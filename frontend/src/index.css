@@ -1,0 +1,176 @@
+@import './styles/tokens.css';
+
+@layer base {
+  html {
+    font-family: var(--font-display);
+    background-color: var(--color-bg-base);
+    color: var(--color-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  /* Custom minimal scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-subtle);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-muted);
+  }
+}
+
+@layer utilities {
+  /* Vibrant Background Aura */
+  .vibrant-bg {
+    background-color: var(--color-bg-base);
+  }
+
+  /* Clean Surface Card with subtle glow on hover */
+  .surface-card {
+    background-color: var(--color-bg-surface);
+    border: 1px solid var(--color-border-subtle);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.3s ease;
+  }
+  
+  .surface-card:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    box-shadow: var(--shadow-glow-blue);
+    transform: translateY(-1px);
+  }
+
+  /* Minimal Input */
+  .minimal-input {
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--color-border-subtle);
+    color: var(--color-text-primary);
+    transition: all 0.2s ease;
+  }
+
+  .minimal-input:focus {
+    border-color: var(--color-border-focus);
+    box-shadow: 0 0 0 1px var(--color-border-focus), var(--shadow-glow-purple);
+    outline: none;
+  }
+
+  select.minimal-input option {
+    background-color: var(--color-bg-surface);
+    color: var(--color-text-primary);
+  }
+
+  /* Primary Button (Vibrant Gradient) */
+  .btn-primary {
+    background: linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-purple));
+    color: white;
+    font-weight: 500;
+    box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.3);
+    transition: all 0.2s ease;
+    border: none;
+  }
+  
+  .btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+    transform: translateY(-1px);
+    opacity: 0.95;
+  }
+  
+  .btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  /* Secondary Button */
+  .btn-secondary {
+    background-color: var(--color-bg-surface);
+    border: 1px solid var(--color-border-subtle);
+    color: var(--color-text-primary);
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .btn-secondary:hover {
+    background-color: var(--color-bg-hover);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: white;
+  }
+
+  /* Text Gradient for Headings */
+  .text-gradient {
+    background: linear-gradient(to right, #F8FAFC, #94A3B8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .text-gradient-vibrant {
+    background: linear-gradient(135deg, #60A5FA, #A78BFA);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Markdown Content Styles */
+  .markdown-content p {
+    margin-bottom: 1rem;
+  }
+  .markdown-content p:last-child {
+    margin-bottom: 0;
+  }
+  .markdown-content ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .markdown-content ol {
+    list-style-type: decimal;
+    padding-left: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .markdown-content li {
+    margin-bottom: 0.25rem;
+  }
+  .markdown-content h1, .markdown-content h2, .markdown-content h3 {
+    font-weight: 600;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: white;
+  }
+  .markdown-content h1 { font-size: 1.5rem; }
+  .markdown-content h2 { font-size: 1.25rem; }
+  .markdown-content h3 { font-size: 1.125rem; }
+  .markdown-content a {
+    color: var(--color-accent-blue);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .markdown-content pre {
+    margin-top: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .markdown-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+  }
+  .markdown-content th, .markdown-content td {
+    border: 1px solid var(--color-border-subtle);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+  .markdown-content th {
+    background-color: var(--color-bg-hover);
+  }
+}

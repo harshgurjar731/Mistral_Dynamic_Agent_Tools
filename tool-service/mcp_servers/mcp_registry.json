@@ -1,0 +1,25 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "url": "http://mcp-filesystem:3001",
+      "protocol": "mcp-v1",
+      "enabled": false,
+      "description": "File system operations — read, write, search files"
+    },
+    {
+      "name": "database",
+      "url": "http://mcp-database:3002",
+      "protocol": "mcp-v1",
+      "enabled": false,
+      "description": "Database access — SQL queries, schema inspection"
+    },
+    {
+      "name": "web-search",
+      "url": "http://mcp-web-search:3003",
+      "protocol": "mcp-v1",
+      "enabled": false,
+      "description": "Web search and scraping capabilities"
+    }
+  ]
+}

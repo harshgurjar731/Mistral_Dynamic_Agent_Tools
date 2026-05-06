@@ -1,0 +1,28 @@
+import { api } from './client';
+
+export interface Agent {
+  id: string;
+  name: string;
+  model: string;
+  description?: string;
+  instructions?: string;
+  tools?: unknown[];
+  created_at?: string;
+}
+
+export interface PaginatedAgents {
+  items: Agent[];
+  page: number;
+  page_size: number;
+  total_pages: number;
+  count: number;
+}
+
+export const agentsApi = {
+  list:   (page = 0, page_size = 20) =>
+    api.get<PaginatedAgents>('/api/agents', { params: { page, page_size } }),
+  get:    (id: string)  => api.get<Agent>(`/api/agents/${id}`),
+  create: (body: Partial<Agent>) => api.post<Agent>('/api/agents', body),
+  update: (id: string, body: Partial<Agent>) => api.patch<Agent>(`/api/agents/${id}`, body),
+  delete: (id: string)  => api.delete(`/api/agents/${id}`),
+};

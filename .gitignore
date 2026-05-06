@@ -1,0 +1,106 @@
+# ───────────────────────────────────────────────
+# Python
+# ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+*.wheel
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Type checker / linting caches
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# ───────────────────────────────────────────────
+# Environment & Secrets  ← NEVER commit these
+# ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+
+# ───────────────────────────────────────────────
+# Databases & local state
+# ───────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ───────────────────────────────────────────────
+# Node / Frontend
+# ───────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.cache/
+*.tsbuildinfo
+tsc_errors.txt
+
+# ───────────────────────────────────────────────
+# Docker
+# ───────────────────────────────────────────────
+# Named volumes are managed by Docker; don't commit their data
+tool-data/
+
+# ───────────────────────────────────────────────
+# Dynamic & generated tool artefacts
+# ───────────────────────────────────────────────
+tool-service/dynamic_tools/*.py
+!tool-service/dynamic_tools/__init__.py
+
+# Compiled / cached Mistral Workflows
+backend/.mistral_workflows/
+backend/mistral_workflows/__pycache__/
+mistral_workflows/__pycache__/
+
+# ───────────────────────────────────────────────
+# IDE / Editor
+# ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ───────────────────────────────────────────────
+# OS artefacts
+# ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ───────────────────────────────────────────────
+# Logs
+# ───────────────────────────────────────────────
+*.log
+logs/
+
+# ───────────────────────────────────────────────
+# Misc one-off scripts / scratch files
+# ───────────────────────────────────────────────
+backend/test_endpoint.py
+backend/test_stream.py
+backend/tools.json

@@ -1,0 +1,7 @@
+# Safe subset of libraries available to generated tool code
+requests
+pandas
+numpy
+beautifulsoup4
+lxml
+sqlalchemy

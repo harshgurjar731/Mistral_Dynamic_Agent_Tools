@@ -1,0 +1,40 @@
+version: "3.9"
+services:
+  tool-service:
+    build: .
+    ports:
+      - "9000:9000"
+    env_file: ./.env
+    volumes:
+      - tool-data:/app/dynamic_tools
+    networks:
+      - tool-net
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # [FUTURE] MCP Servers — add as sibling containers
+  # Each MCP server runs in its own container on tool-net
+  # The tool-service discovers and proxies requests to them
+  # ──────────────────────────────────────────────
+  # mcp-filesystem:
+  #   image: mcp/filesystem-server:latest
+  #   volumes:
+  #     - mcp-fs-data:/data
+  #   networks:
+  #     - tool-net
+  #   restart: unless-stopped
+  #
+  # mcp-database:
+  #   image: mcp/database-server:latest
+  #   environment:
+  #     - DB_CONNECTION_STRING=...
+  #   networks:
+  #     - tool-net
+  #   restart: unless-stopped
+
+networks:
+  tool-net:
+    driver: bridge
+
+volumes:
+  tool-data:

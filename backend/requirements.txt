@@ -1,0 +1,10 @@
+fastapi[standard]
+uvicorn[standard]
+pydantic-settings
+python-dotenv
+mistralai
+httpx
+sqlalchemy
+watchfiles
+# mistralai-workflows[mistralai] — install separately if Temporal worker support is needed
+# pip install mistralai-workflows  (without extras, or resolve conflict manually)
