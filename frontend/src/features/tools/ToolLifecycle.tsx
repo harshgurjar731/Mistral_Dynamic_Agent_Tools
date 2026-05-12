@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Wrench, FlaskConical, Sparkles, Shield, Edit2, Trash2, Code2 } from 'lucide-react';
@@ -315,7 +316,7 @@ export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject
     approveMut.mutate();
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -340,9 +341,11 @@ export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject
                 <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
                   <Edit2 size={14} /> Edit
                 </button>
-                <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-400 px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-                  <Trash2 size={14} /> {deleteMut.isPending ? 'Deleting...' : 'Delete'}
-                </button>
+                {!['get_weather', 'calculate', 'search_knowledge', 'create_document', 'send_email'].includes(tool.name) && (
+                  <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-400 px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
+                    <Trash2 size={14} /> {deleteMut.isPending ? 'Deleting...' : 'Delete'}
+                  </button>
+                )}
               </>
             ) : isEditing ? (
               <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="flex items-center gap-2 text-xs font-medium bg-[var(--color-bg-hover)] text-white hover:bg-[var(--color-bg-surface)] px-3 py-1.5 rounded-md transition-colors">
@@ -430,6 +433,7 @@ export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject
           )}
         </div>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }

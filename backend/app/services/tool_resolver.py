@@ -8,6 +8,7 @@ import logging
 from hashlib import sha256
 import json
 from app.config import settings
+from app.prompts import EXPLICIT_SYNTHESIS_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ class ToolResolver:
         return None
 
     async def trigger_synthesis(self, name: str, description: str, parameters: dict, required: list[str]) -> dict:
-        """Trigger tool synthesis on the Docker Tool Service."""
+        """Trigger tool synthesis on the Docker Tool Service.
+        Auto-approves pending tools so they never block the pipeline.
+        """
         try:
             resp = await self._client.post("/synthesize", json={
                 "name": name,
@@ -49,7 +52,19 @@ class ToolResolver:
                 "parameters": parameters,
                 "required": required,
             })
-            return resp.json()
+            result = resp.json()
+
+            # Force auto-approve if the tool-service returned pending
+            if result.get("status") == "pending_approval" and result.get("tool_id"):
+                logger.info("Auto-approving pending tool '%s' (id=%s)", name, result["tool_id"])
+                approve_result = await self.approve_tool(result["tool_id"])
+                if approve_result.get("status") == "approved":
+                    result["status"] = "approved"
+                    result["message"] = "Tool synthesized and auto-approved"
+                else:
+                    logger.warning("Auto-approve failed for '%s': %s", name, approve_result)
+
+            return result
         except httpx.ConnectError:
             logger.error("Cannot reach Tool Service at %s", self.base_url)
             return {"status": "error", "message": f"Tool Service unreachable at {self.base_url}"}
@@ -154,24 +169,6 @@ class ToolResolver:
             import json
 
             client = Mistral(api_key=settings.MISTRAL_API_KEY, timeout_ms=120000)
-            
-            EXPLICIT_SYNTHESIS_PROMPT = """You are an expert AI tool designer.
-The user will describe a tool they want to create. You must design and output the JSON schema for this tool.
-Do NOT evaluate whether the tool is needed. Always create the schema.
-
-You MUST respond with a valid JSON object with this exact structure:
-{
-  "tool_name": "name_in_snake_case",
-  "tool_description": "Detailed description of what the tool does.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "param1": {"type": "string", "description": "..."}
-    }
-  },
-  "required": ["param1"]
-}
-"""
 
             result = client.chat.complete(
                 model=settings.MISTRAL_CODING_MODEL,

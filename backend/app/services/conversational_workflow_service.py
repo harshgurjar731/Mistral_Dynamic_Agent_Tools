@@ -18,38 +18,10 @@ from typing import Any
 
 from mistralai.client import Mistral
 from app.config import settings
+from app.prompts import CONVERSATIONAL_GATEWAY_PROMPT
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# System prompt template for the gateway agent
-# ---------------------------------------------------------------------------
-
-_GATEWAY_SYSTEM_PROMPT = """\
-You are a conversational assistant for the **{workflow_name}** workflow.
-
-## What you do
-You help users run the "{workflow_display_name}" workflow step-by-step.
-
-## Workflow description
-{workflow_description}
-
-## Required inputs
-{input_schema_desc}
-
-## How to behave
-1. Greet the user and briefly explain what the workflow does.
-2. Ask for each required input — be concise, one question at a time if there are many.
-3. Once you have all the required information, confirm with the user.
-4. Call the `trigger_workflow_execution` tool with the collected inputs as JSON.
-5. After triggering, inform the user that the workflow has started and they can track
-   progress with the execution ID you received.
-
-## Important
-- Do NOT make up input values. Always ask the user.
-- Be conversational and friendly, not robotic.
-- If the user asks about workflow progress, remind them of the execution ID.
-"""
 
 # ---------------------------------------------------------------------------
 # Tool definition injected into the gateway agent
@@ -135,7 +107,7 @@ async def create_conversational_agent(
 
     # Build system prompt
     display_name = workflow_name.replace("_", " ").title()
-    system_prompt = _GATEWAY_SYSTEM_PROMPT.format(
+    system_prompt = CONVERSATIONAL_GATEWAY_PROMPT.format(
         workflow_name=workflow_name,
         workflow_display_name=display_name,
         workflow_description=workflow_description or f"A multi-step automated pipeline: {display_name}",

@@ -90,14 +90,14 @@ export default function AgentStudio() {
   return (
     <div className="p-8 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-end justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">Agent Studio</h1>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">Create and manage specialized Mistral AI agents.</p>
         </div>
         <button 
           onClick={() => setShowCreate(true)} 
-          className="btn-primary flex items-center gap-2 px-4 py-2 text-sm rounded-md"
+          className="btn-primary shrink-0 flex items-center gap-2 px-4 py-2 text-sm rounded-md self-start sm:self-auto"
         >
           <Plus size={16} /> New Agent
         </button>

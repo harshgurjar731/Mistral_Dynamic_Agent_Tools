@@ -4,9 +4,14 @@ export interface PlannerEvent extends SSEEvent {
   type:
     | 'status'
     | 'requirements'
-    | 'tool_synthesised'
-    | 'agent_created'
+    | 'tool_exists'
+    | 'tool_new'
+    | 'agent_exists'
+    | 'agent_new'
     | 'workflow_ready'
+    | 'compiled'
+    | 'registered'
+    | 'fatal_error'
     | 'error'
     | 'done';
 }

@@ -22,6 +22,9 @@ class WorkflowStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    TERMINATED = "TERMINATED"
+    TIMED_OUT = "TIMED_OUT"
+    CONTINUED_AS_NEW = "CONTINUED_AS_NEW"
 
 
 class WorkflowStep(BaseModel):
@@ -95,6 +98,7 @@ class WorkflowExecutionResponse(BaseModel):
     end_time: Optional[datetime] = None
     result: Any = None
     root_execution_id: Optional[str] = None
+    source: Optional[str] = None  # "mistral" or "local"
 
 
 class WorkflowListResponse(BaseModel):

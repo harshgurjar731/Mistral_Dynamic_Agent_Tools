@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     WORKFLOW_STEP_TIMEOUT: int = 60
 
     # Mistral Workflows Worker
-    DEPLOYMENT_NAME: str = "dynamic-workflows-worker"
+    DEPLOYMENT_NAME: str = "default"
     MISTRAL_WORKER_ENABLED: bool = True
     MISTRAL_WORKFLOWS_DIR: str = "../mistral_workflows"
 

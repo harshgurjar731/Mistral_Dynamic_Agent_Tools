@@ -16,6 +16,7 @@ from typing import AsyncGenerator
 import httpx
 from mistralai.client import Mistral
 from app.config import settings
+from app.prompts import WORKFLOW_ANALYSIS_PROMPT, WORKFLOW_DAG_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -27,94 +28,6 @@ def _sse(data, event: str = "message") -> str:
     if isinstance(payload, str):
         payload = payload.replace("\n", "\ndata: ")
     return f"event: {event}\ndata: {payload}\n\n"
-
-
-# ── Phase 1 Prompt ─────────────────────────────────────────────────────────
-
-ANALYSIS_PROMPT = """\
-You are a workflow architect. Given a user's goal, identify the exact tools and \
-agents needed to build a multi-step automated pipeline for it.
-
-Respond ONLY with a valid JSON object — no markdown, no explanation:
-{{
-  "workflow_description": "<one sentence summary>",
-  "tools_needed": [
-    {{
-      "name": "snake_case_name",
-      "description": "What this tool does",
-      "parameters": {{
-        "type": "object",
-        "properties": {{
-          "param1": {{"type": "string", "description": "..."}}
-        }}
-      }},
-      "required": ["param1"]
-    }}
-  ],
-  "agents_needed": [
-    {{
-      "name": "AgentName",
-      "description": "What this agent does in the workflow",
-      "instructions": "Detailed system prompt for this agent",
-      "model": "mistral-large-latest",
-      "tools": ["tool_name_1", "tool_name_2"]
-    }}
-  ]
-}}
-
-Available tools already in the system (do NOT re-create these):
-{existing_tools}
-
-Available agents already in the system (you MUST reuse these if they match your needs):
-{existing_agents}
-
-Available workflows already deployed on the server:
-{existing_workflows}
-"""
-
-# ── Phase 4 Prompt ─────────────────────────────────────────────────────────
-
-DAG_PROMPT = """\
-You are a workflow DAG builder. Given agents and requirements, build a \
-WorkflowDefinition JSON for a multi-step pipeline.
-
-WorkflowDefinition schema:
-{{
-  "name": "snake_case_workflow_name",
-  "description": "What this workflow does",
-  "entry_step": "first_step_id",
-  "steps": [
-    {{
-      "id": "step_id",
-      "type": "agent|tool|condition|transform",
-      "description": "What this step does",
-      "config": {{
-        "agent_id": "<agent_id for agent steps>",
-        "query_template": "<query with {{variable}} placeholders for agent steps>",
-        "tool_name": "<tool name for tool steps>",
-        "arguments": {{"param": "{{variable}}"}}
-      }},
-      "next_steps": ["next_step_id"]
-    }}
-  ],
-  "input_schema": [{{"name": "input_field", "type": "string", "description": "..."}}],
-  "variables": {{}}
-}}
-
-Step types:
-- "agent"    → config needs: agent_id, query_template
-- "tool"     → config needs: tool_name, arguments
-- "condition"→ config needs: expression (Python bool), true_step, false_step
-- "transform"→ config needs: mappings dict
-
-Agents available (use their IDs):
-{agents_json}
-
-Workflow goal: {goal}
-Requirements: {requirements_json}
-
-Respond ONLY with the valid JSON WorkflowDefinition object. No markdown.
-"""
 
 
 # ── Main SSE Generator ─────────────────────────────────────────────────────
@@ -158,7 +71,7 @@ async def plan_workflow_stream(
             messages=[
                 {
                     "role": "system",
-                    "content": ANALYSIS_PROMPT.format(
+                    "content": WORKFLOW_ANALYSIS_PROMPT.format(
                         existing_tools=json.dumps(existing_tool_names),
                         existing_agents=json.dumps(existing_agents),
                         existing_workflows=json.dumps(existing_workflows)
@@ -184,7 +97,7 @@ async def plan_workflow_stream(
             tool_name = tool_spec.get("name", "unknown")
             # Skip if already exists
             if tool_name in existing_tool_names:
-                yield _sse(json.dumps({"tool_name": tool_name, "status": "exists"}), "tool_synthesised")
+                yield _sse(json.dumps({"tool_name": tool_name, "status": "exists"}), "tool_exists")
                 continue
 
             yield _sse(f"Synthesising tool: {tool_name}…", "status")
@@ -196,13 +109,18 @@ async def plan_workflow_stream(
                     required=tool_spec.get("required", []),
                 )
                 status = synth_result.get("status", "unknown")
-                yield _sse(json.dumps({"tool_name": tool_name, "status": status}), "tool_synthesised")
+                if status in ("failed", "error"):
+                    error_msg = synth_result.get("message", f"Tool synthesis failed for {tool_name}")
+                    yield _sse(json.dumps({"error": error_msg}), "fatal_error")
+                    return
+                yield _sse(json.dumps({"tool_name": tool_name, "status": status}), "tool_new")
 
                 # Refresh tool cache so agents can use the new tool
                 await refresh_dynamic_tools()
             except Exception as e:
                 logger.error("Tool synthesis failed for %s: %s", tool_name, e)
-                yield _sse(json.dumps({"tool_name": tool_name, "status": "failed", "error": str(e)}), "tool_synthesised")
+                yield _sse(json.dumps({"error": f"Tool synthesis failed for {tool_name}: {e}"}), "fatal_error")
+                return
 
         # ── Phase 3: Create agents ────────────────────────────────────────
         agents_needed = requirements.get("agents_needed", [])
@@ -223,7 +141,7 @@ async def plan_workflow_stream(
                     "description": agent_spec.get("description", ""),
                 }
                 created_agents.append(agent_info)
-                yield _sse(json.dumps(agent_info), "agent_created")
+                yield _sse(json.dumps(agent_info), "agent_exists")
                 continue
 
             yield _sse(f"Creating agent: {agent_name}…", "status")
@@ -254,11 +172,12 @@ async def plan_workflow_stream(
                 }
                 created_agents.append(agent_info)
 
-                yield _sse(json.dumps(agent_info), "agent_created")
+                yield _sse(json.dumps(agent_info), "agent_new")
 
             except Exception as e:
                 logger.error("Agent creation failed for %s: %s", agent_name, e)
-                yield _sse(json.dumps({"agent_name": agent_name, "error": str(e)}), "agent_created")
+                yield _sse(json.dumps({"error": f"Agent creation failed for {agent_name}: {e}"}), "fatal_error")
+                return
 
         # ── Phase 4: Build DAG ────────────────────────────────────────────
         yield _sse("Building workflow DAG…", "status")
@@ -268,7 +187,7 @@ async def plan_workflow_stream(
             messages=[
                 {
                     "role": "system",
-                    "content": DAG_PROMPT.format(
+                    "content": WORKFLOW_DAG_PROMPT.format(
                         agents_json=json.dumps(created_agents, indent=2),
                         goal=goal,
                         requirements_json=json.dumps(requirements, indent=2),
@@ -338,11 +257,6 @@ async def plan_workflow_stream(
         yield _sse("Checking Mistral server registration…", "status")
         mistral_workflow_id = None
         try:
-            # Single best-effort check — no polling loop.
-            # If the Temporal worker is connected it will have registered the
-            # workflow by now (the file was just written in Phase 5b).
-            # Use asyncio.to_thread so the sync httpx call doesn't block the
-            # event loop.
             def _check_registration():
                 try:
                     r = httpx.get(
@@ -378,40 +292,13 @@ async def plan_workflow_stream(
 
         except Exception as e:
             logger.error("Workflow registration check failed: %s", e)
-            yield _sse(json.dumps({"workflow_name": workflow_name, "error": str(e)}), "registered")
-
-        # ── Phase 5d: Publish as le Chat conversational assistant ─────────
-        yield _sse("Publishing as le Chat assistant…", "status")
-        le_chat_url = None
-        try:
-            from app.services.conversational_workflow_service import publish_as_le_chat
-
-            backing_agent_id = created_agents[-1]["agent_id"] if created_agents else None
-            le_chat_info = await publish_as_le_chat(
-                client=client,
-                workflow_name=workflow_name,
-                workflow_description=workflow_def.description or goal,
-                input_schema=workflow_def.input_schema,
-                existing_agent_id=backing_agent_id,
-            )
-            le_chat_url = le_chat_info["le_chat_url"]
-            logger.info("Workflow '%s' published to le Chat: %s", workflow_name, le_chat_url)
-            yield _sse(json.dumps({
-                "workflow_name": workflow_name,
-                "agent_id": le_chat_info["agent_id"],
-                "le_chat_url": le_chat_url,
-                "is_new": le_chat_info.get("is_new", True),
-            }), "le_chat_published")
-
-        except Exception as e:
-            logger.error("le Chat publish failed for '%s': %s", workflow_name, e)
-            yield _sse(json.dumps({"workflow_name": workflow_name, "error": str(e)}), "le_chat_published")
+            yield _sse(json.dumps({"error": f"Registration check failed: {e}"}), "fatal_error")
+            return
 
         # ── Final done ────────────────────────────────────────────────────
         yield _sse(json.dumps({
             "workflow_name": workflow_name,
             "mistral_workflow_id": mistral_workflow_id,
-            "le_chat_url": le_chat_url,
         }), "done")
 
     except Exception as e:

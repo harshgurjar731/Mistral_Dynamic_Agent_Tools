@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import ToolRecord
 from app.services.sandbox import run_in_sandbox, generate_test_inputs
+from app.prompts import CODEGEN_SYSTEM_PROMPT, CODEGEN_USER_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +35,7 @@ FORBIDDEN_IMPORTS = {
     "multiprocessing", "threading", "signal", "importlib",
 }
 
-CODEGEN_SYSTEM_PROMPT = """You are an expert Python developer. Your job is to write a single, self-contained Python function.
 
-Rules:
-1. Define a function named `run` that takes the specified parameters and returns a result.
-2. The function MUST return a JSON-serializable value (str, int, float, bool, list, dict).
-3. ALL imports must be at the very top of the file. Use only standard library imports and these safe packages: requests, pandas, numpy, beautifulsoup4, lxml, sqlalchemy.
-4. FORBIDDEN imports: os, subprocess, socket, shutil, sys, ctypes, multiprocessing, threading, signal, importlib.
-5. Handle exceptions gracefully — return error messages as strings, don't crash.
-6. Return ONLY valid Python code. No markdown fences, no prose, no explanations.
-7. Include proper type hints on the function signature.
-8. Keep all lines strictly under 88 characters. Break long strings or comments across multiple lines.
-"""
 
 # ── In-process cache ───────────────────────────────────────────────────────
 
@@ -69,20 +59,10 @@ def _build_prompt(name: str, description: str, parameters: dict, required: list[
 
     params_str = "\n".join(params_desc) if params_desc else "  (no parameters)"
 
-    return f"""Write a Python function named `run` that does the following:
-
-Function name: run
-Description: {description}
-Parameters:
-{params_str}
-
-The function should:
-1. Accept the parameters listed above as keyword arguments.
-2. Wrap the core logic of the function inside a `try...except Exception as e:` block. If an error occurs, return `f"Error: {{str(e)}}"`. NEVER raise an unhandled exception.
-3. Perform the described task using only standard libraries or the allowed third-party libraries.
-4. Return a JSON-serializable result.
-
-Return ONLY the Python code, nothing else."""
+    return CODEGEN_USER_PROMPT_TEMPLATE.format(
+        description=description,
+        params_str=params_str,
+    )
 
 
 # ── Stage 2: Codestral Call ───────────────────────────────────────────────
@@ -369,6 +349,10 @@ def delete_tool(db: Session, tool_id: int) -> dict:
     record = db.query(ToolRecord).filter_by(id=tool_id).first()
     if not record:
         return {"status": "error", "message": "Tool not found"}
+
+    PREDEFINED_TOOL_NAMES = {"get_weather", "calculate", "search_knowledge", "create_document", "send_email"}
+    if record.name in PREDEFINED_TOOL_NAMES:
+        return {"status": "error", "message": f"Cannot delete predefined native tool '{record.name}'"}
 
     # Remove from disk if exists
     if record.module_path and os.path.exists(record.module_path):

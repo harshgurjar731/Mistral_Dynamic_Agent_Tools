@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, Play, Archive, Loader2, Plus, Eye,
   CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles,
-  FolderArchive, MessageSquare, ExternalLink, Server, Zap,
+  FolderArchive, Server, Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowsApi } from '../../api/workflows';
@@ -71,7 +71,6 @@ function WorkflowCard({
 }) {
   const steps = (wf.steps as unknown[]) ?? [];
   const isDeployed = Boolean(wf.is_deployed);
-  const leChatUrl = wf.le_chat_url as string | undefined;
   const mistralId = wf.id as string | undefined;
 
   return (
@@ -116,20 +115,6 @@ function WorkflowCard({
           <span className="flex items-center gap-1 text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium shrink-0">
             <Zap size={10} /> Local
           </span>
-        )}
-
-        {/* le Chat badge */}
-        {leChatUrl && (
-          <a
-            href={leChatUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[10px] bg-[rgba(99,102,241,0.12)] text-[#a5b4fc] border border-[rgba(99,102,241,0.25)] px-2 py-0.5 rounded-full uppercase font-medium shrink-0 hover:bg-[rgba(99,102,241,0.2)] transition-colors"
-            title="Open in le Chat"
-            onClick={e => e.stopPropagation()}
-          >
-            <MessageSquare size={10} /> le Chat <ExternalLink size={8} />
-          </a>
         )}
       </div>
 
@@ -275,7 +260,7 @@ export default function WorkflowDashboard() {
           <div>
             <p className="text-base font-semibold text-[var(--color-text-primary)]">No workflows yet</p>
             <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">
-              Get started by planning your first dynamic multi-agent pipeline. It will be registered on Mistral and published to le Chat automatically.
+              Get started by planning your first dynamic multi-agent pipeline. It will be registered on Mistral automatically.
             </p>
           </div>
           <button
@@ -313,7 +298,6 @@ export default function WorkflowDashboard() {
               steps: (executingWorkflow.steps as any) ?? [],
               input_schema: (executingWorkflow.input_schema as any) ?? [],
               is_deployed: Boolean(executingWorkflow.is_deployed),
-              le_chat_url: executingWorkflow.le_chat_url as string | undefined,
             }}
             onClose={() => setExecutingWorkflow(null)}
           />

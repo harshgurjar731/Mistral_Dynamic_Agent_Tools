@@ -12,60 +12,9 @@ from typing import Optional, AsyncGenerator
 from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
 from app.services.tool_registry import get_tools, get_tool_descriptions, AVAILABLE_TOOL_KEYS, execute_tool, refresh_dynamic_tools
+from app.prompts import ORCHESTRATOR_SYSTEM_PROMPT, SYNTHESIS_CHECK_PROMPT
 
 logger = logging.getLogger(__name__)
-
-# ── Orchestrator System Prompt ──────────────────────────────────────────────
-
-ORCHESTRATOR_SYSTEM_PROMPT = """You are an AI orchestrator. Your job is to analyze a user's query and determine the optimal agent configuration to handle it.
-
-You MUST respond with a valid JSON object (no markdown, no extra text) with this exact structure:
-{{
-  "agent_name": "<descriptive name for the agent>",
-  "agent_instructions": "<detailed system instructions for the agent, describing its role, expertise, and behavior>",
-  "model": "<model to use>",
-  "tools": [<list of tool keys to enable>],
-  "temperature": <float between 0.0 and 1.0>,
-  "description": "<one-line description of what this agent does>"
-}}
-
-Available models (pick the best fit):
-- "mistral-large-latest" — Most capable, best for complex reasoning, analysis, coding
-- "mistral-medium-latest" — Good balance of quality and speed
-- "mistral-small-latest" — Fast, good for simple tasks
-
-Available tools (pick only what's needed):
-{tool_descriptions}
-
-Available tool keys: {tool_keys}
-
-Guidelines:
-- Choose the MINIMUM set of tools needed — don't add tools the agent won't use
-- Write detailed, specific agent_instructions tailored to the query
-- Use lower temperature (0.1-0.3) for factual/analytical tasks, higher (0.5-0.8) for creative tasks
-- The agent_name should be concise and descriptive (e.g. "Python Code Expert", "Research Analyst")
-- If no tools are needed, return an empty tools array []
-"""
-
-SYNTHESIS_SYSTEM_PROMPT = """You are an expert Python developer and AI agent tool creator.
-Your job is to analyze a user's query and determine if they need a capability that is NOT present in the current available tools.
-If they need a new tool, you must describe it as a JSON schema.
-Do not create tools for simple queries that the LLM can answer itself.
-
-Current Available Tools:
-{tool_descriptions}
-
-You must respond with a valid JSON object:
-{{
-  "needs_new_tool": true/false,
-  "tool_name": "name_in_snake_case",
-  "tool_description": "what the tool does",
-  "parameters": {{...}},
-  "required": [...]
-}}
-
-If needs_new_tool is false, omit the other fields.
-"""
 
 
 def _build_orchestrator_prompt() -> str:
@@ -120,7 +69,7 @@ async def _check_synthesis_needed(client: Mistral, query: str) -> dict | bool:
     """Check if a new tool is needed and trigger synthesis via Docker Tool Service."""
     from app.config import settings
 
-    system_prompt = SYNTHESIS_SYSTEM_PROMPT.format(tool_descriptions=get_tool_descriptions())
+    system_prompt = SYNTHESIS_CHECK_PROMPT.format(tool_descriptions=get_tool_descriptions())
 
     try:
         result = client.chat.complete(
@@ -157,10 +106,6 @@ async def _check_synthesis_needed(client: Mistral, query: str) -> dict | bool:
 
         # Refresh dynamic tools cache
         await refresh_dynamic_tools()
-        
-        if synthesis_result.get("status") == "pending_approval":
-            return synthesis_result
-            
         return synthesis_result.get("status") == "approved"
 
     except RuntimeError:
@@ -610,10 +555,6 @@ async def orchestrate_stream(
 
         yield _sse("Analyzing your query...", "status")
         synthesis_check = await _check_synthesis_needed(client, query)
-        if isinstance(synthesis_check, dict) and synthesis_check.get("status") == "pending_approval":
-            yield _sse(json.dumps(synthesis_check), "pending_approval")
-            yield _sse("done", "done")
-            return
             
         agent_config = await _analyze_query(client, query)
 

@@ -1,16 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, ArrowRight, CheckCircle2, Zap, AlertCircle, RefreshCw, Shield, Wrench, X } from 'lucide-react';
+import { Sparkles, ArrowRight, CheckCircle2, Zap, AlertCircle, RefreshCw } from 'lucide-react';
 import { orchestratorApi } from '../../api/orchestrator';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '../../lib/utils';
-import { useQuery } from '@tanstack/react-query';
-import { toolsApi } from '../../api/tools';
-import { QK } from '../../lib/queryClient';
-import { ToolDetailsModal } from '../tools/ToolLifecycle';
 
 interface TimelineStep {
   id: string;
@@ -25,7 +21,6 @@ export default function Orchestrator() {
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [streamingResponse, setStreamingResponse] = useState('');
-  const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -86,15 +81,6 @@ export default function Orchestrator() {
                 newSteps.push({ id: crypto.randomUUID(), type: 'error', content: event.data, status: 'completed' });
                 return newSteps;
             });
-        }
-        else if (event.type === 'pending_approval') {
-            setSteps(prev => {
-                const newSteps = [...prev];
-                if (newSteps.length > 0) newSteps[newSteps.length - 1].status = 'completed';
-                newSteps.push({ id: crypto.randomUUID(), type: 'status', content: 'Waiting for manual tool approval...', status: 'active' });
-                return newSteps;
-            });
-            setShowApprovalDialog(true);
         }
         else if (event.type === 'done') {
             try {
@@ -288,96 +274,7 @@ export default function Orchestrator() {
 
           </div>
         </div>
-      )}
-      <AnimatePresence>
-        {showApprovalDialog && (
-          <PendingToolsDialog 
-            onClose={() => setShowApprovalDialog(false)} 
-            onResume={() => { setShowApprovalDialog(false); handleSubmit(); }}
-          />
-        )}
-      </AnimatePresence>
       <div ref={endRef} />
-    </div>
-  );
-}
-
-function PendingToolsDialog({ onClose, onResume }: { onClose: () => void; onResume: () => void }) {
-  const { data: pendingTools = [], isLoading } = useQuery({
-    queryKey: QK.pendingTools(),
-    queryFn: () => toolsApi.listPending().then(r => Array.isArray(r.data) ? r.data : r.data.tools ?? []),
-    refetchInterval: 3000,
-  });
-
-  const [selectedTool, setSelectedTool] = useState<Record<string, any> | null>(null);
-
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
-      >
-        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
-          <div className="flex items-center gap-3">
-             <div className="w-8 h-8 rounded-md bg-[rgba(245,158,11,0.1)] border border-[rgba(245,158,11,0.2)] flex items-center justify-center">
-               <Shield size={14} className="text-[var(--color-accent-warning)]" />
-             </div>
-             <div>
-               <h3 className="font-semibold text-white">Manual Approval Required</h3>
-               <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider font-medium">New dynamic tools were generated</p>
-             </div>
-          </div>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-white p-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="p-6 overflow-y-auto flex-1 bg-transparent">
-            {isLoading ? (
-                <div className="flex items-center justify-center py-10"><div className="w-6 h-6 border-2 border-[var(--color-accent-warning)] border-t-transparent rounded-full animate-spin" /></div>
-            ) : pendingTools.length === 0 ? (
-                <div className="text-center py-10">
-                    <p className="text-sm text-[var(--color-text-secondary)]">No pending tools found. They might have been approved already.</p>
-                </div>
-            ) : (
-                <div className="space-y-3">
-                    {pendingTools.map((tool: Record<string, unknown>) => (
-                        <div key={String(tool.id)} className="surface-card rounded-xl border border-[var(--color-border-subtle)] p-4 flex items-center justify-between cursor-pointer hover:border-[var(--color-border-focus)] transition-colors" onClick={() => setSelectedTool(tool)}>
-                            <div className="flex items-center gap-3">
-                                <Wrench size={16} className="text-[var(--color-text-muted)]" />
-                                <div>
-                                    <h4 className="text-sm font-medium font-mono text-white">{String(tool.name)}</h4>
-                                    <p className="text-xs text-[var(--color-text-muted)] line-clamp-1">{String(tool.description)}</p>
-                                </div>
-                            </div>
-                            <span className="text-[10px] bg-[rgba(245,158,11,0.1)] text-[var(--color-accent-warning)] px-2 py-1 rounded-full uppercase font-medium">Pending Review</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-
-        <div className="p-5 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] flex justify-end gap-3">
-            <button onClick={onClose} className="btn-secondary px-4 py-2 text-sm rounded-md">Close</button>
-            <button onClick={onResume} className="btn-primary px-4 py-2 text-sm rounded-md shadow-[0_0_15px_rgba(255,255,255,0.1)] flex items-center gap-2">
-                Resume Generation <ArrowRight size={14} />
-            </button>
-        </div>
-      </motion.div>
-
-      <AnimatePresence>
-        {selectedTool && (
-           <ToolDetailsModal 
-             tool={selectedTool} 
-             onClose={() => setSelectedTool(null)} 
-             isPending={true}
-             onApprove={() => setSelectedTool(null)}
-             onReject={() => setSelectedTool(null)}
-           />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

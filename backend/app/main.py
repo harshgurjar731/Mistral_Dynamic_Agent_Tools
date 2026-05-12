@@ -27,6 +27,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Show WARNING+ from worker SDK (catches registration failures).
+# Suppress verbose config/temporal tracebacks that are self-recovering.
+logging.getLogger("mistralai.workflows.core.worker").setLevel(logging.WARNING)
+logging.getLogger("mistralai.workflows.core.config").setLevel(logging.WARNING)
+logging.getLogger("mistralai.workflows.core.config.config_discovery").setLevel(logging.WARNING)
+logging.getLogger("mistralai.workflows.core.temporal").setLevel(logging.WARNING)
+logging.getLogger("mistralai.workflows.core.temporal.temporal_client").setLevel(logging.WARNING)
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,32 +52,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Could not refresh dynamic tools: %s (Tool Service may not be running)", e)
 
-    # Auto-start Mistral Workflows worker with hot-reload
-    _worker_task = None
-    if settings.MISTRAL_WORKER_ENABLED:
-        try:
-            from app.services.mistral_worker import launch_worker_background
-            import os
-            workflows_dir = os.path.abspath(
-                os.path.join(os.getcwd(), settings.MISTRAL_WORKFLOWS_DIR)
-            )
-            _worker_task = await launch_worker_background(workflows_dir)
-            logger.info("✅ Mistral Workflows worker started (DEPLOYMENT_NAME=%s, dir=%s)", settings.DEPLOYMENT_NAME, workflows_dir)
-        except Exception as e:
-            logger.warning("⚠️ Mistral Workflows worker failed to start: %s (workflows will use local DAG engine)", e)
-    else:
-        logger.info("ℹ️ Mistral Workflows worker disabled (MISTRAL_WORKER_ENABLED=false)")
-
     yield
-
-    # Graceful shutdown
-    if _worker_task and not _worker_task.done():
-        logger.info("🛑 Stopping Mistral Workflows worker …")
-        _worker_task.cancel()
-        try:
-            await asyncio.wait_for(_worker_task, timeout=5.0)
-        except Exception:
-            pass
 
     logger.info("🛑 Shutting down …")
 

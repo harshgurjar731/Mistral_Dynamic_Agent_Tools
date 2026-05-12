@@ -17,11 +17,17 @@ class SafeDict(dict):
         return "{" + key + "}"
 
 async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
-    """Execute an agent step — calls orchestrator_service or chat_service."""
+    """
+    Execute an agent step.
+    
+    Priority:
+      1. If step.config has an agent_id → call that agent directly via
+         the Mistral conversations API (fast, no new agent created).
+      2. Fallback → orchestrate() which creates a dynamic agent (slow).
+    """
     start = time.time()
     try:
         from app.dependencies import get_mistral_client
-        from app.services.orchestrator_service import orchestrate
 
         client = get_mistral_client()
         config = step.config
@@ -30,24 +36,54 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
         query_template = config.get("query_template", config.get("query", ""))
         query = query_template.format_map(SafeDict(**variables)) if variables else query_template
 
-        result = await orchestrate(
-            client=client,
-            query=query,
-            conversation_id=config.get("conversation_id"),
-            cleanup_agent=config.get("cleanup_agent", True),
-        )
+        agent_id = config.get("agent_id")
 
-        duration = (time.time() - start) * 1000
-        return StepResult(
-            step_id=step.id,
-            status="completed",
-            output=result.get("response", result),
-            duration_ms=duration,
-        )
+        if agent_id:
+            # ── Fast path: call existing agent directly ──────────────────
+            logger.info("Step '%s' — calling existing agent %s", step.id, agent_id)
+
+            messages = [{"role": "user", "content": query}]
+
+            # Use conversation_id from config or create a new conversation
+            conv_id = config.get("conversation_id")
+            kwargs = {"agent_id": agent_id, "messages": messages}
+            if conv_id:
+                kwargs["conversation_id"] = conv_id
+
+            response = client.agents.complete(**kwargs)
+            result_text = response.choices[0].message.content if response.choices else ""
+
+            duration = (time.time() - start) * 1000
+            return StepResult(
+                step_id=step.id,
+                status="completed",
+                output=result_text,
+                duration_ms=duration,
+            )
+        else:
+            # ── Slow path: orchestrate (creates new agent dynamically) ───
+            logger.info("Step '%s' — no agent_id in config, using orchestrator", step.id)
+            from app.services.orchestrator_service import orchestrate
+
+            result = await orchestrate(
+                client=client,
+                query=query,
+                conversation_id=config.get("conversation_id"),
+                cleanup_agent=config.get("cleanup_agent", True),
+            )
+
+            duration = (time.time() - start) * 1000
+            return StepResult(
+                step_id=step.id,
+                status="completed",
+                output=result.get("response", result),
+                duration_ms=duration,
+            )
     except Exception as e:
         duration = (time.time() - start) * 1000
         logger.error("Agent step '%s' failed: %s", step.id, e)
         return StepResult(step_id=step.id, status="failed", error=str(e), duration_ms=duration)
+
 
 
 async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:

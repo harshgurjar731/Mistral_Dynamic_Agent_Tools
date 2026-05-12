@@ -65,7 +65,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
             f"    start_to_close_timeout=timedelta(seconds={timeout_sec}),",
             f"    retry_policy_max_attempts=3,",
             f")",
-            f"async def run_{step.id}(variables: Dict[str, Any]) -> Any:",
+            f"async def run_{workflow_def.name}_{step.id}(variables: Dict[str, Any]) -> Any:",
             f"    \"\"\"Activity for step: {step.id} ({step.type})\"\"\"",
             f"    step_def = WorkflowStep.model_validate({step_json})",
             f"    result = await run_step(step_def, variables)",
@@ -136,7 +136,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         lines += [
             f"            {prefix} current_step == \"{step.id}\":",
             f"                self._progress.append(\"{step.id}\")",
-            f"                output = await run_{step.id}(variables)",
+            f"                output = await run_{workflow_def.name}_{step.id}(variables)",
             f"                last_output = output",
             f"                self._last_result = output",
             f"                if isinstance(output, dict):",

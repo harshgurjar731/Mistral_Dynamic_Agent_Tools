@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
-  MessageSquare, Send, Bot, User, ExternalLink, Zap, Server,
+  MessageSquare, Send, Bot, User, Zap, Server,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
@@ -18,7 +18,6 @@ interface WorkflowDef {
   steps: { id: string; config: Record<string, unknown> }[];
   input_schema?: { name: string; type: string; description?: string }[];
   is_deployed?: boolean;
-  le_chat_url?: string;
 }
 
 interface Message {
@@ -41,6 +40,66 @@ interface ExecutionData {
   start_time?: string;
   end_time?: string;
   source?: 'mistral' | 'local';
+}
+
+/**
+ * Parse raw workflow result into clean markdown for display.
+ * Handles several output formats:
+ *   - Tool call text: "function_name {json}" → extracts JSON content
+ *   - JSON string with 'content' or 'result' field → extracts that field
+ *   - Escaped newlines (\n as literal chars) → converts to real newlines
+ *   - Plain text → passes through
+ */
+function parseWorkflowResult(raw: string): string {
+  // 1. Try to extract JSON from tool call format: "function_name {json...}"
+  //    Also handles garbage Unicode chars before the function name.
+  const toolCallMatch = raw.match(/\{[\s\S]*\}$/);
+  if (toolCallMatch) {
+    try {
+      const json = JSON.parse(toolCallMatch[0]);
+      // If the JSON has a 'content' field (common for document/report tools), use it
+      if (typeof json.content === 'string') {
+        const title = json.title ? `# ${json.title}\n\n` : '';
+        return title + unescapeNewlines(json.content);
+      }
+      // If it has a 'result' field, use that
+      if (typeof json.result === 'string') {
+        return unescapeNewlines(json.result);
+      }
+      // Otherwise format the whole JSON nicely
+      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
+    } catch {
+      // JSON parse failed, fall through
+    }
+  }
+
+  // 2. Try parsing the entire string as JSON
+  try {
+    const json = JSON.parse(raw);
+    if (typeof json === 'object' && json !== null) {
+      if (typeof json.content === 'string') {
+        const title = json.title ? `# ${json.title}\n\n` : '';
+        return title + unescapeNewlines(json.content);
+      }
+      if (typeof json.result === 'string') {
+        return unescapeNewlines(json.result);
+      }
+      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
+    }
+  } catch {
+    // Not JSON, fall through
+  }
+
+  // 3. Plain string — unescape any literal \n sequences
+  return unescapeNewlines(raw);
+}
+
+/** Convert literal \n sequences (two chars) into real newlines. */
+function unescapeNewlines(str: string): string {
+  return str
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"');
 }
 
 export default function WorkflowExecutionModal({
@@ -233,26 +292,67 @@ Do not output anything else after the JSON.`,
   useEffect(() => {
     if (!execData || hasAddedResultMsg) return;
     const st = execData.status?.toUpperCase();
-    if (st === 'COMPLETED' && execData.result !== undefined) {
+    if (st === 'COMPLETED') {
       setExecStatus('COMPLETED');
       setHasAddedResultMsg(true);
-      const resultStr = typeof execData.result === 'object'
-        ? JSON.stringify(execData.result, null, 2)
-        : String(execData.result);
+
       const source = execData.source === 'mistral' ? '🌐 Mistral Server' : '💻 Local Engine';
+      const stepsCompleted = execData.step_results?.length ?? 0;
+
+      // Calculate duration
+      let durationStr = '';
+      if (execData.start_time && execData.end_time) {
+        const ms = new Date(execData.end_time).getTime() - new Date(execData.start_time).getTime();
+        const sec = Math.round(ms / 1000);
+        durationStr = sec > 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+      }
+
+      // ── Smart result parser ─────────────────────────────────────────
+      let resultContent: string;
+      let rawResultValue = execData.result;
+
+      // Unwrap {'result': X} envelope if backend didn't
+      if (rawResultValue && typeof rawResultValue === 'object' && !Array.isArray(rawResultValue)) {
+        const keys = Object.keys(rawResultValue);
+        if (keys.length === 1 && keys[0] === 'result') {
+          rawResultValue = (rawResultValue as Record<string, unknown>).result;
+        }
+      }
+
+      if (rawResultValue == null || rawResultValue === '' || (typeof rawResultValue === 'object' && Object.keys(rawResultValue as object).length === 0)) {
+        resultContent = '*Workflow completed successfully but did not return output data.*';
+      } else {
+        const rawStr = typeof rawResultValue === 'string'
+          ? rawResultValue
+          : typeof rawResultValue === 'object'
+          ? JSON.stringify(rawResultValue, null, 2)
+          : String(rawResultValue);
+        resultContent = parseWorkflowResult(rawStr);
+      }
+
+      const header = `🎉 **Workflow completed!**\n\n` +
+        `| | |\n|---|---|\n` +
+        `| **Source** | ${source} |\n` +
+        `| **Steps** | ${stepsCompleted} completed |\n` +
+        (durationStr ? `| **Duration** | ${durationStr} |\n` : '') +
+        `\n---\n\n`;
+
       setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: `🎉 Workflow completed! *(via ${source})*\n\n\`\`\`json\n${resultStr}\n\`\`\`\n\nDo you have any questions about this result?`,
+          content: header + resultContent + '\n\n---\n*Ask me anything about this result.*',
         },
       ]);
     } else if (['FAILED', 'TIMED_OUT', 'CANCELLED', 'TERMINATED'].includes(st ?? '')) {
       setExecStatus('FAILED');
       setHasAddedResultMsg(true);
+      const errorDetail = execData.result && typeof execData.result === 'object'
+        ? (execData.result as Record<string, unknown>).error || ''
+        : typeof execData.result === 'string' ? execData.result : '';
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: `❌ Workflow execution ${st?.toLowerCase() ?? 'failed'}.` },
+        { role: 'assistant', content: `❌ Workflow execution **${st?.toLowerCase() ?? 'failed'}**.${errorDetail ? '\n\n> ' + errorDetail : ''}` },
       ]);
     }
   }, [execData?.status, execData?.result, hasAddedResultMsg]);
@@ -369,36 +469,47 @@ Do not output anything else after the JSON.`,
 
           {/* Steps */}
           <div className="relative border-l border-[var(--color-border-subtle)] ml-2 space-y-3 pl-4">
-            {steps.map((sr) => (
-              <div key={sr.step_id} className="relative">
-                <div className="absolute -left-[21px] top-0 w-2.5 h-2.5 rounded-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-                  {sr.status === 'completed'
-                    ? <CheckCircle2 size={10} className="text-emerald-400 bg-[var(--color-bg-base)] rounded-full" />
-                    : sr.status === 'failed'
-                    ? <AlertCircle size={10} className="text-red-400 bg-[var(--color-bg-base)] rounded-full" />
-                    : <CircleDot size={10} className="text-[#6366f1] animate-pulse bg-[var(--color-bg-base)] rounded-full" />}
+            {steps.map((sr) => {
+              const durationSec = sr.duration_ms ? (sr.duration_ms / 1000).toFixed(1) : null;
+              const displayName = sr.step_id.replace(/_/g, ' ');
+              return (
+                <div key={sr.step_id} className="relative">
+                  <div className="absolute -left-[21px] top-0 w-2.5 h-2.5 rounded-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] flex items-center justify-center">
+                    {sr.status === 'completed'
+                      ? <CheckCircle2 size={10} className="text-emerald-400 bg-[var(--color-bg-base)] rounded-full" />
+                      : sr.status === 'failed'
+                      ? <AlertCircle size={10} className="text-red-400 bg-[var(--color-bg-base)] rounded-full" />
+                      : <CircleDot size={10} className="text-[#6366f1] animate-pulse bg-[var(--color-bg-base)] rounded-full" />}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-white capitalize">{displayName}</p>
+                    {durationSec && (
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        <Clock size={9} className="inline mr-0.5 mb-[1px]" />{durationSec}s
+                      </span>
+                    )}
+                  </div>
+                  {sr.error && <p className="text-[10px] text-red-400 font-mono mt-0.5 truncate">{sr.error}</p>}
                 </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-white font-mono">{sr.step_id}</p>
-                  {sr.duration_ms && (
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      <Clock size={9} className="inline mr-0.5 mb-[1px]" />{Math.round(sr.duration_ms)}ms
-                    </span>
-                  )}
-                </div>
-                {sr.error && <p className="text-[10px] text-red-400 font-mono mt-0.5 truncate">{sr.error}</p>}
-              </div>
-            ))}
+              );
+            })}
             {isRunning && (
               <div className="relative">
                 <div className="absolute -left-[21px] top-0 w-2.5 h-2.5 rounded-full bg-[var(--color-bg-base)] border border-[#6366f1] animate-pulse" />
-                <p className="text-xs text-[var(--color-text-muted)] italic">Running…</p>
+                <p className="text-xs text-[var(--color-text-muted)] italic flex items-center gap-1.5">
+                  <Loader2 size={10} className="animate-spin text-[#6366f1]" />
+                  {steps.length > 0
+                    ? `Step ${steps.length + 1} running…`
+                    : 'Starting…'
+                  }
+                </p>
               </div>
             )}
             {steps.length === 0 && !isRunning && (
               <p className="text-xs text-[var(--color-text-muted)] italic">No step data available.</p>
             )}
           </div>
+
         </div>
       </div>
     );
@@ -427,7 +538,6 @@ Do not output anything else after the JSON.`,
   const preExecMsgs = execStartIndex > -1 ? messages.slice(0, execStartIndex) : messages;
   const postExecMsgs = execStartIndex > -1 ? messages.slice(execStartIndex) : [];
 
-  const leChatUrl = workflow.le_chat_url;
   const isTerminal = ['COMPLETED', 'FAILED'].includes(execStatus);
 
   return (
@@ -452,17 +562,6 @@ Do not output anything else after the JSON.`,
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5 font-mono truncate">{workflow.name}</p>
           </div>
           <div className="flex items-center gap-2 ml-3 shrink-0">
-            {leChatUrl && (
-              <a
-                href={leChatUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[rgba(99,102,241,0.15)] text-[#a5b4fc] border border-[rgba(99,102,241,0.3)] hover:bg-[rgba(99,102,241,0.25)] transition-colors"
-                title="Open in le Chat"
-              >
-                <ExternalLink size={12} /> le Chat
-              </a>
-            )}
             <button onClick={onClose} className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-bg-hover)] transition-colors">
               <X size={18} />
             </button>

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, ArrowRight, CheckCircle2, AlertCircle,
   RefreshCw, Wrench, Cpu, Sparkles, CircleDot,
-  Code2, Server, MessageSquare, ExternalLink,
+  Code2, Server, PackageCheck, PackagePlus,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowPlannerApi, type PlannerEvent } from '../../api/workflowPlanner';
@@ -12,8 +12,8 @@ import { cn } from '../../lib/utils';
 /* ── Timeline Step Types ──────────────────────────────────────────────── */
 interface TimelineStep {
   id: string;
-  type: 'status' | 'requirements' | 'tool_synthesised' | 'agent_created' | 'workflow_ready'
-      | 'compiled' | 'registered' | 'le_chat_published' | 'error';
+  type: 'status' | 'requirements' | 'tool_exists' | 'tool_new' | 'agent_exists' | 'agent_new'
+      | 'workflow_ready' | 'compiled' | 'registered' | 'fatal_error' | 'error';
   content: string | Record<string, unknown>;
   status: 'pending' | 'active' | 'completed';
 }
@@ -61,38 +61,65 @@ function RequirementsCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function ToolCard({ data }: { data: Record<string, unknown> }) {
-  const status = data.status as string;
-  const colors: Record<string, string> = {
-    synthesized: 'text-[var(--color-accent-success)] bg-[rgba(34,197,94,0.1)] border-[rgba(34,197,94,0.2)]',
-    approved: 'text-[var(--color-accent-success)] bg-[rgba(34,197,94,0.1)] border-[rgba(34,197,94,0.2)]',
-    exists: 'text-[var(--color-text-muted)] bg-[var(--color-bg-hover)] border-[var(--color-border-subtle)]',
-    failed: 'text-[var(--color-accent-danger)] bg-[rgba(239,68,68,0.1)] border-[rgba(239,68,68,0.2)]',
-    pending_approval: 'text-[var(--color-accent-warning)] bg-[rgba(245,158,11,0.1)] border-[rgba(245,158,11,0.2)]',
-  };
+function ToolExistsCard({ data }: { data: Record<string, unknown> }) {
   return (
     <div className="flex items-center justify-between surface-card rounded-lg px-4 py-2.5 mt-2">
       <div className="flex items-center gap-2.5">
-        <Wrench size={14} className="text-[var(--color-text-muted)]" />
+        <PackageCheck size={14} className="text-[var(--color-text-muted)]" />
         <span className="text-sm font-mono text-[var(--color-text-primary)]">{data.tool_name as string}</span>
       </div>
-      <span className={cn('text-[10px] font-medium uppercase px-2 py-0.5 rounded border', colors[status] ?? colors.failed)}>
-        {status === 'exists' ? 'Already exists' : status}
+      <span className="text-[10px] font-medium uppercase px-2 py-0.5 rounded border text-[var(--color-text-muted)] bg-[var(--color-bg-hover)] border-[var(--color-border-subtle)]">
+        Already exists
       </span>
     </div>
   );
 }
 
-function AgentCard({ data }: { data: Record<string, unknown> }) {
-  const tools = (data.tools as string[]) ?? [];
-  if (data.error) {
-    return (
-      <div className="surface-card rounded-xl p-4 mt-2 border border-[rgba(239,68,68,0.2)]">
-        <p className="text-sm font-medium text-[var(--color-accent-danger)]">{data.agent_name as string} — failed</p>
-        <p className="text-xs text-[var(--color-text-muted)] font-mono mt-1">{data.error as string}</p>
+function ToolNewCard({ data }: { data: Record<string, unknown> }) {
+  const status = data.status as string;
+  return (
+    <div className="flex items-center justify-between surface-card rounded-lg px-4 py-2.5 mt-2">
+      <div className="flex items-center gap-2.5">
+        <PackagePlus size={14} className="text-emerald-400" />
+        <span className="text-sm font-mono text-[var(--color-text-primary)]">{data.tool_name as string}</span>
       </div>
-    );
-  }
+      <span className="text-[10px] font-medium uppercase px-2 py-0.5 rounded border text-[var(--color-accent-success)] bg-[rgba(34,197,94,0.1)] border-[rgba(34,197,94,0.2)]">
+        {status === 'approved' ? 'Synthesised & Approved' : status}
+      </span>
+    </div>
+  );
+}
+
+function AgentExistsCard({ data }: { data: Record<string, unknown> }) {
+  const tools = (data.tools as string[]) ?? [];
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[var(--color-border-subtle)]">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-9 h-9 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center">
+          <Cpu size={16} className="text-[var(--color-text-muted)]" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-white">{data.agent_name as string}</p>
+          <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{data.model as string}</p>
+        </div>
+        <span className="ml-auto text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium">Reused</span>
+      </div>
+      {tools.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 font-medium">Equipped Tools</p>
+          <div className="flex flex-wrap gap-1.5">
+            {tools.map(t => (
+              <span key={t} className="px-2 py-0.5 rounded bg-[rgba(236,72,153,0.08)] border border-[rgba(236,72,153,0.15)] text-[11px] font-mono text-[#f9a8d4]">{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentNewCard({ data }: { data: Record<string, unknown> }) {
+  const tools = (data.tools as string[]) ?? [];
   return (
     <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
       <div className="flex items-center gap-3 mb-3">
@@ -190,38 +217,6 @@ function RegisteredCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function LeChatCard({ data }: { data: Record<string, unknown> }) {
-  if (data.error) {
-    return (
-      <div className="surface-card rounded-xl p-4 mt-2 border border-[rgba(239,68,68,0.2)]">
-        <p className="text-xs text-[var(--color-text-muted)]">le Chat publish failed: {data.error as string}</p>
-      </div>
-    );
-  }
-  const url = data.le_chat_url as string;
-  return (
-    <div className="surface-card rounded-xl p-4 mt-2 border border-[rgba(99,102,241,0.3)] bg-[rgba(99,102,241,0.06)] flex items-center gap-3">
-      <div className="w-8 h-8 rounded-lg bg-[rgba(99,102,241,0.15)] flex items-center justify-center shrink-0">
-        <MessageSquare size={14} className="text-[#a5b4fc]" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-semibold text-white">Published to le Chat</p>
-        <p className="text-[10px] text-[var(--color-text-muted)] font-mono truncate mt-0.5">Agent: {data.agent_id as string}</p>
-      </div>
-      {url && (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-auto flex items-center gap-1 text-[10px] bg-[rgba(99,102,241,0.2)] text-[#a5b4fc] border border-[rgba(99,102,241,0.3)] px-2.5 py-1.5 rounded-lg hover:bg-[rgba(99,102,241,0.3)] transition-colors shrink-0"
-        >
-          <ExternalLink size={10} /> Open
-        </a>
-      )}
-    </div>
-  );
-}
-
 /* ── Main Component ───────────────────────────────────────────────────── */
 
 export default function WorkflowPlanner() {
@@ -229,7 +224,7 @@ export default function WorkflowPlanner() {
   const [isPlanning, setIsPlanning] = useState(false);
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [workflowName, setWorkflowName] = useState<string | null>(null);
-  const [leChatUrl, setLeChatUrl] = useState<string | null>(null);
+  const [hasFatalError, setHasFatalError] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -265,6 +260,7 @@ export default function WorkflowPlanner() {
     setIsPlanning(true);
     setSteps([]);
     setWorkflowName(null);
+    setHasFatalError(false);
 
     const cancel = workflowPlannerApi.plan(
       goal,
@@ -273,10 +269,14 @@ export default function WorkflowPlanner() {
           addStep('status', event.data, 'active');
         } else if (event.type === 'requirements') {
           try { addStep('requirements', JSON.parse(event.data)); } catch { /* ignore */ }
-        } else if (event.type === 'tool_synthesised') {
-          try { addStep('tool_synthesised', JSON.parse(event.data)); } catch { /* ignore */ }
-        } else if (event.type === 'agent_created') {
-          try { addStep('agent_created', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'tool_exists') {
+          try { addStep('tool_exists', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'tool_new') {
+          try { addStep('tool_new', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'agent_exists') {
+          try { addStep('agent_exists', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'agent_new') {
+          try { addStep('agent_new', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'workflow_ready') {
           try {
             const data = JSON.parse(event.data);
@@ -287,19 +287,21 @@ export default function WorkflowPlanner() {
           try { addStep('compiled', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'registered') {
           try { addStep('registered', JSON.parse(event.data)); } catch { /* ignore */ }
-        } else if (event.type === 'le_chat_published') {
+        } else if (event.type === 'fatal_error') {
           try {
             const data = JSON.parse(event.data);
-            addStep('le_chat_published', data);
-            if (data.le_chat_url) setLeChatUrl(data.le_chat_url);
-          } catch { /* ignore */ }
+            addStep('fatal_error', data.error || event.data);
+          } catch {
+            addStep('fatal_error', event.data);
+          }
+          setHasFatalError(true);
         } else if (event.type === 'error') {
           addStep('error', event.data);
+          setHasFatalError(true);
         } else if (event.type === 'done') {
           try {
             const data = JSON.parse(event.data);
             if (data.workflow_name) setWorkflowName(data.workflow_name);
-            if (data.le_chat_url) setLeChatUrl(data.le_chat_url);
           } catch { /* ignore */ }
         }
       },
@@ -317,6 +319,13 @@ export default function WorkflowPlanner() {
     cancelRef.current = cancel;
   };
 
+  const handleRestart = () => {
+    if (cancelRef.current) cancelRef.current();
+    setHasFatalError(false);
+    setWorkflowName(null);
+    handleSubmit();
+  };
+
   const renderStepContent = (step: TimelineStep) => {
     if (step.type === 'status') {
       return (
@@ -327,18 +336,19 @@ export default function WorkflowPlanner() {
       );
     }
     if (step.type === 'requirements') return <RequirementsCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'tool_synthesised') return <ToolCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'agent_created') return <AgentCard data={step.content as Record<string, unknown>} />;
+    if (step.type === 'tool_exists') return <ToolExistsCard data={step.content as Record<string, unknown>} />;
+    if (step.type === 'tool_new') return <ToolNewCard data={step.content as Record<string, unknown>} />;
+    if (step.type === 'agent_exists') return <AgentExistsCard data={step.content as Record<string, unknown>} />;
+    if (step.type === 'agent_new') return <AgentNewCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'workflow_ready') return <WorkflowReadyCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'compiled') return <CompiledCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'registered') return <RegisteredCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'le_chat_published') return <LeChatCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'error') {
+    if (step.type === 'fatal_error' || step.type === 'error') {
       return (
         <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.05)] flex flex-col gap-4">
           <p className="text-sm font-mono text-[var(--color-accent-danger)] break-words">{step.content as string}</p>
-          <button onClick={handleSubmit} className="btn-secondary px-4 py-2 text-sm rounded-md flex items-center gap-2 hover:text-white w-fit">
-            <RefreshCw size={14} /> Retry Planning
+          <button onClick={handleRestart} className="btn-secondary px-4 py-2 text-sm rounded-md flex items-center gap-2 hover:text-white w-fit">
+            <RefreshCw size={14} /> Restart Planning
           </button>
         </div>
       );
@@ -410,8 +420,8 @@ export default function WorkflowPlanner() {
                   {/* Timeline dot */}
                   <div className="absolute left-[-9px] top-1.5 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 border-[var(--color-border-subtle)] flex items-center justify-center">
                     {step.status === 'active' && <CircleDot size={16} className="text-[#a5b4fc] absolute animate-pulse bg-[var(--color-bg-base)] rounded-full" />}
-                    {step.status === 'completed' && step.type !== 'error' && <CheckCircle2 size={16} className="text-[var(--color-accent-success)] absolute bg-[var(--color-bg-base)] rounded-full" />}
-                    {step.type === 'error' && <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />}
+                    {step.status === 'completed' && step.type !== 'error' && step.type !== 'fatal_error' && <CheckCircle2 size={16} className="text-[var(--color-accent-success)] absolute bg-[var(--color-bg-base)] rounded-full" />}
+                    {(step.type === 'error' || step.type === 'fatal_error') && <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />}
                   </div>
 
                   {renderStepContent(step)}
@@ -420,7 +430,7 @@ export default function WorkflowPlanner() {
             </AnimatePresence>
 
             {/* Final CTA */}
-            {workflowName && !isPlanning && (
+            {workflowName && !isPlanning && !hasFatalError && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 className="relative pl-8 md:pl-12 pt-6"
@@ -432,16 +442,6 @@ export default function WorkflowPlanner() {
                   >
                     <GitBranch size={20} /> View Workflow DAG
                   </button>
-                  {leChatUrl && (
-                    <a
-                      href={leChatUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-5 py-4 rounded-xl font-bold text-base border border-[rgba(99,102,241,0.4)] bg-[rgba(99,102,241,0.1)] text-[#a5b4fc] hover:bg-[rgba(99,102,241,0.2)] transition-colors"
-                    >
-                      <MessageSquare size={18} /> Open in le Chat <ExternalLink size={14} />
-                    </a>
-                  )}
                   <button
                     onClick={() => navigate('/workflows')}
                     className="btn-secondary px-5 py-4 rounded-xl font-medium flex items-center gap-2"
