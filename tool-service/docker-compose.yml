@@ -7,6 +7,7 @@ services:
     env_file: ./.env
     volumes:
       - tool-data:/app/dynamic_tools
+      - tool-db:/app/db
     networks:
       - tool-net
     restart: unless-stopped
@@ -38,3 +39,4 @@ networks:
 
 volumes:
   tool-data:
+  tool-db:

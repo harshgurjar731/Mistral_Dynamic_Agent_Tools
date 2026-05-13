@@ -10,7 +10,6 @@ import { useNavigate } from 'react-router-dom';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
-import WorkflowExecutionModal from './WorkflowExecutionModal';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -154,7 +153,6 @@ function WorkflowCard({
 export default function WorkflowDashboard() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [executingWorkflow, setExecutingWorkflow] = useState<Record<string, unknown> | null>(null);
   const [registeringName, setRegisteringName] = useState<string | null>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -280,7 +278,7 @@ export default function WorkflowDashboard() {
               key={String(wf.name)}
               wf={wf}
               onArchive={() => archiveMut.mutate(String(wf.name))}
-              onExecute={() => setExecutingWorkflow(wf)}
+              onExecute={() => navigate(`/workflows/${encodeURIComponent(String(wf.name))}/execute`)}
               onView={() => navigate(`/workflows/${encodeURIComponent(String(wf.name))}`)}
               onRegister={() => registerMut.mutate(String(wf.name))}
               isRegistering={registeringName === String(wf.name)}
@@ -289,20 +287,6 @@ export default function WorkflowDashboard() {
         </motion.div>
       )}
 
-      <AnimatePresence>
-        {executingWorkflow && (
-          <WorkflowExecutionModal
-            workflow={{
-              name: String(executingWorkflow.name),
-              description: executingWorkflow.description as string | undefined,
-              steps: (executingWorkflow.steps as any) ?? [],
-              input_schema: (executingWorkflow.input_schema as any) ?? [],
-              is_deployed: Boolean(executingWorkflow.is_deployed),
-            }}
-            onClose={() => setExecutingWorkflow(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

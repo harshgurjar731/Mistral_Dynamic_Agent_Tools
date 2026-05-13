@@ -24,7 +24,6 @@ import {
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
-import WorkflowExecutionModal from './WorkflowExecutionModal';
 import WorkflowHistoryPanel from './WorkflowHistoryPanel';
 
 /* ── Type helpers ────────────────────────────────────────────────────── */
@@ -435,8 +434,6 @@ export default function WorkflowVisualizer() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalExecutionId, setModalExecutionId] = useState<string | undefined>();
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
@@ -539,10 +536,7 @@ export default function WorkflowVisualizer() {
             <Clock size={14} /> History
           </button>
           <button
-            onClick={() => {
-              setModalExecutionId(undefined);
-              setIsModalOpen(true);
-            }}
+            onClick={() => navigate(`/workflows/${encodeURIComponent(workflowName!)}/execute`)}
             className="btn-primary flex items-center gap-2 px-4 py-2 text-sm rounded-md whitespace-nowrap"
           >
             <Play size={14} /> Run Workflow
@@ -599,20 +593,12 @@ export default function WorkflowVisualizer() {
         {selectedStep && (
           <NodeDetailModal step={selectedStep} onClose={() => setSelectedStepId(null)} />
         )}
-        {isModalOpen && workflow && (
-          <WorkflowExecutionModal
-            workflow={{ name: workflow.name, steps: workflow.steps }}
-            executionId={modalExecutionId}
-            onClose={() => setIsModalOpen(false)}
-          />
-        )}
         {isHistoryOpen && workflow && (
           <WorkflowHistoryPanel
             workflowName={workflow.name}
             onClose={() => setIsHistoryOpen(false)}
             onSelectExecution={(id) => {
-              setModalExecutionId(id);
-              setIsModalOpen(true);
+              navigate(`/workflows/${encodeURIComponent(workflowName!)}/execute`);
             }}
           />
         )}

@@ -115,10 +115,20 @@ export default function WorkflowExecutionModal({
 
   // Extract required variables from workflow
   const requiredInputs = useRef<string[]>([]);
+
+  // Helper: detect internal inter-step variable names regardless of brace wrapping
+  const isInternalVar = (name: string) =>
+    /^\{?step_.*_output\}?$/.test(name.trim());
+
+  // Filter input_schema to exclude internal inter-step variables (step_*_output)
+  const filteredInputSchema = workflow.input_schema?.filter(
+    f => !isInternalVar(f.name)
+  );
+  const hasInputSchema = filteredInputSchema && filteredInputSchema.length > 0;
   useEffect(() => {
     // Prefer input_schema if available (more reliable than template parsing)
-    if (workflow.input_schema && workflow.input_schema.length > 0) {
-      requiredInputs.current = workflow.input_schema.map(f => f.name);
+    if (hasInputSchema) {
+      requiredInputs.current = filteredInputSchema!.map(f => f.name);
       return;
     }
     // Fallback: parse {variable} placeholders from step configs
@@ -126,19 +136,20 @@ export default function WorkflowExecutionModal({
     workflow.steps.forEach(step => {
       const checkValues = (obj: unknown) => {
         if (typeof obj === 'string') {
-          [...obj.matchAll(/\{([^}]+)\}/g)].forEach(m => vars.add(m[1]));
+          // Match both single {var} and double {{var}} brace patterns
+          [...obj.matchAll(/\{{1,2}([^}]+)\}{1,2}/g)].forEach(m => vars.add(m[1]));
         } else if (typeof obj === 'object' && obj !== null) {
           Object.values(obj).forEach(checkValues);
         }
       };
       checkValues(step.config);
     });
-    // Remove step output vars
+    // Remove internal inter-step variables — these are NOT user inputs
     Array.from(vars).forEach(v => {
-      if (v.startsWith('step_') && v.endsWith('_output')) vars.delete(v);
+      if (isInternalVar(v)) vars.delete(v);
     });
     requiredInputs.current = Array.from(vars);
-  }, [workflow]);
+  }, [workflow, hasInputSchema, filteredInputSchema]);
 
   const [execStatus, setExecStatus] = useState<'INIT' | 'GATHERING' | 'RUNNING' | 'COMPLETED' | 'FAILED'>(
     initialExecId ? 'RUNNING' : 'INIT'
@@ -146,6 +157,7 @@ export default function WorkflowExecutionModal({
   const [executionId, setExecutionId] = useState<string | null>(initialExecId ?? null);
   const [execData, setExecData] = useState<ExecutionData | null>(null);
   const [hasAddedResultMsg, setHasAddedResultMsg] = useState(false);
+  const hasInitialized = useRef(false); // guard against StrictMode double-mount
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -164,11 +176,13 @@ export default function WorkflowExecutionModal({
   // Init: decide whether to gather inputs or execute immediately
   useEffect(() => {
     if (execStatus !== 'INIT') return;
-    if (requiredInputs.current.length === 0) {
-      setExecStartIndex(0);
-      executeMut.mutate({});
-    } else {
-      setExecStatus('GATHERING');
+    if (hasInitialized.current) return; // prevent double execution
+    hasInitialized.current = true;
+
+    setExecStatus('GATHERING');
+
+    if (requiredInputs.current.length > 0) {
+      // We know exactly what inputs are needed — ask for each one
       const sysMsg: Message = {
         role: 'system',
         content: `You are a conversational assistant collecting inputs for the '${workflow.name}' workflow.
@@ -179,13 +193,30 @@ Ask the user for these inputs clearly. Once you have ALL information, output ONL
 \`\`\`
 Do not output anything else after the JSON.`,
       };
+      const inputList = hasInputSchema
+        ? filteredInputSchema!.map(f => `- **${f.name}**${f.description ? `: ${f.description}` : ''}`).join('\n')
+        : requiredInputs.current.map(v => `- **${v}**`).join('\n');
       const greeting: Message = {
         role: 'assistant',
-        content: `Hi! To run **${workflow.name.replace(/_/g, ' ')}**, I need a few details:\n\n${
-          workflow.input_schema
-            ? workflow.input_schema.map(f => `- **${f.name}**${f.description ? `: ${f.description}` : ''}`).join('\n')
-            : requiredInputs.current.map(v => `- **${v}**`).join('\n')
-        }\n\nWhat would you like to use for these?`,
+        content: `Hi! To run **${workflow.name.replace(/_/g, ' ')}**, I need a few details:\n\n${inputList}\n\nWhat would you like to use for these?`,
+      };
+      setMessages([sysMsg, greeting]);
+    } else {
+      // No explicit inputs detected — ask for general context
+      const displayName = workflow.name.replace(/_/g, ' ');
+      const sysMsg: Message = {
+        role: 'system',
+        content: `You are a conversational assistant for the '${workflow.name}' workflow.
+The workflow does not have explicitly defined input variables, but the user should describe what they want.
+Ask the user to describe their requirements. Once you have enough context, output ONLY a JSON block:
+\`\`\`json
+{"__ready": true, "inputs": {"user_input": "the user's description"}}
+\`\`\`
+Do not output anything else after the JSON.`,
+      };
+      const greeting: Message = {
+        role: 'assistant',
+        content: `Hi! To run **${displayName}**, please describe what you'd like.\n\nFor example: your preferences, requirements, or any specific details that would help the workflow produce better results.`,
       };
       setMessages([sysMsg, greeting]);
     }

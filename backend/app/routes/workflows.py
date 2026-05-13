@@ -413,10 +413,20 @@ async def get_execution_status(execution_id: str):
 
         run = get_execution(execution_id)
 
-        # Unwrap {'result': X} envelope
-        raw_result = getattr(execution, "result", None) or getattr(execution, "output", None)
-        if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
-            raw_result = raw_result["result"]
+        # Try all known SDK attribute names for the result
+        raw_result = None
+        for attr_name in ("result", "output", "return_value", "data"):
+            val = getattr(execution, attr_name, None)
+            if val is not None and val != "" and val != {}:
+                raw_result = val
+                break
+
+        # Unwrap nested {'result': X} envelopes (may be multiple layers)
+        for _ in range(3):
+            if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
+                raw_result = raw_result["result"]
+            else:
+                break
 
         return WorkflowExecutionResponse(
             execution_id=getattr(execution, "execution_id", execution_id),
@@ -488,15 +498,48 @@ async def stream_execution_status(execution_id: str):
                     status_str = _normalise_status(getattr(execution, "status", None))
 
                     # ── Extract result ──
-                    # The SDK may expose the return value as .result or .output;
-                    # the server wraps it in {'result': <value>}.
-                    raw_result = getattr(execution, "result", None) or getattr(execution, "output", None)
+                    # The SDK exposes the return value under different attr names
+                    # depending on version. Try all known names.
+                    raw_result = None
+                    for attr_name in ("result", "output", "return_value", "data"):
+                        val = getattr(execution, attr_name, None)
+                        if val is not None and val != "" and val != {}:
+                            raw_result = val
+                            break
 
-                    # Unwrap {'result': X} envelope if present
-                    if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
-                        raw_result = raw_result["result"]
+                    # Unwrap nested {'result': X} envelopes (may be multiple layers)
+                    for _ in range(3):
+                        if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
+                            raw_result = raw_result["result"]
+                        else:
+                            break
 
-                    # If result is still empty/None but status is terminal, provide feedback
+                    # Log all execution attributes for debugging
+                    if status_str in TERMINAL:
+                        logger.info(
+                            "Terminal execution attrs: %s",
+                            {a: repr(getattr(execution, a, None))[:200]
+                             for a in dir(execution) if not a.startswith("_")},
+                        )
+
+                    # If result is still empty but terminal, try the query API
+                    # to fetch the workflow's in-memory last_result
+                    if status_str in TERMINAL and (raw_result is None or raw_result == "" or raw_result == {}):
+                        try:
+                            query_result = await asyncio.to_thread(
+                                lambda: client.workflows.executions.query_workflow_execution(
+                                    execution_id=execution_id,
+                                    query_type="get_last_result",
+                                )
+                            )
+                            qr = getattr(query_result, "result", None) or getattr(query_result, "data", None)
+                            if qr and qr != {} and qr != "":
+                                raw_result = qr
+                                logger.info("Got result from query API: %.200s", str(qr)[:200])
+                        except Exception as q_err:
+                            logger.debug("Query API fallback failed (expected for some workflows): %s", q_err)
+
+                    # Final fallback message for truly empty results
                     if status_str in TERMINAL and (raw_result is None or raw_result == "" or raw_result == {}):
                         raw_result = f"Workflow completed with status {status_str} (no output data returned from activities)."
 
@@ -506,12 +549,28 @@ async def stream_execution_status(execution_id: str):
                         str(raw_result)[:200] if raw_result else "None",
                     )
 
+                    # ── Try to get step progress via workflow query API ──
+                    step_progress = []
+                    try:
+                        progress_result = await asyncio.to_thread(
+                            lambda: client.workflows.executions.query_workflow_execution(
+                                execution_id=execution_id,
+                                query_type="get_progress",
+                            )
+                        )
+                        pr = getattr(progress_result, "result", None) or getattr(progress_result, "data", None)
+                        if isinstance(pr, list):
+                            step_progress = [{"step_id": s, "status": "completed"} for s in pr]
+                    except Exception:
+                        pass  # Query not supported by all workflows
+
                     data = {
                         "execution_id": execution_id,
                         "workflow_name": getattr(execution, "workflow_identifier", "") or getattr(execution, "workflow_name", ""),
                         "status": status_str,
                         "source": "mistral",
                         "result": raw_result if status_str in TERMINAL else None,
+                        "step_results": step_progress,
                         "start_time": str(getattr(execution, "start_time", "") or ""),
                         "end_time":   str(getattr(execution, "end_time",   "") or ""),
                     }
@@ -533,6 +592,8 @@ async def stream_execution_status(execution_id: str):
                             "status": sr.status,
                             "duration_ms": sr.duration_ms,
                             "error": sr.error,
+                            "input_preview": sr.input_preview,
+                            "output_preview": sr.output_preview,
                         }
                         for sr in run.step_results
                     ]

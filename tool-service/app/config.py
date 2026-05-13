@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     AUTO_APPROVE_DYNAMIC_TOOLS: bool = False
 
     # Database
-    DATABASE_URL: str = "sqlite:///./tool_service.db"
+    DATABASE_URL: str = "sqlite:///./db/tool_service.db"
 
     # MCP (future)
     MCP_SERVERS_ENABLED: bool = False

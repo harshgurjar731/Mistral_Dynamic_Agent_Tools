@@ -274,6 +274,7 @@ export default function Orchestrator() {
 
           </div>
         </div>
+      )}
       <div ref={endRef} />
     </div>
   );

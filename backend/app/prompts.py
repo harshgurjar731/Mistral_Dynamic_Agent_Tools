@@ -217,11 +217,23 @@ Example: 'Given the destination {{{{destination}}}} and budget {{{{budget}}}}, s
 | condition | expression (Python bool), true_step, false_step | Branch based on a variable value |
 | transform | mappings (dict mapping output_key→"{{{{source_variable}}}}") | Reshape/rename variables between steps |
 
-## Variable system
-- Variables from `input_schema` are available to all steps as {{{{variable_name}}}}.
-- Each agent step's output is stored as a dict. If the output is a dict, its keys \
-  become new variables. Otherwise, the output is stored as `step_<step_id>_output`.
-- Use {{{{variable}}}} syntax in query_template and arguments to reference variables.
+## Variable system — READ THIS CAREFULLY
+- **User inputs**: Variables from `input_schema` are directly available as {{{{variable_name}}}}.
+- **Previous step outputs**: When an agent step completes, its full text output is \
+  stored in a variable called `step_<step_id>_output`. For example, if step ID is \
+  "allocate_budget", its output is available as {{{{step_allocate_budget_output}}}}.
+- **ONLY these two sources exist.** Do NOT invent variable names like \
+  {{{{travel_budget}}}} or {{{{travel_details}}}} — they will never be set and the \
+  agent will receive broken placeholder text.
+- In query_template, reference previous step outputs using the exact format: \
+  {{{{step_<previous_step_id>_output}}}}
+
+### Example of correct variable usage
+If step 1 has id "research" and step 2 needs its output:
+```
+Step 1: id="research", query_template="Research topic {{{{topic}}}}"
+Step 2: id="summarize", query_template="Summarize the following research: {{{{step_research_output}}}}"
+```
 
 ## CRITICAL RULES
 1. **Linear by default** — unless the goal explicitly requires branching, build a \
@@ -230,15 +242,22 @@ Example: 'Given the destination {{{{destination}}}} and budget {{{{budget}}}}, s
 2. **entry_step** must reference the `id` of the first step in the list.
 3. **Every step needs a descriptive id** — use snake_case, e.g. "gather_preferences", \
    "generate_report".
-4. **query_template MUST be detailed** — write at least 2 sentences telling the \
-   agent exactly what to do, what variables are available, and what output format \
-   you expect. Never use vague queries like "do the task".
-5. **input_schema completeness** — include EVERY variable the user needs to provide \
+4. **query_template MUST be detailed** — write at least 3 sentences telling the \
+   agent exactly what to do. Include ALL context it needs. Reference previous step \
+   output using {{{{step_<id>_output}}}}. Tell the agent what format to output in. \
+   End with: "Provide a comprehensive, detailed response."
+5. **NEVER use made-up variable names** — only use variables from input_schema or \
+   step_<step_id>_output from a previous step. This is the #1 cause of workflow \
+   failures. Double-check every {{{{...}}}} reference.
+6. **input_schema completeness** — include EVERY variable the user needs to provide \
    at workflow start. Each entry must have name, type, and description.
-6. **No orphan steps** — every step must be reachable from entry_step via next_steps.
-7. **No cycles** — the graph must be a DAG (directed acyclic graph).
-8. **Agent steps only** — prefer agent steps over direct tool steps, because agents \
+7. **No orphan steps** — every step must be reachable from entry_step via next_steps.
+8. **No cycles** — the graph must be a DAG (directed acyclic graph).
+9. **Agent steps only** — prefer agent steps over direct tool steps, because agents \
    can reason about tool results and produce richer output.
+10. **Last step query_template** — the final step should ask the agent to produce a \
+    comprehensive summary/report that synthesizes ALL previous step outputs. This \
+    becomes the workflow's final output.
 
 ## Agents available (use these exact IDs)
 {agents_json}

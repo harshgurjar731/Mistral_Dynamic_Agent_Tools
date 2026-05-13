@@ -11,6 +11,7 @@ const WorkflowDashboard  = lazy(() => import('./features/workflows/WorkflowDashb
 const ArchivedWorkflows  = lazy(() => import('./features/workflows/ArchivedWorkflows'));
 const WorkflowPlanner    = lazy(() => import('./features/workflows/WorkflowPlanner'));
 const WorkflowVisualizer = lazy(() => import('./features/workflows/WorkflowVisualizer'));
+const WorkflowExecutionPage = lazy(() => import('./features/workflows/WorkflowExecutionPage'));
 const ConversationMgr    = lazy(() => import('./features/conversations/ConversationManager'));
 const McpRegistry        = lazy(() => import('./features/mcp/McpRegistry'));
 const HealthDashboard    = lazy(() => import('./features/health/HealthDashboard'));
@@ -51,6 +52,7 @@ const router = createBrowserRouter([
       { path: 'workflows/new',         element: <Suspense fallback={<PageSkeleton />}><WorkflowPlanner /></Suspense> },
       { path: 'workflows/archived',    element: <Suspense fallback={<PageSkeleton />}><ArchivedWorkflows /></Suspense> },
       { path: 'workflows/:workflowName', element: <Suspense fallback={<PageSkeleton />}><WorkflowVisualizer /></Suspense> },
+      { path: 'workflows/:workflowName/execute', element: <Suspense fallback={<PageSkeleton />}><WorkflowExecutionPage /></Suspense> },
       { path: 'conversations',         element: <Suspense fallback={<PageSkeleton />}><ConversationMgr /></Suspense> },
       { path: 'mcp',                   element: <Suspense fallback={<PageSkeleton />}><McpRegistry /></Suspense> },
       { path: 'health',                element: <Suspense fallback={<PageSkeleton />}><HealthDashboard /></Suspense> },

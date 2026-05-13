@@ -27,18 +27,26 @@ function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: 
       onClick={onClick}
       className="surface-card rounded-xl p-5 group flex flex-col h-full cursor-pointer hover:border-[var(--color-border-focus)] transition-all hover:scale-[1.01]"
     >
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-            <Cpu size={18} className="text-[var(--color-text-primary)]" />
-          </div>
-          <div>
-            <h3 className="text-sm font-medium text-[var(--color-text-primary)]">{agent.name}</h3>
-            <span className="inline-block mt-1 px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
-              {agent.model}
-            </span>
-          </div>
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-10 h-10 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0">
+          <Cpu size={18} className="text-[var(--color-text-primary)]" />
         </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium text-[var(--color-text-primary)] break-words">{agent.name}</h3>
+          <span className="inline-block mt-1 px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
+            {agent.model}
+          </span>
+        </div>
+      </div>
+      <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed line-clamp-4 flex-1">
+        {agent.description || <span className="italic opacity-50">No description provided</span>}
+      </p>
+      <div className="mt-4 pt-4 border-t border-[var(--color-border-subtle)] flex items-center justify-between">
+        <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] uppercase tracking-wider">
+          {agent.created_at
+            ? `Created ${new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+            : '\u00A0'}
+        </p>
         <button 
           onClick={(e) => { e.stopPropagation(); onDelete(agent.id); }} 
           className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-accent-danger)] transition-colors opacity-0 group-hover:opacity-100 z-10"
@@ -46,16 +54,6 @@ function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: 
           <Trash2 size={14} />
         </button>
       </div>
-      <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed line-clamp-4 flex-1">
-        {agent.description || <span className="italic opacity-50">No description provided</span>}
-      </p>
-      {agent.created_at && (
-        <div className="mt-4 pt-4 border-t border-[var(--color-border-subtle)] flex items-center justify-between">
-          <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] uppercase tracking-wider">
-            Created {new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-          </p>
-        </div>
-      )}
     </motion.div>
   );
 }

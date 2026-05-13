@@ -60,6 +60,8 @@ class StepResult(BaseModel):
     output: Any = None
     error: Optional[str] = None
     duration_ms: Optional[float] = None
+    input_preview: Optional[str] = None   # truncated query sent to agent
+    output_preview: Optional[str] = None  # truncated text result
 
 
 class WorkflowRun(BaseModel):

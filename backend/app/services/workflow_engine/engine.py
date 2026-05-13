@@ -183,10 +183,13 @@ async def execute_workflow(
                 return run
 
             if result.output is not None:
+                # Always store under the canonical step output key
+                run.variables[f"step_{step.id}_output"] = (
+                    json.dumps(result.output) if isinstance(result.output, dict) else result.output
+                )
+                # Also spread dict keys for direct variable access
                 if isinstance(result.output, dict):
                     run.variables.update(result.output)
-                else:
-                    run.variables[f"step_{step.id}_output"] = result.output
 
             if step.type == StepType.CONDITION and isinstance(result.output, dict):
                 current_step_id = result.output.get("next_step")
