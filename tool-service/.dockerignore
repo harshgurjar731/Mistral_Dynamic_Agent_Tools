@@ -1,0 +1,9 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+db/
+*.db
+dynamic_tools/
+.git
+.venv

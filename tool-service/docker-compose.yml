@@ -8,6 +8,7 @@ services:
     volumes:
       - tool-data:/app/dynamic_tools
       - tool-db:/app/db
+      - tool-docs:/app/documents
     networks:
       - tool-net
     restart: unless-stopped
@@ -40,3 +41,4 @@ networks:
 volumes:
   tool-data:
   tool-db:
+  tool-docs:

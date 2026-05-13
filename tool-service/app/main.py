@@ -4,10 +4,12 @@ Handles the complete tool lifecycle: synthesis, execution, and management.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db, SessionLocal
 from app.routes import synthesis, execution, management
@@ -25,6 +27,10 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Tool Service …")
     init_db()
     logger.info("✅ Database initialized")
+
+    # Ensure documents directory exists for generated files
+    os.makedirs("/app/documents", exist_ok=True)
+    logger.info("✅ Documents directory ready")
 
     # Warm execution cache with approved tools
     from app.services.execution_service import warm_cache
@@ -69,6 +75,10 @@ try:
     logger.info("MCP routes loaded")
 except ImportError:
     pass
+
+# ── Static file serving (document downloads) ────────────────────────────────
+os.makedirs("/app/documents", exist_ok=True)
+app.mount("/documents", StaticFiles(directory="/app/documents"), name="documents")
 
 
 @app.get("/health", tags=["Health"])

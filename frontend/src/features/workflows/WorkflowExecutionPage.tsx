@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
-  MessageSquare, Send, Bot, User, Zap, Server, ChevronDown, ChevronRight, TerminalSquare
+  MessageSquare, Send, Bot, User, Zap, Server, ChevronDown, ChevronUp, TerminalSquare,
+  PanelRightClose, PanelRightOpen, Layers, ArrowDownRight, ArrowUpRight
 } from 'lucide-react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
@@ -69,67 +70,97 @@ function unescapeNewlines(str: string): string {
   return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
 }
 
-function StepDetails({ sr }: { sr: StepResult }) {
-  const [expanded, setExpanded] = useState(false);
+function StepDetails({ sr, index }: { sr: StepResult; index: number }) {
+  const [expanded, setExpanded] = useState(true);
   const durationSec = sr.duration_ms ? (sr.duration_ms / 1000).toFixed(1) : null;
   const displayName = sr.step_id.replace(/_/g, ' ');
+  const isCompleted = sr.status === 'completed';
+  const isFailed = sr.status === 'failed';
+  const isRunning = !isCompleted && !isFailed;
+
+  const dotColor = isCompleted ? 'bg-emerald-500' : isFailed ? 'bg-red-500' : 'bg-indigo-500 animate-pulse';
+  const DotIcon = isCompleted ? CheckCircle2 : isFailed ? AlertCircle : CircleDot;
+  const dotIconColor = isCompleted ? 'text-emerald-400' : isFailed ? 'text-red-400' : 'text-indigo-400';
 
   return (
-    <div className="relative">
-      <div className="absolute -left-[30px] top-0.5 w-2.5 h-2.5 rounded-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-        {sr.status === 'completed'
-          ? <CheckCircle2 size={10} className="text-emerald-400 bg-[var(--color-bg-base)] rounded-full" />
-          : sr.status === 'failed'
-          ? <AlertCircle size={10} className="text-red-400 bg-[var(--color-bg-base)] rounded-full" />
-          : <CircleDot size={10} className="text-[#6366f1] animate-pulse bg-[var(--color-bg-base)] rounded-full" />}
-      </div>
-      <div className="flex flex-col">
-        <div 
-          className="flex items-center justify-between cursor-pointer group"
+    <motion.div
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.05 }}
+      className="relative"
+    >
+      {/* Timeline dot */}
+      <div className={cn(
+        'absolute -left-[31px] top-1 w-3 h-3 rounded-full border-2 border-[var(--color-bg-surface)] z-10',
+        dotColor
+      )} />
+
+      {/* Step card */}
+      <div className={cn(
+        'rounded-xl border transition-all duration-200',
+        isCompleted ? 'bg-emerald-500/5 border-emerald-500/20' :
+        isFailed ? 'bg-red-500/5 border-red-500/20' :
+        'bg-indigo-500/5 border-indigo-500/20'
+      )}>
+        {/* Step header */}
+        <button
           onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center justify-between px-4 py-3 cursor-pointer group"
         >
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-white capitalize">{displayName}</p>
-            {expanded ? <ChevronDown size={14} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={14} className="text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <DotIcon size={14} className={dotIconColor} />
+            <span className="text-sm font-semibold text-white capitalize truncate">{displayName}</span>
+            {isRunning && <Loader2 size={12} className="text-indigo-400 animate-spin shrink-0" />}
           </div>
-          {durationSec && (
-            <span className="text-[10px] text-[var(--color-text-muted)] font-mono bg-[var(--color-bg-hover)] px-1.5 py-0.5 rounded border border-[var(--color-border-subtle)]">
-              {durationSec}s
-            </span>
-          )}
-        </div>
-        {sr.error && <p className="text-xs text-red-400 font-mono mt-1 break-words">{sr.error}</p>}
-        
+          <div className="flex items-center gap-2 shrink-0">
+            {durationSec && (
+              <span className="text-[10px] text-[var(--color-text-muted)] font-mono bg-black/20 px-2 py-0.5 rounded-full">
+                {durationSec}s
+              </span>
+            )}
+            {expanded ? <ChevronUp size={14} className="text-[var(--color-text-muted)]" /> : <ChevronDown size={14} className="text-[var(--color-text-muted)]" />}
+          </div>
+        </button>
+
+        {sr.error && <p className="text-xs text-red-400 font-mono px-4 pb-2 break-words">⚠ {sr.error}</p>}
+
         <AnimatePresence>
           {expanded && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }} 
-              animate={{ height: 'auto', opacity: 1 }} 
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <div className="mt-2 space-y-3 p-3 bg-black/20 rounded-xl border border-[var(--color-border-subtle)] text-xs font-mono">
+              <div className="px-4 pb-4 space-y-3">
                 {sr.input_preview && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)] block mb-1 uppercase tracking-wider text-[10px] font-bold">Query / Input:</span>
-                    <div className="text-[var(--color-text-secondary)] whitespace-pre-wrap break-words">{sr.input_preview}</div>
+                  <div className="bg-black/20 rounded-lg p-3 border border-[var(--color-border-subtle)]">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <ArrowDownRight size={11} className="text-blue-400" />
+                      <span className="text-[10px] text-blue-400 uppercase tracking-wider font-bold">Input</span>
+                    </div>
+                    <div className="text-xs text-[var(--color-text-secondary)] whitespace-pre-wrap break-words font-mono leading-relaxed">{sr.input_preview}</div>
                   </div>
                 )}
                 {sr.output_preview && (
-                  <div>
-                    <span className="text-[var(--color-text-muted)] block mb-1 uppercase tracking-wider text-[10px] font-bold mt-2">Output / Result:</span>
-                    <div className="text-emerald-400/80 whitespace-pre-wrap break-words">{sr.output_preview}</div>
+                  <div className="bg-black/20 rounded-lg p-3 border border-emerald-500/10">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <ArrowUpRight size={11} className="text-emerald-400" />
+                      <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold">Output</span>
+                    </div>
+                    <div className="text-xs text-emerald-300/80 whitespace-pre-wrap break-words font-mono leading-relaxed">{sr.output_preview}</div>
                   </div>
                 )}
                 {!sr.input_preview && !sr.output_preview && !sr.error && (
-                  <span className="text-[var(--color-text-muted)] italic">No preview data available</span>
+                  <p className="text-xs text-[var(--color-text-muted)] italic px-1">No preview data available for this step.</p>
                 )}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -161,6 +192,7 @@ export default function WorkflowExecutionPage() {
   const [execStartIndex, setExecStartIndex] = useState<number>(-1);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
 
@@ -453,26 +485,37 @@ Do not output anything else after the JSON.`,
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-base)] text-white overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] shrink-0 z-10">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-border-subtle)] bg-gradient-to-r from-[var(--color-bg-surface)] to-[var(--color-bg-surface)]/80 backdrop-blur-md shrink-0 z-10">
         <div className="flex items-center gap-4 min-w-0">
           <button 
             onClick={() => navigate('/workflows')}
-            className="p-2 -ml-2 rounded-lg text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-bg-hover)] transition-colors"
+            className="p-2 -ml-2 rounded-xl text-[var(--color-text-muted)] hover:text-white hover:bg-white/5 transition-all duration-200"
           >
             <ArrowLeft size={20} />
           </button>
-          <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <TerminalSquare size={22} className="text-[#6366f1]" />
-              <span className="truncate">{workflow.name}</span>
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20">
+                <TerminalSquare size={16} className="text-white" />
+              </div>
+              <span className="truncate">{workflow.name.replace(/_/g, ' ')}</span>
             </h1>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate max-w-md">
-              {workflow.description || 'Execution workspace'}
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate max-w-md pl-10">
+              {workflow.description || 'Workflow execution workspace'}
             </p>
           </div>
         </div>
-        <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold uppercase tracking-wider shadow-sm", sc.cls)}>
-          {sc.icon} {sc.label}
+        <div className="flex items-center gap-3">
+          <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold uppercase tracking-wider shadow-sm", sc.cls)}>
+            {sc.icon} {sc.label}
+          </div>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-xl text-[var(--color-text-muted)] hover:text-white hover:bg-white/5 transition-all duration-200 hidden md:flex"
+            title={sidebarOpen ? 'Hide timeline' : 'Show timeline'}
+          >
+            {sidebarOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </button>
         </div>
       </div>
 
@@ -480,123 +523,198 @@ Do not output anything else after the JSON.`,
       <div className="flex flex-1 overflow-hidden flex-col md:flex-row">
         
         {/* Left: Chat Interface */}
-        <div className="flex-[3] flex flex-col min-w-0 border-r border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] relative">
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-            {messages.map((msg, i) => {
-              if (msg.role === 'system') return null;
-              return (
-                <div key={i} className={cn('flex gap-3 max-w-[90%]', msg.role === 'user' ? 'ml-auto flex-row-reverse' : '')}>
-                  <div className={cn('w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-1 shadow-sm',
-                    msg.role === 'user' ? 'bg-gradient-to-br from-[#6366f1] to-[#4f46e5]' : 'bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)]')}>
-                    {msg.role === 'user' ? <User size={16} className="text-white" /> : <Bot size={16} className="text-[var(--color-text-primary)]" />}
+        <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-bg-base)] relative">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-6 custom-scrollbar">
+            <div className="max-w-3xl mx-auto space-y-5">
+              {messages.map((msg, i) => {
+                if (msg.role === 'system') return null;
+                const isUser = msg.role === 'user';
+                const isResult = !isUser && i >= execStartIndex && execStartIndex > 0 && msg.content.includes('Workflow Execution Complete');
+                return (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}
+                  >
+                    {!isUser && (
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[var(--color-bg-surface)] to-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                        <Bot size={14} className="text-indigo-400" />
+                      </div>
+                    )}
+                    <div className={cn(
+                      'text-[14px] leading-relaxed shadow-sm overflow-hidden',
+                      isUser
+                        ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-2xl rounded-tr-md px-4 py-3 max-w-[75%]'
+                        : isResult
+                        ? 'bg-gradient-to-br from-[var(--color-bg-surface)] to-emerald-500/5 border border-emerald-500/20 rounded-2xl rounded-tl-md px-5 py-4 max-w-[85%]'
+                        : 'bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-2xl rounded-tl-md px-5 py-4 max-w-[85%]'
+                    )}>
+                      {isUser
+                        ? <span className="whitespace-pre-wrap">{msg.content}</span>
+                        : <div className="prose prose-invert prose-sm prose-p:my-1.5 prose-pre:my-3 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1 max-w-none prose-a:text-indigo-400 prose-strong:text-white prose-code:text-indigo-300 prose-code:bg-black/20 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-pre:bg-black/30 prose-pre:border prose-pre:border-[var(--color-border-subtle)] prose-pre:rounded-xl">
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          </div>}
+                    </div>
+                    {isUser && (
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 mt-1 shadow-lg shadow-indigo-500/20">
+                        <User size={14} className="text-white" />
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+              
+              {isTyping && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[var(--color-bg-surface)] to-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0">
+                    <Bot size={14} className="text-indigo-400" />
                   </div>
-                  <div className={cn('p-4 rounded-2xl text-[15px] leading-relaxed shadow-sm overflow-hidden',
-                    msg.role === 'user'
-                      ? 'bg-gradient-to-br from-[#6366f1] to-[#4f46e5] text-white rounded-tr-sm'
-                      : 'bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-tl-sm text-[var(--color-text-primary)] backdrop-blur-sm bg-opacity-80')}>
-                    {msg.role === 'user'
-                      ? <span className="whitespace-pre-wrap">{msg.content}</span>
-                      : <div className="prose prose-invert prose-sm prose-p:my-1 prose-pre:my-2 prose-headings:my-2 max-w-none prose-a:text-[#818cf8] prose-strong:text-white">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>}
+                  <div className="px-5 py-4 rounded-2xl bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-tl-md flex items-center gap-1.5 shadow-sm">
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
                   </div>
-                </div>
-              );
-            })}
-            
-            {isTyping && (
-              <div className="flex gap-3">
-                <div className="w-9 h-9 rounded-full bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0">
-                  <Bot size={16} className="text-[var(--color-text-primary)]" />
-                </div>
-                <div className="p-4 rounded-2xl bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-tl-sm flex items-center gap-1.5 shadow-sm">
-                  <span className="w-2 h-2 bg-[#6366f1] rounded-full animate-bounce" />
-                  <span className="w-2 h-2 bg-[#6366f1] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                  <span className="w-2 h-2 bg-[#6366f1] rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
-                </div>
-              </div>
-            )}
+                </motion.div>
+              )}
+            </div>
           </div>
 
-          <div className="p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] shrink-0">
-            {execStatus === 'RUNNING' && (
-              <div className="flex items-center gap-2 mb-3 text-xs text-blue-400 bg-blue-400/10 p-2 rounded-lg border border-blue-400/20">
-                <Zap size={14} className="shrink-0" />
-                <span>Messages sent now will be delivered as runtime signals to the workflow.</span>
+          {/* Input bar */}
+          <div className="px-4 md:px-8 pb-4 pt-3 border-t border-[var(--color-border-subtle)] bg-gradient-to-t from-[var(--color-bg-surface)] to-transparent shrink-0">
+            <div className="max-w-3xl mx-auto">
+              {execStatus === 'RUNNING' && (
+                <div className="flex items-center gap-2 mb-3 text-xs text-blue-400 bg-blue-500/10 px-3 py-2 rounded-xl border border-blue-500/20">
+                  <Zap size={13} className="shrink-0" />
+                  <span>Messages will be delivered as runtime signals to the workflow.</span>
+                </div>
+              )}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                  placeholder={
+                    execStatus === 'RUNNING' ? 'Send a signal to the running workflow…' :
+                    isTerminal ? 'Ask about the results…' :
+                    'Type your message here…'
+                  }
+                  className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-2xl pl-5 pr-14 py-3.5 text-[14px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                  disabled={isTyping}
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim() || isTyping}
+                  className="absolute right-2 top-2 bottom-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white w-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all shadow-lg shadow-indigo-500/20"
+                >
+                  {execStatus === 'RUNNING' ? <Play size={15} className="fill-current ml-0.5" /> : <Send size={15} />}
+                </button>
               </div>
-            )}
-            <div className="relative group">
-              <input
-                type="text"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-                placeholder={
-                  execStatus === 'RUNNING' ? 'Send a signal to the running workflow...' :
-                  isTerminal ? 'Ask a question about the results...' :
-                  'Type your message here...'
-                }
-                className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-xl pl-4 pr-14 py-3.5 text-[15px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[#6366f1] focus:ring-1 focus:ring-[#6366f1] transition-all shadow-inner"
-                disabled={isTyping}
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isTyping}
-                className="absolute right-2 top-2 bottom-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white px-3 rounded-lg flex items-center justify-center disabled:opacity-50 disabled:hover:bg-[#6366f1] transition-colors shadow-md"
-              >
-                {execStatus === 'RUNNING' ? <Play size={16} className="fill-current" /> : <Send size={16} />}
-              </button>
             </div>
           </div>
         </div>
 
-        {/* Right: Timeline & Telemetry */}
-        <div className="flex-[2] flex flex-col min-w-0 bg-[var(--color-bg-surface)] border-l border-[var(--color-border-subtle)]">
-          <div className="px-6 py-4 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-hover)] shrink-0 flex items-center justify-between">
-            <h3 className="font-semibold flex items-center gap-2 text-[15px]">
-              <Clock size={16} className="text-[#6366f1]" />
-              Execution Timeline
-            </h3>
-            {executionId && (
-              <span className="text-xs font-mono text-[var(--color-text-muted)] flex items-center gap-1.5 bg-black/20 px-2 py-1 rounded-md border border-[var(--color-border-subtle)]">
-                {execData?.source === 'mistral' ? <Server size={10} className="text-emerald-400" /> : <Zap size={10} className="text-amber-400" />}
-                ID: {executionId.slice(0, 8)}
-              </span>
-            )}
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar relative">
-            {!executionId ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
-                <CircleDot size={32} className="mb-4 opacity-20" />
-                <p className="text-sm">Timeline will appear once execution begins</p>
-              </div>
-            ) : (
-              <div className="relative border-l-2 border-[var(--color-border-subtle)] ml-3 space-y-6 pl-6 pb-8">
-                {steps.map((sr) => (
-                  <StepDetails key={sr.step_id} sr={sr} />
-                ))}
-                
-                {isRunning && (
-                  <div className="relative">
-                    <div className="absolute -left-[31px] top-0.5 w-3 h-3 rounded-full bg-[var(--color-bg-base)] border-2 border-[#6366f1] animate-pulse" />
-                    <p className="text-sm font-semibold text-[#6366f1] flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" />
-                      {steps.length > 0 ? `Running step ${steps.length + 1}...` : 'Initializing workflow...'}
-                    </p>
-                  </div>
-                )}
-                
-                {isTerminal && steps.length > 0 && (
-                  <div className="relative">
-                    <div className="absolute -left-[31px] top-0.5 w-3 h-3 rounded-full bg-[var(--color-bg-base)] border-2 border-emerald-400" />
-                    <p className="text-sm font-semibold text-emerald-400">Workflow Execution Finished</p>
-                  </div>
+        {/* Right: Timeline & Telemetry — Collapsible */}
+        <AnimatePresence initial={false}>
+          {sidebarOpen && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 380, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              className="hidden md:flex flex-col min-w-0 bg-[var(--color-bg-surface)] border-l border-[var(--color-border-subtle)] overflow-hidden"
+              style={{ maxWidth: 380 }}
+            >
+              <div className="px-5 py-3 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-hover)]/50 shrink-0 flex items-center justify-between">
+                <h3 className="font-semibold flex items-center gap-2 text-sm">
+                  <Layers size={15} className="text-indigo-400" />
+                  Execution Timeline
+                </h3>
+                {executionId && (
+                  <span className="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-1 bg-black/20 px-2 py-0.5 rounded-full border border-[var(--color-border-subtle)]">
+                    {execData?.source === 'mistral' ? <Server size={9} className="text-emerald-400" /> : <Zap size={9} className="text-amber-400" />}
+                    {executionId.slice(0, 8)}
+                  </span>
                 )}
               </div>
-            )}
-          </div>
-        </div>
+              
+              <div className="flex-1 overflow-y-auto p-5 custom-scrollbar relative">
+                {!executionId ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
+                    <div className="w-16 h-16 rounded-2xl bg-[var(--color-bg-hover)] flex items-center justify-center mb-4">
+                      <Clock size={24} className="opacity-30" />
+                    </div>
+                    <p className="text-sm font-medium opacity-60">Awaiting execution</p>
+                    <p className="text-xs opacity-40 mt-1">Timeline appears once the workflow starts</p>
+                  </div>
+                ) : (
+                  <div className="relative border-l-2 border-[var(--color-border-subtle)] ml-3 space-y-4 pl-5 pb-6">
+                    {/* Step count summary */}
+                    {steps.length > 0 && (
+                      <div className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider font-bold mb-2 -mt-1">
+                        {steps.filter(s => s.status === 'completed').length}/{steps.length} steps completed
+                      </div>
+                    )}
+
+                    {steps.map((sr, idx) => (
+                      <StepDetails key={sr.step_id} sr={sr} index={idx} />
+                    ))}
+                    
+                    {isRunning && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="relative"
+                      >
+                        <div className="absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-indigo-500 border-2 border-[var(--color-bg-surface)] animate-pulse z-10" />
+                        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl px-4 py-3 flex items-center gap-2">
+                          <Loader2 size={13} className="text-indigo-400 animate-spin shrink-0" />
+                          <p className="text-sm font-medium text-indigo-300">
+                            {steps.length > 0 ? `Running step ${steps.length + 1}…` : 'Initializing workflow…'}
+                          </p>
+                        </div>
+                      </motion.div>
+                    )}
+                    
+                    {isTerminal && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="relative"
+                      >
+                        <div className={cn(
+                          "absolute -left-[30px] top-1 w-3 h-3 rounded-full border-2 border-[var(--color-bg-surface)] z-10",
+                          execStatus === 'COMPLETED' ? 'bg-emerald-500' : 'bg-red-500'
+                        )} />
+                        <div className={cn(
+                          "rounded-xl px-4 py-3 border",
+                          execStatus === 'COMPLETED'
+                            ? 'bg-emerald-500/10 border-emerald-500/20'
+                            : 'bg-red-500/10 border-red-500/20'
+                        )}>
+                          <p className={cn(
+                            "text-sm font-semibold flex items-center gap-2",
+                            execStatus === 'COMPLETED' ? 'text-emerald-400' : 'text-red-400'
+                          )}>
+                            {execStatus === 'COMPLETED' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                            {execStatus === 'COMPLETED' ? 'Execution Complete' : 'Execution Failed'}
+                          </p>
+                          {execData?.end_time && execData?.start_time && (
+                            <p className="text-[10px] text-[var(--color-text-muted)] mt-1 font-mono">
+                              Duration: {((new Date(execData.end_time).getTime() - new Date(execData.start_time).getTime()) / 1000).toFixed(1)}s
+                            </p>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
         
       </div>
     </div>

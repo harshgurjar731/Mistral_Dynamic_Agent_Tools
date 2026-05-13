@@ -270,8 +270,8 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
       2. On server failure or if not deployed → fall back to local DAG engine.
     """
     workflow = get_workflow(workflow_name)
-    if not workflow:
-        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+    # Note: workflow may be None for Mistral-only (remotely registered) workflows.
+    # We still attempt Mistral server execution before raising 404.
 
     # ── Always try Mistral server first via direct HTTP ──────────────────
     # We use httpx directly so we can pass worker routing fields that the
@@ -343,6 +343,12 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
         )
 
     # ── Local DAG engine fallback ─────────────────────────────────────────
+    if not workflow:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow '{workflow_name}' not found locally and Mistral server execution failed.",
+        )
+
     try:
         import uuid as _uuid
         exec_id = request.execution_id or str(_uuid.uuid4())

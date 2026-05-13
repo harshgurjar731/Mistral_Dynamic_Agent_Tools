@@ -1,5 +1,8 @@
 """
 Execution Service — dynamically loads and executes stored tools.
+
+When a tool's primary execution fails, the LLM fallback service generates
+a synthetic result so the caller always gets a useful response.
 """
 
 import importlib.util
@@ -7,6 +10,7 @@ import json
 import logging
 from sqlalchemy.orm import Session
 from app.models import ToolRecord
+from app.services.llm_fallback import llm_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -32,23 +36,87 @@ def load_tool(name: str, module_path: str) -> callable:
     return _execution_cache[name]
 
 
+def _get_tool_description(record: ToolRecord) -> str:
+    """Extract the tool description from the stored schema JSON."""
+    try:
+        schema = json.loads(record.schema_json)
+        return schema.get("function", {}).get("description", record.name)
+    except Exception:
+        return record.name
+
+
 def execute_tool(db: Session, tool_name: str, arguments: dict) -> dict:
     """
     Execute a stored, approved tool by name.
-    Returns the result as a dict.
+
+    Execution strategy:
+      1. Run the tool's `run()` function normally.
+      2. If it returns an error dict, try LLM fallback.
+      3. If it raises an exception, try LLM fallback.
+      4. Always return something useful to the caller.
     """
-    # Look up tool in database
-    record = db.query(ToolRecord).filter_by(name=tool_name, status="approved").first()
+    # ── Look up tool ──────────────────────────────────────────────────────
+    record = db.query(ToolRecord).filter_by(
+        name=tool_name, status="approved"
+    ).first()
     if not record:
         return {"error": f"Tool '{tool_name}' not found or not approved"}
 
     if not record.module_path:
-        return {"error": f"Tool '{tool_name}' has no module path — needs re-approval"}
+        return {
+            "error": f"Tool '{tool_name}' has no module path — needs re-approval"
+        }
 
+    tool_description = _get_tool_description(record)
+
+    # ── Primary execution ─────────────────────────────────────────────────
     try:
         run_fn = load_tool(tool_name, record.module_path)
         result = run_fn(**arguments)
 
+        # ── Check for soft errors in the result ───────────────────────────
+        # Some tools return error strings or dicts instead of raising
+        if _is_error_result(result):
+            logger.warning(
+                "Tool '%s' returned an error result: %s",
+                tool_name, str(result)[:200],
+            )
+            fallback_result = llm_fallback(
+                tool_name=tool_name,
+                tool_description=tool_description,
+                arguments=arguments,
+                original_error=_extract_error_msg(result),
+            )
+            return {"result": fallback_result, "tool_name": tool_name}
+
+        # ── Handle document file writes ──────────────────────────────────
+        # Tools like create_document return _needs_file_write=True
+        # The actual I/O happens here, outside the sandbox
+        if isinstance(result, dict) and result.get("_needs_file_write"):
+            try:
+                import os
+                docs_dir = "/app/documents"
+                os.makedirs(docs_dir, exist_ok=True)
+                filename = result.get("filename", "document.md")
+                content = result.get("content", "")
+                filepath = os.path.join(docs_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                logger.info(
+                    "Document written to %s (%d chars)",
+                    filepath, len(content),
+                )
+                # Remove internal flag before returning
+                result.pop("_needs_file_write", None)
+            except Exception as write_err:
+                logger.error(
+                    "Document write failed: %s", write_err,
+                )
+                # Still return the content even if write fails
+                result.pop("_needs_file_write", None)
+                result["write_error"] = str(write_err)
+
+        # ── Normal success path ───────────────────────────────────────────
         # Ensure JSON-serializable
         try:
             json.dumps(result)
@@ -56,9 +124,49 @@ def execute_tool(db: Session, tool_name: str, arguments: dict) -> dict:
             result = str(result)
 
         return {"result": result, "tool_name": tool_name}
+
     except Exception as e:
-        logger.error("Error executing tool '%s': %s", tool_name, e)
-        return {"error": f"Execution error: {str(e)}", "tool_name": tool_name}
+        # ── Hard crash → LLM fallback ─────────────────────────────────────
+        logger.error(
+            "Tool '%s' crashed: %s — invoking LLM fallback", tool_name, e,
+        )
+        try:
+            fallback_result = llm_fallback(
+                tool_name=tool_name,
+                tool_description=tool_description,
+                arguments=arguments,
+                original_error=str(e),
+            )
+            return {"result": fallback_result, "tool_name": tool_name}
+        except Exception as fallback_err:
+            logger.error(
+                "LLM fallback also failed for '%s': %s", tool_name, fallback_err,
+            )
+            return {
+                "error": f"Execution error: {str(e)}",
+                "tool_name": tool_name,
+            }
+
+
+def _is_error_result(result) -> bool:
+    """Detect if a tool's return value represents a failure."""
+    if isinstance(result, str):
+        lower = result.lower()
+        return any(kw in lower for kw in [
+            "error:", "failed:", "lookup failed",
+            "api returned status", "connection", "timeout",
+            "not found", "refused", "unreachable",
+        ])
+    if isinstance(result, dict):
+        return "error" in result
+    return False
+
+
+def _extract_error_msg(result) -> str:
+    """Pull the error message out of a tool's return value."""
+    if isinstance(result, dict):
+        return str(result.get("error", result))
+    return str(result)
 
 
 def warm_cache(db: Session):
@@ -71,6 +179,8 @@ def warm_cache(db: Session):
                 load_tool(record.name, record.module_path)
                 loaded += 1
             except Exception as e:
-                logger.warning("Failed to warm cache for tool '%s': %s", record.name, e)
+                logger.warning(
+                    "Failed to warm cache for tool '%s': %s", record.name, e,
+                )
 
     logger.info("Warmed execution cache with %d tools", loaded)

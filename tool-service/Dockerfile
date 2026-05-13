@@ -17,8 +17,9 @@ RUN useradd -m sandboxuser
 
 COPY . .
 
-# Create dynamic_tools directory
-RUN mkdir -p dynamic_tools && chown sandboxuser:sandboxuser dynamic_tools
+# Create persistent directories (volume mount targets)
+RUN mkdir -p dynamic_tools db documents \
+    && chown sandboxuser:sandboxuser dynamic_tools db documents
 
 EXPOSE 9000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
