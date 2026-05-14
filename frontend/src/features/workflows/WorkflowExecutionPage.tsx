@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
   MessageSquare, Send, Bot, User, Zap, Server, ChevronDown, ChevronUp, TerminalSquare,
@@ -40,29 +40,50 @@ interface ExecutionData {
 }
 
 function parseWorkflowResult(raw: string): string {
+  let jsonObj: any = null;
   const toolCallMatch = raw.match(/\{[\s\S]*\}$/);
   if (toolCallMatch) {
-    try {
-      const json = JSON.parse(toolCallMatch[0]);
-      if (typeof json.content === 'string') {
-        const title = json.title ? `# ${json.title}\n\n` : '';
-        return title + unescapeNewlines(json.content);
-      }
-      if (typeof json.result === 'string') return unescapeNewlines(json.result);
-      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
-    } catch { /* ignore */ }
+    try { jsonObj = JSON.parse(toolCallMatch[0]); } catch {}
   }
-  try {
-    const json = JSON.parse(raw);
-    if (typeof json === 'object' && json !== null) {
-      if (typeof json.content === 'string') {
-        const title = json.title ? `# ${json.title}\n\n` : '';
-        return title + unescapeNewlines(json.content);
-      }
-      if (typeof json.result === 'string') return unescapeNewlines(json.result);
-      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
+  if (!jsonObj) {
+    try { jsonObj = JSON.parse(raw); } catch {}
+  }
+
+  if (jsonObj && typeof jsonObj === 'object' && jsonObj !== null) {
+    if (typeof jsonObj.content === 'string') {
+      const title = jsonObj.title ? `# ${jsonObj.title}\n\n` : '';
+      return title + unescapeNewlines(jsonObj.content);
     }
-  } catch { /* ignore */ }
+    if (typeof jsonObj.result === 'string') return unescapeNewlines(jsonObj.result);
+    if (typeof jsonObj.final_output === 'string') return unescapeNewlines(jsonObj.final_output);
+    if (typeof jsonObj.output === 'string') return unescapeNewlines(jsonObj.output);
+    if (typeof jsonObj.response === 'string') return unescapeNewlines(jsonObj.response);
+
+    if ('approved' in jsonObj && jsonObj.reason) {
+      const status = jsonObj.approved ? '✅ **Approved**' : '❌ **Rejected**';
+      let out = `${status}\n\n**Reason:** ${jsonObj.reason}`;
+      if (jsonObj.final_output) out += `\n\n**Output:** ${jsonObj.final_output}`;
+      return unescapeNewlines(out);
+    }
+
+    const keys = Object.keys(jsonObj).filter(k => k !== 'step_id' && k !== 'status');
+    if (keys.length > 0) {
+      let formatted = '';
+      for (const k of keys) {
+        const val = jsonObj[k];
+        const readableKey = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        if (typeof val === 'string') {
+           formatted += `**${readableKey}:**\n${val}\n\n`;
+        } else {
+           formatted += `**${readableKey}:**\n\`\`\`json\n${JSON.stringify(val, null, 2)}\n\`\`\`\n\n`;
+        }
+      }
+      return unescapeNewlines(formatted.trim());
+    }
+
+    return '```json\n' + JSON.stringify(jsonObj, null, 2) + '\n```';
+  }
+
   return unescapeNewlines(raw);
 }
 
@@ -167,6 +188,8 @@ function StepDetails({ sr, index }: { sr: StepResult; index: number }) {
 export default function WorkflowExecutionPage() {
   const { workflowName } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlExecId = searchParams.get('execId');
 
   // ── Fetch Workflow Definition ───────────────────────────────────────────
   const { data: wfData, isLoading: wfLoading } = useQuery({
@@ -200,10 +223,54 @@ export default function WorkflowExecutionPage() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isTyping, execData]);
 
+  // Save state to local storage
+  useEffect(() => {
+    if (!executionId) return;
+    const stateToSave = {
+      messages,
+      execStartIndex,
+      execData,
+      hasAddedResultMsg,
+      execStatus,
+    };
+    localStorage.setItem(`workflow_chat_${executionId}`, JSON.stringify(stateToSave));
+  }, [messages, execStartIndex, execData, hasAddedResultMsg, execStatus, executionId]);
+
   // Init Requirements
   useEffect(() => {
     if (!workflow || execStatus !== 'INIT' || hasInitialized.current) return;
     hasInitialized.current = true;
+
+    if (urlExecId) {
+      setExecutionId(urlExecId);
+      const saved = localStorage.getItem(`workflow_chat_${urlExecId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setMessages(parsed.messages || []);
+          setExecStartIndex(parsed.execStartIndex ?? -1);
+          setExecData(parsed.execData || null);
+          setHasAddedResultMsg(parsed.hasAddedResultMsg || false);
+          setExecStatus(parsed.execStatus || 'RUNNING');
+          
+          if (parsed.execStatus === 'RUNNING') {
+            startSSEStream(urlExecId);
+          }
+          return;
+        } catch { /* fallback if corrupted */ }
+      }
+      
+      setExecStatus('RUNNING');
+      setMessages([
+        {
+          role: 'assistant',
+          content: '⚠️ **Chat history not found**\n\nThe conversational history for this execution is not available in your local storage. You can still view the backend execution timeline and status above.',
+        }
+      ]);
+      startSSEStream(urlExecId);
+      return;
+    }
+
     setExecStatus('GATHERING');
 
     const filteredInputSchema = workflow.input_schema?.filter((f: any) => !isInternalVar(f.name));
@@ -293,8 +360,8 @@ Do not output anything else after the JSON.`,
     },
   });
 
-  // ── SSE Stream ───────────────────────────────────────────────────────────
-  const startSSEStream = (execId: string) => {
+  // ── SSE Stream ────────────────────────────────────────────────────────────────
+  function startSSEStream(execId: string) {
     if (streamAbortRef.current) streamAbortRef.current.abort();
     const ctrl = new AbortController();
     streamAbortRef.current = ctrl;
@@ -525,7 +592,7 @@ Do not output anything else after the JSON.`,
         {/* Left: Chat Interface */}
         <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-bg-base)] relative">
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-6 custom-scrollbar">
-            <div className="max-w-3xl mx-auto space-y-5">
+            <div className="w-full flex flex-col space-y-5">
               {messages.map((msg, i) => {
                 if (msg.role === 'system') return null;
                 const isUser = msg.role === 'user';
@@ -536,7 +603,7 @@ Do not output anything else after the JSON.`,
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25 }}
-                    className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}
+                    className={cn('flex gap-3 min-w-0 w-full', isUser ? 'justify-end' : 'justify-start')}
                   >
                     {!isUser && (
                       <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[var(--color-bg-surface)] to-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0 mt-1 shadow-sm">
@@ -544,15 +611,16 @@ Do not output anything else after the JSON.`,
                       </div>
                     )}
                     <div className={cn(
-                      'text-[14px] leading-relaxed shadow-sm overflow-hidden',
+                      'text-[14px] leading-relaxed shadow-sm min-w-0 w-fit',
+                      '[&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:!overflow-x-hidden [&_code]:break-words [&_*]:min-w-0 break-words',
                       isUser
                         ? 'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-2xl rounded-tr-md px-4 py-3 max-w-[75%]'
                         : isResult
-                        ? 'bg-gradient-to-br from-[var(--color-bg-surface)] to-emerald-500/5 border border-emerald-500/20 rounded-2xl rounded-tl-md px-5 py-4 max-w-[85%]'
+                        ? 'bg-gradient-to-br from-[var(--color-bg-surface)] to-emerald-500/5 border border-emerald-500/20 rounded-2xl rounded-tl-md px-5 py-4 max-w-[90%]'
                         : 'bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-2xl rounded-tl-md px-5 py-4 max-w-[85%]'
                     )}>
                       {isUser
-                        ? <span className="whitespace-pre-wrap">{msg.content}</span>
+                        ? <span className="whitespace-pre-wrap break-words">{msg.content}</span>
                         : <div className="prose prose-invert prose-sm prose-p:my-1.5 prose-pre:my-3 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1 max-w-none prose-a:text-indigo-400 prose-strong:text-white prose-code:text-indigo-300 prose-code:bg-black/20 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-pre:bg-black/30 prose-pre:border prose-pre:border-[var(--color-border-subtle)] prose-pre:rounded-xl">
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
                           </div>}
@@ -583,7 +651,7 @@ Do not output anything else after the JSON.`,
 
           {/* Input bar */}
           <div className="px-4 md:px-8 pb-4 pt-3 border-t border-[var(--color-border-subtle)] bg-gradient-to-t from-[var(--color-bg-surface)] to-transparent shrink-0">
-            <div className="max-w-3xl mx-auto">
+            <div className="w-full relative">
               {execStatus === 'RUNNING' && (
                 <div className="flex items-center gap-2 mb-3 text-xs text-blue-400 bg-blue-500/10 px-3 py-2 rounded-xl border border-blue-500/20">
                   <Zap size={13} className="shrink-0" />
@@ -591,23 +659,34 @@ Do not output anything else after the JSON.`,
                 </div>
               )}
               <div className="relative">
-                <input
-                  type="text"
+                <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  onInput={e => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = 'auto';
+                    target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+                  }}
+                  rows={1}
                   placeholder={
                     execStatus === 'RUNNING' ? 'Send a signal to the running workflow…' :
                     isTerminal ? 'Ask about the results…' :
                     'Type your message here…'
                   }
-                  className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-2xl pl-5 pr-14 py-3.5 text-[14px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                  className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-2xl pl-5 pr-14 py-3.5 text-[14px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all resize-none overflow-y-auto overflow-x-hidden custom-scrollbar"
+                  style={{ minHeight: '50px', maxHeight: '200px' }}
                   disabled={isTyping}
                 />
                 <button
                   onClick={handleSend}
                   disabled={!input.trim() || isTyping}
-                  className="absolute right-2 top-2 bottom-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white w-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all shadow-lg shadow-indigo-500/20"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all shadow-lg shadow-indigo-500/20"
                 >
                   {execStatus === 'RUNNING' ? <Play size={15} className="fill-current ml-0.5" /> : <Send size={15} />}
                 </button>

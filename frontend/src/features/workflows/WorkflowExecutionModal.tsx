@@ -51,46 +51,50 @@ interface ExecutionData {
  *   - Plain text → passes through
  */
 function parseWorkflowResult(raw: string): string {
-  // 1. Try to extract JSON from tool call format: "function_name {json...}"
-  //    Also handles garbage Unicode chars before the function name.
+  let jsonObj: any = null;
   const toolCallMatch = raw.match(/\{[\s\S]*\}$/);
   if (toolCallMatch) {
-    try {
-      const json = JSON.parse(toolCallMatch[0]);
-      // If the JSON has a 'content' field (common for document/report tools), use it
-      if (typeof json.content === 'string') {
-        const title = json.title ? `# ${json.title}\n\n` : '';
-        return title + unescapeNewlines(json.content);
-      }
-      // If it has a 'result' field, use that
-      if (typeof json.result === 'string') {
-        return unescapeNewlines(json.result);
-      }
-      // Otherwise format the whole JSON nicely
-      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
-    } catch {
-      // JSON parse failed, fall through
-    }
+    try { jsonObj = JSON.parse(toolCallMatch[0]); } catch {}
+  }
+  if (!jsonObj) {
+    try { jsonObj = JSON.parse(raw); } catch {}
   }
 
-  // 2. Try parsing the entire string as JSON
-  try {
-    const json = JSON.parse(raw);
-    if (typeof json === 'object' && json !== null) {
-      if (typeof json.content === 'string') {
-        const title = json.title ? `# ${json.title}\n\n` : '';
-        return title + unescapeNewlines(json.content);
-      }
-      if (typeof json.result === 'string') {
-        return unescapeNewlines(json.result);
-      }
-      return '```json\n' + JSON.stringify(json, null, 2) + '\n```';
+  if (jsonObj && typeof jsonObj === 'object' && jsonObj !== null) {
+    if (typeof jsonObj.content === 'string') {
+      const title = jsonObj.title ? `# ${jsonObj.title}\n\n` : '';
+      return title + unescapeNewlines(jsonObj.content);
     }
-  } catch {
-    // Not JSON, fall through
+    if (typeof jsonObj.result === 'string') return unescapeNewlines(jsonObj.result);
+    if (typeof jsonObj.final_output === 'string') return unescapeNewlines(jsonObj.final_output);
+    if (typeof jsonObj.output === 'string') return unescapeNewlines(jsonObj.output);
+    if (typeof jsonObj.response === 'string') return unescapeNewlines(jsonObj.response);
+
+    if ('approved' in jsonObj && jsonObj.reason) {
+      const status = jsonObj.approved ? '✅ **Approved**' : '❌ **Rejected**';
+      let out = `${status}\n\n**Reason:** ${jsonObj.reason}`;
+      if (jsonObj.final_output) out += `\n\n**Output:** ${jsonObj.final_output}`;
+      return unescapeNewlines(out);
+    }
+
+    const keys = Object.keys(jsonObj).filter(k => k !== 'step_id' && k !== 'status');
+    if (keys.length > 0) {
+      let formatted = '';
+      for (const k of keys) {
+        const val = jsonObj[k];
+        const readableKey = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        if (typeof val === 'string') {
+           formatted += `**${readableKey}:**\n${val}\n\n`;
+        } else {
+           formatted += `**${readableKey}:**\n\`\`\`json\n${JSON.stringify(val, null, 2)}\n\`\`\`\n\n`;
+        }
+      }
+      return unescapeNewlines(formatted.trim());
+    }
+
+    return '```json\n' + JSON.stringify(jsonObj, null, 2) + '\n```';
   }
 
-  // 3. Plain string — unescape any literal \n sequences
   return unescapeNewlines(raw);
 }
 
@@ -173,11 +177,54 @@ export default function WorkflowExecutionModal({
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isTyping, execData]);
 
+  // Save state to local storage
+  useEffect(() => {
+    if (!executionId) return;
+    const stateToSave = {
+      messages,
+      execStartIndex,
+      execData,
+      hasAddedResultMsg,
+      execStatus,
+    };
+    localStorage.setItem(`workflow_chat_${executionId}`, JSON.stringify(stateToSave));
+  }, [messages, execStartIndex, execData, hasAddedResultMsg, execStatus, executionId]);
+
   // Init: decide whether to gather inputs or execute immediately
   useEffect(() => {
     if (execStatus !== 'INIT') return;
     if (hasInitialized.current) return; // prevent double execution
     hasInitialized.current = true;
+
+    if (initialExecId) {
+      setExecutionId(initialExecId);
+      const saved = localStorage.getItem(`workflow_chat_${initialExecId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setMessages(parsed.messages || []);
+          setExecStartIndex(parsed.execStartIndex ?? -1);
+          setExecData(parsed.execData || null);
+          setHasAddedResultMsg(parsed.hasAddedResultMsg || false);
+          setExecStatus(parsed.execStatus || 'RUNNING');
+          
+          if (parsed.execStatus === 'RUNNING') {
+            startSSEStream(initialExecId);
+          }
+          return;
+        } catch { /* fallback */ }
+      }
+      
+      setExecStatus('RUNNING');
+      setMessages([
+        {
+          role: 'assistant',
+          content: '⚠️ **Chat history not found**\n\nThe conversational history for this execution is not available in your local storage. You can still view the backend execution timeline and status above.',
+        }
+      ]);
+      startSSEStream(initialExecId);
+      return;
+    }
 
     setExecStatus('GATHERING');
 
@@ -251,7 +298,7 @@ Do not output anything else after the JSON.`,
   });
 
   // ── SSE real-time execution stream ──────────────────────────────────────
-  const startSSEStream = (execId: string) => {
+  function startSSEStream(execId: string) {
     if (streamAbortRef.current) streamAbortRef.current.abort();
     const ctrl = new AbortController();
     streamAbortRef.current = ctrl;
@@ -548,18 +595,20 @@ Do not output anything else after the JSON.`,
 
   const renderMessage = (msg: Message, idx: number) => {
     if (msg.role === 'system') return null;
+    const isResult = msg.role === 'assistant' && msg.content.includes('Workflow completed!');
     return (
-      <div key={idx} className={cn('flex gap-3 max-w-[87%]', msg.role === 'user' ? 'ml-auto flex-row-reverse' : '')}>
+      <div key={idx} className={cn('flex gap-3 min-w-0 w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
         <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1',
           msg.role === 'user' ? 'bg-[#6366f1]' : 'bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)]')}>
           {msg.role === 'user' ? <User size={14} className="text-white" /> : <Bot size={14} className="text-[var(--color-text-muted)]" />}
         </div>
-        <div className={cn('p-3 rounded-2xl text-sm',
+        <div className={cn('p-3 rounded-2xl text-sm min-w-0 w-fit',
+          '[&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:!overflow-x-hidden [&_code]:break-words [&_*]:min-w-0 break-words',
           msg.role === 'user'
-            ? 'bg-[#6366f1] text-white rounded-tr-sm'
-            : 'surface-card border border-[var(--color-border-subtle)] rounded-tl-sm text-[var(--color-text-primary)]')}>
+            ? 'bg-[#6366f1] text-white rounded-tr-sm max-w-[85%]'
+            : 'surface-card border border-[var(--color-border-subtle)] rounded-tl-sm text-[var(--color-text-primary)] max-w-[90%]')}>
           {msg.role === 'user'
-            ? <span className="whitespace-pre-wrap">{msg.content}</span>
+            ? <span className="whitespace-pre-wrap break-words">{msg.content}</span>
             : <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
         </div>
       </div>
@@ -637,11 +686,21 @@ Do not output anything else after the JSON.`,
                     </p>
                   )}
                   <div className="flex items-center gap-2">
-                    <input
-                      type="text"
+                    <textarea
                       value={input}
                       onChange={e => setInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleSend()}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSend();
+                        }
+                      }}
+                      onInput={e => {
+                        const target = e.target as HTMLTextAreaElement;
+                        target.style.height = 'auto';
+                        target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+                      }}
+                      rows={1}
                       placeholder={
                         execStatus === 'RUNNING'
                           ? 'Send a message to the running workflow…'
@@ -649,7 +708,8 @@ Do not output anything else after the JSON.`,
                           ? 'Ask a question about the results…'
                           : 'Type your answer…'
                       }
-                      className="flex-1 bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[#6366f1] transition-colors"
+                      className="flex-1 bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[#6366f1] transition-colors resize-none overflow-y-auto overflow-x-hidden custom-scrollbar"
+                      style={{ minHeight: '42px', maxHeight: '200px' }}
                       disabled={isTyping}
                     />
                     <button

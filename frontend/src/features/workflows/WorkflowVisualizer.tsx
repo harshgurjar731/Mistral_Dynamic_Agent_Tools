@@ -598,7 +598,7 @@ export default function WorkflowVisualizer() {
             workflowName={workflow.name}
             onClose={() => setIsHistoryOpen(false)}
             onSelectExecution={(id) => {
-              navigate(`/workflows/${encodeURIComponent(workflowName!)}/execute`);
+              navigate(`/workflows/${encodeURIComponent(workflowName!)}/execute?execId=${id}`);
             }}
           />
         )}
