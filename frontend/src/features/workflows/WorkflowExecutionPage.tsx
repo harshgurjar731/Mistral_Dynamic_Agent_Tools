@@ -4,13 +4,14 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
   MessageSquare, Send, Bot, User, Zap, Server, ChevronDown, ChevronUp, TerminalSquare,
-  PanelRightClose, PanelRightOpen, Layers, ArrowDownRight, ArrowUpRight
+  PanelRightClose, PanelRightOpen, Layers, ArrowDownRight, ArrowUpRight, ImagePlus, X as XIcon
 } from 'lucide-react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
 import { chatApi } from '../../api/chat';
 import { cn } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { QK } from '../../lib/queryClient';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
@@ -18,7 +19,18 @@ const API_BASE = import.meta.env.VITE_API_URL ?? '';
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  imagePreview?: string;  // local preview URL for uploaded images
+  imageData?: ImageUploadData;
 }
+
+interface ImageUploadData {
+  image_base64: string;
+  image_url: string;
+  image_mime: string;
+  previewUrl: string;
+}
+
+const API_IMG_BASE = import.meta.env.VITE_API_URL ?? '';
 
 interface StepResult {
   step_id: string;
@@ -39,6 +51,17 @@ interface ExecutionData {
   source?: 'mistral' | 'local';
 }
 
+function stripMarkdownCodeBlock(str: string): string {
+  const trimmed = str.trim();
+  if (trimmed.startsWith('```markdown') && trimmed.endsWith('```')) {
+    return trimmed.slice(11, -3).trim();
+  }
+  if (trimmed.startsWith('```') && trimmed.endsWith('```')) {
+    return trimmed.slice(3, -3).trim();
+  }
+  return str;
+}
+
 function parseWorkflowResult(raw: string): string {
   let jsonObj: any = null;
   const toolCallMatch = raw.match(/\{[\s\S]*\}$/);
@@ -52,12 +75,13 @@ function parseWorkflowResult(raw: string): string {
   if (jsonObj && typeof jsonObj === 'object' && jsonObj !== null) {
     if (typeof jsonObj.content === 'string') {
       const title = jsonObj.title ? `# ${jsonObj.title}\n\n` : '';
-      return title + unescapeNewlines(jsonObj.content);
+      return stripMarkdownCodeBlock(title + unescapeNewlines(jsonObj.content));
     }
-    if (typeof jsonObj.result === 'string') return unescapeNewlines(jsonObj.result);
-    if (typeof jsonObj.final_output === 'string') return unescapeNewlines(jsonObj.final_output);
-    if (typeof jsonObj.output === 'string') return unescapeNewlines(jsonObj.output);
-    if (typeof jsonObj.response === 'string') return unescapeNewlines(jsonObj.response);
+    if (typeof jsonObj.final_response === 'string') return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.final_response));
+    if (typeof jsonObj.result === 'string') return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.result));
+    if (typeof jsonObj.final_output === 'string') return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.final_output));
+    if (typeof jsonObj.output === 'string') return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.output));
+    if (typeof jsonObj.response === 'string') return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.response));
 
     if ('approved' in jsonObj && jsonObj.reason) {
       const status = jsonObj.approved ? '✅ **Approved**' : '❌ **Rejected**';
@@ -73,7 +97,7 @@ function parseWorkflowResult(raw: string): string {
         const val = jsonObj[k];
         const readableKey = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         if (typeof val === 'string') {
-           formatted += `**${readableKey}:**\n${val}\n\n`;
+           formatted += `**${readableKey}:**\n${stripMarkdownCodeBlock(val)}\n\n`;
         } else {
            formatted += `**${readableKey}:**\n\`\`\`json\n${JSON.stringify(val, null, 2)}\n\`\`\`\n\n`;
         }
@@ -219,6 +243,42 @@ export default function WorkflowExecutionPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
 
+  // Image upload state
+  const [uploadedImage, setUploadedImage] = useState<ImageUploadData | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Please select a valid image file (JPEG, PNG, WebP, or GIF).' }]);
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const res = await workflowsApi.uploadImage(file);
+      const data = res.data;
+      const previewUrl = URL.createObjectURL(file);
+      setUploadedImage({
+        image_base64: data.image_base64,
+        image_url: `${API_IMG_BASE}${data.image_url}`,
+        image_mime: data.image_mime,
+        previewUrl,
+      });
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `📷 Image uploaded successfully! (${(data.size_bytes / 1024).toFixed(0)}KB)\n\nThe image will be included with your next message or when the workflow executes.`,
+      }]);
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.detail || 'Failed to upload image.';
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Image upload failed: ${errMsg}` }]);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isTyping, execData]);
@@ -335,12 +395,25 @@ Do not output anything else after the JSON.`,
 
   // ── Execute Mutation ─────────────────────────────────────────────────────
   const executeMut = useMutation({
-    mutationFn: (inputs: Record<string, string>) =>
-      workflowsApi.execute(workflow.name, { input: inputs, wait_for_result: false }),
+    mutationFn: (inputs: Record<string, string>) => {
+      // Find the last image uploaded in the chat history
+      const lastImgMsg = messages.slice().reverse().find(m => m.imageData);
+      const imgData = uploadedImage || lastImgMsg?.imageData;
+
+      // Merge image data into inputs if an image was uploaded
+      const mergedInputs = { ...inputs };
+      if (imgData) {
+        mergedInputs.image_base64 = imgData.image_base64;
+        mergedInputs.image_url = imgData.image_url;
+        mergedInputs.image_mime = imgData.image_mime;
+      }
+      return workflowsApi.execute(workflow.name, { input: mergedInputs, wait_for_result: false });
+    },
     onSuccess: (res) => {
       const execId = res.data?.execution_id;
       setExecutionId(execId);
       setExecStatus('RUNNING');
+      setUploadedImage(null);
       setMessages(prev => {
         setExecStartIndex(prev.length + 1);
         return [
@@ -498,19 +571,34 @@ Do not output anything else after the JSON.`,
   });
 
   const signalMut = useMutation({
-    mutationFn: (msg: string) => workflowsApi.sendSignal(executionId!, 'user_message', { message: msg }),
+    mutationFn: (payload: any) => workflowsApi.sendSignal(executionId!, 'user_message', payload),
   });
 
   const handleSend = () => {
-    if (!input.trim() || isTyping) return;
-    const userMsg: Message = { role: 'user', content: input.trim() };
+    if ((!input.trim() && !uploadedImage) || isTyping) return;
+    const userMsg: Message = {
+      role: 'user',
+      content: input.trim() || '📸 [Image Attached]',
+      imagePreview: uploadedImage?.previewUrl,
+      imageData: uploadedImage || undefined,
+    };
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
+    
     const sentInput = input.trim();
+    const currentImage = uploadedImage;
+    
     setInput('');
+    setUploadedImage(null);
 
     if (execStatus === 'RUNNING') {
-      if (executionId) signalMut.mutate(sentInput);
+      const payload: any = { message: sentInput };
+      if (currentImage) {
+        payload.image_base64 = currentImage.image_base64;
+        payload.image_url = currentImage.image_url;
+        payload.image_mime = currentImage.image_mime;
+      }
+      if (executionId) signalMut.mutate(payload);
       return;
     }
 
@@ -620,9 +708,38 @@ Do not output anything else after the JSON.`,
                         : 'bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-2xl rounded-tl-md px-5 py-4 max-w-[85%]'
                     )}>
                       {isUser
-                        ? <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-                        : <div className="prose prose-invert prose-sm prose-p:my-1.5 prose-pre:my-3 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1 max-w-none prose-a:text-indigo-400 prose-strong:text-white prose-code:text-indigo-300 prose-code:bg-black/20 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-pre:bg-black/30 prose-pre:border prose-pre:border-[var(--color-border-subtle)] prose-pre:rounded-xl">
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        ? <div>
+                            {msg.imagePreview && (
+                              <img
+                                src={msg.imagePreview}
+                                alt="Uploaded"
+                                className="max-w-[240px] max-h-[180px] rounded-xl mb-2 object-cover border border-white/20"
+                              />
+                            )}
+                            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                          </div>
+                        : <div className="prose prose-invert prose-sm prose-p:my-1.5 prose-pre:my-3 prose-headings:my-2 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1 max-w-none prose-strong:text-white prose-code:text-indigo-300 prose-code:bg-black/20 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-pre:bg-black/30 prose-pre:border prose-pre:border-[var(--color-border-subtle)] prose-pre:rounded-xl">
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                table: ({node, ...props}) => (
+                                  <div className="overflow-x-auto my-6 rounded-xl border border-[var(--color-border-subtle)] bg-black/20 shadow-lg">
+                                    <table className="w-full text-sm text-left border-collapse" {...props} />
+                                  </div>
+                                ),
+                                thead: ({node, ...props}) => <thead className="text-xs uppercase bg-black/40 border-b border-[var(--color-border-subtle)] text-indigo-200 tracking-wider" {...props} />,
+                                tbody: ({node, ...props}) => <tbody className="divide-y divide-[var(--color-border-subtle)]" {...props} />,
+                                tr: ({node, ...props}) => <tr className="hover:bg-white/[0.04] transition-colors" {...props} />,
+                                th: ({node, ...props}) => <th className="px-4 py-3.5 font-semibold" {...props} />,
+                                td: ({node, ...props}) => <td className="px-4 py-3 align-top leading-relaxed text-[var(--color-text-secondary)]" {...props} />,
+                                a: ({node, ...props}) => <a className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 transition-colors" {...props} />,
+                                h1: ({node, ...props}) => <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400 mt-6 mb-4 pb-2 border-b border-[var(--color-border-subtle)]" {...props} />,
+                                h2: ({node, ...props}) => <h2 className="text-xl font-semibold text-indigo-300 mt-6 mb-3 flex items-center gap-2" {...props} />,
+                                h3: ({node, ...props}) => <h3 className="text-lg font-medium text-white mt-4 mb-2" {...props} />,
+                              }}
+                            >
+                              {msg.content.replace(/```(?:markdown)?\n([\s\S]*?)```/g, '$1')}
+                            </ReactMarkdown>
                           </div>}
                     </div>
                     {isUser && (
@@ -658,38 +775,87 @@ Do not output anything else after the JSON.`,
                   <span>Messages will be delivered as runtime signals to the workflow.</span>
                 </div>
               )}
-              <div className="relative">
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  onInput={e => {
-                    const target = e.target as HTMLTextAreaElement;
-                    target.style.height = 'auto';
-                    target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
-                  }}
-                  rows={1}
-                  placeholder={
-                    execStatus === 'RUNNING' ? 'Send a signal to the running workflow…' :
-                    isTerminal ? 'Ask about the results…' :
-                    'Type your message here…'
-                  }
-                  className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-2xl pl-5 pr-14 py-3.5 text-[14px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all resize-none overflow-y-auto overflow-x-hidden custom-scrollbar"
-                  style={{ minHeight: '50px', maxHeight: '200px' }}
-                  disabled={isTyping}
+
+              {/* Image preview */}
+              {uploadedImage && (
+                <div className="mb-3 flex items-start gap-2">
+                  <div className="relative group">
+                    <img
+                      src={uploadedImage.previewUrl}
+                      alt="Upload preview"
+                      className="w-20 h-20 rounded-xl object-cover border-2 border-indigo-500/40 shadow-lg shadow-indigo-500/10"
+                    />
+                    <button
+                      onClick={() => setUploadedImage(null)}
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <XIcon size={10} />
+                    </button>
+                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-1">
+                    <p className="font-semibold text-indigo-400">📷 Image attached</p>
+                    <p className="mt-0.5">Will be sent with the workflow</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="relative flex items-center gap-2">
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleImageUpload}
                 />
+
+                {/* Image upload button */}
                 <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || isTyping}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all shadow-lg shadow-indigo-500/20"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading || execStatus === 'RUNNING'}
+                  className="shrink-0 w-10 h-10 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] hover:bg-[var(--color-bg-hover)] hover:border-indigo-500/30 text-[var(--color-text-muted)] hover:text-indigo-400 flex items-center justify-center transition-all disabled:opacity-40"
+                  title="Upload an image"
                 >
-                  {execStatus === 'RUNNING' ? <Play size={15} className="fill-current ml-0.5" /> : <Send size={15} />}
+                  {isUploading
+                    ? <Loader2 size={15} className="animate-spin" />
+                    : <ImagePlus size={15} />
+                  }
                 </button>
+
+                <div className="relative flex-1 flex items-center">
+                  <textarea
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                    onInput={e => {
+                      const target = e.target as HTMLTextAreaElement;
+                      target.style.height = 'auto';
+                      target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+                    }}
+                    rows={1}
+                    placeholder={
+                      execStatus === 'RUNNING' ? 'Send a signal to the running workflow…' :
+                      isTerminal ? 'Ask about the results…' :
+                      uploadedImage ? 'Describe the image or add details…' :
+                      'Type your message or attach an image…'
+                    }
+                    className="w-full bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-2xl pl-5 pr-14 py-3.5 text-[14px] text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all resize-none overflow-y-auto overflow-x-hidden custom-scrollbar"
+                    style={{ minHeight: '50px', maxHeight: '200px' }}
+                    disabled={isTyping}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isTyping}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all shadow-lg shadow-indigo-500/20"
+                  >
+                    {execStatus === 'RUNNING' ? <Play size={15} className="fill-current ml-0.5" /> : <Send size={15} />}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

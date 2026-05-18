@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
-  MessageSquare, Send, Bot, User, Zap, Server,
+  MessageSquare, Send, Bot, User, Zap, Server, ImagePlus, X as XIcon,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
@@ -23,7 +23,17 @@ interface WorkflowDef {
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  imagePreview?: string;
 }
+
+interface ImageUploadData {
+  image_base64: string;
+  image_url: string;
+  image_mime: string;
+  previewUrl: string;
+}
+
+const API_IMG_BASE_MODAL = import.meta.env.VITE_API_URL ?? '';
 
 interface StepResult {
   step_id: string;
@@ -173,6 +183,42 @@ export default function WorkflowExecutionModal({
   // SSE stream ref for cleanup
   const streamAbortRef = useRef<AbortController | null>(null);
 
+  // Image upload state
+  const [uploadedImage, setUploadedImage] = useState<ImageUploadData | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Please select a valid image file.' }]);
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const res = await workflowsApi.uploadImage(file);
+      const data = res.data;
+      const previewUrl = URL.createObjectURL(file);
+      setUploadedImage({
+        image_base64: data.image_base64,
+        image_url: `${API_IMG_BASE_MODAL}${data.image_url}`,
+        image_mime: data.image_mime,
+        previewUrl,
+      });
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `📷 Image uploaded! (${(data.size_bytes / 1024).toFixed(0)}KB) — it will be included with the workflow execution.`,
+      }]);
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.detail || 'Upload failed.';
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ ${errMsg}` }]);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, isTyping, execData]);
@@ -272,8 +318,15 @@ Do not output anything else after the JSON.`,
 
   // ── Execute mutation ────────────────────────────────────────────────────
   const executeMut = useMutation({
-    mutationFn: (inputs: Record<string, string>) =>
-      workflowsApi.execute(workflow.name, { input: inputs, wait_for_result: false }),
+    mutationFn: (inputs: Record<string, string>) => {
+      const mergedInputs = { ...inputs };
+      if (uploadedImage) {
+        mergedInputs.image_base64 = uploadedImage.image_base64;
+        mergedInputs.image_url = uploadedImage.image_url;
+        mergedInputs.image_mime = uploadedImage.image_mime;
+      }
+      return workflowsApi.execute(workflow.name, { input: mergedInputs, wait_for_result: false });
+    },
     onSuccess: (res) => {
       const execId = res.data?.execution_id;
       setExecutionId(execId);
@@ -478,7 +531,11 @@ Do not output anything else after the JSON.`,
 
   const handleSend = () => {
     if (!input.trim() || isTyping) return;
-    const userMsg: Message = { role: 'user', content: input.trim() };
+    const userMsg: Message = {
+      role: 'user',
+      content: input.trim(),
+      imagePreview: uploadedImage?.previewUrl,
+    };
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
     const sentInput = input.trim();
@@ -608,7 +665,12 @@ Do not output anything else after the JSON.`,
             ? 'bg-[#6366f1] text-white rounded-tr-sm max-w-[85%]'
             : 'surface-card border border-[var(--color-border-subtle)] rounded-tl-sm text-[var(--color-text-primary)] max-w-[90%]')}>
           {msg.role === 'user'
-            ? <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+            ? <div>
+                {msg.imagePreview && (
+                  <img src={msg.imagePreview} alt="Uploaded" className="max-w-[200px] max-h-[150px] rounded-lg mb-2 object-cover border border-white/20" />
+                )}
+                <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+              </div>
             : <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
         </div>
       </div>
@@ -685,7 +747,34 @@ Do not output anything else after the JSON.`,
                       Messages sent while running will be delivered as signals to the workflow.
                     </p>
                   )}
+
+                  {/* Image preview */}
+                  {uploadedImage && (
+                    <div className="mb-2 flex items-center gap-2">
+                      <div className="relative group">
+                        <img src={uploadedImage.previewUrl} alt="Preview" className="w-14 h-14 rounded-lg object-cover border border-indigo-500/40" />
+                        <button onClick={() => setUploadedImage(null)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                          <XIcon size={8} />
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-indigo-400 font-semibold">📷 Attached</span>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2">
+                    {/* Hidden file input */}
+                    <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={handleImageUpload} />
+
+                    {/* Image upload button */}
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading || execStatus === 'RUNNING'}
+                      className="p-2.5 rounded-xl border border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-indigo-400 hover:border-indigo-500/30 transition-all disabled:opacity-40"
+                      title="Upload image"
+                    >
+                      {isUploading ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
+                    </button>
+
                     <textarea
                       value={input}
                       onChange={e => setInput(e.target.value)}
@@ -706,7 +795,9 @@ Do not output anything else after the JSON.`,
                           ? 'Send a message to the running workflow…'
                           : isTerminal
                           ? 'Ask a question about the results…'
-                          : 'Type your answer…'
+                          : uploadedImage
+                          ? 'Describe the image or add details…'
+                          : 'Type your answer or attach an image…'
                       }
                       className="flex-1 bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[#6366f1] transition-colors resize-none overflow-y-auto overflow-x-hidden custom-scrollbar"
                       style={{ minHeight: '42px', maxHeight: '200px' }}

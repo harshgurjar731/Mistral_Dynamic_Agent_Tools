@@ -37,14 +37,16 @@ FORBIDDEN_IMPORTS = {
 
 
 
-# ── In-process cache ───────────────────────────────────────────────────────
-
-_execution_cache: dict[str, callable] = {}
+# NOTE: The actual execution cache lives in execution_service._execution_cache.
+# _write_and_register below imports and updates it directly.
 
 
 # ── Stage 1: Prompt Builder ───────────────────────────────────────────────
 
-def _build_prompt(name: str, description: str, parameters: dict, required: list[str]) -> str:
+def _build_prompt(
+    name: str, description: str, parameters: dict, required: list[str],
+    api_details: str, expected_output_shape: str
+) -> str:
     """Build a structured Codestral prompt from the tool schema."""
     params_desc = []
     for pname, pdef in parameters.get("properties", {}).items():
@@ -62,6 +64,8 @@ def _build_prompt(name: str, description: str, parameters: dict, required: list[
     return CODEGEN_USER_PROMPT_TEMPLATE.format(
         description=description,
         params_str=params_str,
+        api_details=api_details,
+        expected_output_shape=expected_output_shape,
     )
 
 
@@ -69,7 +73,7 @@ def _build_prompt(name: str, description: str, parameters: dict, required: list[
 
 def _call_codestral(messages: list[dict]) -> str:
     """Call Codestral to generate Python code."""
-    client = Mistral(api_key=settings.MISTRAL_API_KEY)
+    client = Mistral(api_key=settings.MISTRAL_API_KEY, timeout_ms=120000)
     response = client.chat.complete(
         model=settings.MISTRAL_CODING_MODEL,
         messages=messages,
@@ -115,7 +119,11 @@ def _static_analyse(code: str) -> tuple[bool, str, str]:
         return False, f"SyntaxError: {e}", code
 
     # 3. Strict Import Whitelist Check
-    ALLOWED_IMPORTS = {"requests", "pandas", "numpy", "bs4", "beautifulsoup4", "lxml", "sqlalchemy"}
+    ALLOWED_IMPORTS = {
+        "requests", "pandas", "numpy", "bs4", "beautifulsoup4", "lxml", "sqlalchemy",
+        "httpx", "pydantic", "mistralai", "PIL", "pillow", "sklearn", "scipy",
+        "aiohttp", "certifi", "charset_normalizer", "idna", "urllib3",
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -166,6 +174,8 @@ def synthesize_tool(
     description: str,
     parameters: dict,
     required: list[str],
+    api_details: str = "No external API. This is a pure computation using standard library.",
+    expected_output_shape: str = "A dictionary containing the result.",
 ) -> dict:
     """
     Run the full 6-stage synthesis pipeline.
@@ -190,7 +200,7 @@ def synthesize_tool(
             return {"status": "pending_approval", "tool_name": name, "message": "Tool awaiting approval", "tool_id": existing.id}
 
     # Stage 1: Build prompt
-    prompt = _build_prompt(name, description, parameters, required)
+    prompt = _build_prompt(name, description, parameters, required, api_details, expected_output_shape)
 
     # Stage 2 + 3 + 3a: Generate code with self-heal retry
     messages = [
@@ -382,6 +392,7 @@ def update_tool(db: Session, tool_id: int, code: str, description: str) -> dict:
     # Re-verify static analysis
     ok, error, formatted_code = _static_analyse(code)
     if not ok:
+        logger.warning("Tool update rejected for '%s' (id=%d): %s", record.name, tool_id, error)
         return {"status": "error", "message": f"Static analysis failed: {error}"}
     code = formatted_code
 
@@ -417,6 +428,8 @@ def update_tool(db: Session, tool_id: int, code: str, description: str) -> dict:
 def _write_and_register(code: str, name: str, content_hash: str) -> str:
     """Write tool to disk and load it into the execution cache."""
     import os
+    from app.services.execution_service import _execution_cache
+
     module_path = f"dynamic_tools/{name}_{content_hash[:8]}.py"
     os.makedirs("dynamic_tools", exist_ok=True)
 
@@ -428,7 +441,7 @@ def _write_and_register(code: str, name: str, content_hash: str) -> str:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    # Warm execution cache
+    # Warm the REAL execution cache (execution_service._execution_cache)
     if hasattr(module, "run"):
         _execution_cache[name] = module.run
         logger.info("Tool '%s' loaded into execution cache", name)

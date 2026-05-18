@@ -6,16 +6,164 @@ Each step type has its own runner function.
 import json
 import time
 import logging
+import re
+import base64
 
 from typing import Any
 from app.services.workflow_engine.models import WorkflowStep, StepResult, StepType
 
 logger = logging.getLogger(__name__)
 
+# ── Agent name → ID cache (lives for the process lifetime) ────────────────
+_agent_name_to_id_cache: dict[str, str] = {}
+
+
+def _is_agent_uuid(agent_id: str) -> bool:
+    """Check if the agent_id looks like a real Mistral agent UUID (not a human name)."""
+    if not agent_id:
+        return False
+    # Mistral agent IDs are typically 'ag:...' or plain UUIDs
+    if agent_id.startswith("ag:"):
+        return True
+    # UUID-like pattern (hex with dashes)
+    if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', agent_id, re.IGNORECASE):
+        return True
+    # Pure hex (some APIs return these)
+    if re.match(r'^[0-9a-f]{24,}$', agent_id, re.IGNORECASE):
+        return True
+    return False
+
+
+def _resolve_agent_id(client: Any, agent_id: str) -> str:
+    """
+    Resolve an agent identifier to a real Mistral agent UUID.
+
+    If agent_id already looks like a UUID, return it as-is.
+    Otherwise, treat it as a human-readable name:
+      1. Check the in-memory cache.
+      2. Query the Mistral API for existing agents with that name.
+      3. If not found, auto-create a lightweight agent with that name.
+    """
+    if _is_agent_uuid(agent_id):
+        return agent_id
+
+    # Check cache
+    if agent_id in _agent_name_to_id_cache:
+        cached_id = _agent_name_to_id_cache[agent_id]
+        logger.info("Agent '%s' resolved from cache → %s", agent_id, cached_id)
+        return cached_id
+
+    # Query Mistral API by listing agents and matching by name
+    import httpx
+    from app.config import settings
+
+    try:
+        http_client = httpx.Client(
+            base_url="https://api.mistral.ai",
+            headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+            timeout=15.0,
+        )
+        resp = http_client.get("/v1/agents", params={"page": 0, "page_size": 100})
+        if resp.status_code == 200:
+            data = resp.json()
+            agent_list = data if isinstance(data, list) else data.get("data", data)
+            for agent in agent_list:
+                name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
+                aid = agent.get("id") if isinstance(agent, dict) else getattr(agent, "id", None)
+                if name == agent_id and aid:
+                    _agent_name_to_id_cache[agent_id] = aid
+                    logger.info("Agent '%s' resolved by name → %s", agent_id, aid)
+                    return aid
+    except Exception as e:
+        logger.warning("Failed to query agents for name resolution: %s", e)
+
+    # Auto-create a new agent with this name
+    logger.info("Agent '%s' not found on server — auto-creating…", agent_id)
+    try:
+        agent_obj = client.beta.agents.create(
+            model="mistral-large-latest",
+            name=agent_id,
+            instructions=(
+                f"You are '{agent_id}', a specialist workflow agent. "
+                "Analyze the input carefully and provide a thorough, structured response. "
+                "If the task involves JSON output, return valid JSON. "
+                "Always provide a complete response — never return empty."
+            ),
+            description=f"Auto-created workflow agent: {agent_id}",
+        )
+        real_id = agent_obj.id
+        _agent_name_to_id_cache[agent_id] = real_id
+        logger.info("Auto-created agent '%s' → %s", agent_id, real_id)
+        return real_id
+    except Exception as e:
+        logger.error("Failed to auto-create agent '%s': %s", agent_id, e)
+        raise RuntimeError(f"Cannot resolve agent '{agent_id}': not found and auto-creation failed: {e}")
+
+
+def _build_multimodal_messages(query: str, variables: dict) -> list[dict[str, Any]]:
+    """
+    Build the messages list for an agent call.
+    If variables contain image data (image_url or image_base64), construct a
+    multimodal content array with text + image. Otherwise, plain text message.
+    """
+    image_url = variables.get("image_url")
+    image_base64 = variables.get("image_base64")
+
+    if image_base64:
+        # Base64-encoded image → use data URI
+        mime = variables.get("image_mime", "image/jpeg")
+        content = [
+            {"type": "text", "text": query},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_base64}"}},
+        ]
+        return [{"role": "user", "content": content}]
+    elif image_url:
+        content = [
+            {"type": "text", "text": query},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]
+        return [{"role": "user", "content": content}]
+    else:
+        return [{"role": "user", "content": query}]
+
+
 class SafeDict(dict):
     """A dictionary that returns the key placeholder when a key is missing during string formatting."""
     def __missing__(self, key):
         return "{" + key + "}"
+
+def substitute_double_brackets(text: str, variables: dict) -> str:
+    """Safely replace {{key}} with variables[key] without breaking on single {JSON} braces. Supports dot notation."""
+    if not isinstance(text, str) or not variables:
+        return text
+    
+    def repl(match):
+        key = match.group(1).strip()
+        parts = key.split('.')
+        val = variables.get(parts[0])
+        if val is None:
+            return match.group(0)
+            
+        for part in parts[1:]:
+            if isinstance(val, dict):
+                val = val.get(part)
+            else:
+                return match.group(0)
+
+        # Convert dicts/lists to JSON strings for prompt insertion
+        if isinstance(val, (dict, list)):
+            return json.dumps(val)
+        return str(val)
+
+    return re.sub(r'\{\{([^}]+)\}\}', repl, text)
+
+class DotDict(dict):
+    """Dictionary supporting dot notation for condition evaluation."""
+    def __getattr__(self, item):
+        val = self.get(item)
+        if isinstance(val, dict):
+            return DotDict(val)
+        return val
 
 
 def _execute_tool_via_service(tool_name: str, arguments: dict) -> Any:
@@ -62,19 +210,21 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
         # Resolve query template with variables
         query_template = config.get("query_template", config.get("query", ""))
-        query = query_template.format_map(SafeDict(**variables)) if variables else query_template
+        query = substitute_double_brackets(query_template, variables)
 
         agent_id = config.get("agent_id")
 
         if agent_id:
-            # ── Fast path: call existing agent with tool execution loop ──
-            logger.info("Step '%s' — calling agent %s with query (%.300s)", step.id, agent_id, query)
+            # ── Resolve agent name → real UUID if needed ──
+            resolved_id = _resolve_agent_id(client, agent_id)
+            logger.info("Step '%s' — calling agent %s (resolved: %s) with query (%.300s)", step.id, agent_id, resolved_id, query)
 
-            messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
+            # Build messages — supports multimodal (text + image) if image data in variables
+            messages: list[dict[str, Any]] = _build_multimodal_messages(query, variables)
 
             # Use conversation_id from config or create a new conversation
             conv_id = config.get("conversation_id")
-            base_kwargs: dict[str, Any] = {"agent_id": agent_id}
+            base_kwargs: dict[str, Any] = {"agent_id": resolved_id}
             if conv_id:
                 base_kwargs["conversation_id"] = conv_id
 
@@ -163,12 +313,48 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             # Try to parse structured JSON from the agent response so
             # downstream steps can reference individual fields as variables.
             output: Any = result_text
-            try:
-                parsed = json.loads(result_text)
-                if isinstance(parsed, dict):
-                    output = parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
+            import re
+            
+            def extract_json(text: str) -> dict | None:
+                # 1. Try finding explicitly marked JSON block
+                match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+                if match:
+                    try:
+                        parsed = json.loads(match.group(1))
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except Exception:
+                        pass
+                
+                # 2. Try just parsing the whole text after stripping
+                try:
+                    text_to_parse = text.strip()
+                    if text_to_parse.startswith("```json"):
+                        text_to_parse = text_to_parse[7:]
+                    elif text_to_parse.startswith("```"):
+                        text_to_parse = text_to_parse[3:]
+                    if text_to_parse.endswith("```"):
+                        text_to_parse = text_to_parse[:-3]
+                    parsed = json.loads(text_to_parse.strip())
+                    if isinstance(parsed, dict):
+                        return parsed
+                except Exception:
+                    pass
+                
+                # 3. Try finding any {...} block
+                match = re.search(r'(\{.*?\})', text, re.DOTALL)
+                if match:
+                    try:
+                        parsed = json.loads(match.group(1))
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except Exception:
+                        pass
+                return None
+
+            parsed_dict = extract_json(result_text)
+            if parsed_dict is not None:
+                output = parsed_dict
 
             duration = (time.time() - start) * 1000
             
@@ -200,6 +386,11 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             # Guarantee non-empty output
             if not output or (isinstance(output, str) and not output.strip()):
                 output = f"Orchestrator completed step '{step.id}' but returned no text output."
+            
+            if isinstance(output, str):
+                parsed_dict = extract_json(output)
+                if parsed_dict is not None:
+                    output = parsed_dict
 
             duration = (time.time() - start) * 1000
             
@@ -242,10 +433,9 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         # Resolve arguments template with variables
         args_template = config.get("arguments", {})
         arguments = {}
-        safe_vars = SafeDict(**variables) if variables else SafeDict()
         for k, v in args_template.items():
-            if isinstance(v, str) and "{" in v:
-                arguments[k] = v.format_map(safe_vars)
+            if isinstance(v, str) and "{{" in v:
+                arguments[k] = substitute_double_brackets(v, variables)
             else:
                 arguments[k] = v
 
@@ -289,6 +479,45 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         )
 
 
+def substitute_for_eval(text: str, variables: dict) -> str:
+    """Replace {{key}} with properly quoted Python literals for safe eval().
+    
+    Unlike substitute_double_brackets (which produces raw strings for prompt
+    insertion), this function wraps string values in repr() quotes so the
+    result is a valid Python expression, e.g.:
+        {{step_x.input_type}} == 'image'  →  'text' == 'image'
+    """
+    if not isinstance(text, str):
+        return text
+
+    def repl(match):
+        key = match.group(1).strip()
+        parts = key.split(".")
+        val = variables.get(parts[0])
+        if val is None:
+            return "None"
+
+        for part in parts[1:]:
+            if isinstance(val, dict):
+                val = val.get(part)
+            else:
+                return "None"
+            if val is None:
+                return "None"
+
+        if isinstance(val, bool):
+            return "True" if val else "False"
+        if isinstance(val, (int, float)):
+            return str(val)
+        if isinstance(val, str):
+            return repr(val)
+        if isinstance(val, (dict, list)):
+            return json.dumps(val)
+        return repr(str(val))
+
+    return re.sub(r'\{\{([^}]+)\}\}', repl, text)
+
+
 async def run_condition_step(step: WorkflowStep, variables: dict) -> StepResult:
     """Evaluate a condition and return which branch to take."""
     start = time.time()
@@ -296,12 +525,20 @@ async def run_condition_step(step: WorkflowStep, variables: dict) -> StepResult:
         config = step.config
         expression = config.get("expression", "True")
 
-        # Safe eval with only variables in scope
-        safe_globals = {"__builtins__": None}
-        safe_locals = {**variables}
-        result = eval(expression, safe_globals, safe_locals)
+        # Substitute {{var.prop}} → properly quoted Python literals
+        expression = substitute_for_eval(expression, variables)
+
+        logger.info("Condition step '%s' — evaluating: %s", step.id, expression)
+
+        # Provide JSON-style boolean aliases so 'true'/'false' work in eval
+        safe_globals = {"__builtins__": None, "true": True, "false": False, "null": None, "True": True, "False": False, "None": None}
+        result = eval(expression, safe_globals, {})
 
         branch = config.get("true_step") if result else config.get("false_step")
+
+        # If condition evaluated to a falsy path and there's a fallback, prefer it
+        if not branch:
+            branch = config.get("fallback_step")
 
         duration = (time.time() - start) * 1000
         return StepResult(
@@ -313,6 +550,16 @@ async def run_condition_step(step: WorkflowStep, variables: dict) -> StepResult:
     except Exception as e:
         duration = (time.time() - start) * 1000
         logger.error("Condition step '%s' failed: %s", step.id, e)
+        # On failure, use fallback_step if available instead of crashing
+        fallback = step.config.get("fallback_step")
+        if fallback:
+            logger.info("Condition step '%s' — using fallback_step '%s'", step.id, fallback)
+            return StepResult(
+                step_id=step.id,
+                status="completed",
+                output={"condition_result": False, "next_step": fallback},
+                duration_ms=duration,
+            )
         return StepResult(step_id=step.id, status="failed", error=str(e), duration_ms=duration)
 
 
@@ -330,9 +577,8 @@ async def run_transform_step(step: WorkflowStep, variables: dict) -> StepResult:
                 # Reference to a variable: $variable_name
                 var_name = source_expr[1:]
                 output[target_key] = variables.get(var_name)
-            elif isinstance(source_expr, str) and "{" in source_expr:
-                safe_vars = SafeDict(**variables) if variables else SafeDict()
-                output[target_key] = source_expr.format_map(safe_vars)
+            elif isinstance(source_expr, str) and "{{" in source_expr:
+                output[target_key] = substitute_double_brackets(source_expr, variables)
             else:
                 output[target_key] = source_expr
 

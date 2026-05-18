@@ -87,7 +87,7 @@ async def plan_workflow_stream(
 
         yield _sse(json.dumps({
             "tools_needed": [t["name"] for t in requirements.get("tools_needed", [])],
-            "agents_needed": [a["name"] for a in requirements.get("agents_needed", [])],
+            "agents_needed": [a.get("agent_name", a.get("name", "")) for a in requirements.get("agents_needed", [])],
             "description": requirements.get("workflow_description", goal),
         }), "requirements")
 
@@ -95,8 +95,10 @@ async def plan_workflow_stream(
         tools_needed = requirements.get("tools_needed", [])
         for tool_spec in tools_needed:
             tool_name = tool_spec.get("name", "unknown")
-            # Skip if already exists
-            if tool_name in existing_tool_names:
+            is_reused = tool_spec.get("is_reused", False)
+
+            # Skip if flagged as reused OR already exists in registry
+            if is_reused or tool_name in existing_tool_names:
                 yield _sse(json.dumps({"tool_name": tool_name, "status": "exists"}), "tool_exists")
                 continue
 
@@ -107,6 +109,8 @@ async def plan_workflow_stream(
                     description=tool_spec.get("description", f"Tool to {tool_name}"),
                     parameters=tool_spec.get("parameters", {"type": "object", "properties": {}}),
                     required=tool_spec.get("required", []),
+                    api_details=tool_spec.get("api_details", "No external API. This is a pure computation using standard library."),
+                    expected_output_shape=tool_spec.get("expected_output_shape", "A dictionary containing the result.")
                 )
                 status = synth_result.get("status", "unknown")
                 if status in ("failed", "error"):
@@ -127,18 +131,29 @@ async def plan_workflow_stream(
         created_agents: list[dict] = []
 
         for agent_spec in agents_needed:
-            agent_name = agent_spec.get("name", "WorkflowAgent")
-            
-            # Check if we can reuse an existing agent from the server
-            existing_agent = next((a for a in existing_agents if a["name"] == agent_name), None)
+            # v2.0 uses agent_name/agent_instructions; fall back to v1 name/instructions
+            agent_name = agent_spec.get("agent_name", agent_spec.get("name", "WorkflowAgent"))
+            is_reused = agent_spec.get("is_reused", False)
+            existing_id = agent_spec.get("existing_id")
+
+            # ── Try to find existing agent: by explicit ID, then by name match ──
+            existing_agent = None
+            if is_reused and existing_id and existing_id != "null":
+                existing_agent = next((a for a in existing_agents if a["id"] == existing_id), None)
+            if not existing_agent:
+                # Fallback: match by exact name
+                existing_agent = next((a for a in existing_agents if a["name"] == agent_name), None)
+
             if existing_agent:
-                yield _sse(f"Reusing existing agent from server: {agent_name}…", "status")
+                yield _sse(f"Reusing existing agent: {agent_name}", "status")
                 agent_info = {
                     "agent_id": existing_agent["id"],
-                    "agent_name": agent_name,
+                    "agent_name": existing_agent["name"],
                     "model": agent_spec.get("model", "mistral-large-latest"),
                     "tools": agent_spec.get("tools", []),
                     "description": agent_spec.get("description", ""),
+                    "output_contract": agent_spec.get("output_contract", ""),
+                    "output_contract_detail": agent_spec.get("output_contract_detail", ""),
                 }
                 created_agents.append(agent_info)
                 yield _sse(json.dumps(agent_info), "agent_exists")
@@ -150,15 +165,28 @@ async def plan_workflow_stream(
                 tool_keys = agent_spec.get("tools", [])
                 tool_definitions = get_tools(tool_keys)
 
+                # v2.0 uses agent_instructions; fall back to v1 instructions
+                instructions = agent_spec.get(
+                    "agent_instructions",
+                    agent_spec.get("instructions", f"You are {agent_name}, a specialist agent."),
+                )
+
                 create_kwargs: dict = {
                     "model": agent_spec.get("model", "mistral-large-latest"),
                     "name": agent_name,
-                    "instructions": agent_spec.get("instructions", f"You are {agent_name}, a specialist agent."),
+                    "instructions": instructions,
                     "description": agent_spec.get("description", f"Workflow agent: {agent_name}"),
                     "metadata": {"workflow_goal": goal[:200], "source": "workflow_planner"},
                 }
                 if tool_definitions:
                     create_kwargs["tools"] = tool_definitions
+
+                comp_args = {}
+                temp = agent_spec.get("temperature")
+                if temp is not None:
+                    comp_args["temperature"] = temp
+                if comp_args:
+                    create_kwargs["completion_args"] = comp_args
 
                 agent_obj = client.beta.agents.create(**create_kwargs)
                 agent_id = agent_obj.id
@@ -169,6 +197,8 @@ async def plan_workflow_stream(
                     "model": agent_spec.get("model", "mistral-large-latest"),
                     "tools": tool_keys,
                     "description": agent_spec.get("description", ""),
+                    "output_contract": agent_spec.get("output_contract", ""),
+                    "output_contract_detail": agent_spec.get("output_contract_detail", ""),
                 }
                 created_agents.append(agent_info)
 

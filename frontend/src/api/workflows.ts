@@ -1,4 +1,7 @@
 import { api } from './client';
+import axios from 'axios';
+
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 export const workflowsApi = {
   // ── CRUD ────────────────────────────────────────────────────────────────
@@ -24,7 +27,17 @@ export const workflowsApi = {
       payload: payload ?? {},
     }),
 
+  // ── Image upload ─────────────────────────────────────────────────────────
+  uploadImage: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return axios.post(`${API_BASE}/api/uploads/image`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
   // ── SSE stream helpers (returns URL string for use with createSSEStream) ──
   executionStreamUrl: (executionId: string) =>
     `/api/workflows/executions/${executionId}/stream`,
 };
+

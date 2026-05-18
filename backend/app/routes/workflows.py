@@ -39,9 +39,71 @@ WORKER_DEPLOYMENT = os.environ.get("DEPLOYMENT_NAME", "default")
 
 # ── SSE helper ────────────────────────────────────────────────────────────────
 def _sse(data, event: str = "message") -> str:
-    payload = json.dumps(data) if not isinstance(data, str) else data
+    payload = json.dumps(data, default=str) if not isinstance(data, str) else data
     payload = payload.replace("\n", "\ndata: ")
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _safe_serialize(obj):
+    """
+    Recursively convert a value into a plain JSON-serializable Python type.
+
+    Handles:
+      - Pydantic BaseModel objects → dict via model_dump() / dict()
+      - datetime objects → ISO string
+      - strings that look like JSON or Python dicts → parsed to dict
+      - lists/dicts → recursively cleaned
+      - Everything else → str()
+    """
+    if obj is None:
+        return None
+
+    # Pydantic models (Mistral SDK returns these)
+    if hasattr(obj, "model_dump"):
+        try:
+            return _safe_serialize(obj.model_dump())
+        except Exception:
+            pass
+    if hasattr(obj, "dict") and callable(obj.dict) and not isinstance(obj, dict):
+        try:
+            return _safe_serialize(obj.dict())
+        except Exception:
+            pass
+
+    # datetime → ISO string
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+
+    # dict → recurse
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize(v) for k, v in obj.items()}
+
+    # list/tuple → recurse
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize(item) for item in obj]
+
+    # Primitives pass through
+    if isinstance(obj, (str, int, float, bool)):
+        # Try parsing strings that look like JSON or Python dict literals
+        if isinstance(obj, str) and obj.strip().startswith("{"):
+            try:
+                return _safe_serialize(json.loads(obj))
+            except (json.JSONDecodeError, ValueError):
+                # Try Python literal eval as last resort (for repr-style dicts)
+                import ast
+                try:
+                    parsed = ast.literal_eval(obj)
+                    if isinstance(parsed, (dict, list)):
+                        return _safe_serialize(parsed)
+                except (ValueError, SyntaxError):
+                    pass
+        return obj
+
+    # Fallback: stringify
+    try:
+        return str(obj)
+    except Exception:
+        return repr(obj)
 
 
 router = APIRouter(tags=["Workflows"])
@@ -427,6 +489,9 @@ async def get_execution_status(execution_id: str):
                 raw_result = val
                 break
 
+        # Make result JSON-serializable (SDK returns Pydantic models)
+        raw_result = _safe_serialize(raw_result)
+
         # Unwrap nested {'result': X} envelopes (may be multiple layers)
         for _ in range(3):
             if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
@@ -513,6 +578,11 @@ async def stream_execution_status(execution_id: str):
                             raw_result = val
                             break
 
+                    # ── Make result JSON-serializable ──
+                    # SDK may return Pydantic models, datetime objects, or other
+                    # non-serializable types that silently break json.dumps().
+                    raw_result = _safe_serialize(raw_result)
+
                     # Unwrap nested {'result': X} envelopes (may be multiple layers)
                     for _ in range(3):
                         if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
@@ -540,7 +610,7 @@ async def stream_execution_status(execution_id: str):
                             )
                             qr = getattr(query_result, "result", None) or getattr(query_result, "data", None)
                             if qr and qr != {} and qr != "":
-                                raw_result = qr
+                                raw_result = _safe_serialize(qr)
                                 logger.info("Got result from query API: %.200s", str(qr)[:200])
                         except Exception as q_err:
                             logger.debug("Query API fallback failed (expected for some workflows): %s", q_err)

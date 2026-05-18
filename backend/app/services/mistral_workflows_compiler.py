@@ -139,10 +139,9 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
             f"                output = await run_{workflow_def.name}_{step.id}(variables)",
             f"                last_output = output",
             f"                self._last_result = output",
+            f"                variables[\"step_{step.id}_output\"] = output",
             f"                if isinstance(output, dict):",
             f"                    variables.update(output)",
-            f"                else:",
-            f"                    variables[\"step_{step.id}_output\"] = output",
             "",
         ]
 

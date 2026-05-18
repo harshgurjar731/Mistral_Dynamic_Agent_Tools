@@ -18,7 +18,7 @@ class ToolResolver:
 
     def __init__(self, base_url: str = None):
         self.base_url = base_url or settings.TOOL_SERVICE_URL
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=60.0)
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=180.0)
 
     async def health_check(self) -> bool:
         """Check if the Tool Service is reachable."""
@@ -41,16 +41,29 @@ class ToolResolver:
             logger.warning("Tool lookup failed: %s", e)
         return None
 
-    async def trigger_synthesis(self, name: str, description: str, parameters: dict, required: list[str]) -> dict:
+    async def trigger_synthesis(
+        self, name: str, description: str, parameters: dict, required: list[str],
+        api_details: str = "No external API. This is a pure computation using standard library.",
+        expected_output_shape: str = "A dictionary containing the result."
+    ) -> dict:
         """Trigger tool synthesis on the Docker Tool Service.
         Auto-approves pending tools so they never block the pipeline.
         """
+        # Defensive sanitization to prevent 422 errors from Pydantic in tool-service
+        safe_parameters = parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}
+        safe_required = required if isinstance(required, list) else []
+        safe_api_details = str(api_details) if api_details else "No external API. This is a pure computation using standard library."
+        safe_expected_output = str(expected_output_shape) if expected_output_shape else "A dictionary containing the result."
+        safe_description = str(description) if description else f"Tool {name}"
+
         try:
             resp = await self._client.post("/synthesize", json={
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-                "required": required,
+                "name": str(name),
+                "description": safe_description,
+                "parameters": safe_parameters,
+                "required": safe_required,
+                "api_details": safe_api_details,
+                "expected_output_shape": safe_expected_output,
             })
             result = resp.json()
 
@@ -188,7 +201,9 @@ class ToolResolver:
                 name=data.get("tool_name", "unknown"),
                 description=data.get("tool_description", ""),
                 parameters=data.get("parameters", {}),
-                required=data.get("required", [])
+                required=data.get("required", []),
+                api_details=data.get("api_details", "No external API. This is a pure computation using standard library."),
+                expected_output_shape=data.get("expected_output_shape", "A dictionary containing the result.")
             )
         except Exception as e:
             logger.error("Failed to parse task to schema: %s", e)

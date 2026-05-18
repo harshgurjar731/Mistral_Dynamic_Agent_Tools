@@ -15,6 +15,8 @@ class SynthesizeRequest(BaseModel):
     description: str
     parameters: dict
     required: list[str] = []
+    api_details: str = "No external API. This is a pure computation using standard library."
+    expected_output_shape: str = "A dictionary containing the result."
 
 
 class SynthesizeResponse(BaseModel):
