@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { agentsApi, type Agent } from '../../api/agents';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
+import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -21,21 +22,27 @@ const itemVariants = {
 };
 
 function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: string) => void; onClick: () => void }) {
+  const tier = agent.tier || 'foundation';
+  const cfg = getTierConfig(tier);
+
   return (
     <motion.div 
       variants={itemVariants}
       onClick={onClick}
-      className="surface-card rounded-xl p-5 group flex flex-col h-full cursor-pointer hover:border-[var(--color-border-focus)] transition-all hover:scale-[1.01]"
+      className={cn('rounded-xl p-5 group flex flex-col h-full cursor-pointer hover:scale-[1.01] transition-all shadow-lg', cfg.cardBg, cfg.cardBorder, 'border')}
     >
       <div className="flex items-start gap-3 mb-4">
-        <div className="w-10 h-10 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center shrink-0">
-          <Cpu size={18} className="text-[var(--color-text-primary)]" />
+        <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border', cfg.bg, cfg.border)}>
+          <Cpu size={18} className={cfg.color} />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium text-[var(--color-text-primary)] break-words">{agent.name}</h3>
-          <span className="inline-block mt-1 px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
-            {agent.model}
-          </span>
+          <div className="mt-1 flex items-center gap-2">
+            <TierBadge tier={tier} />
+            <span className="inline-block px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
+              {agent.model}
+            </span>
+          </div>
         </div>
       </div>
       <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed line-clamp-4 flex-1">
@@ -63,7 +70,7 @@ export default function AgentStudio() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '' });
+  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' });
 
   const { data, isLoading } = useQuery({
     queryKey: [...QK.agents(), search],
@@ -73,7 +80,7 @@ export default function AgentStudio() {
 
   const createMut = useMutation({
     mutationFn: () => agentsApi.create(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '' }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' }); },
   });
 
   const deleteMut = useMutation({
@@ -90,8 +97,8 @@ export default function AgentStudio() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">Agent Studio</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">Create and manage specialized Mistral AI agents.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Agent <span className="text-gradient-vibrant">Studio</span></h1>
+          <p className="text-sm text-[var(--color-text-muted)]">Create and manage specialized Mistral AI agents.</p>
         </div>
         <button 
           onClick={() => setShowCreate(true)} 
@@ -133,6 +140,14 @@ export default function AgentStudio() {
                     <option className="bg-[var(--color-bg-surface)] text-white">mistral-medium-latest</option>
                     <option className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
                     <option className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Tier</label>
+                  <select value={form.tier} onChange={e => setForm({ ...form, tier: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
+                    <option value="foundation" className="bg-[var(--color-bg-surface)] text-white">Foundation</option>
+                    <option value="domain" className="bg-[var(--color-bg-surface)] text-white">Domain</option>
+                    <option value="use_case" className="bg-[var(--color-bg-surface)] text-white">Use Case</option>
                   </select>
                 </div>
               </div>
@@ -186,11 +201,11 @@ export default function AgentStudio() {
         </div>
       ) : agents.length === 0 ? (
         <motion.div 
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          className="text-center py-20 border border-dashed border-[var(--color-border-subtle)] rounded-xl flex flex-col items-center gap-4 bg-[var(--color-bg-surface)]"
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[400px] gap-4 bg-[rgba(15,20,28,0.4)] backdrop-blur-xl border border-[rgba(255,255,255,0.05)] shadow-[inset_0_0_30px_rgba(0,0,0,0.2)] w-full mt-2"
         >
-          <div className="w-16 h-16 rounded-full bg-[var(--color-bg-hover)] flex items-center justify-center mb-2">
-            <Cpu size={28} className="text-[var(--color-text-muted)]" />
+          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-[rgba(6,182,212,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+            <Cpu size={32} className="text-cyan-400" />
           </div>
           <div>
             <p className="text-base font-semibold text-[var(--color-text-primary)]">No agents found</p>

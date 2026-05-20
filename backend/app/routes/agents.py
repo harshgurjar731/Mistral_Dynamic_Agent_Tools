@@ -18,6 +18,7 @@ class CreateAgentRequest(BaseModel):
     model: str = "mistral-large-latest"
     instructions: str = "You are a helpful assistant."
     description: Optional[str] = None
+    tier: Optional[str] = None
     tools: list = []
 
 
@@ -25,6 +26,7 @@ class UpdateAgentRequest(BaseModel):
     name: Optional[str] = None
     instructions: Optional[str] = None
     description: Optional[str] = None
+    tier: Optional[str] = None
 
 
 @router.get("/agents")

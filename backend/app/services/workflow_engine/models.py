@@ -31,6 +31,7 @@ class WorkflowStep(BaseModel):
     """A single step in the workflow DAG."""
     id: str
     type: StepType
+    tier: Optional[str] = None
     config: dict = Field(default_factory=dict)
     # For agent steps: {"agent_id": "...", "query_template": "..."} or {"model": "...", "instructions": "..."}
     # For tool steps: {"tool_name": "...", "arguments_template": {}}

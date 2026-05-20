@@ -32,7 +32,7 @@ export default function AgentDetail() {
   const endRef = useRef<HTMLDivElement>(null);
 
   // Edit State
-  const [editForm, setEditForm] = useState({ name: '', model: '', instructions: '', description: '' });
+  const [editForm, setEditForm] = useState({ name: '', model: '', instructions: '', description: '', tier: '' });
 
   useEffect(() => {
     if (agent) {
@@ -40,7 +40,8 @@ export default function AgentDetail() {
         name: agent.name || '',
         model: agent.model || 'mistral-large-latest',
         instructions: agent.agent_instructions || agent.instructions || '',
-        description: agent.description || ''
+        description: agent.description || '',
+        tier: agent.tier || 'foundation'
       });
     }
   }, [agent]);
@@ -123,7 +124,8 @@ export default function AgentDetail() {
     editForm.name !== agent.name ||
     editForm.model !== agent.model ||
     editForm.instructions !== (agent.agent_instructions || agent.instructions || '') ||
-    editForm.description !== (agent.description || '')
+    editForm.description !== (agent.description || '') ||
+    editForm.tier !== (agent.tier || 'foundation')
   );
 
   return (
@@ -281,6 +283,15 @@ export default function AgentDetail() {
                     <option value="mistral-small-latest" className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
                     <option value="open-mistral-nemo" className="bg-[var(--color-bg-surface)] text-white">open-mistral-nemo</option>
                     <option value="codestral-latest" className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-2 uppercase tracking-wider font-medium">Tier</label>
+                  <select value={editForm.tier} onChange={e => setEditForm(f => ({...f, tier: e.target.value}))} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
+                    <option value="foundation" className="bg-[var(--color-bg-surface)] text-white">Foundation</option>
+                    <option value="domain" className="bg-[var(--color-bg-surface)] text-white">Domain</option>
+                    <option value="use_case" className="bg-[var(--color-bg-surface)] text-white">Use Case</option>
                   </select>
                 </div>
 

@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, ArrowRight, CheckCircle2, Zap, AlertCircle, RefreshCw } from 'lucide-react';
+import { Sparkles, ArrowRight, CheckCircle2, AlertCircle, RefreshCw, ChevronDown, Cpu } from 'lucide-react';
 import { orchestratorApi } from '../../api/orchestrator';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '../../lib/utils';
+import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 
 interface TimelineStep {
   id: string;
@@ -17,14 +18,28 @@ interface TimelineStep {
 
 export default function Orchestrator() {
   const [input, setInput] = useState('');
+  const [selectedTier, setSelectedTier] = useState<string>('domain');
+  const [showTierMenu, setShowTierMenu] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [streamingResponse, setStreamingResponse] = useState('');
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const tierMenuRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  // Close tier menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (tierMenuRef.current && !tierMenuRef.current.contains(e.target as Node)) {
+        setShowTierMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -50,7 +65,7 @@ export default function Orchestrator() {
     let currentResponse = '';
 
     orchestratorApi.stream(
-      { query: q },
+      { query: q, tier: selectedTier },
       (event) => {
         if (event.type === 'status') {
           setSteps(prev => {
@@ -131,7 +146,68 @@ export default function Orchestrator() {
             className="w-full bg-transparent px-4 py-3 text-base text-white placeholder:text-[var(--color-text-muted)] outline-none resize-none overflow-y-auto custom-scrollbar min-h-[60px]"
             disabled={isProcessing}
           />
-          <div className="flex justify-end p-2 border-t border-[var(--color-border-subtle)] mt-2">
+          <div className="flex items-center justify-between p-2 border-t border-[var(--color-border-subtle)] mt-2 gap-3">
+            {/* Tier Selector */}
+            <div className="relative" ref={tierMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowTierMenu(!showTierMenu)}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-all',
+                  getTierConfig(selectedTier).bg,
+                  getTierConfig(selectedTier).border,
+                  getTierConfig(selectedTier).color,
+                  'hover:brightness-125'
+                )}
+              >
+                <span>{getTierConfig(selectedTier).icon}</span>
+                <span>{getTierConfig(selectedTier).label}</span>
+                <ChevronDown size={12} className={cn('transition-transform', showTierMenu && 'rotate-180')} />
+              </button>
+
+              <AnimatePresence>
+                {showTierMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute top-full mt-2 left-0 z-50 min-w-[220px] bg-[rgba(15,20,28,0.85)] backdrop-blur-2xl border border-[rgba(255,255,255,0.1)] rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.6)] overflow-hidden"
+                  >
+                    <div className="p-1.5">
+                      {(['foundation', 'domain', 'use_case'] as const).map(t => {
+                        const cfg = getTierConfig(t);
+                        const isSelected = selectedTier === t;
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => { setSelectedTier(t); setShowTierMenu(false); }}
+                            className={cn(
+                              'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all',
+                              isSelected ? cn(cfg.bg, cfg.border, 'border') : 'hover:bg-[var(--color-bg-hover)] border border-transparent'
+                            )}
+                          >
+                            <span className="text-base">{cfg.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className={cn('text-xs font-bold', isSelected ? cfg.color : 'text-white')}>{cfg.label}</p>
+                              <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">
+                                {t === 'foundation' && 'Guardrails, moderation, safety'}
+                                {t === 'domain' && 'Business logic, data processing'}
+                                {t === 'use_case' && 'Product-specific workflows'}
+                              </p>
+                            </div>
+                            {isSelected && (
+                              <CheckCircle2 size={14} className={cfg.color} />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button 
               onClick={handleSubmit} 
               disabled={!input.trim() || isProcessing} 
@@ -160,12 +236,32 @@ export default function Orchestrator() {
                   animate={{ opacity: 1, x: 0 }}
                   className="relative pl-8 md:pl-12"
                 >
-                  {/* Timeline Dot */}
-                  <div className="absolute left-[-9px] top-1 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 border-[var(--color-border-subtle)] flex items-center justify-center">
-                    {step.status === 'active' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                    {step.status === 'completed' && step.type !== 'error' && <CheckCircle2 size={16} className="text-[var(--color-accent-success)] absolute bg-[var(--color-bg-base)] rounded-full" />}
-                    {step.type === 'error' && <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />}
-                  </div>
+                  {/* Timeline Dot — color-coded for agent steps */}
+                  {(() => {
+                    const isAgentStep = step.type === 'agent_config';
+                    const tierColor = isAgentStep
+                      ? getTierConfig(step.content?.tier).dot
+                      : undefined;
+                    return (
+                      <div
+                        className={cn(
+                          'absolute left-[-9px] top-1 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 flex items-center justify-center',
+                          !tierColor && 'border-[var(--color-border-subtle)]'
+                        )}
+                        style={tierColor ? { borderColor: tierColor } : undefined}
+                      >
+                        {step.status === 'active' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                        {step.status === 'completed' && step.type !== 'error' && (
+                          <CheckCircle2
+                            size={16}
+                            className="absolute bg-[var(--color-bg-base)] rounded-full"
+                            style={tierColor ? { color: tierColor } : { color: 'var(--color-accent-success)' }}
+                          />
+                        )}
+                        {step.type === 'error' && <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />}
+                      </div>
+                    );
+                  })()}
 
                   {/* Content */}
                   {step.type === 'status' && (
@@ -179,31 +275,38 @@ export default function Orchestrator() {
                     </div>
                   )}
 
-                  {step.type === 'agent_config' && (
-                    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(255,255,255,0.05)] shadow-lg">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-8 h-8 rounded-lg bg-[var(--color-bg-hover)] flex items-center justify-center">
-                          <Zap size={14} className="text-[var(--color-accent-warning)]" />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-white">{step.content.agent_name}</h3>
-                          <p className="text-xs text-[var(--color-text-muted)] font-mono">{step.content.model}</p>
-                        </div>
-                      </div>
-                      {step.content.tools && step.content.tools.length > 0 && (
-                        <div>
-                          <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider font-semibold mb-2">Equipped Tools</p>
-                          <div className="flex flex-wrap gap-2">
-                            {step.content.tools.map((t: string) => (
-                              <span key={t} className="px-2.5 py-1 rounded bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] text-xs font-mono text-[var(--color-text-secondary)]">
-                                {t}
-                              </span>
-                            ))}
+                  {step.type === 'agent_config' && (() => {
+                    const agentTier = step.content?.tier as string | undefined;
+                    const cfg = getTierConfig(agentTier);
+                    return (
+                      <div className={cn('rounded-xl p-5 mt-2 border shadow-lg transition-all', cfg.cardBg, cfg.cardBorder)}>
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border', cfg.bg, cfg.border)}>
+                            <Cpu size={16} className={cfg.color} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-sm font-bold text-white">{step.content.agent_name}</h3>
+                              <TierBadge tier={agentTier} />
+                            </div>
+                            <p className="text-xs text-[var(--color-text-muted)] font-mono">{step.content.model}</p>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {step.content.tools && step.content.tools.length > 0 && (
+                          <div>
+                            <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider font-semibold mb-2">Equipped Tools</p>
+                            <div className="flex flex-wrap gap-2">
+                              {step.content.tools.map((t: string) => (
+                                <span key={t} className="px-2.5 py-1 rounded bg-[rgba(236,72,153,0.08)] border border-[rgba(236,72,153,0.15)] text-xs font-mono text-[#f9a8d4]">
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {step.type === 'error' && (
                     <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.05)] flex flex-col items-start gap-4">

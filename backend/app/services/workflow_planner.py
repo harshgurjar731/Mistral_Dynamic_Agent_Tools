@@ -16,7 +16,7 @@ from typing import AsyncGenerator
 import httpx
 from mistralai.client import Mistral
 from app.config import settings
-from app.prompts import WORKFLOW_ANALYSIS_PROMPT, WORKFLOW_DAG_PROMPT
+from app.prompts import WORKFLOW_ANALYSIS_SYSTEM_PROMPT, WORKFLOW_ANALYSIS_USER_PROMPT, WORKFLOW_DAG_SYSTEM_PROMPT, WORKFLOW_DAG_USER_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +53,19 @@ async def plan_workflow_stream(
         existing_tools = await tool_resolver.list_tools()
         existing_tool_names = [t.get("name", "") for t in existing_tools]
 
-        # Fetch existing agents
+        # Fetch existing agents and classify by tier
         from app.services import agent_service
         agents_resp = await agent_service.list_agents(client, page=0, page_size=100)
-        existing_agents = [{"id": a["id"], "name": a["name"], "instructions": a.get("instructions", "")} for a in agents_resp.get("items", [])]
-        
+        all_agents = [
+            {"id": a["id"], "name": a["name"], "tier": a.get("tier", "foundation"), "instructions": a.get("instructions", "")}
+            for a in agents_resp.get("items", [])
+        ]
+
+        # Classify agents into three tiers for the v4.0 prompt
+        foundation_agents = [a for a in all_agents if a.get("tier") == "foundation"]
+        domain_agents = [a for a in all_agents if a.get("tier") == "domain"]
+        usecase_agents = [a for a in all_agents if a.get("tier") == "use_case"]
+
         # Fetch existing workflows
         import httpx
         try:
@@ -71,13 +79,19 @@ async def plan_workflow_stream(
             messages=[
                 {
                     "role": "system",
-                    "content": WORKFLOW_ANALYSIS_PROMPT.format(
-                        existing_tools=json.dumps(existing_tool_names),
-                        existing_agents=json.dumps(existing_agents),
-                        existing_workflows=json.dumps(existing_workflows)
+                    "content": WORKFLOW_ANALYSIS_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": WORKFLOW_ANALYSIS_USER_PROMPT.format(
+                        existing_foundation_agents=json.dumps(foundation_agents, indent=2),
+                        existing_domain_agents=json.dumps(domain_agents, indent=2),
+                        existing_usecase_agents=json.dumps(usecase_agents, indent=2),
+                        existing_tools=json.dumps(existing_tool_names, indent=2),
+                        existing_workflows=json.dumps(existing_workflows, indent=2),
+                        goal=goal
                     ),
                 },
-                {"role": "user", "content": f"Goal: {goal}"},
             ],
             temperature=0.1,
             response_format={"type": "json_object"},
@@ -139,10 +153,10 @@ async def plan_workflow_stream(
             # ── Try to find existing agent: by explicit ID, then by name match ──
             existing_agent = None
             if is_reused and existing_id and existing_id != "null":
-                existing_agent = next((a for a in existing_agents if a["id"] == existing_id), None)
+                existing_agent = next((a for a in all_agents if a["id"] == existing_id), None)
             if not existing_agent:
                 # Fallback: match by exact name
-                existing_agent = next((a for a in existing_agents if a["name"] == agent_name), None)
+                existing_agent = next((a for a in all_agents if a["name"] == agent_name), None)
 
             if existing_agent:
                 yield _sse(f"Reusing existing agent: {agent_name}", "status")
@@ -150,6 +164,7 @@ async def plan_workflow_stream(
                     "agent_id": existing_agent["id"],
                     "agent_name": existing_agent["name"],
                     "model": agent_spec.get("model", "mistral-large-latest"),
+                    "tier": agent_spec.get("tier", "foundation"),
                     "tools": agent_spec.get("tools", []),
                     "description": agent_spec.get("description", ""),
                     "output_contract": agent_spec.get("output_contract", ""),
@@ -176,7 +191,7 @@ async def plan_workflow_stream(
                     "name": agent_name,
                     "instructions": instructions,
                     "description": agent_spec.get("description", f"Workflow agent: {agent_name}"),
-                    "metadata": {"workflow_goal": goal[:200], "source": "workflow_planner"},
+                    "metadata": {"workflow_goal": goal[:200], "source": "workflow_planner", "tier": agent_spec.get("tier", "foundation")},
                 }
                 if tool_definitions:
                     create_kwargs["tools"] = tool_definitions
@@ -195,6 +210,7 @@ async def plan_workflow_stream(
                     "agent_id": agent_id,
                     "agent_name": agent_name,
                     "model": agent_spec.get("model", "mistral-large-latest"),
+                    "tier": agent_spec.get("tier", "foundation"),
                     "tools": tool_keys,
                     "description": agent_spec.get("description", ""),
                     "output_contract": agent_spec.get("output_contract", ""),
@@ -217,13 +233,16 @@ async def plan_workflow_stream(
             messages=[
                 {
                     "role": "system",
-                    "content": WORKFLOW_DAG_PROMPT.format(
+                    "content": WORKFLOW_DAG_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": WORKFLOW_DAG_USER_PROMPT.format(
                         agents_json=json.dumps(created_agents, indent=2),
                         goal=goal,
                         requirements_json=json.dumps(requirements, indent=2),
                     ),
                 },
-                {"role": "user", "content": "Build the WorkflowDefinition JSON now."},
             ],
             temperature=0.1,
             response_format={"type": "json_object"},

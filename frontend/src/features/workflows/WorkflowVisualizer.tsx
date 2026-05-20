@@ -25,11 +25,13 @@ import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 import WorkflowHistoryPanel from './WorkflowHistoryPanel';
+import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 
 /* ── Type helpers ────────────────────────────────────────────────────── */
 interface WorkflowStep {
   id: string;
   type: string;
+  tier?: string;
   description?: string;
   config: Record<string, unknown>;
   next_steps: string[];
@@ -86,19 +88,34 @@ function BaseNode({
 }
 
 function AgentNode({ data }: { data: Record<string, unknown> }) {
+  const tier = data.tier as string | undefined;
+  const cfg = getTierConfig(tier);
+  const gradientMap: Record<string, string> = {
+    foundation: 'bg-gradient-to-r from-indigo-600 to-purple-600',
+    domain: 'bg-gradient-to-r from-amber-500 to-orange-600',
+    use_case: 'bg-gradient-to-r from-emerald-500 to-teal-600',
+  };
+  const borderMap: Record<string, string> = {
+    foundation: 'border-indigo-500/60',
+    domain: 'border-amber-500/60',
+    use_case: 'border-emerald-500/60',
+  };
   return (
     <BaseNode
       icon={<Cpu size={14} className="text-white shrink-0" />}
       label={data.label as string}
       sublabel={data.agent_id as string | undefined}
-      accentClass="bg-gradient-to-r from-indigo-600 to-purple-600"
-      borderClass="border-indigo-500/60"
+      accentClass={gradientMap[tier || 'foundation'] || gradientMap.foundation}
+      borderClass={borderMap[tier || 'foundation'] || borderMap.foundation}
       selected={data.selected as boolean}
       onClick={data.onClick as () => void}
     >
-      {data.queryTemplate && (
-        <span className="line-clamp-2 italic">"{data.queryTemplate as string}"</span>
-      )}
+      <div className="flex flex-col gap-1.5">
+        <TierBadge tier={tier} />
+        {data.queryTemplate && (
+          <span className="line-clamp-2 italic">"{data.queryTemplate as string}"</span>
+        )}
+      </div>
     </BaseNode>
   );
 }
@@ -208,7 +225,7 @@ function buildGraph(workflow: WorkflowDef, selectedId: string | null, onSelect: 
 
     let typeSpecific: Record<string, unknown> = {};
     if (step.type === 'agent') {
-      typeSpecific = { agent_id: step.config?.agent_id, queryTemplate: step.config?.query_template };
+      typeSpecific = { agent_id: step.config?.agent_id, queryTemplate: step.config?.query_template, tier: step.tier };
     } else if (step.type === 'tool') {
       typeSpecific = { toolName: step.config?.tool_name, args: step.config?.arguments };
     } else if (step.type === 'condition') {

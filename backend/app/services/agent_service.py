@@ -20,6 +20,39 @@ _http_client = httpx.Client(
 )
 
 
+# ── Tier inference heuristic (when metadata.tier is absent) ────────────────
+
+_FOUNDATION_KEYWORDS = [
+    "jailbreak", "moderation", "moderator", "guardrail", "topic_control",
+    "reviewer", "review_agent", "output_moderation", "final_response_generation",
+    "safety", "routing",
+]
+_USECASE_KEYWORDS = [
+    "mortgage", "vehicle_finance", "vehicle_loan", "car_loan", "personal_loan",
+    "insurance", "home_loan", "auto_loan", "credit_card",
+]
+
+
+def _infer_tier(name: str, instructions: str = "") -> str:
+    """Infer the agent tier from its name and instructions when metadata is absent."""
+    name_lower = (name or "").lower().replace(" ", "_")
+    instr_lower = (instructions or "").lower()
+
+    # Check foundation first
+    for kw in _FOUNDATION_KEYWORDS:
+        if kw in name_lower or kw in instr_lower:
+            return "foundation"
+
+    # Check use-case specific
+    for kw in _USECASE_KEYWORDS:
+        if kw in name_lower:
+            return "use_case"
+
+    # Default to domain (not foundation) — most workflow agents are domain-level
+    return "domain"
+
+
+
 async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> dict:
     """List all agents via direct HTTP (bypasses SDK sentinel serialization)."""
     try:
@@ -32,24 +65,34 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
         agents = []
         for agent in agent_list:
             if isinstance(agent, dict):
+                meta = agent.get("metadata", {}) if isinstance(agent.get("metadata"), dict) else {}
+                explicit_tier = meta.get("tier")
+                a_name = agent.get("name", "")
+                a_instr = agent.get("instructions", "")
                 agents.append({
                     "id": agent.get("id"),
-                    "name": agent.get("name"),
+                    "name": a_name,
                     "model": agent.get("model"),
                     "description": agent.get("description"),
-                    "instructions": agent.get("instructions"),
+                    "instructions": a_instr,
                     "tools": agent.get("tools", []),
                     "created_at": str(agent.get("created_at", "")),
+                    "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
                 })
             else:
+                meta = getattr(agent, "metadata", None)
+                explicit_tier = meta.get("tier") if isinstance(meta, dict) else None
+                a_name = getattr(agent, "name", "") or ""
+                a_instr = getattr(agent, "instructions", "") or ""
                 agents.append({
                     "id": getattr(agent, "id", None),
-                    "name": getattr(agent, "name", None),
+                    "name": a_name,
                     "model": getattr(agent, "model", None),
                     "description": getattr(agent, "description", None),
-                    "instructions": getattr(agent, "instructions", None),
+                    "instructions": a_instr,
                     "tools": getattr(agent, "tools", []),
                     "created_at": str(getattr(agent, "created_at", "")),
+                    "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
                 })
         # Paginated response format for frontend useInfiniteQuery
         total_pages = 1 if len(agents) < page_size else page + 2
@@ -69,18 +112,34 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
 
 
 async def get_agent(client: Mistral, agent_id: str) -> dict:
-    """Get a single agent by ID."""
+    """Get a single agent by ID (uses direct HTTP for reliable field access)."""
     try:
-        agent = client.beta.agents.get(agent_id=agent_id)
+        # Use direct HTTP — the SDK's beta.agents.get() may omit instructions
+        resp = _http_client.get(f"/v1/agents/{agent_id}")
+        resp.raise_for_status()
+        agent = resp.json()
+
+        logger.info("RAW Mistral agent keys: %s", list(agent.keys()))
+        logger.info("RAW instructions field: %r", agent.get("instructions"))
+
+        meta = agent.get("metadata", {}) if isinstance(agent.get("metadata"), dict) else {}
+        explicit_tier = meta.get("tier")
+        a_name = agent.get("name", "") or ""
+        a_instr = agent.get("instructions", "") or ""
         return {
-            "id": agent.id,
-            "name": getattr(agent, "name", None),
-            "model": getattr(agent, "model", None),
-            "description": getattr(agent, "description", None),
-            "instructions": getattr(agent, "instructions", None),
-            "tools": getattr(agent, "tools", []),
-            "created_at": str(getattr(agent, "created_at", "")),
+            "id": agent.get("id"),
+            "name": a_name,
+            "model": agent.get("model"),
+            "description": agent.get("description"),
+            "instructions": a_instr,
+            "tools": agent.get("tools", []),
+            "created_at": str(agent.get("created_at", "")),
+            "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
         }
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise AgentNotFoundError(agent_id)
+        raise MistralAPIError(f"Failed to get agent: {e.response.text}")
     except Exception as e:
         if "not found" in str(e).lower() or "404" in str(e):
             raise AgentNotFoundError(agent_id)
@@ -97,6 +156,8 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         }
         if data.get("description"):
             create_kwargs["description"] = data["description"]
+        if data.get("tier"):
+            create_kwargs["metadata"] = {"tier": data["tier"]}
         if data.get("tools"):
             from app.services.tool_registry import get_tools
             create_kwargs["tools"] = get_tools(data["tools"])
@@ -111,6 +172,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
 async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
     """Update an agent."""
     try:
+        agent = client.beta.agents.get(agent_id=agent_id)
         update_kwargs = {"agent_id": agent_id}
         if "name" in data:
             update_kwargs["name"] = data["name"]
@@ -118,6 +180,10 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             update_kwargs["instructions"] = data["instructions"]
         if "description" in data:
             update_kwargs["description"] = data["description"]
+        if "tier" in data:
+            existing_metadata = getattr(agent, "metadata", {}) or {}
+            existing_metadata["tier"] = data["tier"]
+            update_kwargs["metadata"] = existing_metadata
 
         agent = client.beta.agents.update(**update_kwargs)
         return {"id": agent.id, "name": getattr(agent, "name", None)}

@@ -136,7 +136,7 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
         layout
         className={cn(
           'flex flex-col flex-shrink-0 z-50',
-          'bg-[var(--color-bg-base)] md:bg-transparent border-r border-[var(--color-border-subtle)]',
+          'bg-[rgba(6,9,15,0.7)] backdrop-blur-xl md:bg-[rgba(6,9,15,0.5)] border-r border-[rgba(255,255,255,0.05)]',
           'fixed inset-y-0 left-0 md:relative',
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         )}
@@ -154,7 +154,7 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
             <motion.span 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="font-bold text-sm tracking-tight text-white whitespace-nowrap"
+              className="font-bold text-sm tracking-tight whitespace-nowrap text-gradient-vibrant"
             >
               MISTRAL
             </motion.span>
@@ -197,7 +197,7 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
                   )}
                 >
                   {isActive && !expandable && (
-                    <motion.div layoutId="sidebar-active-indicator" className="absolute inset-0 bg-[var(--color-bg-hover)] rounded-md border border-[rgba(255,255,255,0.05)]" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+                    <motion.div layoutId="sidebar-active-indicator" className="absolute inset-0 bg-gradient-to-r from-[rgba(59,130,246,0.15)] to-[rgba(139,92,246,0.15)] rounded-md border border-[rgba(255,255,255,0.08)] shadow-[0_0_15px_rgba(139,92,246,0.15)]" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
                   )}
                   <Icon size={16} className={cn('relative z-10', isActive ? 'text-white' : 'text-[var(--color-text-muted)] group-hover:text-white')} />
                   {!collapsed && <span className="relative z-10 font-medium whitespace-nowrap">{label}</span>}

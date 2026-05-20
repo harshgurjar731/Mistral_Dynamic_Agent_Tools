@@ -7,6 +7,7 @@ export interface OrchestratorRequest {
   conversation_id?: string;
   cleanup_agent?: boolean;
   workflow?: string;
+  tier?: string;
 }
 
 export const orchestratorApi = {

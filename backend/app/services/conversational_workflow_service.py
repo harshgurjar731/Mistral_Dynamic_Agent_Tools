@@ -18,7 +18,7 @@ from typing import Any
 
 from mistralai.client import Mistral
 from app.config import settings
-from app.prompts import CONVERSATIONAL_GATEWAY_PROMPT
+from app.prompts import CONVERSATIONAL_GATEWAY_SYSTEM_PROMPT, CONVERSATIONAL_GATEWAY_USER_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +105,16 @@ async def create_conversational_agent(
     except Exception as e:
         logger.warning("Could not list existing agents for le Chat check: %s", e)
 
-    # Build system prompt
+    # Build system prompt (combining both for le Chat compatibility)
     display_name = workflow_name.replace("_", " ").title()
-    system_prompt = CONVERSATIONAL_GATEWAY_PROMPT.format(
+    system_prompt_base = CONVERSATIONAL_GATEWAY_SYSTEM_PROMPT
+    user_context = CONVERSATIONAL_GATEWAY_USER_PROMPT.format(
         workflow_name=workflow_name,
         workflow_display_name=display_name,
         workflow_description=workflow_description or f"A multi-step automated pipeline: {display_name}",
         input_schema_desc=_build_input_schema_desc(input_schema),
     )
+    system_prompt = f"{system_prompt_base}\n\n{user_context}"
 
     # Create the agent
     try:

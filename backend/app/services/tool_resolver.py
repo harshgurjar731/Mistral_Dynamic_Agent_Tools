@@ -8,7 +8,7 @@ import logging
 from hashlib import sha256
 import json
 from app.config import settings
-from app.prompts import EXPLICIT_SYNTHESIS_PROMPT
+from app.prompts import EXPLICIT_SYNTHESIS_SYSTEM_PROMPT, EXPLICIT_SYNTHESIS_USER_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -183,11 +183,20 @@ class ToolResolver:
 
             client = Mistral(api_key=settings.MISTRAL_API_KEY, timeout_ms=120000)
 
+            existing_tools_list = await self.list_tools()
+            existing_tools = [t.get("name") for t in existing_tools_list]
+
             result = client.chat.complete(
                 model=settings.MISTRAL_CODING_MODEL,
                 messages=[
-                    {"role": "system", "content": EXPLICIT_SYNTHESIS_PROMPT},
-                    {"role": "user", "content": f"Task Description: {task}"},
+                    {"role": "system", "content": EXPLICIT_SYNTHESIS_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": EXPLICIT_SYNTHESIS_USER_PROMPT.format(
+                            existing_tools=json.dumps(existing_tools),
+                            tool_request=task
+                        )
+                    },
                 ],
                 temperature=0.1,
                 response_format={"type": "json_object"},

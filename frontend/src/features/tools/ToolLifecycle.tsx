@@ -226,11 +226,11 @@ function SynthesizePanel() {
 function EmptyState({ icon: Icon, text }: { icon: React.ComponentType<{ size: number; className?: string }>; text: string }) {
   return (
     <motion.div 
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="text-center py-20 border border-dashed border-[var(--color-border-subtle)] rounded-xl flex flex-col items-center gap-4 bg-[var(--color-bg-surface)]"
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[400px] gap-4 bg-[rgba(15,20,28,0.4)] backdrop-blur-xl border border-[rgba(255,255,255,0.05)] shadow-[inset_0_0_30px_rgba(0,0,0,0.2)] w-full mt-2"
     >
-      <div className="w-16 h-16 rounded-full bg-[var(--color-bg-hover)] flex items-center justify-center mb-2">
-        <Icon size={28} className="text-[var(--color-text-muted)]" />
+      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-[rgba(236,72,153,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
+        <Icon size={32} className="text-pink-400" />
       </div>
       <div>
         <p className="text-base font-semibold text-[var(--color-text-primary)]">Nothing to show</p>

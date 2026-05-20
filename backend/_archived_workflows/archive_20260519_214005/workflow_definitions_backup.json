@@ -1,0 +1,405 @@
+{
+  "residential_mortgage_approval_workflow": {
+    "id": "019e3f04-80ba-7165-b322-11a44726d79e",
+    "name": "residential_mortgage_approval_workflow",
+    "description": "Automates end-to-end residential mortgage approval and affordability assessment, processing applicant data, evaluating eligibility, generating lending decisions with justification, and ensuring regulatory compliance and safety.",
+    "steps": [
+      {
+        "id": "jailbreak_moderation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb3d2b703c877b901d4740f5a6",
+          "query_template": "The user has submitted a mortgage application request. Validate the safety of the following input data to detect malicious or non-compliant requests: {{{{applicant_details}}}}.\n\nThis request relates to residential mortgage processing. Apply the relevant safety and compliance checks for this product.\n\nTASK: Determine if the input is safe for processing. If unsafe, classify the risk level and provide a reason.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"is_safe\": boolean,\n  \"risk_level\": \"low | medium | high\",\n  \"risk_reason\": \"string\"\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "topic_control_guardrail"
+        ],
+        "description": "Validates input safety and detects malicious or non-compliant requests before processing."
+      },
+      {
+        "id": "topic_control_guardrail",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb3e9570a69c36b9e6fccf9cc2",
+          "query_template": "The following data was produced by the previous step: {{{{step_jailbreak_moderation_output}}}}.\n\nThe user has submitted a request for mortgage processing. This request relates to residential mortgage products.\n\nTASK: Ensure the request is relevant to mortgage processing and classify it into a mortgage sub-type (e.g., 'first_time_buyer', 'remortgage', 'buy_to_let', 'fixed_rate').\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"is_relevant\": boolean,\n  \"mortgage_type\": \"string\",\n  \"confidence_score\": number (0.0 to 1.0)\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "mortgage_eligibility_assessment"
+        ],
+        "description": "Ensures the request is relevant to mortgage processing and classifies it into a mortgage sub-type."
+      },
+      {
+        "id": "mortgage_eligibility_assessment",
+        "type": "agent",
+        "tier": "use_case",
+        "config": {
+          "agent_id": "ag_019e3feb3fbf73a883545de8de8b0f0b",
+          "query_template": "The following data was produced by the previous steps:\n- Input data: {{{{applicant_details}}}}\n- Safety validation: {{{{step_jailbreak_moderation_output}}}}\n- Topic classification: {{{{step_topic_control_guardrail_output}}}}\n\nThis request relates to residential mortgage processing. Apply the relevant regulations and metrics for this product.\n\nTASK: Analyse the applicant's financial and property data to determine preliminary mortgage eligibility. Compute key affordability metrics (DTI, LTV), assess creditworthiness, and generate a confidence score for the decision.\n\nUse the following tools as needed:\n1. `fetch_credit_report` to retrieve the applicant's credit report.\n2. `calculate_affordability_metrics` to compute DTI, LTV, disposable income, and monthly repayment estimate.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"eligibility_status\": \"eligible | ineligible | conditionally_eligible\",\n  \"confidence_score\": number (0.0 to 1.0),\n  \"affordability_metrics\": {\n    \"debt_to_income_ratio\": number (percentage),\n    \"loan_to_value_ratio\": number (percentage),\n    \"disposable_income\": number,\n    \"monthly_repayment_estimate\": number\n  },\n  \"credit_assessment\": {\n    \"credit_score\": integer,\n    \"credit_risk\": \"low | medium | high\"\n  },\n  \"justification\": \"string\"\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "financial_risk_assessment"
+        ],
+        "description": "Analyses borrower affordability metrics to determine preliminary mortgage eligibility with a confidence score."
+      },
+      {
+        "id": "financial_risk_assessment",
+        "type": "agent",
+        "tier": "domain",
+        "config": {
+          "agent_id": "ag_019e3feb40f2724eb3c7c23b5625e72e",
+          "query_template": "The following data was produced by the previous steps:\n- Input data: {{{{applicant_details}}}}\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\n\nThis request relates to residential mortgage processing. Apply the relevant European mortgage lending standards and affordability regulations.\n\nTASK: Evaluate the repayment risk, probability of arrears, and overall lending exposure for the mortgage application.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"repayment_risk\": \"low | medium | high\",\n  \"probability_of_arrears\": number (0.0 to 1.0),\n  \"lending_exposure\": \"low | medium | high\",\n  \"regulatory_compliance\": boolean,\n  \"risk_factors\": [\"string\"],\n  \"mitigation_strategies\": [\"string\"]\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "mortgage_recommendation"
+        ],
+        "description": "Evaluates repayment risk, probability of arrears, and overall lending exposure in alignment with European mortgage lending standards."
+      },
+      {
+        "id": "mortgage_recommendation",
+        "type": "agent",
+        "tier": "use_case",
+        "config": {
+          "agent_id": "ag_019e3feb4261714594f45376dd11bca8",
+          "query_template": "The following data was produced by the previous steps:\n- Input data: {{{{applicant_details}}}}\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\n\nThis request relates to residential mortgage processing. Apply the relevant lending criteria and product guidelines.\n\nTASK: Generate a lending recommendation (approved, declined, or conditionally approved) and indicative mortgage terms based on the applicant's eligibility and risk assessment.\n\nUse the `validate_property_details` tool to validate property details as needed.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"lending_outcome\": \"approved | declined | conditionally_approved\",\n  \"borrowing_amount\": number,\n  \"repayment_period_years\": integer,\n  \"interest_structure\": \"fixed_5_years | variable | tracker\",\n  \"estimated_monthly_instalment\": number,\n  \"conditions\": [\"string\"],\n  \"justification\": \"string\"\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "final_response_generation"
+        ],
+        "description": "Generates the proposed lending outcome and indicative mortgage terms."
+      },
+      {
+        "id": "final_response_generation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb43b472a0b60e54f15c0bb446",
+          "query_template": "The following data was produced by the previous steps:\n- Input data: {{{{applicant_details}}}}\n- Safety validation: {{{{step_jailbreak_moderation_output}}}}\n- Topic classification: {{{{step_topic_control_guardrail_output}}}}\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\n- Mortgage recommendation: {{{{step_mortgage_recommendation_output}}}}\n\nThis request relates to residential mortgage processing. Apply the relevant communication standards for this product.\n\nTASK: Consolidate all outputs into a structured, customer-friendly mortgage decision document.\n\nOUTPUT FORMAT: Respond with a markdown report using the following structure:\n## Mortgage Decision\n### Outcome (Approved/Declined/Conditionally Approved)\n### Key Terms (Borrowing Amount, Repayment Period, Interest Structure, Monthly Instalment)\n\n## Eligibility Summary\n### Affordability Metrics (DTI, LTV, Disposable Income)\n### Credit Assessment (Credit Score, Credit Risk)\n\n## Risk Assessment\n### Repayment Risk, Probability of Arrears, Lending Exposure\n### Regulatory Compliance Status\n\n## Justification\nDetailed explanation of the decision, citing specific metrics and thresholds.\n\n## Next Steps\nActions for the applicant (e.g., provide additional documents, contact advisor).\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "markdown_report"
+        },
+        "next_steps": [
+          "reviewer"
+        ],
+        "description": "Consolidates outputs from upstream agents into a structured, customer-friendly mortgage decision document."
+      },
+      {
+        "id": "reviewer",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb451176c999dd1aeb3163b654",
+          "query_template": "The following data was produced by the previous step: {{{{step_final_response_generation_output}}}}.\n\nThis request relates to residential mortgage processing. Apply the relevant financial communication standards for this product.\n\nTASK: Review the mortgage decision document for readability, completeness, factual consistency, and compliance with financial communication standards.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"is_complete\": boolean,\n  \"readability_score\": number (0.0 to 1.0),\n  \"factual_consistency\": boolean,\n  \"compliance_status\": \"compliant | non_compliant\",\n  \"feedback\": [{\"section\": \"string\", \"issue\": \"string\", \"suggestion\": \"string\"}]\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "output_moderation"
+        ],
+        "description": "Reviews the final mortgage decision document for readability, completeness, factual consistency, and compliance with financial communication standards."
+      },
+      {
+        "id": "output_moderation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb4635715d83244bccf98566e4",
+          "query_template": "The following data was produced by the previous steps:\n- Final response: {{{{step_final_response_generation_output}}}}\n- Review feedback: {{{{step_reviewer_output}}}}\n\nThis request relates to residential mortgage processing. Apply the relevant safety checks for this product.\n\nTASK: Perform a final safety check on the mortgage decision document before delivery to the user.\n\nOUTPUT FORMAT: Respond with a raw JSON object matching the following contract:\n{\n  \"is_safe\": boolean,\n  \"risk_level\": \"low | medium | high\",\n  \"risk_reason\": \"string\"\n}\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [],
+        "description": "Performs a final safety check on the mortgage decision document before delivery to the user."
+      }
+    ],
+    "entry_step": "jailbreak_moderation",
+    "input_schema": [
+      {
+        "name": "applicant_details",
+        "type": "object",
+        "description": "Applicant's personal, financial, and property details required for mortgage processing.",
+        "properties": {
+          "applicant_name": {
+            "type": "string",
+            "description": "Full name of the applicant"
+          },
+          "applicant_address": {
+            "type": "string",
+            "description": "Current residential address of the applicant"
+          },
+          "national_id": {
+            "type": "string",
+            "description": "National identification number (e.g., SSN, NIN)"
+          },
+          "gross_annual_income": {
+            "type": "number",
+            "description": "Applicant's gross annual income"
+          },
+          "monthly_debt_commitments": {
+            "type": "number",
+            "description": "Total monthly debt repayments"
+          },
+          "property_address": {
+            "type": "string",
+            "description": "Full address of the property"
+          },
+          "property_postcode": {
+            "type": "string",
+            "description": "Postcode of the property"
+          },
+          "loan_amount": {
+            "type": "number",
+            "description": "Requested loan amount"
+          },
+          "employment_status": {
+            "type": "string",
+            "description": "Employment status of the applicant (e.g., 'employed', 'self_employed', 'unemployed')"
+          }
+        },
+        "required": [
+          "applicant_name",
+          "applicant_address",
+          "national_id",
+          "gross_annual_income",
+          "monthly_debt_commitments",
+          "property_address",
+          "property_postcode",
+          "loan_amount"
+        ]
+      }
+    ],
+    "variables": {},
+    "is_deployed": true,
+    "archived": false
+  },
+  "vehicle_finance_approval_workflow": {
+    "id": null,
+    "name": "vehicle_finance_approval_workflow",
+    "description": "Automates end-to-end vehicle finance approval and affordability assessment, processing applicant data, evaluating eligibility, generating lending decisions with justification, and ensuring regulatory compliance and safety.",
+    "steps": [
+      {
+        "id": "jailbreak_moderation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb3d2b703c877b901d4740f5a6",
+          "query_template": "The following data was provided by the user: {{{{applicant_data}}}}.\n\nThis request relates to vehicle finance processing. Validate the input for safety and compliance. Ensure the request contains no malicious, harmful, or non-compliant content.\n\nTask: Determine if the input is safe for processing. If it is not safe, provide the risk level and reason for violation.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"is_safe\": \"boolean\",\n  \"risk_level\": \"string (e.g., 'low', 'medium', 'high')\",\n  \"violation_reason\": \"string (description if is_safe is false, else null)\"\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "topic_control_guardrail"
+        ],
+        "description": "Validates input safety and detects malicious or non-compliant requests."
+      },
+      {
+        "id": "topic_control_guardrail",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb3e9570a69c36b9e6fccf9cc2",
+          "query_template": "The following data was produced by the previous step: {{{{step_jailbreak_moderation_output}}}}.\n\nThis request relates to vehicle finance processing. Classify the request into a vehicle finance sub-type (e.g., new car, used vehicle, motorcycle, EV, commercial) and ensure it is relevant to vehicle finance.\n\nTask: Determine if the request is relevant to vehicle finance. If it is relevant, provide the sub-type and confidence score. If it is not relevant, provide the reason for irrelevance.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"is_relevant\": \"boolean\",\n  \"sub_type\": \"string (e.g., 'new_car', 'used_vehicle', 'motorcycle', 'electric_vehicle', 'commercial_vehicle')\",\n  \"confidence\": \"float (0.0 to 1.0)\",\n  \"irrelevance_reason\": \"string (description if is_relevant is false, else null)\"\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "check_relevance"
+        ],
+        "description": "Classifies the request into a vehicle finance sub-type and ensures relevance to vehicle finance processing."
+      },
+      {
+        "id": "check_relevance",
+        "type": "condition",
+        "tier": null,
+        "config": {
+          "expression": "{{{{step_topic_control_guardrail_output.is_relevant}}}} == true",
+          "true_step": "vehicle_finance_eligibility_assessment",
+          "false_step": "irrelevant_request_response",
+          "fallback_step": "irrelevant_request_response"
+        },
+        "next_steps": [],
+        "description": "Checks if the request is relevant to vehicle finance."
+      },
+      {
+        "id": "irrelevant_request_response",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb43b472a0b60e54f15c0bb446",
+          "query_template": "The following data was produced by the previous step: {{{{step_topic_control_guardrail_output}}}}.\n\nThis request is not relevant to vehicle finance processing. Generate a polite and clear response informing the user that their request is not relevant to vehicle finance.\n\nTask: Create a structured, customer-friendly response explaining why the request is not relevant.\n\nOutput format: Respond with a markdown report using the following structure:\n## Summary\nExplain why the request is not relevant to vehicle finance.\n\n## Next Steps\nProvide guidance on what the user can do next.\n\nProvide a complete, thorough response. Do not return an empty response.",
+          "expected_output_contract": "markdown_report"
+        },
+        "next_steps": [
+          "reviewer"
+        ],
+        "description": "Generates a response for irrelevant requests."
+      },
+      {
+        "id": "vehicle_finance_eligibility_assessment",
+        "type": "agent",
+        "tier": "use_case",
+        "config": {
+          "agent_id": "ag_019e3ff1ab27702c80a08ea807fb2984",
+          "query_template": "The following data was produced by the previous steps:\n- User input: {{{{applicant_data}}}}\n- Safety validation: {{{{step_jailbreak_moderation_output}}}}\n- Topic classification: {{{{step_topic_control_guardrail_output}}}}\n\nThis request relates to vehicle finance processing. Analyse the applicant's eligibility for vehicle finance by evaluating their financial profile, creditworthiness, and the vehicle's value.\n\nTask: Use the provided tools to fetch credit reports, validate vehicle details, and calculate affordability metrics. Determine a preliminary eligibility status and confidence score.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"eligibility_status\": \"string (eligible | ineligible | conditionally_eligible)\",\n  \"confidence_score\": \"float (0.0 to 1.0)\",\n  \"affordability_metrics\": {\n    \"debt_to_income_ratio\": \"float\",\n    \"loan_to_value_ratio\": \"float\",\n    \"monthly_repayment_capacity\": \"float\",\n    \"disposable_income\": \"float\"\n  },\n  \"credit_assessment\": {\n    \"credit_score\": \"integer\",\n    \"credit_utilisation\": \"float\",\n    \"payment_history_summary\": \"string\"\n  },\n  \"vehicle_assessment\": {\n    \"market_value\": \"float\",\n    \"depreciation_rate\": \"float\",\n    \"finance_eligibility\": \"boolean\",\n    \"validation_notes\": [\"string\"]\n  },\n  \"justification\": [\"string\"]\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "financial_risk_assessment"
+        ],
+        "description": "Analyses borrower affordability metrics, creditworthiness, vehicle value, and deposit to determine preliminary eligibility for vehicle finance."
+      },
+      {
+        "id": "financial_risk_assessment",
+        "type": "agent",
+        "tier": "domain",
+        "config": {
+          "agent_id": "ag_019e3feb40f2724eb3c7c23b5625e72e",
+          "query_template": "The following data was produced by the previous step: {{{{step_vehicle_finance_eligibility_assessment_output}}}}.\n\nThis request relates to vehicle finance processing. Evaluate the repayment risk, depreciation exposure, and probability of arrears for the vehicle finance application. Ensure alignment with European consumer credit regulations.\n\nTask: Assess the risk level, probability of arrears, and depreciation exposure. Identify key risk factors and propose mitigations where applicable.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"risk_level\": \"string (low | medium | high)\",\n  \"probability_of_arrears\": \"float (0.0 to 1.0)\",\n  \"depreciation_exposure\": \"float (0.0 to 1.0)\",\n  \"regulatory_compliance\": \"boolean\",\n  \"risk_factors\": [\n    {\n      \"factor\": \"string\",\n      \"severity\": \"string (low | medium | high)\",\n      \"mitigation\": \"string\"\n    }\n  ],\n  \"justification\": \"string\"\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "vehicle_finance_recommendation"
+        ],
+        "description": "Evaluates repayment risk, depreciation-related exposure, and probability of arrears in alignment with European consumer credit standards."
+      },
+      {
+        "id": "vehicle_finance_recommendation",
+        "type": "agent",
+        "tier": "use_case",
+        "config": {
+          "agent_id": "ag_019e3ff1ac6475758a98f0fed6ef402e",
+          "query_template": "The following data was produced by the previous steps:\n- Eligibility assessment: {{{{step_vehicle_finance_eligibility_assessment_output}}}}\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\n\nThis request relates to vehicle finance processing. Generate a lending outcome (approved, declined, or conditionally approved) and propose indicative finance terms.\n\nTask: Determine the lending outcome and propose terms such as borrowing amount, APR, repayment duration, deposit requirements, and balloon payment conditions where applicable.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"lending_outcome\": \"string (approved | declined | conditionally_approved)\",\n  \"finance_terms\": {\n    \"borrowing_amount\": \"float\",\n    \"apr\": \"float\",\n    \"repayment_duration_months\": \"integer\",\n    \"deposit_required\": \"float\",\n    \"balloon_payment\": \"float (null if not applicable)\",\n    \"estimated_monthly_instalment\": \"float\"\n  },\n  \"conditions\": [\"string\"],\n  \"justification\": \"string\"\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "final_response_generation"
+        ],
+        "description": "Generates the proposed lending outcome with indicative finance terms such as APR, repayment duration, and deposit requirements."
+      },
+      {
+        "id": "final_response_generation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb43b472a0b60e54f15c0bb446",
+          "query_template": "The following data was produced by the previous steps:\n- Eligibility assessment: {{{{step_vehicle_finance_eligibility_assessment_output}}}}\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\n- Finance recommendation: {{{{step_vehicle_finance_recommendation_output}}}}\n\nThis request relates to vehicle finance processing. Consolidate the outputs into a clear, structured, and customer-friendly explanation of the lending decision.\n\nTask: Create a markdown report summarising the lending decision, finance terms, eligibility summary, risk assessment, and next steps.\n\nOutput format: Respond with a markdown report using the following structure:\n## Summary\nProvide a brief summary of the lending decision.\n\n## Key Findings / Results\nSummarise the key findings from the eligibility and risk assessments.\n\n## Details\nProvide detailed information on the finance terms, eligibility metrics, and risk factors.\n\n## Recommendations (if applicable)\nInclude any recommendations or conditions for approval.\n\n## Next Steps\nOutline the next steps for the user.\n\nProvide a complete, thorough response. Do not return an empty response.",
+          "expected_output_contract": "markdown_report"
+        },
+        "next_steps": [
+          "reviewer"
+        ],
+        "description": "Consolidates outputs from upstream agents into a clear, structured, and customer-friendly explanation of the lending decision."
+      },
+      {
+        "id": "reviewer",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb451176c999dd1aeb3163b654",
+          "query_template": "The following data was produced by the previous step: {{{{step_final_response_generation_output}}}}.\n\nReview the final response for readability, completeness, factual consistency, and compliance with financial communication standards.\n\nTask: Evaluate the response and provide scores for readability, completeness, and factual consistency. Identify any issues and suggest improvements.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"is_approved\": \"boolean\",\n  \"readability_score\": \"float (0.0 to 1.0)\",\n  \"completeness_score\": \"float (0.0 to 1.0)\",\n  \"factual_consistency_score\": \"float (0.0 to 1.0)\",\n  \"issues\": [\n    {\n      \"issue\": \"string\",\n      \"severity\": \"string (low | medium | high)\",\n      \"suggestion\": \"string\"\n    }\n  ]\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [
+          "check_review_approval"
+        ],
+        "description": "Reviews the final response for readability, completeness, factual consistency, and compliance with financial communication standards."
+      },
+      {
+        "id": "check_review_approval",
+        "type": "condition",
+        "tier": null,
+        "config": {
+          "expression": "{{{{step_reviewer_output.is_approved}}}} == true",
+          "true_step": "output_moderation",
+          "false_step": "final_response_generation",
+          "fallback_step": "final_response_generation"
+        },
+        "next_steps": [],
+        "description": "Checks if the final response is approved by the reviewer."
+      },
+      {
+        "id": "output_moderation",
+        "type": "agent",
+        "tier": "foundation",
+        "config": {
+          "agent_id": "ag_019e3feb4635715d83244bccf98566e4",
+          "query_template": "The following data was produced by the previous step: {{{{step_final_response_generation_output}}}}.\n\nPerform a final safety check on the response to ensure it contains no harmful, misleading, or non-compliant content.\n\nTask: Determine if the response is safe for delivery. If it is not safe, provide the risk level and reason for violation.\n\nOutput format: Respond with a raw JSON object matching the following schema:\n```json\n{\n  \"is_safe\": \"boolean\",\n  \"risk_level\": \"string (e.g., 'low', 'medium', 'high')\",\n  \"violation_reason\": \"string (description if is_safe is false, else null)\"\n}\n```\n\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.",
+          "expected_output_contract": "json_object"
+        },
+        "next_steps": [],
+        "description": "Performs a final safety gate on the response to ensure it contains no harmful, misleading, or non-compliant content."
+      }
+    ],
+    "entry_step": "jailbreak_moderation",
+    "input_schema": [
+      {
+        "name": "applicant_data",
+        "type": "object",
+        "description": "Applicant information including borrower details, income records, credit profile, vehicle information, and supporting financial documentation.",
+        "properties": {
+          "applicant_id": {
+            "type": "string",
+            "description": "Unique identifier for the applicant."
+          },
+          "consent_token": {
+            "type": "string",
+            "description": "Token proving the applicant's consent to fetch their credit report."
+          },
+          "gross_annual_income": {
+            "type": "float",
+            "description": "Applicant's gross annual income."
+          },
+          "existing_debts": {
+            "type": "float",
+            "description": "Total monthly debt obligations (e.g., loans, credit cards)."
+          },
+          "vehicle_registration": {
+            "type": "string",
+            "description": "Vehicle registration number or VIN."
+          },
+          "make": {
+            "type": "string",
+            "description": "Manufacturer of the vehicle (e.g., 'Toyota')."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model of the vehicle (e.g., 'Corolla')."
+          },
+          "year": {
+            "type": "integer",
+            "description": "Manufacturing year of the vehicle."
+          },
+          "mileage": {
+            "type": "integer",
+            "description": "Current mileage of the vehicle."
+          },
+          "loan_amount": {
+            "type": "float",
+            "description": "Requested loan amount."
+          },
+          "deposit_amount": {
+            "type": "float",
+            "description": "Deposit amount provided by the applicant."
+          }
+        },
+        "required": [
+          "applicant_id",
+          "consent_token",
+          "gross_annual_income",
+          "existing_debts",
+          "vehicle_registration",
+          "make",
+          "model",
+          "year",
+          "mileage",
+          "loan_amount",
+          "deposit_amount"
+        ]
+      }
+    ],
+    "variables": {},
+    "is_deployed": false,
+    "archived": false
+  }
+}

@@ -121,7 +121,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "        variables = dict(input.variables)",
         f"        current_step: Optional[str] = \"{workflow_def.entry_step}\"",
         "        visited: set = set()",
-        "        last_output: Any = None",
+        "        outputs: Dict[str, Any] = {}",
         "",
         "        while current_step and len(visited) < 50:",
         "            if current_step in visited:",
@@ -137,7 +137,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
             f"            {prefix} current_step == \"{step.id}\":",
             f"                self._progress.append(\"{step.id}\")",
             f"                output = await run_{workflow_def.name}_{step.id}(variables)",
-            f"                last_output = output",
+            f"                outputs[\"{step.id}\"] = output",
             f"                self._last_result = output",
             f"                variables[\"step_{step.id}_output\"] = output",
             f"                if isinstance(output, dict):",
@@ -164,7 +164,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "            else:",
         "                current_step = None",
         "",
-        "        return last_output",
+        "        return outputs",
         "",
     ]
 

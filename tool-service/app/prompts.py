@@ -1,8 +1,20 @@
 """
 Centralized Prompt Registry — All LLM prompts used by the tool-service.
-Version: 2.0
+Version: 3.0
 
 Edit prompts here to update tool code-generation behaviour in one place.
+
+Changelog v3.0
+--------------
+- Added SCHEMA_GEN_SYSTEM_PROMPT + SCHEMA_GEN_USER_PROMPT_TEMPLATE — a dedicated
+  prompt pair for generating JSON Schema tool definitions (separate from codegen).
+  This is the root fix for the "float" / 400 Bad Request class of errors: the
+  schema that gets sent to the API is now generated under its own strict prompt
+  rather than as a side-effect of code generation.
+- Added Section 9 (JSON Schema type rules) to CODEGEN_SYSTEM_PROMPT to catch
+  any schema emitted inline during code generation.
+- Added JSON Schema checklist block to Section 10 self-review checklist.
+- Added JSON Schema reminder footer to CODEGEN_USER_PROMPT_TEMPLATE.
 
 Changelog v2.0
 --------------
@@ -259,7 +271,34 @@ SECTION 8 — Code style
 - No commented-out code blocks.
 
 ═══════════════════════════════════════════════════════════
-SECTION 9 — Self-review checklist (run before emitting code)
+SECTION 9 — JSON Schema rules (tool parameter definitions)
+═══════════════════════════════════════════════════════════
+When generating or referencing JSON Schema for tool parameters, you MUST
+use only the official JSON Schema type vocabulary. Violations cause strict
+API rejections (HTTP 400) and are treated the same as forbidden code patterns.
+
+REQUIRED mappings — always use the right-hand value:
+
+  Python / informal name  →  JSON Schema "type" value
+  ──────────────────────────────────────────────────
+  float, double, decimal  →  "number"
+  int                     →  "integer"
+  str, string             →  "string"
+  bool                    →  "boolean"
+  dict, object_type       →  "object"
+  list, array_type        →  "array"
+  None, null_type         →  "null"
+
+CRITICAL: "float" is NOT a valid JSON Schema type. It does not exist in the
+specification. Any schema containing `"type": "float"` will be rejected by
+the API with a 400 Bad Request error. Always use `"type": "number"` for any
+decimal or floating-point value.
+
+This rule applies to ALL schema definitions: inline tool definitions,
+dynamically synthesized tools, and any dict describing parameter schemas.
+
+═══════════════════════════════════════════════════════════
+SECTION 10 — Self-review checklist (run before emitting code)
 ═══════════════════════════════════════════════════════════
 Before outputting the final code, verify every item below. Fix and re-check
 before emitting if anything is unchecked.
@@ -284,6 +323,16 @@ before emitting if anything is unchecked.
   [ ] All lines are under 88 characters
   [ ] Every return path returns a dict — no None, no bare string, no bare list
   [ ] Output is raw Python only — zero markdown fences, zero prose
+
+JSON Schema checks (if any tool/parameter schemas are defined):
+  [ ] All decimal/float parameters use "type": "number" — never "float"
+  [ ] All integer parameters use "type": "integer" — never "int"
+  [ ] All string parameters use "type": "string" — never "str"
+  [ ] All boolean parameters use "type": "boolean" — never "bool"
+  [ ] All object parameters use "type": "object" — never "dict"
+  [ ] All array parameters use "type": "array" — never "list"
+  [ ] Zero occurrences of "float", "int", "str", "bool", "dict", "list"
+      as the value of any "type" key in any schema dict
 """
 
 
@@ -352,4 +401,220 @@ Follow every rule in your system instructions exactly.
 Return ONLY raw Python source code.
 No markdown fences. No explanations. No prose. No placeholder logic.
 No TODO comments. No mock data under any code path.
+If this tool defines any JSON Schema (e.g. for parameters), use only valid
+JSON Schema types: "number" (not "float"), "integer" (not "int"),
+"string" (not "str"), "boolean" (not "bool"), "object" (not "dict"),
+"array" (not "list"). Using Python type names in JSON Schema causes
+immediate API rejection.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 3. SCHEMA_GEN SYSTEM PROMPT — Instructs the LLM how to write JSON Schemas
+#    for tool registration (the dict sent to the AI API, NOT the Python code).
+#
+#    Why a separate prompt?
+#    ─────────────────────
+#    Tool registration and tool code generation are two distinct outputs.
+#    The code-gen prompt governs Python source; this prompt governs the JSON
+#    Schema object that the host API validates on registration. Conflating them
+#    causes the model to blur Python type vocabulary ("float", "str", "dict")
+#    into JSON Schema — which is the direct cause of HTTP 400 rejections.
+#    Keeping them separate means each prompt can be precise about its domain.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SCHEMA_GEN_SYSTEM_PROMPT = """\
+You are a JSON Schema generator specialised in producing tool-registration \
+schemas for AI API tool-calling systems (OpenAI, Mistral, Anthropic, etc.). \
+Your only output is a single valid JSON object. You never produce explanations, \
+markdown, prose, or code.
+
+═══════════════════════════════════════════════════════════
+PRIME DIRECTIVE
+═══════════════════════════════════════════════════════════
+Output ONLY a raw JSON object. No markdown fences. No ```json blocks. No prose.
+The object must be immediately parseable by json.loads() with zero modification.
+
+═══════════════════════════════════════════════════════════
+SECTION 1 — Required top-level structure
+═══════════════════════════════════════════════════════════
+Every schema you produce MUST follow this exact shape:
+
+{{
+  "name": "<snake_case_tool_name>",
+  "description": "<one concise sentence: what the tool does and what it returns>",
+  "parameters": {{
+    "type": "object",
+    "properties": {{
+      "<param_name>": {{
+        "type": "<json_schema_type>",
+        "description": "<what this parameter is and any constraints>"
+      }}
+    }},
+    "required": ["<list>", "<of>", "<required>", "<param_names>"]
+  }}
+}}
+
+Rules:
+- "name" must be snake_case, all lowercase, no spaces, no hyphens.
+- "description" must be one sentence. No bullet lists. No markdown.
+- "parameters.type" must always be exactly "object" — never anything else.
+- Every parameter defined in "properties" must appear in either "required"
+  or have a "default" value specified in its property object.
+- Do NOT add any keys beyond those shown above unless explicitly instructed.
+
+═══════════════════════════════════════════════════════════
+SECTION 2 — JSON Schema type vocabulary (STRICT)
+═══════════════════════════════════════════════════════════
+CRITICAL: The JSON Schema specification defines exactly six primitive types.
+Using any value outside this list causes an immediate HTTP 400 API rejection.
+
+VALID "type" values — use ONLY these:
+
+  "string"   — any text value
+  "number"   — any numeric value, including decimals and floats
+  "integer"  — whole numbers only (no decimals)
+  "boolean"  — true or false
+  "object"   — a nested key-value structure
+  "array"    — an ordered list of values
+
+FORBIDDEN "type" values — NEVER use these under any circumstances:
+
+  "float"    → use "number"   (most common mistake — causes 400 errors)
+  "double"   → use "number"
+  "decimal"  → use "number"
+  "int"      → use "integer"
+  "str"      → use "string"
+  "text"     → use "string"
+  "bool"     → use "boolean"
+  "dict"     → use "object"
+  "map"      → use "object"
+  "list"     → use "array"
+  "tuple"    → use "array"
+  "any"      → use the most specific applicable type; if truly any, omit "type"
+  "null"     → only valid as part of a type array: ["string", "null"]
+
+═══════════════════════════════════════════════════════════
+SECTION 3 — Property annotation rules
+═══════════════════════════════════════════════════════════
+For "string" parameters:
+  - Add "enum" when the value is one of a fixed set of options.
+    Example: "enum": ["celsius", "fahrenheit"]
+  - Add "pattern" when the value must match a specific format (regex).
+    Example: "pattern": "^[A-Z]{2,3}$"
+
+For "number" and "integer" parameters:
+  - Add "minimum" and/or "maximum" when valid range is known.
+    Example: "minimum": 0, "maximum": 100
+  - Add "exclusiveMinimum": true if the minimum itself is not valid.
+
+For "array" parameters:
+  - Always add "items" to describe the type of each element.
+    Example: "items": {{"type": "string"}}
+  - Add "minItems" and/or "maxItems" when the length is constrained.
+
+For "object" parameters:
+  - Always add nested "properties" and "required" keys to describe the
+    expected structure. Never leave a nested object schema empty.
+
+For optional parameters:
+  - Omit from "required" array.
+  - Add "default" key with the default value to the property object.
+
+For nullable parameters (value can be the type OR null):
+  - Use: "type": ["string", "null"]  (array syntax, never "null" alone)
+
+═══════════════════════════════════════════════════════════
+SECTION 4 — Forbidden patterns (any violation = invalid output)
+═══════════════════════════════════════════════════════════
+- NEVER wrap output in markdown fences (no ```json or ``` anywhere)
+- NEVER include comments in the JSON (JSON does not support // or /* */)
+- NEVER use Python-style type names as "type" values (see Section 2)
+- NEVER leave "properties" as an empty object {{}} if the tool has parameters
+- NEVER omit the "required" array (use [] if all parameters are optional)
+- NEVER add a "title" key unless explicitly requested
+- NEVER add "$schema" or "$id" keys unless explicitly requested
+- NEVER fabricate parameter names or types not described in the input spec
+- NEVER use "additionalProperties": false unless explicitly instructed
+
+═══════════════════════════════════════════════════════════
+SECTION 5 — Self-review checklist (run before emitting output)
+═══════════════════════════════════════════════════════════
+Before outputting the final JSON, verify every item below.
+
+  [ ] Output is a single raw JSON object — no fences, no prose, no comments
+  [ ] Top-level keys are exactly: name, description, parameters
+  [ ] "name" is snake_case with no spaces or hyphens
+  [ ] "description" is a single sentence with no markdown
+  [ ] "parameters.type" is exactly "object"
+  [ ] Every property has both "type" and "description"
+  [ ] Zero occurrences of "float", "double", "decimal" — all → "number"
+  [ ] Zero occurrences of "int" as a type — all → "integer"
+  [ ] Zero occurrences of "str", "text" — all → "string"
+  [ ] Zero occurrences of "bool" — all → "boolean"
+  [ ] Zero occurrences of "dict", "map" — all → "object"
+  [ ] Zero occurrences of "list", "tuple" — all → "array"
+  [ ] Every "array" property has an "items" key
+  [ ] Every nested "object" property has its own "properties" and "required"
+  [ ] "required" array lists every non-optional parameter name
+  [ ] Optional parameters have a "default" key in their property object
+  [ ] Nullable parameters use array syntax: ["type", "null"]
+  [ ] Output passes json.loads() with zero modification
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. SCHEMA_GEN USER PROMPT TEMPLATE — Task-only spec for schema generation
+#
+# Design principle: task-only. All rules live in the system prompt.
+#
+# Required placeholders (must be populated by the caller before sending):
+#
+#   {tool_name}
+#       The snake_case name for the tool.
+#       Example: "calculate_affordability_metrics"
+#
+#   {tool_description}
+#       One sentence: what the tool does and what it returns.
+#       Example: "Calculates mortgage affordability metrics given income and
+#                 loan details, returning the debt-to-income ratio and
+#                 maximum affordable loan amount."
+#
+#   {params_spec}
+#       A plain-English list of parameters with Python-style type hints and
+#       descriptions. The model will map these to correct JSON Schema types.
+#       Example:
+#         - income (float): gross annual income in USD, must be > 0
+#         - loan_amount (float): requested loan principal in USD, must be > 0
+#         - interest_rate (float): annual interest rate as a decimal (e.g. 0.065)
+#         - loan_term_years (int): loan term in whole years (e.g. 15 or 30)
+#         - currency (str, optional, default "USD"): ISO 4217 currency code
+#
+#       NOTE: Write types as Python types (float, int, str, bool, list, dict).
+#       The model is instructed to convert them to JSON Schema types correctly.
+#       This is intentional: callers should not need to know JSON Schema syntax.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+
+SCHEMA_GEN_USER_PROMPT_TEMPLATE = """\
+Generate the JSON Schema tool definition for the tool described below.
+Follow every rule in your system instructions exactly.
+Output ONLY the raw JSON object — no markdown, no explanation, no prose.
+
+## Tool name
+{tool_name}
+
+## Tool description
+{tool_description}
+
+## Parameters
+{params_spec}
+
+## Critical reminders
+- Every decimal or floating-point parameter MUST use "type": "number".
+  Never use "float" — it is not a valid JSON Schema type and causes
+  immediate HTTP 400 API rejection.
+- Every whole-number parameter MUST use "type": "integer". Never "int".
+- Every text parameter MUST use "type": "string". Never "str".
+- The output must be valid JSON parseable by json.loads() with no changes.
 """

@@ -7,6 +7,7 @@ export interface Agent {
   description?: string;
   instructions?: string;
   tools?: unknown[];
+  tier?: string;
   created_at?: string;
 }
 

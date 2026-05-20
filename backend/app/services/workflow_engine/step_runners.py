@@ -22,8 +22,8 @@ def _is_agent_uuid(agent_id: str) -> bool:
     """Check if the agent_id looks like a real Mistral agent UUID (not a human name)."""
     if not agent_id:
         return False
-    # Mistral agent IDs are typically 'ag:...' or plain UUIDs
-    if agent_id.startswith("ag:"):
+    # Mistral agent IDs are typically 'ag:', 'ag_', or plain UUIDs
+    if agent_id.startswith("ag:") or agent_id.startswith("ag_"):
         return True
     # UUID-like pattern (hex with dashes)
     if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', agent_id, re.IGNORECASE):
@@ -155,7 +155,7 @@ def substitute_double_brackets(text: str, variables: dict) -> str:
             return json.dumps(val)
         return str(val)
 
-    return re.sub(r'\{\{([^}]+)\}\}', repl, text)
+    return re.sub(r'\{{2,}([^{}]+)\}{2,}', repl, text)
 
 class DotDict(dict):
     """Dictionary supporting dot notation for condition evaluation."""
@@ -515,7 +515,7 @@ def substitute_for_eval(text: str, variables: dict) -> str:
             return json.dumps(val)
         return repr(str(val))
 
-    return re.sub(r'\{\{([^}]+)\}\}', repl, text)
+    return re.sub(r'\{{2,}([^{}]+)\}{2,}', repl, text)
 
 
 async def run_condition_step(step: WorkflowStep, variables: dict) -> StepResult:

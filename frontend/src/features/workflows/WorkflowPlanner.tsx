@@ -3,14 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, ArrowRight, CheckCircle2, AlertCircle,
   RefreshCw, Wrench, Cpu, Sparkles, CircleDot,
-  Code2, Server, PackageCheck, PackagePlus,
+  Code2, Server, PackageCheck, PackagePlus, History
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowPlannerApi, type PlannerEvent } from '../../api/workflowPlanner';
 import { cn } from '../../lib/utils';
+import PlannerHistoryPanel, { type PlannerHistoryEntry } from './PlannerHistoryPanel';
+
+import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 
 /* ── Timeline Step Types ──────────────────────────────────────────────── */
-interface TimelineStep {
+export interface TimelineStep {
   id: string;
   type: 'status' | 'requirements' | 'tool_exists' | 'tool_new' | 'agent_exists' | 'agent_new'
       | 'workflow_ready' | 'compiled' | 'registered' | 'fatal_error' | 'error';
@@ -63,7 +66,7 @@ function RequirementsCard({ data }: { data: Record<string, unknown> }) {
 
 function ToolExistsCard({ data }: { data: Record<string, unknown> }) {
   return (
-    <div className="flex items-center justify-between surface-card rounded-lg px-4 py-2.5 mt-2">
+    <div className="flex items-center justify-between rounded-lg px-4 py-2.5 mt-2 shadow-lg transition-all border border-[rgba(148,163,184,0.2)] bg-gradient-to-br from-[rgba(148,163,184,0.1)] to-[rgba(148,163,184,0.02)] backdrop-blur-md">
       <div className="flex items-center gap-2.5">
         <PackageCheck size={14} className="text-[var(--color-text-muted)]" />
         <span className="text-sm font-mono text-[var(--color-text-primary)]">{data.tool_name as string}</span>
@@ -78,7 +81,7 @@ function ToolExistsCard({ data }: { data: Record<string, unknown> }) {
 function ToolNewCard({ data }: { data: Record<string, unknown> }) {
   const status = data.status as string;
   return (
-    <div className="flex items-center justify-between surface-card rounded-lg px-4 py-2.5 mt-2">
+    <div className="flex items-center justify-between rounded-lg px-4 py-2.5 mt-2 shadow-lg transition-all border border-[rgba(52,211,153,0.3)] bg-gradient-to-br from-[rgba(52,211,153,0.15)] to-[rgba(52,211,153,0.02)] backdrop-blur-md">
       <div className="flex items-center gap-2.5">
         <PackagePlus size={14} className="text-emerald-400" />
         <span className="text-sm font-mono text-[var(--color-text-primary)]">{data.tool_name as string}</span>
@@ -92,17 +95,22 @@ function ToolNewCard({ data }: { data: Record<string, unknown> }) {
 
 function AgentExistsCard({ data }: { data: Record<string, unknown> }) {
   const tools = (data.tools as string[]) ?? [];
+  const tier = data.tier as string | undefined;
+  const cfg = getTierConfig(tier);
   return (
-    <div className="surface-card rounded-xl p-5 mt-2 border border-[var(--color-border-subtle)]">
+    <div className={cn('rounded-xl p-5 mt-2 border shadow-lg transition-all', cfg.cardBg, cfg.cardBorder)}>
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-          <Cpu size={16} className="text-[var(--color-text-muted)]" />
+        <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border', cfg.bg, cfg.border)}>
+          <Cpu size={16} className={cfg.color} />
         </div>
-        <div>
-          <p className="text-sm font-semibold text-white">{data.agent_name as string}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-white">{data.agent_name as string}</p>
+            <TierBadge tier={tier} />
+          </div>
           <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{data.model as string}</p>
         </div>
-        <span className="ml-auto text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium">Reused</span>
+        <span className="text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium shrink-0">Reused</span>
       </div>
       {tools.length > 0 && (
         <div>
@@ -120,17 +128,22 @@ function AgentExistsCard({ data }: { data: Record<string, unknown> }) {
 
 function AgentNewCard({ data }: { data: Record<string, unknown> }) {
   const tools = (data.tools as string[]) ?? [];
+  const tier = data.tier as string | undefined;
+  const cfg = getTierConfig(tier);
   return (
-    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
+    <div className={cn('rounded-xl p-5 mt-2 border shadow-lg transition-all', cfg.cardBg, cfg.cardBorder)}>
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-lg bg-[rgba(99,102,241,0.15)] border border-[rgba(99,102,241,0.25)] flex items-center justify-center">
-          <Cpu size={16} className="text-[#a5b4fc]" />
+        <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border', cfg.bg, cfg.border)}>
+          <Cpu size={16} className={cfg.color} />
         </div>
-        <div>
-          <p className="text-sm font-semibold text-white">{data.agent_name as string}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-white">{data.agent_name as string}</p>
+            <TierBadge tier={tier} />
+          </div>
           <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{data.model as string}</p>
         </div>
-        <span className="ml-auto text-[10px] bg-[rgba(34,197,94,0.1)] text-[var(--color-accent-success)] border border-[rgba(34,197,94,0.2)] px-2 py-0.5 rounded-full uppercase font-medium">Created</span>
+        <span className="text-[10px] bg-[rgba(34,197,94,0.1)] text-[var(--color-accent-success)] border border-[rgba(34,197,94,0.2)] px-2 py-0.5 rounded-full uppercase font-medium shrink-0">Created</span>
       </div>
       {tools.length > 0 && (
         <div>
@@ -226,6 +239,32 @@ export default function WorkflowPlanner() {
   const [workflowName, setWorkflowName] = useState<string | null>(null);
   const [hasFatalError, setHasFatalError] = useState(false);
 
+  const [history, setHistory] = useState<PlannerHistoryEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('mistral_planner_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  const saveToHistory = (goalToSave: string, finalSteps: TimelineStep[], finalWorkflowName: string | null, fatalError: boolean) => {
+    setHistory(prev => {
+      const newEntry: PlannerHistoryEntry = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        goal: goalToSave,
+        workflowName: finalWorkflowName,
+        steps: finalSteps,
+        hasFatalError: fatalError
+      };
+      const updated = [newEntry, ...prev].slice(0, 50);
+      localStorage.setItem('mistral_planner_history', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<(() => void) | null>(null);
@@ -312,6 +351,10 @@ export default function WorkflowPlanner() {
           if (updated.length > 0 && updated[updated.length - 1].status === 'active') {
             updated[updated.length - 1].status = 'completed';
           }
+          const fatal = updated.some(s => s.type === 'fatal_error' || s.type === 'error');
+          const nameStep = updated.find(s => s.type === 'workflow_ready');
+          const finalName = nameStep ? (nameStep.content as Record<string, any>).workflow_name : null;
+          saveToHistory(goal, updated, finalName, fatal);
           return updated;
         });
       },
@@ -361,8 +404,17 @@ export default function WorkflowPlanner() {
       {/* Hero / Input area */}
       <motion.div
         layout
-        className={cn('max-w-3xl mx-auto w-full transition-all duration-500', steps.length > 0 ? 'mt-0 mb-12' : 'mt-[18vh]')}
+        className={cn('max-w-3xl mx-auto w-full transition-all duration-500 relative z-10', steps.length > 0 ? 'mt-0 mb-12' : 'mt-[18vh]')}
       >
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => setIsHistoryOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-bg-hover)] border border-transparent hover:border-[var(--color-border-subtle)] transition-colors"
+          >
+            <History size={14} />
+            View History
+          </button>
+        </div>
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-6 shadow-[0_0_40px_rgba(99,102,241,0.3)]">
             <GitBranch size={30} className="text-white" />
@@ -417,12 +469,40 @@ export default function WorkflowPlanner() {
                   animate={{ opacity: 1, x: 0 }}
                   className="relative pl-8 md:pl-12"
                 >
-                  {/* Timeline dot */}
-                  <div className="absolute left-[-9px] top-1.5 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 border-[var(--color-border-subtle)] flex items-center justify-center">
-                    {step.status === 'active' && <CircleDot size={16} className="text-[#a5b4fc] absolute animate-pulse bg-[var(--color-bg-base)] rounded-full" />}
-                    {step.status === 'completed' && step.type !== 'error' && step.type !== 'fatal_error' && <CheckCircle2 size={16} className="text-[var(--color-accent-success)] absolute bg-[var(--color-bg-base)] rounded-full" />}
-                    {(step.type === 'error' || step.type === 'fatal_error') && <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />}
-                  </div>
+                  {/* Timeline dot — color-coded by tier for agent steps */}
+                  {(() => {
+                    const isAgentStep = step.type === 'agent_exists' || step.type === 'agent_new';
+                    const tierColor = isAgentStep
+                      ? getTierConfig((step.content as Record<string, unknown>)?.tier as string).dot
+                      : undefined;
+                    return (
+                      <div
+                        className={cn(
+                          "absolute left-[-9px] top-1.5 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 flex items-center justify-center",
+                          !tierColor && "border-[var(--color-border-subtle)]"
+                        )}
+                        style={tierColor ? { borderColor: tierColor } : undefined}
+                      >
+                        {step.status === 'active' && (
+                          <CircleDot
+                            size={16}
+                            className="absolute animate-pulse bg-[var(--color-bg-base)] rounded-full"
+                            style={tierColor ? { color: tierColor } : { color: '#a5b4fc' }}
+                          />
+                        )}
+                        {step.status === 'completed' && step.type !== 'error' && step.type !== 'fatal_error' && (
+                          <CheckCircle2
+                            size={16}
+                            className="absolute bg-[var(--color-bg-base)] rounded-full"
+                            style={tierColor ? { color: tierColor } : { color: 'var(--color-accent-success)' }}
+                          />
+                        )}
+                        {(step.type === 'error' || step.type === 'fatal_error') && (
+                          <AlertCircle size={16} className="text-[var(--color-accent-danger)] absolute bg-[var(--color-bg-base)] rounded-full" />
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {renderStepContent(step)}
                 </motion.div>
@@ -456,6 +536,25 @@ export default function WorkflowPlanner() {
       )}
 
       <div ref={endRef} />
+
+      <AnimatePresence>
+        {isHistoryOpen && (
+          <PlannerHistoryPanel
+            history={history}
+            onClose={() => setIsHistoryOpen(false)}
+            onSelectEntry={(entry) => {
+              setInput(entry.goal);
+              setSteps(entry.steps);
+              setWorkflowName(entry.workflowName);
+              setHasFatalError(entry.hasFatalError);
+            }}
+            onClearHistory={() => {
+              setHistory([]);
+              localStorage.removeItem('mistral_planner_history');
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -92,6 +92,25 @@ function parseWorkflowResult(raw: string): string {
 
     const keys = Object.keys(jsonObj).filter(k => k !== 'step_id' && k !== 'status');
     if (keys.length > 0) {
+      // If we have a final_response_generation step, prefer it directly
+      if (jsonObj.final_response_generation && typeof jsonObj.final_response_generation === 'string') {
+        return stripMarkdownCodeBlock(unescapeNewlines(jsonObj.final_response_generation));
+      }
+
+      // Find the longest string (most likely the markdown report)
+      let longestStr = '';
+      for (const k of keys) {
+        const val = jsonObj[k];
+        if (typeof val === 'string' && val.length > longestStr.length) {
+          longestStr = val;
+        }
+      }
+
+      if (longestStr) {
+        return stripMarkdownCodeBlock(unescapeNewlines(longestStr));
+      }
+
+      // Only fallback to formatting all keys if we couldn't find a good string
       let formatted = '';
       for (const k of keys) {
         const val = jsonObj[k];
@@ -343,7 +362,7 @@ export default function WorkflowExecutionPage() {
       (workflow.steps ?? []).forEach((step: any) => {
         const checkValues = (obj: unknown) => {
           if (typeof obj === 'string') {
-            [...obj.matchAll(/\{{1,2}([^}]+)\}{1,2}/g)].forEach(m => vars.add(m[1]));
+            [...obj.matchAll(/\{+([^{}]+)\}+/g)].forEach(m => vars.add(m[1].trim()));
           } else if (typeof obj === 'object' && obj !== null) {
             Object.values(obj).forEach(checkValues);
           }
@@ -359,7 +378,9 @@ export default function WorkflowExecutionPage() {
         role: 'system',
         content: `You are a conversational assistant collecting inputs for the '${workflow.name}' workflow.
 Required inputs: ${requiredInputs.current.join(', ')}.
-Ask the user for these inputs clearly. Once you have ALL information, output ONLY a JSON block:
+Ask the user for these inputs clearly.
+CRITICAL INSTRUCTION: DO NOT output any JSON while you are still gathering inputs. Only ask conversational questions.
+Once you have ALL information, output ONLY a JSON block:
 \`\`\`json
 {"__ready": true, "inputs": {"var_name": "value"}}
 \`\`\`
@@ -413,6 +434,8 @@ Do not output anything else after the JSON.`,
       const execId = res.data?.execution_id;
       setExecutionId(execId);
       setExecStatus('RUNNING');
+      setExecData(null);
+      setHasAddedResultMsg(false);
       setUploadedImage(null);
       setMessages(prev => {
         setExecStartIndex(prev.length + 1);
@@ -548,20 +571,56 @@ Do not output anything else after the JSON.`,
     mutationFn: (msgs: Message[]) => chatApi.completion({ model: 'mistral-large-latest', messages: msgs, temperature: 0.1 }),
     onSuccess: (res) => {
       const content = res.data?.choices?.[0]?.message?.content || '';
-      if (execStatus === 'GATHERING') {
-        const match = content.match(/```json\n([\s\S]*?)\n```/);
+      let displayContent = content;
+      
+      // Always try to intercept __ready JSON payload so users can restart workflows
+      // Try to parse as JSON first (if the LLM output raw JSON without markdown)
+      try {
+        const rawParsed = JSON.parse(content.trim());
+        if (rawParsed.__ready && rawParsed.inputs) {
+          executeMut.mutate(rawParsed.inputs);
+          setIsTyping(false);
+          return;
+        } else if (rawParsed.__ready === false) {
+           displayContent = ''; // If it's pure JSON and false, don't show it
+        }
+      } catch {
+        // If not raw JSON, check for markdown block or raw JSON block embedded in text
+        let jsonStr = '';
+        const match = content.match(/```(?:json)?\n?([\s\S]*?)\n?```/);
+        
         if (match) {
+          jsonStr = match[1].trim();
+        } else {
+          // Fallback: Try to find a JSON block containing "__ready"
+          const fallbackMatch = content.match(/(\{[\s\S]*"__ready"[\s\S]*\})/);
+          if (fallbackMatch) {
+            jsonStr = fallbackMatch[1].trim();
+          }
+        }
+        
+        if (jsonStr) {
           try {
-            const parsed = JSON.parse(match[1]);
+            const parsed = JSON.parse(jsonStr);
             if (parsed.__ready && parsed.inputs) {
               executeMut.mutate(parsed.inputs);
               setIsTyping(false);
               return;
+            } else if (parsed.__ready === false) {
+              // Strip the JSON block from the display content
+              if (match) {
+                displayContent = displayContent.replace(/```(?:json)?\n?[\s\S]*?\n?```/, '').trim();
+              } else {
+                displayContent = displayContent.replace(/\{[\s\S]*"__ready"[\s\S]*\}/, '').trim();
+              }
             }
           } catch { /* ignore */ }
         }
       }
-      setMessages(prev => [...prev, { role: 'assistant', content }]);
+      
+      if (displayContent) {
+        setMessages(prev => [...prev, { role: 'assistant', content: displayContent }]);
+      }
       setIsTyping(false);
     },
     onError: () => {
@@ -952,6 +1011,49 @@ Do not output anything else after the JSON.`,
                             </p>
                           )}
                         </div>
+
+                        {execStatus === 'COMPLETED' && execData?.result && (
+                          <div className="mt-4 bg-black border border-emerald-500/30 rounded-xl overflow-hidden backdrop-blur-md shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+                            <div className="bg-emerald-500/10 px-4 py-3 border-b border-emerald-500/20 flex items-center gap-2">
+                              <CheckCircle2 size={16} className="text-emerald-400" />
+                              <h3 className="text-emerald-400 font-semibold text-sm tracking-wide uppercase">Final Output</h3>
+                            </div>
+                            <div className="p-8 bg-white text-black overflow-x-auto rounded-b-xl">
+                              {(() => {
+                                let mdContent = '';
+                                const raw = execData.result;
+                                if (typeof raw === 'string') {
+                                  mdContent = raw;
+                                } else if (raw && typeof raw === 'object') {
+                                  // Extract markdown from workflow steps
+                                  const rObj = raw as Record<string, any>;
+                                  if (rObj.final_response_generation && typeof rObj.final_response_generation === 'string') {
+                                    mdContent = rObj.final_response_generation;
+                                  } else {
+                                    // Find longest string (usually the report)
+                                    let longest = '';
+                                    Object.values(rObj).forEach(val => {
+                                      if (typeof val === 'string' && val.length > longest.length) {
+                                        longest = val;
+                                      }
+                                    });
+                                    mdContent = longest || JSON.stringify(raw, null, 2);
+                                  }
+                                }
+
+                                mdContent = stripMarkdownCodeBlock(mdContent);
+
+                                return (
+                                  <div className="prose prose-sm md:prose-base prose-slate max-w-none prose-headings:font-bold prose-a:text-indigo-600 prose-tables:border-collapse prose-th:bg-gray-100 prose-th:p-2 prose-th:border prose-td:p-2 prose-td:border">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                      {mdContent}
+                                    </ReactMarkdown>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        )}
                       </motion.div>
                     )}
                   </div>

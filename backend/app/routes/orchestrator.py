@@ -20,6 +20,7 @@ class OrchestrateRequest(BaseModel):
     conversation_id: Optional[str] = None
     cleanup_agent: bool = False
     workflow: Optional[str] = None
+    tier: Optional[str] = None
 
 
 @router.post("/orchestrate")
@@ -31,6 +32,7 @@ async def orchestrate_endpoint(request: OrchestrateRequest, client=Depends(get_m
         agent_id=request.agent_id,
         conversation_id=request.conversation_id,
         cleanup_agent=request.cleanup_agent,
+        tier=request.tier,
     )
     return result
 
@@ -45,6 +47,7 @@ async def orchestrate_stream_endpoint(request: OrchestrateRequest, client=Depend
             agent_id=request.agent_id,
             conversation_id=request.conversation_id,
             cleanup_agent=request.cleanup_agent,
+            tier=request.tier,
         ),
         media_type="text/event-stream",
     )

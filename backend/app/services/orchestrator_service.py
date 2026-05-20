@@ -12,17 +12,9 @@ from typing import Optional, AsyncGenerator
 from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
 from app.services.tool_registry import get_tools, get_tool_descriptions, AVAILABLE_TOOL_KEYS, execute_tool, refresh_dynamic_tools
-from app.prompts import ORCHESTRATOR_SYSTEM_PROMPT, SYNTHESIS_CHECK_PROMPT
+from app.prompts import ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATOR_USER_PROMPT, SYNTHESIS_CHECK_SYSTEM_PROMPT, SYNTHESIS_CHECK_USER_PROMPT
 
 logger = logging.getLogger(__name__)
-
-
-def _build_orchestrator_prompt() -> str:
-    """Build the orchestrator system prompt with current tool descriptions."""
-    return ORCHESTRATOR_SYSTEM_PROMPT.format(
-        tool_descriptions=get_tool_descriptions(),
-        tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
-    )
 
 
 def _parse_agent_config(raw_text: str) -> dict:
@@ -44,6 +36,7 @@ def _parse_agent_config(raw_text: str) -> dict:
             "tools": [],
             "temperature": 0.5,
             "description": "General-purpose assistant",
+            "tier": "foundation",
         }
 
     config.setdefault("agent_name", "Dynamic Agent")
@@ -51,7 +44,39 @@ def _parse_agent_config(raw_text: str) -> dict:
     config.setdefault("tools", [])
     config.setdefault("temperature", 0.5)
     config.setdefault("description", "Dynamically created agent")
-    config.setdefault("agent_instructions", "You are a helpful assistant.")
+    config.setdefault("agent_instructions", "")
+    config.setdefault("tier", "foundation")
+
+    # Ensure agent_instructions is a proper string
+    instr = config.get("agent_instructions") or ""
+    if not isinstance(instr, str):
+        instr = str(instr)
+    instr = instr.strip()
+
+    # If the LLM returned an empty/placeholder instruction (< 50 chars),
+    # auto-generate a proper one from the agent's name, description, and tier.
+    if len(instr) < 50:
+        agent_name = config.get("agent_name", "Agent")
+        description = config.get("description", "")
+        tier = config.get("tier", "foundation")
+        logger.warning(
+            "agent_instructions too short (%d chars: %r), generating fallback from name/description.",
+            len(instr), instr
+        )
+        instr = (
+            f"ROLE: You are {agent_name}, a specialised AI agent (tier: {tier}).\n"
+            f"TASK: {description or 'Assist the user with their query.'}\n"
+            f"REASONING APPROACH: Analyse the request step-by-step, consider all relevant factors, "
+            f"and provide a thorough, well-structured response.\n"
+            f"OUTPUT FORMAT: Provide a clear, structured response with headers and bullet points where appropriate. "
+            f"Use markdown for formatting.\n"
+            f"CONSTRAINTS: Stay within your area of expertise. Do not fabricate data or sources. "
+            f"Be precise and factual.\n"
+            f"FALLBACK: If information is uncertain or unavailable, state your assumption clearly "
+            f"and continue. Never return an empty response."
+        )
+    config["agent_instructions"] = instr
+    logger.info("Final agent_instructions length: %d", len(instr))
     return config
 
 
@@ -69,14 +94,18 @@ async def _check_synthesis_needed(client: Mistral, query: str) -> dict | bool:
     """Check if a new tool is needed and trigger synthesis via Docker Tool Service."""
     from app.config import settings
 
-    system_prompt = SYNTHESIS_CHECK_PROMPT.format(tool_descriptions=get_tool_descriptions())
-
     try:
         result = client.chat.complete(
             model=settings.MISTRAL_CODING_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Query: {query}"},
+                {"role": "system", "content": SYNTHESIS_CHECK_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": SYNTHESIS_CHECK_USER_PROMPT.format(
+                        tool_descriptions=get_tool_descriptions(),
+                        user_query=query
+                    )
+                },
             ],
             temperature=0.1,
             response_format={"type": "json_object"},
@@ -102,14 +131,13 @@ async def _check_synthesis_needed(client: Mistral, query: str) -> dict | bool:
 
         if synthesis_result.get("status") in ("failed", "error"):
             msg = synthesis_result.get("message", "Unknown synthesis error")
-            raise RuntimeError(f"Tool generation failed: {msg}")
+            logger.warning("Tool synthesis failed (non-fatal, continuing with existing tools): %s", msg)
+            return False
 
         # Refresh dynamic tools cache
         await refresh_dynamic_tools()
         return synthesis_result.get("status") == "approved"
 
-    except RuntimeError:
-        raise
     except Exception as e:
         logger.error("Synthesis check failed: %s", e)
         return False
@@ -123,13 +151,14 @@ async def orchestrate(
     agent_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     cleanup_agent: bool = False,
+    tier: Optional[str] = None,
 ) -> dict:
     """Main orchestration flow."""
     if conversation_id:
         return await _handle_followup(client, query, conversation_id)
     if agent_id:
         return await _handle_existing_agent(client, query, agent_id)
-    return await _handle_new_query(client, query, cleanup_agent)
+    return await _handle_new_query(client, query, cleanup_agent, tier=tier)
 
 
 async def _process_tool_calls(client: Mistral, conv_result, conversation_id: str):
@@ -261,7 +290,7 @@ async def _handle_existing_agent(client: Mistral, query: str, agent_id: str) -> 
         raise MistralAPIError(f"Agent query failed: {str(e)}")
 
 
-async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool) -> dict:
+async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool, tier: Optional[str] = None) -> dict:
     """Handle a brand new query with full orchestration."""
     agent_id = None
     try:
@@ -270,6 +299,10 @@ async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool) ->
         # Step 1: Check synthesis and analyze query
         await _check_synthesis_needed(client, query)
         agent_config = await _analyze_query(client, query)
+
+        # Override tier if explicitly selected by the user
+        if tier:
+            agent_config["tier"] = tier
 
         logger.info("Agent config: name=%s, model=%s, tools=%s",
                      agent_config["agent_name"], agent_config["model"], agent_config["tools"])
@@ -323,12 +356,15 @@ def _create_dynamic_agent(client: Mistral, agent_config: dict, query: str) -> st
     """Create a dynamic agent from the analyzed config."""
     tool_definitions = get_tools(agent_config["tools"])
 
+    instructions_text = str(agent_config.get("agent_instructions", "") or "")
+    logger.info("Creating agent with instructions (%d chars): %.300s", len(instructions_text), instructions_text)
+
     create_kwargs = {
         "model": agent_config["model"],
         "name": agent_config["agent_name"],
-        "instructions": agent_config["agent_instructions"],
+        "instructions": instructions_text,
         "description": agent_config.get("description", "Dynamic agent"),
-        "metadata": {"dynamic": "true", "source_query": query[:200]},
+        "metadata": {"dynamic": "true", "source_query": query[:200], "tier": agent_config.get("tier", "foundation")},
     }
     if tool_definitions:
         create_kwargs["tools"] = tool_definitions
@@ -349,13 +385,18 @@ async def _analyze_query(client: Mistral, query: str) -> dict:
     """Use Mistral to analyze the query and determine optimal agent config."""
     try:
         from app.config import settings
-        system_prompt = _build_orchestrator_prompt()
-
         result = client.chat.complete(
             model=settings.MISTRAL_ORCHESTRATOR_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Analyze this query and return the optimal agent configuration:\n\n" + query},
+                {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": ORCHESTRATOR_USER_PROMPT.format(
+                        tool_descriptions=get_tool_descriptions(),
+                        tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
+                        user_query=query
+                    )
+                },
             ],
             temperature=0.1,
             response_format={"type": "json_object"},
@@ -516,6 +557,7 @@ async def orchestrate_stream(
     agent_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     cleanup_agent: bool = False,
+    tier: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     try:
         if conversation_id:
@@ -558,10 +600,15 @@ async def orchestrate_stream(
             
         agent_config = await _analyze_query(client, query)
 
+        # Override tier if explicitly selected by the user
+        if tier:
+            agent_config["tier"] = tier
+
         yield _sse(json.dumps({
             "agent_name": agent_config["agent_name"],
             "model": agent_config["model"],
             "tools": agent_config["tools"],
+            "tier": agent_config.get("tier", "foundation"),
         }), "agent_config")
 
         yield _sse(f"Creating {agent_config['agent_name']}...", "status")
