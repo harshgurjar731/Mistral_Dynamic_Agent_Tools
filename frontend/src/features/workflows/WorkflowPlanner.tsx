@@ -194,7 +194,7 @@ function CompiledCard({ data }: { data: Record<string, unknown> }) {
         <Code2 size={14} className="text-[#a5b4fc]" />
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-white">Compiled to Mistral Workflows SDK</p>
+        <p className="text-xs font-semibold text-white">Compiled to Workflows SDK</p>
         <p className="text-[10px] text-[var(--color-text-muted)] font-mono truncate mt-0.5">{data.file_path as string}</p>
       </div>
       <span className="ml-auto text-[10px] bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 px-2 py-0.5 rounded-full uppercase font-medium shrink-0">Done</span>
@@ -220,7 +220,7 @@ function RegisteredCard({ data }: { data: Record<string, unknown> }) {
         <Server size={14} className="text-emerald-400" />
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-white">Registered on Mistral Server</p>
+        <p className="text-xs font-semibold text-white">Registered on Workflow Server</p>
         {data.mistral_workflow_id && (
           <p className="text-[10px] text-emerald-400 font-mono truncate mt-0.5">ID: {data.mistral_workflow_id as string}</p>
         )}
@@ -241,7 +241,7 @@ export default function WorkflowPlanner() {
 
   const [history, setHistory] = useState<PlannerHistoryEntry[]>(() => {
     try {
-      const saved = localStorage.getItem('mistral_planner_history');
+      const saved = localStorage.getItem('agent_planner_history');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -260,7 +260,7 @@ export default function WorkflowPlanner() {
         hasFatalError: fatalError
       };
       const updated = [newEntry, ...prev].slice(0, 50);
-      localStorage.setItem('mistral_planner_history', JSON.stringify(updated));
+      localStorage.setItem('agent_planner_history', JSON.stringify(updated));
       return updated;
     });
   };
@@ -434,13 +434,13 @@ export default function WorkflowPlanner() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
             placeholder="e.g. Build a multi-step insurance claim processing pipeline that validates claims, queries the database, checks weather, and generates a report…"
-            className="w-full bg-transparent px-4 py-3 text-base text-white placeholder:text-[var(--color-text-muted)] outline-none resize-none overflow-y-auto custom-scrollbar min-h-[64px]"
+            rows={6}
+            className="w-full bg-transparent px-4 py-3 text-base text-white placeholder:text-[var(--color-text-muted)] outline-none resize-none overflow-y-auto custom-scrollbar min-h-[180px]"
             disabled={isPlanning}
           />
           <div className="flex justify-between items-center p-2 border-t border-[var(--color-border-subtle)] mt-2">
             <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
               <Sparkles size={12} />
-              <span>Powered by Mistral AI</span>
             </div>
             <button
               onClick={handleSubmit}
@@ -550,7 +550,7 @@ export default function WorkflowPlanner() {
             }}
             onClearHistory={() => {
               setHistory([]);
-              localStorage.removeItem('mistral_planner_history');
+              localStorage.removeItem('agent_planner_history');
             }}
           />
         )}

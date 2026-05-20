@@ -133,7 +133,7 @@ export default function Orchestrator() {
             <Sparkles size={32} className="text-black" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight mb-3">What do you want to build?</h1>
-          <p className="text-[var(--color-text-muted)]">Describe your task, and Mistral will dynamically assemble the perfect agent and tools for it.</p>
+          <p className="text-[var(--color-text-muted)]">Describe your task, and AI will dynamically assemble the perfect agent and tools for it.</p>
         </div>
 
         <div className="surface-card rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-[var(--color-border-focus)] transition-all">
@@ -143,7 +143,8 @@ export default function Orchestrator() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
             placeholder="e.g. Create a database agent that can execute SQL queries to manage my local users..."
-            className="w-full bg-transparent px-4 py-3 text-base text-white placeholder:text-[var(--color-text-muted)] outline-none resize-none overflow-y-auto custom-scrollbar min-h-[60px]"
+            rows={6}
+            className="w-full bg-transparent px-4 py-3 text-base text-white placeholder:text-[var(--color-text-muted)] outline-none resize-none overflow-y-auto custom-scrollbar min-h-[180px]"
             disabled={isProcessing}
           />
           <div className="flex items-center justify-between p-2 border-t border-[var(--color-border-subtle)] mt-2 gap-3">

@@ -38,7 +38,7 @@ export default function AgentDetail() {
     if (agent) {
       setEditForm({
         name: agent.name || '',
-        model: agent.model || 'mistral-large-latest',
+        model: agent.model || 'default-large-latest',
         instructions: agent.agent_instructions || agent.instructions || '',
         description: agent.description || '',
         tier: agent.tier || 'foundation'
@@ -84,7 +84,7 @@ export default function AgentDetail() {
     setStreaming(true);
     setAgentStatus('Initializing...');
 
-    let isMistralError = false;
+    let isAIError = false;
 
     const stop = orchestratorApi.stream(
       {
@@ -102,15 +102,15 @@ export default function AgentDetail() {
         if (event.type === 'conversation_id') setConversationId(event.data);
         if (event.type === 'error') {
             appendChunk('\n\n**System Error:** ' + event.data);
-            isMistralError = true;
+            isAIError = true;
             setAgentStatus('');
         }
       },
       () => {
         finalizeStreaming();
         setAgentStatus('');
-        // If it was a 400 error about missing function results, we reset the Mistral conversation ID to auto-recover next time
-        if (isMistralError) {
+        // If it was a 400 error about missing function results, we reset the AI conversation ID to auto-recover next time
+        if (isAIError) {
             setConversationId('');
         }
       }
@@ -279,9 +279,9 @@ export default function AgentDetail() {
                 <div>
                   <label className="block text-xs text-[var(--color-text-muted)] mb-2 uppercase tracking-wider font-medium">Model</label>
                   <select value={editForm.model} onChange={e => setEditForm(f => ({...f, model: e.target.value}))} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
-                    <option value="mistral-large-latest" className="bg-[var(--color-bg-surface)] text-white">mistral-large-latest</option>
-                    <option value="mistral-small-latest" className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
-                    <option value="open-mistral-nemo" className="bg-[var(--color-bg-surface)] text-white">open-mistral-nemo</option>
+                    <option value="default-large-latest" className="bg-[var(--color-bg-surface)] text-white">default-large-latest</option>
+                    <option value="default-small-latest" className="bg-[var(--color-bg-surface)] text-white">default-small-latest</option>
+                    <option value="open-default-nemo" className="bg-[var(--color-bg-surface)] text-white">open-default-nemo</option>
                     <option value="codestral-latest" className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
                   </select>
                 </div>

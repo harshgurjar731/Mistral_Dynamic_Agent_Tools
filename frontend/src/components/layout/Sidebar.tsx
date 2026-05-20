@@ -154,9 +154,9 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
             <motion.span 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="font-bold text-sm tracking-tight whitespace-nowrap text-gradient-vibrant"
+              className="font-bold text-xl text-gradient-vibrant w-fit"
             >
-              MISTRAL
+              Agentic AI Design Patterns
             </motion.span>
           )}
         </div>

@@ -544,7 +544,7 @@ export default function WorkflowVisualizer() {
             className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-sm rounded-md whitespace-nowrap"
           >
             {exportMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Server size={14} />}
-            {exportSuccess ? "Exported!" : "Export to Mistral"}
+            {exportSuccess ? "Exported!" : "Export Workflow"}
           </button>
           <button
             onClick={() => setIsHistoryOpen(true)}

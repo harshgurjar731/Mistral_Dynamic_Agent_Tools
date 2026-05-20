@@ -194,7 +194,7 @@ export default function WorkflowDashboard() {
       {/* Header */}
       <div className="flex items-end justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Mistral <span className="text-gradient-vibrant">Workflows</span></h1>
+          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Workflows</h1>
           <p className="text-sm text-[var(--color-text-muted)]">Design, execute, and monitor multi-agent pipelines.</p>
         </div>
         <div className="flex items-center gap-2">

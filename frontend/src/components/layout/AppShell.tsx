@@ -16,7 +16,7 @@ export default function AppShell() {
           <button onClick={() => setMobileMenuOpen(true)} className="p-2 -ml-2 text-[var(--color-text-muted)] hover:text-white">
             <Menu size={20} />
           </button>
-          <span className="font-bold text-sm tracking-tight text-white ml-2">MISTRAL</span>
+          <span className="font-bold text-xl text-white ml-2">Agentic AI Design Patterns</span>
         </div>
         <main className="flex flex-col flex-1 overflow-y-scroll overflow-x-hidden bg-transparent relative z-0">
           {/* Ambient Background Orbs */}

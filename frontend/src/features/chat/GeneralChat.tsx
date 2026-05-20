@@ -16,7 +16,7 @@ export default function GeneralChat() {
   const endRef = useRef<HTMLDivElement>(null);
 
   // Settings
-  const [model, setModel] = useState('mistral-large-latest');
+  const [model, setModel] = useState('default-large-latest');
   const [temperature, setTemperature] = useState(0.7);
   const [safePrompt, setSafePrompt] = useState(false);
 
@@ -82,7 +82,7 @@ export default function GeneralChat() {
             <div className="h-full flex flex-col items-center justify-center text-center opacity-50">
               <Sparkles size={32} className="mb-4 text-[var(--color-text-muted)]" />
               <h2 className="text-lg font-medium text-white mb-1">Standard Chat</h2>
-              <p className="text-sm text-[var(--color-text-muted)] max-w-sm">Chat directly with Mistral models without dynamic agent wrappers or tool synthesis.</p>
+              <p className="text-sm text-[var(--color-text-muted)] max-w-sm">Chat directly with standard AI models without dynamic agent wrappers or tool synthesis.</p>
             </div>
           )}
 
@@ -162,9 +162,9 @@ export default function GeneralChat() {
                 <div>
                   <label className="block text-xs text-[var(--color-text-muted)] mb-2 uppercase tracking-wider font-medium">Model</label>
                   <select value={model} onChange={e => setModel(e.target.value)} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
-                    <option value="mistral-large-latest" className="bg-[var(--color-bg-surface)] text-white">mistral-large-latest</option>
-                    <option value="mistral-small-latest" className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
-                    <option value="open-mistral-nemo" className="bg-[var(--color-bg-surface)] text-white">open-mistral-nemo</option>
+                    <option value="default-large-latest" className="bg-[var(--color-bg-surface)] text-white">default-large-latest</option>
+                    <option value="default-small-latest" className="bg-[var(--color-bg-surface)] text-white">default-small-latest</option>
+                    <option value="open-default-nemo" className="bg-[var(--color-bg-surface)] text-white">open-default-nemo</option>
                     <option value="codestral-latest" className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
                   </select>
                 </div>

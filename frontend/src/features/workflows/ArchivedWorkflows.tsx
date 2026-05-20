@@ -48,7 +48,7 @@ function ArchivedWorkflowCard({
         </span>
         {wf.is_deployed && (
           <span className="ml-auto text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium flex items-center gap-1">
-            Deployed to Mistral
+            Deployed
           </span>
         )}
       </div>
