@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, ArrowRight, CheckCircle2, AlertCircle,
@@ -6,8 +6,11 @@ import {
   Code2, Server, PackageCheck, PackagePlus, History
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { workflowPlannerApi, type PlannerEvent } from '../../api/workflowPlanner';
+import { workflowsApi } from '../../api/workflows';
 import { cn } from '../../lib/utils';
+import { QK } from '../../lib/queryClient';
 import PlannerHistoryPanel, { type PlannerHistoryEntry } from './PlannerHistoryPanel';
 
 import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
@@ -248,6 +251,102 @@ export default function WorkflowPlanner() {
     }
   });
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  const { data: wfListData, isLoading: isLoadingWorkflows } = useQuery({
+    queryKey: QK.workflows(),
+    queryFn: () =>
+      workflowsApi.list().then(r => {
+        const d = r.data;
+        return Array.isArray(d) ? d : d.workflows ?? [];
+      }),
+    enabled: isHistoryOpen, // only fetch when panel is opened
+  });
+
+  const mergedHistory = useMemo(() => {
+    // Build synthetic entries from backend workflows
+    const workflows = (Array.isArray(wfListData) ? wfListData : (wfListData as any)?.workflows ?? []) as Record<string, any>[];
+    if (workflows.length === 0) return history;
+
+    const knownNames = new Set(history.map(h => h.workflowName).filter(Boolean));
+    const synthetic: PlannerHistoryEntry[] = workflows
+      .filter(wf => !wf.archived && wf.name && !knownNames.has(wf.name))
+      .map(wf => {
+        const steps: TimelineStep[] = [];
+        // Reconstruct a minimal timeline from the workflow definition
+        const wfSteps = (wf.steps ?? []) as Record<string, any>[];
+        const agentSteps = wfSteps.filter(s => s.type === 'agent');
+        const toolSteps = wfSteps.filter(s => s.type === 'tool');
+        const agentNames = agentSteps.map(s => s.config?.agent_name ?? s.config?.agent_id ?? s.id);
+        const toolNames = toolSteps.map(s => s.config?.tool_name ?? s.id);
+
+        steps.push({
+          id: `${wf.name}-req`,
+          type: 'requirements',
+          content: {
+            description: wf.description ?? '',
+            tools_needed: toolNames,
+            agents_needed: agentNames,
+          },
+          status: 'completed',
+        });
+
+        toolSteps.forEach(s => {
+          steps.push({
+            id: `${wf.name}-tool-${s.id}`,
+            type: 'tool_exists',
+            content: { tool_name: s.config?.tool_name ?? s.id },
+            status: 'completed',
+          });
+        });
+
+        agentSteps.forEach(s => {
+          steps.push({
+            id: `${wf.name}-agent-${s.id}`,
+            type: 'agent_exists',
+            content: {
+              agent_name: s.config?.agent_name ?? s.config?.agent_id ?? s.id,
+              model: s.config?.model ?? 'mistral',
+              tools: s.config?.tools ?? [],
+              tier: s.tier,
+            },
+            status: 'completed',
+          });
+        });
+
+        steps.push({
+          id: `${wf.name}-ready`,
+          type: 'workflow_ready',
+          content: {
+            workflow_name: wf.name,
+            description: wf.description ?? '',
+            step_count: wfSteps.length,
+            agents: agentNames,
+            entry_step: wf.entry_step ?? '',
+          },
+          status: 'completed',
+        });
+
+        let nameHash = 0;
+        const nameStr = wf.name || '';
+        for (let i = 0; i < nameStr.length; i++) {
+          nameHash = nameStr.charCodeAt(i) + ((nameHash << 5) - nameHash);
+        }
+        // Offset deterministically by up to 3 days (in ms) from the current moment
+        const stableTimestamp = 1779274134000 - Math.abs(nameHash % 259200000);
+
+        return {
+          id: `backend-${wf.name}`,
+          timestamp: stableTimestamp,
+          goal: wf.description || `Build the "${wf.name}" workflow`,
+          workflowName: wf.name,
+          steps,
+          hasFatalError: false,
+          restoredFromBackend: true,
+        } as PlannerHistoryEntry;
+      });
+
+    return [...history, ...synthetic];
+  }, [history, wfListData]);
 
   const saveToHistory = (goalToSave: string, finalSteps: TimelineStep[], finalWorkflowName: string | null, fatalError: boolean) => {
     setHistory(prev => {
@@ -540,7 +639,8 @@ export default function WorkflowPlanner() {
       <AnimatePresence>
         {isHistoryOpen && (
           <PlannerHistoryPanel
-            history={history}
+            history={mergedHistory}
+            isLoading={isLoadingWorkflows}
             onClose={() => setIsHistoryOpen(false)}
             onSelectEntry={(entry) => {
               setInput(entry.goal);

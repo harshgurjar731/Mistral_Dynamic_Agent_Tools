@@ -89,7 +89,7 @@ export default function ArchivedWorkflows() {
     }
   });
 
-  const workflows = (data ?? []).filter((w: any) => w.archived);
+  const workflows = (Array.isArray(data) ? data : (data as any)?.workflows ?? []).filter((w: any) => w.archived);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -122,11 +122,28 @@ export default function ArchivedWorkflows() {
 
       {/* Grid */}
       {isLoading ? (
-        <div className="flex items-center justify-center h-64">
-          <div className="flex flex-col items-center gap-3">
-            <RefreshCw size={24} className="animate-spin text-[var(--color-accent-primary)]" />
-            <p className="text-sm text-[var(--color-text-muted)] font-medium">Loading archives...</p>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="surface-card rounded-xl p-5 flex flex-col h-full gap-4 animate-pulse">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[var(--color-bg-hover)] shrink-0" />
+                <div className="flex-1 space-y-2 py-1">
+                  <div className="h-4 w-3/4 rounded bg-[var(--color-bg-hover)]" />
+                  <div className="h-3 w-full rounded bg-[var(--color-bg-hover)]" />
+                  <div className="h-3 w-5/6 rounded bg-[var(--color-bg-hover)]" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-1">
+                <div className="h-5 w-16 rounded-full bg-[var(--color-bg-hover)]" />
+                <div className="h-5 w-20 rounded-full bg-[var(--color-bg-hover)]" />
+              </div>
+              <div className="flex gap-2 pt-2 mt-auto border-t border-[var(--color-border-subtle)]">
+                <div className="h-8 rounded bg-[var(--color-bg-hover)] flex-1" />
+                <div className="h-8 rounded bg-[var(--color-bg-hover)] flex-1" />
+                <div className="h-8 rounded bg-[var(--color-bg-hover)] flex-1" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : workflows.length === 0 ? (
         <motion.div

@@ -54,7 +54,7 @@ import { MotionConfig } from 'framer-motion';
 
 export default function App() {
   return (
-    <MotionConfig reducedMotion="always">
+    <MotionConfig reducedMotion="user">
       <RouterProvider router={router} />
     </MotionConfig>
   );

@@ -212,12 +212,3 @@
   }
 }
 
-/* Disable all animations, transitions, and effects globally for maximum performance */
-*, *::before, *::after {
-  animation-duration: 0s !important;
-  animation-delay: 0s !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0s !important;
-  transition-delay: 0s !important;
-  scroll-behavior: auto !important;
-}

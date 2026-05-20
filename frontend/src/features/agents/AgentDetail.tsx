@@ -117,7 +117,7 @@ export default function AgentDetail() {
     );
   };
 
-  if (isLoadingAgent) return <div className="p-8 text-white">Loading Agent...</div>;
+  if (isLoadingAgent) return <AgentDetailSkeleton />;
   if (!agent) return <div className="p-8 text-white">Agent not found.</div>;
 
   const hasChanges = agent && (
@@ -329,6 +329,47 @@ export default function AgentDetail() {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function AgentDetailSkeleton() {
+  return (
+    <div className="flex w-full h-full absolute inset-0 overflow-hidden bg-[var(--color-bg-base)] text-white animate-pulse">
+      <div className="flex flex-col flex-1 relative min-w-0">
+        {/* Header Skeleton */}
+        <header className="h-14 px-4 md:px-6 border-b border-[var(--color-border-subtle)] flex items-center justify-between shrink-0 bg-transparent">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-md bg-[var(--color-bg-hover)]" />
+            <div className="h-4 w-32 rounded bg-[var(--color-bg-hover)]" />
+          </div>
+          <div className="w-8 h-8 rounded bg-[var(--color-bg-hover)]" />
+        </header>
+
+        {/* Chat Skeleton */}
+        <div className="flex-1 p-6 flex flex-col items-center justify-center text-center opacity-50">
+          <div className="w-16 h-16 rounded-2xl bg-[var(--color-bg-hover)] mb-4" />
+          <div className="h-5 w-48 rounded bg-[var(--color-bg-hover)] mb-2" />
+          <div className="h-3 w-64 rounded bg-[var(--color-bg-hover)] mb-1" />
+          <div className="h-3 w-52 rounded bg-[var(--color-bg-hover)]" />
+        </div>
+
+        {/* Input Bar Skeleton */}
+        <div className="p-4 shrink-0">
+          <div className="max-w-4xl mx-auto h-14 rounded-xl bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)]" />
+        </div>
+      </div>
+
+      {/* Settings Panel Skeleton */}
+      <div className="border-l border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] w-[320px] shrink-0 p-6 space-y-6 hidden md:block">
+        <div className="h-4 w-1/2 rounded bg-[var(--color-bg-hover)] mb-8" />
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="space-y-2">
+            <div className="h-3 w-1/3 rounded bg-[var(--color-bg-hover)]" />
+            <div className="h-9 w-full rounded bg-[var(--color-bg-hover)]" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

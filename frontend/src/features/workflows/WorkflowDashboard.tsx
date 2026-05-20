@@ -187,7 +187,7 @@ export default function WorkflowDashboard() {
     },
   });
 
-  const workflows = (data ?? []).filter((w: unknown) => !(w as Record<string, unknown>).archived);
+  const workflows = (Array.isArray(data) ? data : (data as any)?.workflows ?? []).filter((w: unknown) => !(w as Record<string, unknown>).archived);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
