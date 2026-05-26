@@ -4,7 +4,7 @@ import {
   X, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
   MessageSquare, Send, Bot, User, Zap, Server, ImagePlus, X as XIcon,
 } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
 import { chatApi } from '../../api/chat';
 import { cn } from '../../lib/utils';
@@ -125,7 +125,6 @@ export default function WorkflowExecutionModal({
   executionId?: string;
   onClose: () => void;
 }) {
-  const qc = useQueryClient();
 
   // Extract required variables from workflow
   const requiredInputs = useRef<string[]>([]);
@@ -652,7 +651,6 @@ Do not output anything else after the JSON.`,
 
   const renderMessage = (msg: Message, idx: number) => {
     if (msg.role === 'system') return null;
-    const isResult = msg.role === 'assistant' && msg.content.includes('Workflow completed!');
     return (
       <div key={idx} className={cn('flex gap-3 min-w-0 w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
         <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1',

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { X, Clock, GitBranch, AlertCircle, CheckCircle2, Trash2, Loader2, Database } from 'lucide-react';
+import { X, Clock, GitBranch, AlertCircle, CheckCircle2, Trash2, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { TimelineStep } from './WorkflowPlanner';
 

@@ -16,7 +16,7 @@ const containerVariants = {
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 export default function ToolLifecycle() {
@@ -107,7 +107,7 @@ function ActiveTools() {
                 <span className="text-[10px] font-medium text-[var(--color-accent-success)] uppercase tracking-wider">Active</span>
               </div>
             </div>
-            {tool.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1 line-clamp-4">{String(tool.description)}</p>}
+            {!!tool.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1 line-clamp-4">{String(tool.description)}</p>}
           </motion.div>
         ))}
       </motion.div>

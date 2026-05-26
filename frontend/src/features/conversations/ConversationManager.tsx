@@ -11,7 +11,7 @@ const containerVariants = {
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 export default function ConversationManager() {
@@ -77,8 +77,8 @@ export default function ConversationManager() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-[family-name:var(--font-mono)] text-[var(--color-text-primary)] truncate">{String(conv.id)}</p>
                 <div className="flex items-center gap-3 mt-1">
-                  {conv.model && <span className="text-[10px] text-[var(--color-text-secondary)] font-medium uppercase tracking-wider">{String(conv.model)}</span>}
-                  {conv.created_at && (
+                  {!!conv.model && <span className="text-[10px] text-[var(--color-text-secondary)] font-medium uppercase tracking-wider">{String(conv.model)}</span>}
+                  {!!conv.created_at && (
                     <span className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1 font-[family-name:var(--font-mono)]">
                       <Clock size={10} />{new Date(String(conv.created_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>

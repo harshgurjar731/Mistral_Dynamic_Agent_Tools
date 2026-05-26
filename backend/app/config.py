@@ -52,3 +52,17 @@ class Settings(BaseSettings):
 
 # Singleton settings instance
 settings = Settings()
+
+
+def map_model_name(model_name: str) -> str:
+    """Map frontend/alias model names to official Mistral model names."""
+    if not model_name or not isinstance(model_name, str):
+        return model_name
+    mapping = {
+        "default-large-latest": "mistral-large-latest",
+        "default-medium-latest": "mistral-medium-latest",
+        "default-small-latest": "mistral-small-latest",
+        "open-default-nemo": "open-mistral-nemo",
+    }
+    return mapping.get(model_name, model_name)
+

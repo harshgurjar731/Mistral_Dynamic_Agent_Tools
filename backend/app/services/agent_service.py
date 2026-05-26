@@ -7,7 +7,7 @@ and SDK client for create/update/delete.
 import logging
 import httpx
 from mistralai.client import Mistral
-from app.config import settings
+from app.config import settings, map_model_name
 from app.exceptions import MistralAPIError, AgentNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
     """Create a new agent."""
     try:
         create_kwargs = {
-            "model": data["model"],
+            "model": map_model_name(data["model"]),
             "name": data["name"],
             "instructions": data.get("instructions", "You are a helpful assistant."),
         }

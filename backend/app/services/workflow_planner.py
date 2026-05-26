@@ -15,7 +15,7 @@ from typing import AsyncGenerator
 
 import httpx
 from mistralai.client import Mistral
-from app.config import settings
+from app.config import settings, map_model_name
 from app.prompts import WORKFLOW_ANALYSIS_SYSTEM_PROMPT, WORKFLOW_ANALYSIS_USER_PROMPT, WORKFLOW_DAG_SYSTEM_PROMPT, WORKFLOW_DAG_USER_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ async def plan_workflow_stream(
                 agent_info = {
                     "agent_id": existing_agent["id"],
                     "agent_name": existing_agent["name"],
-                    "model": agent_spec.get("model", "mistral-large-latest"),
+                    "model": map_model_name(agent_spec.get("model", "mistral-large-latest")),
                     "tier": agent_spec.get("tier", "foundation"),
                     "tools": agent_spec.get("tools", []),
                     "description": agent_spec.get("description", ""),
@@ -187,7 +187,7 @@ async def plan_workflow_stream(
                 )
 
                 create_kwargs: dict = {
-                    "model": agent_spec.get("model", "mistral-large-latest"),
+                    "model": map_model_name(agent_spec.get("model", "mistral-large-latest")),
                     "name": agent_name,
                     "instructions": instructions,
                     "description": agent_spec.get("description", f"Workflow agent: {agent_name}"),
@@ -209,7 +209,7 @@ async def plan_workflow_stream(
                 agent_info = {
                     "agent_id": agent_id,
                     "agent_name": agent_name,
-                    "model": agent_spec.get("model", "mistral-large-latest"),
+                    "model": map_model_name(agent_spec.get("model", "mistral-large-latest")),
                     "tier": agent_spec.get("tier", "foundation"),
                     "tools": tool_keys,
                     "description": agent_spec.get("description", ""),

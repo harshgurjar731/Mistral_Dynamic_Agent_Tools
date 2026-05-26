@@ -1012,7 +1012,7 @@ Do not output anything else after the JSON.`,
                           )}
                         </div>
 
-                        {execStatus === 'COMPLETED' && execData?.result && (
+                        {execStatus === 'COMPLETED' && !!execData?.result && (
                           <div className="mt-4 bg-black border border-emerald-500/30 rounded-xl overflow-hidden backdrop-blur-md shadow-[0_0_15px_rgba(16,185,129,0.1)]">
                             <div className="bg-emerald-500/10 px-4 py-3 border-b border-emerald-500/20 flex items-center gap-2">
                               <CheckCircle2 size={16} className="text-emerald-400" />

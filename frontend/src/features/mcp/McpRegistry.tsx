@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Server, Plus, Activity, Wifi, WifiOff, X } from 'lucide-react';
 import { mcpApi } from '../../api/mcp';
 import { QK } from '../../lib/queryClient';
-import { cn } from '../../lib/utils';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -13,7 +12,7 @@ const containerVariants = {
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 export default function McpRegistry() {
@@ -109,7 +108,7 @@ export default function McpRegistry() {
                 <div key={server} className="flex items-center gap-3 px-3 py-2 rounded-md bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)]">
                   {status.reachable ? <Wifi size={14} className="text-[var(--color-accent-success)]" /> : <WifiOff size={14} className="text-[var(--color-accent-danger)]" />}
                   <span className="font-[family-name:var(--font-mono)] text-sm text-[var(--color-text-primary)] flex-1">{server}</span>
-                  {status.latency_ms && (
+                  {!!status.latency_ms && (
                     <span className="text-[10px] text-[var(--color-text-secondary)] font-[family-name:var(--font-mono)]">{String(status.latency_ms)}ms</span>
                   )}
                 </div>
@@ -167,10 +166,10 @@ export default function McpRegistry() {
                 </div>
                 <div>
                   <span className="text-sm font-medium text-[var(--color-text-primary)] block">{String(srv.name)}</span>
-                  {srv.url && <span className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">{String(srv.url)}</span>}
+                  {!!srv.url && <span className="text-xs text-[var(--color-text-muted)] font-[family-name:var(--font-mono)]">{String(srv.url)}</span>}
                 </div>
               </div>
-              {srv.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mt-2 pt-2 border-t border-[var(--color-border-subtle)]">{String(srv.description)}</p>}
+              {!!srv.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mt-2 pt-2 border-t border-[var(--color-border-subtle)]">{String(srv.description)}</p>}
             </motion.div>
           ))}
         </motion.div>

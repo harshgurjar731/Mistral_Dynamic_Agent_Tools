@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BotMessageSquare, Wrench, GitBranch, MessageSquare,
-  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Check
+  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState, useMemo } from 'react';
@@ -11,7 +11,15 @@ import { useQuery } from '@tanstack/react-query';
 import { agentsApi } from '../../api/agents';
 import { QK } from '../../lib/queryClient';
 
-const NAV = [
+interface NavItem {
+  to: string;
+  icon: any;
+  label: string;
+  expandable?: boolean;
+  type?: 'general' | 'agent';
+}
+
+const NAV: NavItem[] = [
   { to: '/',              icon: BotMessageSquare, label: 'Orchestrator' },
   { to: '/playground',    icon: Terminal,         label: 'Playground', expandable: true, type: 'general' },
   { to: '/agents',        icon: Cpu,              label: 'Agents', expandable: true, type: 'agent' },
@@ -20,7 +28,7 @@ const NAV = [
   { to: '/conversations', icon: MessageSquare,    label: 'Conversations' },
   { to: '/mcp',           icon: Server,           label: 'MCP Servers' },
   { to: '/health',        icon: Activity,         label: 'Health' },
-] as const;
+];
 
 export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileMenuOpen?: boolean, setMobileMenuOpen?: (open: boolean) => void }) {
   const [collapsed, setCollapsed] = useState(false);

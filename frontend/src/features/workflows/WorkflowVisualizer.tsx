@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   ReactFlow,
   Background,
@@ -19,15 +19,16 @@ import '@xyflow/react/dist/style.css';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Play, X, Cpu, Wrench, HelpCircle,
-  Shuffle, GitBranch, Loader2, CheckCircle2, AlertCircle, Clock, Server,
-  Grid, Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
-  Copy, Check, EyeOff,
+  Shuffle, GitBranch, Loader2, Clock, Server,
+  Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
+  Copy, EyeOff,
 } from 'lucide-react';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 import WorkflowHistoryPanel from './WorkflowHistoryPanel';
-import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
+import { TierBadge } from '../../components/ui/TierBadge';
+import dagre from 'dagre';
 
 /* ── Type helpers ────────────────────────────────────────────────────── */
 interface WorkflowStep {
@@ -49,29 +50,34 @@ interface WorkflowDef {
 
 /* ── Custom Node Components ──────────────────────────────────────────── */
 
-function BaseNode({
-  icon, label, sublabel, accentClass, borderClass, glowColor, children, onClick, selected, direction,
-}: {
+interface NodeCardProps {
   icon: React.ReactNode;
-  label: string;
-  sublabel?: string;
+  title: string;
+  subtitle?: string;
   accentClass: string;
   borderClass: string;
   glowColor: string;
-  children?: React.ReactNode;
-  onClick?: () => void;
   selected?: boolean;
-  direction?: 'TB' | 'LR';
-}) {
-  const isLR = direction === 'LR';
-  const targetPos = isLR ? Position.Left : Position.Top;
-  const sourcePos = isLR ? Position.Right : Position.Bottom;
+  onClick?: () => void;
+  children?: React.ReactNode;
+}
 
+function NodeCard({
+  icon,
+  title,
+  subtitle,
+  accentClass,
+  borderClass,
+  glowColor,
+  selected,
+  onClick,
+  children,
+}: NodeCardProps) {
   return (
     <div
       onClick={onClick}
       className={cn(
-        'rounded-2xl backdrop-blur-md bg-[rgba(13,18,30,0.85)] border transition-all duration-300 cursor-pointer min-w-[210px] shadow-[0_10px_35px_rgba(0,0,0,0.5)]',
+        'rounded-2xl backdrop-blur-md bg-[rgba(13,18,30,0.85)] border transition-all duration-300 cursor-pointer min-w-[240px] shadow-[0_10px_35px_rgba(0,0,0,0.5)] overflow-hidden',
         selected 
           ? 'border-2 scale-[1.03] ' + borderClass
           : 'border-[rgba(255,255,255,0.08)] hover:border-white/20 hover:scale-[1.01]',
@@ -82,43 +88,85 @@ function BaseNode({
           : '0 10px 35px rgba(0,0,0,0.5)'
       }}
     >
-      <Handle 
-        type="target" 
-        position={targetPos} 
-        className="!bg-[var(--color-bg-base)] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10" 
-      />
-      
       {/* Accent Top Border line */}
-      <div className={cn('h-1 rounded-t-2xl', accentClass)} />
+      <div className={cn('h-1 w-full', accentClass)} />
 
-      <div className="px-4 py-3 flex items-center gap-3">
+      {/* Header content */}
+      <div className="px-4 py-3.5 flex items-center gap-3 border-b border-white/5 bg-white/[0.01]">
         <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center text-white shadow-[inset_0_1px_2px_rgba(255,255,255,0.15)] shrink-0', accentClass)}>
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold text-white leading-snug truncate" title={label}>{label}</p>
-          {sublabel && <p className="text-[9px] text-[var(--color-text-muted)] font-mono leading-tight mt-0.5 truncate">{sublabel}</p>}
+          <p className="text-xs font-extrabold text-white leading-snug truncate" title={title}>{title}</p>
+          {subtitle && <p className="text-[9px] text-[var(--color-text-muted)] font-mono leading-tight mt-0.5 truncate">{subtitle}</p>}
         </div>
       </div>
-      
+
+      {/* Body children */}
       {children && (
-        <div className="px-4 py-3 text-[10.5px] text-[var(--color-text-muted)] border-t border-[rgba(255,255,255,0.04)] bg-black/20 rounded-b-2xl">
+        <div className="text-[10.5px] text-[var(--color-text-muted)] flex flex-col">
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+interface PortRowProps {
+  label: string;
+  direction?: 'TB' | 'LR';
+  type: 'source' | 'target';
+  handleId: string;
+  dotColor: string;
+  side: 'left' | 'right';
+}
+
+function PortRow({
+  label,
+  direction,
+  type,
+  handleId,
+  dotColor,
+  side,
+}: PortRowProps) {
+  const isLR = direction === 'LR';
+  
+  return (
+    <div className="relative flex items-center justify-between px-4 py-2 hover:bg-white/[0.02] transition-colors group/row">
+      {/* Render Handle inside PortRow only in LR mode */}
+      {isLR && (
+        <Handle
+          type={type}
+          id={handleId}
+          position={side === 'left' ? Position.Left : Position.Right}
+          className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          style={{
+            [side]: '-6px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+      )}
       
-      <Handle 
-        type="source" 
-        position={sourcePos} 
-        className="!bg-[var(--color-bg-base)] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10" 
-      />
+      <div className={cn(
+        "flex items-center gap-2 w-full",
+        side === 'right' ? "flex-row-reverse text-right" : "flex-row text-left"
+      )}>
+        {/* Dot badge */}
+        <span className={cn("w-1.5 h-1.5 rounded-full transition-all group-hover/row:scale-125 shrink-0", dotColor)} />
+        <span className="text-[10px] font-mono text-white/70 select-none group-hover/row:text-white transition-colors">{label}</span>
+      </div>
     </div>
   );
 }
 
 function AgentNode({ data }: { data: Record<string, unknown> }) {
   const direction = data.direction as 'TB' | 'LR' | undefined;
+  const isTB = direction === 'TB';
   const tier = data.tier as string | undefined;
+  const selected = data.selected as boolean;
+  const onClick = data.onClick as () => void;
+
   const gradientMap: Record<string, string> = {
     foundation: 'bg-gradient-to-r from-indigo-500 to-purple-600',
     domain: 'bg-gradient-to-r from-amber-500 to-orange-600',
@@ -135,112 +183,483 @@ function AgentNode({ data }: { data: Record<string, unknown> }) {
     use_case: '16,185,129',
   };
 
+  const accentClass = gradientMap[tier || 'foundation'] || gradientMap.foundation;
+  const borderClass = borderMap[tier || 'foundation'] || borderMap.foundation;
+  const glowColor = glowMap[tier || 'foundation'] || glowMap.foundation;
+
+  const queryTemplate = data.queryTemplate as string | undefined;
+
   return (
-    <BaseNode
-      icon={<Cpu size={13} className="text-white shrink-0" />}
-      label={data.label as string}
-      sublabel={data.agent_id as string | undefined}
-      accentClass={gradientMap[tier || 'foundation'] || gradientMap.foundation}
-      borderClass={borderMap[tier || 'foundation'] || borderMap.foundation}
-      glowColor={glowMap[tier || 'foundation'] || glowMap.foundation}
-      selected={data.selected as boolean}
-      onClick={data.onClick as () => void}
-      direction={direction}
-    >
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-1.5">
+    <div className="relative">
+      {isTB ? (
+        <>
+          <Handle
+            type="target"
+            id="instructions-input"
+            position={Position.Top}
+            style={{ left: '30%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="target"
+            id="query-input"
+            position={Position.Top}
+            style={{ left: '70%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="source"
+            id="outcome-output"
+            position={Position.Bottom}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Left}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', left: '-6px', transform: 'translateY(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Right}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', right: '-6px', transform: 'translateY(-50%)' }}
+          />
+        </>
+      ) : (
+        <>
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Top}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', top: '-6px', transform: 'translateX(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Bottom}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', bottom: '-6px', transform: 'translateX(-50%)' }}
+          />
+        </>
+      )}
+
+      <NodeCard
+        icon={<Cpu size={13} className="text-white shrink-0" />}
+        title={data.label as string}
+        subtitle={data.agent_id as string | undefined}
+        accentClass={accentClass}
+        borderClass={borderClass}
+        glowColor={glowColor}
+        selected={selected}
+        onClick={onClick}
+      >
+        {/* Tier Indicator row */}
+        <div className="px-3.5 py-2 bg-white/[0.01] border-b border-white/5 flex items-center justify-between gap-1.5">
           <TierBadge tier={tier} />
           <span className="text-[8px] bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono text-white/50">mistral</span>
         </div>
-        {data.queryTemplate && (
-          <span className="line-clamp-2 text-white/70 italic text-[10px] leading-normal font-light">
-            "{data.queryTemplate as string}"
-          </span>
+
+        {/* Input: Instructions */}
+        <div className="flex flex-col">
+          <PortRow
+            label="Instructions"
+            direction={direction}
+            type="target"
+            handleId="instructions-input"
+            dotColor="text-amber-400 bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]"
+            side="left"
+          />
+        </div>
+
+        {/* Input: Query Input */}
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="Query input"
+            direction={direction}
+            type="target"
+            handleId="query-input"
+            dotColor="text-emerald-400 bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+            side="left"
+          />
+        </div>
+
+        {/* Query Template Preview, if present */}
+        {typeof queryTemplate === 'string' && queryTemplate && (
+          <div className="px-3.5 py-1.5 text-[9px] text-white/60 bg-black/25 italic border-t border-white/5 line-clamp-2">
+            "{queryTemplate}"
+          </div>
         )}
-      </div>
-    </BaseNode>
+
+        {/* Output: Outcome */}
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="Agent outcome"
+            direction={direction}
+            type="source"
+            handleId="outcome-output"
+            dotColor="text-indigo-400 bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
+            side="right"
+          />
+        </div>
+      </NodeCard>
+    </div>
   );
 }
 
 function ToolNode({ data }: { data: Record<string, unknown> }) {
   const direction = data.direction as 'TB' | 'LR' | undefined;
+  const isTB = direction === 'TB';
+  const selected = data.selected as boolean;
+  const onClick = data.onClick as () => void;
+  const args = data.args as Record<string, unknown> | undefined;
+
   return (
-    <BaseNode
-      icon={<Wrench size={13} className="text-white shrink-0" />}
-      label={data.label as string}
-      sublabel={data.toolName as string}
-      accentClass="bg-gradient-to-r from-pink-500 to-rose-600"
-      borderClass="border-pink-500/80"
-      glowColor="236,72,153"
-      selected={data.selected as boolean}
-      onClick={data.onClick as () => void}
-      direction={direction}
-    >
-      {data.args && (
-        <div className="flex flex-col gap-1">
-          <span className="text-[8px] font-semibold text-[rgba(236,72,153,0.7)] uppercase tracking-wider">Arguments</span>
-          <div className="flex flex-wrap gap-1 font-mono text-[9px] text-white/80">
-            {Object.keys(data.args as object).slice(0, 3).map(arg => (
-              <span key={arg} className="px-1 py-0.5 rounded bg-pink-500/10 border border-pink-500/20">{arg}</span>
+    <div className="relative">
+      {isTB ? (
+        <>
+          <Handle
+            type="target"
+            id="args-input"
+            position={Position.Top}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="source"
+            id="tool-output"
+            position={Position.Bottom}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Left}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', left: '-6px', transform: 'translateY(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Right}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', right: '-6px', transform: 'translateY(-50%)' }}
+          />
+        </>
+      ) : (
+        <>
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Top}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', top: '-6px', transform: 'translateX(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Bottom}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', bottom: '-6px', transform: 'translateX(-50%)' }}
+          />
+        </>
+      )}
+
+      <NodeCard
+        icon={<Wrench size={13} className="text-white shrink-0" />}
+        title={data.label as string}
+        subtitle={data.toolName as string}
+        accentClass="bg-gradient-to-r from-pink-500 to-rose-600"
+        borderClass="border-pink-500/80"
+        glowColor="236,72,153"
+        selected={selected}
+        onClick={onClick}
+      >
+        {/* Input: Arguments */}
+        <div className="flex flex-col">
+          <PortRow
+            label="Arguments"
+            direction={direction}
+            type="target"
+            handleId="args-input"
+            dotColor="text-pink-400 bg-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.5)]"
+            side="left"
+          />
+        </div>
+
+        {/* Arguments Keys Preview */}
+        {typeof args === 'object' && args !== null && Object.keys(args).length > 0 && (
+          <div className="px-3.5 py-2 text-[9px] bg-black/25 flex flex-wrap gap-1 border-t border-white/5">
+            {Object.keys(args).slice(0, 3).map(arg => (
+              <span key={arg} className="px-1 py-0.5 rounded bg-pink-500/10 border border-pink-500/20 font-mono text-white/80">{arg}</span>
             ))}
-            {Object.keys(data.args as object).length > 3 && (
-              <span className="px-1 py-0.5 rounded bg-white/5 text-white/40">+{Object.keys(data.args as object).length - 3} more</span>
+            {Object.keys(args).length > 3 && (
+              <span className="px-1 py-0.5 rounded bg-white/5 text-white/40">+{Object.keys(args).length - 3} more</span>
             )}
           </div>
+        )}
+
+        {/* Output: Tool Output */}
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="Tool output"
+            direction={direction}
+            type="source"
+            handleId="tool-output"
+            dotColor="text-rose-400 bg-rose-400 shadow-[0_0_8px_rgba(225,29,72,0.5)]"
+            side="right"
+          />
         </div>
-      )}
-    </BaseNode>
+      </NodeCard>
+    </div>
   );
 }
 
 function ConditionNode({ data }: { data: Record<string, unknown> }) {
   const direction = data.direction as 'TB' | 'LR' | undefined;
+  const isTB = direction === 'TB';
+  const selected = data.selected as boolean;
+  const onClick = data.onClick as () => void;
+  const expression = data.expression as string | undefined;
+
   return (
-    <BaseNode
-      icon={<HelpCircle size={13} className="text-white shrink-0" />}
-      label={data.label as string}
-      sublabel="Conditional Router"
-      accentClass="bg-gradient-to-r from-amber-500 to-orange-500"
-      borderClass="border-amber-500/80"
-      glowColor="245,158,11"
-      selected={data.selected as boolean}
-      onClick={data.onClick as () => void}
-      direction={direction}
-    >
-      <div className="flex flex-col gap-1">
-        <span className="text-[8px] font-semibold text-amber-500/80 uppercase tracking-wider">Expression</span>
-        <span className="font-mono text-[9.5px] text-white/80 line-clamp-1 bg-amber-500/5 border border-amber-500/10 px-1.5 py-0.5 rounded">{data.expression as string}</span>
-      </div>
-    </BaseNode>
+    <div className="relative">
+      {isTB ? (
+        <>
+          <Handle
+            type="target"
+            id="eval-input"
+            position={Position.Top}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="source"
+            id="true-output"
+            position={Position.Bottom}
+            style={{ left: '30%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#10b981] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="source"
+            id="false-output"
+            position={Position.Bottom}
+            style={{ left: '70%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#ef4444] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Left}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', left: '-6px', transform: 'translateY(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Right}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', right: '-6px', transform: 'translateY(-50%)' }}
+          />
+        </>
+      ) : (
+        <>
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Top}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', top: '-6px', transform: 'translateX(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Bottom}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', bottom: '-6px', transform: 'translateX(-50%)' }}
+          />
+        </>
+      )}
+
+      <NodeCard
+        icon={<HelpCircle size={13} className="text-white shrink-0" />}
+        title={data.label as string}
+        subtitle="Conditional Router"
+        accentClass="bg-gradient-to-r from-amber-500 to-orange-500"
+        borderClass="border-amber-500/80"
+        glowColor="245,158,11"
+        selected={selected}
+        onClick={onClick}
+      >
+        {/* Input: Evaluation */}
+        <div className="flex flex-col">
+          <PortRow
+            label="Evaluation payload"
+            direction={direction}
+            type="target"
+            handleId="eval-input"
+            dotColor="text-blue-400 bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+            side="left"
+          />
+        </div>
+
+        {/* Expression Preview */}
+        {typeof expression === 'string' && expression && (
+          <div className="px-3.5 py-1.5 bg-black/25 border-t border-white/5 font-mono text-[9px] text-amber-300 truncate">
+            {expression}
+          </div>
+        )}
+
+        {/* Outputs: True and False paths */}
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="True outcome (YES)"
+            direction={direction}
+            type="source"
+            handleId="true-output"
+            dotColor="text-emerald-400 bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+            side="right"
+          />
+        </div>
+
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="False outcome (NO)"
+            direction={direction}
+            type="source"
+            handleId="false-output"
+            dotColor="text-rose-400 bg-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.5)]"
+            side="right"
+          />
+        </div>
+      </NodeCard>
+    </div>
   );
 }
 
 function TransformNode({ data }: { data: Record<string, unknown> }) {
   const direction = data.direction as 'TB' | 'LR' | undefined;
+  const isTB = direction === 'TB';
+  const selected = data.selected as boolean;
+  const onClick = data.onClick as () => void;
   const mappingsCount = Object.keys((data.mappings as object) ?? {}).length;
+
   return (
-    <BaseNode
-      icon={<Shuffle size={13} className="text-white shrink-0" />}
-      label={data.label as string}
-      sublabel="Data Transform"
-      accentClass="bg-gradient-to-r from-teal-500 to-emerald-500"
-      borderClass="border-teal-500/80"
-      glowColor="20,184,166"
-      selected={data.selected as boolean}
-      onClick={data.onClick as () => void}
-      direction={direction}
-    >
-      <div className="flex items-center gap-1.5">
-        <Layers size={10} className="text-teal-400" />
-        <span className="text-[10px] text-white/80">{mappingsCount} active mapping{mappingsCount !== 1 ? 's' : ''}</span>
-      </div>
-    </BaseNode>
+    <div className="relative">
+      {isTB ? (
+        <>
+          <Handle
+            type="target"
+            id="source-input"
+            position={Position.Top}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10 animate-pulse"
+          />
+          <Handle
+            type="source"
+            id="trans-output"
+            position={Position.Bottom}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10 animate-pulse"
+          />
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Left}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', left: '-6px', transform: 'translateY(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Right}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ top: '50%', right: '-6px', transform: 'translateY(-50%)' }}
+          />
+        </>
+      ) : (
+        <>
+          <Handle
+            type="target"
+            id="loop-input"
+            position={Position.Top}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', top: '-6px', transform: 'translateX(-50%)' }}
+          />
+          <Handle
+            type="source"
+            id="loop-output"
+            position={Position.Bottom}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#a78bfa] !transition-all !rounded-full !z-10"
+            style={{ left: '50%', bottom: '-6px', transform: 'translateX(-50%)' }}
+          />
+        </>
+      )}
+
+      <NodeCard
+        icon={<Shuffle size={13} className="text-white shrink-0" />}
+        title={data.label as string}
+        subtitle="Data Transform"
+        accentClass="bg-gradient-to-r from-teal-500 to-emerald-500"
+        borderClass="border-teal-500/80"
+        glowColor="20,184,166"
+        selected={selected}
+        onClick={onClick}
+      >
+        <div className="flex flex-col">
+          <PortRow
+            label="Source attributes"
+            direction={direction}
+            type="target"
+            handleId="source-input"
+            dotColor="text-teal-400 bg-teal-400"
+            side="left"
+          />
+        </div>
+
+        <div className="px-3.5 py-1 text-[9px] text-teal-300 bg-teal-500/5 flex items-center gap-1">
+          <Layers size={10} className="text-teal-400 shrink-0" />
+          <span>{mappingsCount} mappings</span>
+        </div>
+
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="Transformed"
+            direction={direction}
+            type="source"
+            handleId="trans-output"
+            dotColor="text-emerald-400 bg-emerald-400"
+            side="right"
+          />
+        </div>
+      </NodeCard>
+    </div>
   );
 }
 
 const NODE_TYPES = { agent: AgentNode, tool: ToolNode, condition: ConditionNode, transform: TransformNode };
 
 /* ── DAG layout helper ───────────────────────────────────────────────── */
+function getSourceHandleId(stepType: string): string {
+  if (stepType === 'agent') return 'outcome-output';
+  if (stepType === 'tool') return 'tool-output';
+  if (stepType === 'transform') return 'trans-output';
+  return '';
+}
+
+function getTargetHandleId(stepType: string): string {
+  if (stepType === 'agent') return 'query-input';
+  if (stepType === 'tool') return 'args-input';
+  if (stepType === 'transform') return 'source-input';
+  if (stepType === 'condition') return 'eval-input';
+  return '';
+}
+
 function buildGraph(
   workflow: WorkflowDef,
   selectedId: string | null,
@@ -248,52 +667,9 @@ function buildGraph(
   direction: 'TB' | 'LR'
 ): { nodes: Node[]; edges: Edge[] } {
   const steps = workflow.steps;
-  const levelMap: Record<string, number> = {};
 
-  // BFS to assign levels
-  const queue = [workflow.entry_step];
-  levelMap[workflow.entry_step] = 0;
-  while (queue.length > 0) {
-    const curr = queue.shift()!;
-    const step = steps.find(s => s.id === curr);
-    if (!step) continue;
-    for (const next of step.next_steps ?? []) {
-      if (!(next in levelMap)) {
-        levelMap[next] = (levelMap[curr] ?? 0) + 1;
-        queue.push(next);
-      }
-    }
-    // condition branches
-    if (step.config?.true_step && !((step.config.true_step as string) in levelMap)) {
-      levelMap[step.config.true_step as string] = (levelMap[curr] ?? 0) + 1;
-      queue.push(step.config.true_step as string);
-    }
-    if (step.config?.false_step && !((step.config.false_step as string) in levelMap)) {
-      levelMap[step.config.false_step as string] = (levelMap[curr] ?? 0) + 1;
-      queue.push(step.config.false_step as string);
-    }
-  }
-
-  // Group by level for x-positioning
-  const levelGroups: Record<number, string[]> = {};
-  for (const [id, level] of Object.entries(levelMap)) {
-    if (!levelGroups[level]) levelGroups[level] = [];
-    levelGroups[level].push(id);
-  }
-
+  // 1. Create nodes structure template
   const nodes: Node[] = steps.map(step => {
-    const level = levelMap[step.id] ?? 0;
-    const siblings = levelGroups[level] ?? [step.id];
-    const colIdx = siblings.indexOf(step.id);
-    const totalCols = siblings.length;
-    
-    // Grid alignment offsets
-    const xBase = (colIdx - (totalCols - 1) / 2) * 260;
-
-    // Adjust position based on orientation direction
-    const x = direction === 'LR' ? level * 310 : xBase;
-    const y = direction === 'LR' ? (colIdx - (totalCols - 1) / 2) * 200 : level * 230;
-
     const commonData: Record<string, unknown> = {
       label: step.description || step.id,
       selected: selectedId === step.id,
@@ -314,54 +690,232 @@ function buildGraph(
     return {
       id: step.id,
       type: step.type,
-      position: { x, y },
+      position: { x: 0, y: 0 },
       data: { ...commonData, ...typeSpecific, direction },
     };
   });
 
-  const edges: Edge[] = [];
-  for (const step of steps) {
+  // 2. Initialize and run dagre layout to compute node coordinates first
+  const g = new dagre.graphlib.Graph();
+  
+  g.setGraph({
+    rankdir: direction,
+    nodesep: direction === 'LR' ? 55 : 65, // distance between siblings
+    ranksep: direction === 'LR' ? 90 : 100, // distance between layers/ranks
+    marginx: 40,
+    marginy: 40,
+  });
+
+  g.setDefaultEdgeLabel(() => ({}));
+
+  // Define size bounds for each node card
+  nodes.forEach(node => {
+    let nodeWidth = 280;
+    let nodeHeight = 220;
+
+    if (node.type === 'agent') {
+      nodeHeight = 280;
+    } else if (node.type === 'condition') {
+      nodeHeight = 260;
+    } else if (node.type === 'tool') {
+      nodeHeight = 220;
+    } else if (node.type === 'transform') {
+      nodeHeight = 200;
+    }
+
+    g.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+  });
+
+  // Load bare connections into Dagre graph to compute ranks
+  steps.forEach(step => {
     for (const next of step.next_steps ?? []) {
+      g.setEdge(step.id, next);
+    }
+    if (step.type === 'condition') {
+      if (step.config?.true_step) {
+        g.setEdge(step.id, step.config.true_step as string);
+      }
+      if (step.config?.false_step) {
+        g.setEdge(step.id, step.config.false_step as string);
+      }
+    }
+  });
+
+  // Calculate layout coordinates
+  dagre.layout(g);
+
+  // 3. Map calculated layout results back to React Flow nodes with exact styles
+  const positionedNodes = nodes.map(node => {
+    const dagreNode = g.node(node.id);
+    if (!dagreNode) return node;
+
+    let nodeWidth = 280;
+    let nodeHeight = 220;
+
+    if (node.type === 'agent') {
+      nodeHeight = 280;
+    } else if (node.type === 'condition') {
+      nodeHeight = 260;
+    } else if (node.type === 'tool') {
+      nodeHeight = 220;
+    } else if (node.type === 'transform') {
+      nodeHeight = 200;
+    }
+
+    return {
+      ...node,
+      width: nodeWidth,
+      height: nodeHeight,
+      style: { width: nodeWidth, height: nodeHeight },
+      position: {
+        x: dagreNode.x - nodeWidth / 2,
+        y: dagreNode.y - nodeHeight / 2,
+      },
+    };
+  });
+
+  // 4. Build high-fidelity connection edges dynamically, routing backward loops elegantly
+  const edges: Edge[] = [];
+
+  for (const step of steps) {
+    const sourceNodeDagre = g.node(step.id);
+    if (!sourceNodeDagre) continue;
+
+    for (const next of step.next_steps ?? []) {
+      const nextStepObj = steps.find(s => s.id === next);
+      const targetNodeDagre = g.node(next);
+      if (!targetNodeDagre) continue;
+
+      // Determine backward/feedback edge based on layout positions
+      let isBackward = false;
+      if (direction === 'TB') {
+        isBackward = sourceNodeDagre.y >= targetNodeDagre.y;
+      } else {
+        isBackward = sourceNodeDagre.x >= targetNodeDagre.x;
+      }
+
+      let sourceHandle = '';
+      let targetHandle = '';
+
+      if (isBackward) {
+        sourceHandle = 'loop-output';
+        targetHandle = 'loop-input';
+      } else {
+        sourceHandle = getSourceHandleId(step.type);
+        targetHandle = nextStepObj ? getTargetHandleId(nextStepObj.type) : '';
+      }
+
       edges.push({
         id: `${step.id}->${next}`,
         source: step.id,
         target: next,
+        sourceHandle,
+        targetHandle,
+        type: 'smoothstep',
         animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
-        style: { stroke: '#6366f1', strokeWidth: 2, strokeDasharray: '4,4' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: isBackward ? '#a78bfa' : '#6366f1' },
+        style: { 
+          stroke: isBackward ? '#a78bfa' : '#6366f1', 
+          strokeWidth: 2,
+          strokeDasharray: isBackward ? '4 4' : undefined,
+        },
       });
     }
+
     if (step.type === 'condition') {
       if (step.config?.true_step) {
-        edges.push({
-          id: `${step.id}->true`,
-          source: step.id,
-          target: step.config.true_step as string,
-          label: 'YES',
-          animated: true,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
-          style: { stroke: '#10b981', strokeWidth: 2, strokeDasharray: '4,4' },
-          labelStyle: { fill: '#10b981', fontSize: 10, fontWeight: 700, fontFamily: 'monospace' },
-          labelBgStyle: { fill: 'var(--color-bg-base)', fillOpacity: 0.8 },
-        });
+        const nextStepId = step.config.true_step as string;
+        const nextStepObj = steps.find(s => s.id === nextStepId);
+        const targetNodeDagre = g.node(nextStepId);
+
+        if (targetNodeDagre) {
+          let isBackward = false;
+          if (direction === 'TB') {
+            isBackward = sourceNodeDagre.y >= targetNodeDagre.y;
+          } else {
+            isBackward = sourceNodeDagre.x >= targetNodeDagre.x;
+          }
+
+          let sourceHandle = '';
+          let targetHandle = '';
+
+          if (isBackward) {
+            sourceHandle = 'loop-output';
+            targetHandle = 'loop-input';
+          } else {
+            sourceHandle = 'true-output';
+            targetHandle = nextStepObj ? getTargetHandleId(nextStepObj.type) : '';
+          }
+
+          edges.push({
+            id: `${step.id}->true`,
+            source: step.id,
+            target: nextStepId,
+            sourceHandle,
+            targetHandle,
+            label: 'YES',
+            type: 'smoothstep',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#10b981' },
+            style: { 
+              stroke: '#10b981', 
+              strokeWidth: 2,
+              strokeDasharray: isBackward ? '4 4' : undefined,
+            },
+            labelStyle: { fill: '#10b981', fontSize: 10, fontWeight: 700, fontFamily: 'monospace' },
+            labelBgStyle: { fill: 'var(--color-bg-base)', fillOpacity: 0.8 },
+          });
+        }
       }
+
       if (step.config?.false_step) {
-        edges.push({
-          id: `${step.id}->false`,
-          source: step.id,
-          target: step.config.false_step as string,
-          label: 'NO',
-          animated: true,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' },
-          style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: '4,4' },
-          labelStyle: { fill: '#ef4444', fontSize: 10, fontWeight: 700, fontFamily: 'monospace' },
-          labelBgStyle: { fill: 'var(--color-bg-base)', fillOpacity: 0.8 },
-        });
+        const nextStepId = step.config.false_step as string;
+        const nextStepObj = steps.find(s => s.id === nextStepId);
+        const targetNodeDagre = g.node(nextStepId);
+
+        if (targetNodeDagre) {
+          let isBackward = false;
+          if (direction === 'TB') {
+            isBackward = sourceNodeDagre.y >= targetNodeDagre.y;
+          } else {
+            isBackward = sourceNodeDagre.x >= targetNodeDagre.x;
+          }
+
+          let sourceHandle = '';
+          let targetHandle = '';
+
+          if (isBackward) {
+            sourceHandle = 'loop-output';
+            targetHandle = 'loop-input';
+          } else {
+            sourceHandle = 'false-output';
+            targetHandle = nextStepObj ? getTargetHandleId(nextStepObj.type) : '';
+          }
+
+          edges.push({
+            id: `${step.id}->false`,
+            source: step.id,
+            target: nextStepId,
+            sourceHandle,
+            targetHandle,
+            label: 'NO',
+            type: 'smoothstep',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' },
+            style: { 
+              stroke: '#ef4444', 
+              strokeWidth: 2,
+              strokeDasharray: isBackward ? '4 4' : undefined,
+            },
+            labelStyle: { fill: '#ef4444', fontSize: 10, fontWeight: 700, fontFamily: 'monospace' },
+            labelBgStyle: { fill: 'var(--color-bg-base)', fillOpacity: 0.8 },
+          });
+        }
       }
     }
   }
 
-  return { nodes, edges };
+  return { nodes: positionedNodes, edges };
 }
 
 /* ── Node Detail Modal ────────────────────────────────────────────────── */
@@ -596,7 +1150,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
             
             {step.type === 'agent' && (
               <>
-                {step.config.agent_id && (
+                {!!step.config.agent_id && (
                   <CopyableField label="Assigned Agent Identity" value={step.config.agent_id as string} />
                 )}
                 {step.tier && (
@@ -608,7 +1162,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                     </div>
                   </div>
                 )}
-                {step.config.query_template && (
+                {!!step.config.query_template && (
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1">Query / Instruction Prompt</p>
                     <div className="bg-black/40 border border-white/5 rounded-lg p-3 font-serif italic text-xs leading-relaxed text-white/90 shadow-inner max-h-[220px] overflow-y-auto">
@@ -621,10 +1175,10 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
 
             {step.type === 'tool' && (
               <>
-                {step.config.tool_name && (
+                {!!step.config.tool_name && (
                   <CopyableField label="Tool Definition Called" value={step.config.tool_name as string} />
                 )}
-                {step.config.arguments && (
+                {!!step.config.arguments && (
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1">Execution Arguments Schema</p>
                     <div className="bg-black/30 border border-white/5 rounded-xl overflow-hidden shadow-inner">
@@ -633,7 +1187,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                         <div className="col-span-2">Value Expression</div>
                       </div>
                       <div className="divide-y divide-white/5 max-h-[200px] overflow-y-auto">
-                        {Object.entries(step.config.arguments as object).map(([key, val]) => (
+                        {Object.entries(step.config.arguments as Record<string, unknown>).map(([key, val]) => (
                           <div key={key} className="grid grid-cols-3 gap-2 px-3 py-2 text-xs font-mono">
                             <div className="text-pink-400 font-medium truncate select-all">{key}</div>
                             <div className="col-span-2 text-white/80 select-all truncate" title={typeof val === 'object' ? JSON.stringify(val) : String(val)}>
@@ -650,7 +1204,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
 
             {step.type === 'condition' && (
               <>
-                {step.config.expression && (
+                {!!step.config.expression && (
                   <div>
                     <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1">Conditional Formula Expression</p>
                     <div className="bg-amber-500/5 border border-amber-500/20 px-3 py-2.5 rounded-lg font-mono text-xs text-amber-300 shadow-inner select-all">
@@ -661,7 +1215,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                 <div className="space-y-2">
                   <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold">Router Outcomes</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {step.config.true_step && (
+                    {!!step.config.true_step && (
                       <button
                         onClick={() => onNavigateToNode(step.config.true_step as string)}
                         className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 text-left transition-all group"
@@ -670,7 +1224,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                         <span className="text-xs font-mono text-white/95 truncate block">{step.config.true_step as string}</span>
                       </button>
                     )}
-                    {step.config.false_step && (
+                    {!!step.config.false_step && (
                       <button
                         onClick={() => onNavigateToNode(step.config.false_step as string)}
                         className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20 hover:border-rose-500/40 text-left transition-all group"
@@ -684,7 +1238,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
               </>
             )}
 
-            {step.type === 'transform' && step.config.mappings && (
+            {step.type === 'transform' && !!step.config.mappings && (
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1">Attribute Variable Mappings</p>
                 <div className="bg-black/30 border border-white/5 rounded-xl overflow-hidden shadow-inner">
@@ -693,7 +1247,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                     <div>Target Attribute</div>
                   </div>
                   <div className="divide-y divide-white/5 max-h-[220px] overflow-y-auto">
-                    {Object.entries(step.config.mappings as object).map(([src, dst]) => (
+                    {Object.entries(step.config.mappings as Record<string, unknown>).map(([src, dst]) => (
                       <div key={src} className="grid grid-cols-2 gap-2 px-3 py-2 text-xs font-mono items-center">
                         <div className="text-teal-400 font-medium truncate select-all">{src}</div>
                         <div className="text-white/80 select-all truncate flex items-center gap-1">
@@ -715,31 +1269,14 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
   );
 }
 
-/* ── Status Badge ────────────────────────────────────────────────────── */
-function StatusBadge({ status }: { status?: string }) {
-  const cfg: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
-    COMPLETED: { label: 'Completed', cls: 'text-[var(--color-accent-success)] bg-[rgba(34,197,94,0.1)] border-[rgba(34,197,94,0.2)]', icon: <CheckCircle2 size={11} /> },
-    FAILED: { label: 'Failed', cls: 'text-[var(--color-accent-danger)] bg-[rgba(239,68,68,0.1)] border-[rgba(239,68,68,0.2)]', icon: <AlertCircle size={11} /> },
-    RUNNING: { label: 'Running', cls: 'text-[var(--color-accent-warning)] bg-[rgba(245,158,11,0.1)] border-[rgba(245,158,11,0.2)]', icon: <Loader2 size={11} className="animate-spin" /> },
-    PENDING: { label: 'Pending', cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-hover)] border-[var(--color-border-subtle)]', icon: <Clock size={11} /> },
-  };
-  const c = cfg[status ?? ''] ?? cfg.PENDING;
-  return (
-    <span className={cn('flex items-center gap-1.5 text-[10px] font-semibold uppercase px-2.5 py-1 rounded-full border', c.cls)}>
-      {c.icon} {c.label}
-    </span>
-  );
-}
-
 /* ── Main Component ───────────────────────────────────────────────────── */
 export default function WorkflowVisualizer() {
   const { workflowName } = useParams<{ workflowName: string }>();
   const navigate = useNavigate();
-  const qc = useQueryClient();
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const [direction, setDirection] = useState<'TB' | 'LR'>('TB');
   const [gridVariant, setGridVariant] = useState<BackgroundVariant | 'none'>(BackgroundVariant.Dots);
@@ -777,18 +1314,24 @@ export default function WorkflowVisualizer() {
     setSelectedStepId(prev => prev === id ? null : id);
   }, []);
 
+  // 1. Sync nodes and edges state when workflow, selected step, or layout direction changes
   useEffect(() => {
     if (!workflow) return;
     const { nodes: n, edges: e } = buildGraph(workflow, selectedStepId, handleSelect, direction);
     setNodes(n);
     setEdges(e);
+  }, [workflow, selectedStepId, handleSelect, direction, setNodes, setEdges]);
 
-    if (rfInstance) {
-      setTimeout(() => {
-        rfInstance.fitView({ padding: 0.3, duration: 600 });
-      }, 50);
-    }
-  }, [workflow, selectedStepId, handleSelect, direction, setNodes, setEdges, rfInstance]);
+  // 2. Perform camera auto-fit ONLY when a new workflow is loaded or layout direction changes
+  useEffect(() => {
+    if (!workflow || !rfInstance) return;
+    
+    const timer = setTimeout(() => {
+      rfInstance.fitView({ padding: 0.12, duration: 800 });
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [workflow?.name, direction, rfInstance]);
 
   if (isLoading) {
     return (
@@ -941,7 +1484,7 @@ export default function WorkflowVisualizer() {
 
             {/* Camera auto-fit */}
             <button
-              onClick={() => rfInstance?.fitView({ padding: 0.3, duration: 800 })}
+              onClick={() => rfInstance?.fitView({ padding: 0.12, duration: 800 })}
               className="p-2 rounded-lg border border-white/5 hover:border-white/20 text-white/50 hover:text-white bg-black/40 transition-all flex items-center justify-center"
               title="Fit View"
             >
@@ -958,7 +1501,7 @@ export default function WorkflowVisualizer() {
             nodeTypes={NODE_TYPES}
             onInit={setRfInstance}
             fitView
-            fitViewOptions={{ padding: 0.3 }}
+            fitViewOptions={{ padding: 0.12 }}
             className="!bg-[rgba(8,11,19,0.95)]"
             proOptions={{ hideAttribution: true }}
           >

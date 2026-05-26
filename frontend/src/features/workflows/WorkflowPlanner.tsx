@@ -34,7 +34,7 @@ function RequirementsCard({ data }: { data: Record<string, unknown> }) {
       <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
         Workflow Requirements
       </p>
-      {data.description && (
+      {!!data.description && (
         <p className="text-sm text-[var(--color-text-secondary)] mb-4 italic">
           "{data.description as string}"
         </p>
@@ -224,7 +224,7 @@ function RegisteredCard({ data }: { data: Record<string, unknown> }) {
       </div>
       <div className="min-w-0">
         <p className="text-xs font-semibold text-white">Registered on Workflow Server</p>
-        {data.mistral_workflow_id && (
+        {!!data.mistral_workflow_id && (
           <p className="text-[10px] text-emerald-400 font-mono truncate mt-0.5">ID: {data.mistral_workflow_id as string}</p>
         )}
       </div>

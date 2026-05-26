@@ -7,6 +7,9 @@ export interface Message {
   content: string;
   streaming?: boolean;
   timestamp?: string;
+  imageUrl?: string;
+  imageBase64?: string;
+  imageMime?: string;
 }
 
 export interface ChatSession {
@@ -39,7 +42,7 @@ interface SessionStore {
 
 export const useSessionStore = create<SessionStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       sessions: {},
       activeSessionId: null,
 

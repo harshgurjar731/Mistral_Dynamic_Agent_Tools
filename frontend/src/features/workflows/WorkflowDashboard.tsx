@@ -1,15 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   GitBranch, Play, Archive, Loader2, Plus, Eye,
-  CheckCircle2, AlertCircle, Clock, RefreshCw, Sparkles,
-  FolderArchive, Server, Zap,
+  RefreshCw, Sparkles, FolderArchive, Server, Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
-import { cn } from '../../lib/utils';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -17,40 +15,8 @@ const containerVariants = {
 };
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 24 } },
 };
-
-/* ── Status badge ─────────────────────────────────────────────────────── */
-function ExecStatusBadge({ status }: { status?: string }) {
-  const cfg: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
-    COMPLETED: {
-      label: 'Completed',
-      cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
-      icon: <CheckCircle2 size={10} />,
-    },
-    FAILED: {
-      label: 'Failed',
-      cls: 'text-red-400 bg-red-400/10 border-red-400/20',
-      icon: <AlertCircle size={10} />,
-    },
-    RUNNING: {
-      label: 'Running',
-      cls: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
-      icon: <Loader2 size={10} className="animate-spin" />,
-    },
-    PENDING: {
-      label: 'Pending',
-      cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-hover)] border-[var(--color-border-subtle)]',
-      icon: <Clock size={10} />,
-    },
-  };
-  const c = cfg[status ?? ''] ?? cfg.PENDING;
-  return (
-    <span className={cn('flex items-center gap-1 text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border', c.cls)}>
-      {c.icon} {c.label}
-    </span>
-  );
-}
 
 /* ── Workflow Card ─────────────────────────────────────────────────────── */
 function WorkflowCard({
@@ -84,7 +50,7 @@ function WorkflowCard({
             <p className="text-sm font-semibold text-white font-mono truncate" title={String(wf.name)}>
               {String(wf.name)}
             </p>
-            {wf.description && (
+            {!!wf.description && (
               <p className="text-xs text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{String(wf.description)}</p>
             )}
           </div>

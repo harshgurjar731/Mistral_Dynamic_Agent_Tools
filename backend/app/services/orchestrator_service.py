@@ -12,6 +12,7 @@ from typing import Optional, AsyncGenerator
 from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
 from app.services.tool_registry import get_tools, get_tool_descriptions, AVAILABLE_TOOL_KEYS, execute_tool, refresh_dynamic_tools
+from app.config import map_model_name
 from app.prompts import ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATOR_USER_PROMPT, SYNTHESIS_CHECK_SYSTEM_PROMPT, SYNTHESIS_CHECK_USER_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,19 @@ def _sse(data, event: str = "message") -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def _build_user_inputs(query: str, image_base64: str | None = None, image_mime: str | None = None) -> list[dict]:
+    """Build user input list, with optional multimodal image content for Mistral Vision API."""
+    if image_base64 and image_mime:
+        return [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": query},
+                {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_base64}"}},
+            ]
+        }]
+    return [{"role": "user", "content": query}]
+
+
 # ── Tool Synthesis Check ──────────────────────────────────────────────────
 
 async def _check_synthesis_needed(client: Mistral, query: str) -> dict | bool:
@@ -152,13 +166,15 @@ async def orchestrate(
     conversation_id: Optional[str] = None,
     cleanup_agent: bool = False,
     tier: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    image_mime: Optional[str] = None,
 ) -> dict:
     """Main orchestration flow."""
     if conversation_id:
-        return await _handle_followup(client, query, conversation_id)
+        return await _handle_followup(client, query, conversation_id, image_base64=image_base64, image_mime=image_mime)
     if agent_id:
-        return await _handle_existing_agent(client, query, agent_id)
-    return await _handle_new_query(client, query, cleanup_agent, tier=tier)
+        return await _handle_existing_agent(client, query, agent_id, image_base64=image_base64, image_mime=image_mime)
+    return await _handle_new_query(client, query, cleanup_agent, tier=tier, image_base64=image_base64, image_mime=image_mime)
 
 
 async def _process_tool_calls(client: Mistral, conv_result, conversation_id: str):
@@ -238,10 +254,10 @@ async def _process_tool_calls(client: Mistral, conv_result, conversation_id: str
     return current_result
 
 
-async def _handle_followup(client: Mistral, query: str, conversation_id: str) -> dict:
+async def _handle_followup(client: Mistral, query: str, conversation_id: str, image_base64: Optional[str] = None, image_mime: Optional[str] = None) -> dict:
     """Handle a follow-up query by appending to an existing conversation."""
     try:
-        inputs = [{"role": "user", "content": query}]
+        inputs = _build_user_inputs(query, image_base64, image_mime)
         result = client.beta.conversations.append(
             conversation_id=conversation_id,
             inputs=inputs,
@@ -264,10 +280,10 @@ async def _handle_followup(client: Mistral, query: str, conversation_id: str) ->
         raise MistralAPIError(f"Follow-up query failed: {str(e)}")
 
 
-async def _handle_existing_agent(client: Mistral, query: str, agent_id: str) -> dict:
+async def _handle_existing_agent(client: Mistral, query: str, agent_id: str, image_base64: Optional[str] = None, image_mime: Optional[str] = None) -> dict:
     """Handle a query using a pre-existing agent (selected via AgentSelector in frontend)."""
     try:
-        inputs = [{"role": "user", "content": query}]
+        inputs = _build_user_inputs(query, image_base64, image_mime)
         conv_result = client.beta.conversations.start(
             agent_id=agent_id, inputs=inputs,
         )
@@ -290,7 +306,7 @@ async def _handle_existing_agent(client: Mistral, query: str, agent_id: str) -> 
         raise MistralAPIError(f"Agent query failed: {str(e)}")
 
 
-async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool, tier: Optional[str] = None) -> dict:
+async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool, tier: Optional[str] = None, image_base64: Optional[str] = None, image_mime: Optional[str] = None) -> dict:
     """Handle a brand new query with full orchestration."""
     agent_id = None
     try:
@@ -311,7 +327,7 @@ async def _handle_new_query(client: Mistral, query: str, cleanup_agent: bool, ti
         agent_id = _create_dynamic_agent(client, agent_config, query)
 
         # Step 3: Start conversation
-        inputs = [{"role": "user", "content": query}]
+        inputs = _build_user_inputs(query, image_base64, image_mime)
         conv_result = client.beta.conversations.start(
             agent_id=agent_id, inputs=inputs,
         )
@@ -360,7 +376,7 @@ def _create_dynamic_agent(client: Mistral, agent_config: dict, query: str) -> st
     logger.info("Creating agent with instructions (%d chars): %.300s", len(instructions_text), instructions_text)
 
     create_kwargs = {
-        "model": agent_config["model"],
+        "model": map_model_name(agent_config["model"]),
         "name": agent_config["agent_name"],
         "instructions": instructions_text,
         "description": agent_config.get("description", "Dynamic agent"),
@@ -558,10 +574,12 @@ async def orchestrate_stream(
     conversation_id: Optional[str] = None,
     cleanup_agent: bool = False,
     tier: Optional[str] = None,
+    image_base64: Optional[str] = None,
+    image_mime: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     try:
         if conversation_id:
-            inputs = [{"role": "user", "content": query}]
+            inputs = _build_user_inputs(query, image_base64, image_mime)
             yield _sse("Continuing conversation...", "status")
 
             async for evt_type, data in _consume_stream_and_tools(
@@ -578,7 +596,7 @@ async def orchestrate_stream(
         # If a specific agent is provided, skip analysis
         if agent_id:
             yield _sse("Processing with selected agent...", "status")
-            inputs = [{"role": "user", "content": query}]
+            inputs = _build_user_inputs(query, image_base64, image_mime)
             
             conversation_id_out = None
             async for evt_type, data in _consume_stream_and_tools(
@@ -615,7 +633,7 @@ async def orchestrate_stream(
         agent_id = _create_dynamic_agent(client, agent_config, query)
 
         yield _sse("Processing your query...", "status")
-        inputs = [{"role": "user", "content": query}]
+        inputs = _build_user_inputs(query, image_base64, image_mime)
         
         conversation_id_out = None
         async for evt_type, data in _consume_stream_and_tools(

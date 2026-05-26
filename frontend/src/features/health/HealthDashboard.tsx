@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Activity, Cpu, Server } from 'lucide-react';
+import { Cpu, Server } from 'lucide-react';
 import { healthApi } from '../../api/health';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
@@ -12,7 +12,7 @@ const containerVariants = {
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 function StatusDot({ status }: { status: 'healthy' | 'unreachable' | 'unknown' }) {
@@ -64,13 +64,13 @@ function ServiceCard({ label, port, icon: Icon, data, error }: {
             {online ? 'Healthy' : 'Down'}
           </span>
         </div>
-        {data?.version && (
+        {!!data?.version && (
           <div className="flex items-center justify-between text-sm">
             <span className="text-[var(--color-text-muted)]">Version</span>
             <span className="text-[var(--color-text-secondary)] font-[family-name:var(--font-mono)]">{String(data.version)}</span>
           </div>
         )}
-        {data?.docker_tool_service && (
+        {!!data?.docker_tool_service && (
           <div className="flex items-center justify-between text-sm">
             <span className="text-[var(--color-text-muted)]">Tool Service</span>
             <span className={cn("text-xs font-medium uppercase tracking-wider", data.docker_tool_service === 'reachable' ? "text-[var(--color-accent-success)]" : "text-[var(--color-accent-danger)]")}>

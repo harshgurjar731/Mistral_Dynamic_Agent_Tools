@@ -8,6 +8,8 @@ export interface OrchestratorRequest {
   cleanup_agent?: boolean;
   workflow?: string;
   tier?: string;
+  image_base64?: string;
+  image_mime?: string;
 }
 
 export const orchestratorApi = {

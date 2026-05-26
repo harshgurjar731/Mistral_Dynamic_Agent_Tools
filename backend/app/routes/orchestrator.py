@@ -21,6 +21,8 @@ class OrchestrateRequest(BaseModel):
     cleanup_agent: bool = False
     workflow: Optional[str] = None
     tier: Optional[str] = None
+    image_base64: Optional[str] = None
+    image_mime: Optional[str] = None
 
 
 @router.post("/orchestrate")
@@ -33,6 +35,8 @@ async def orchestrate_endpoint(request: OrchestrateRequest, client=Depends(get_m
         conversation_id=request.conversation_id,
         cleanup_agent=request.cleanup_agent,
         tier=request.tier,
+        image_base64=request.image_base64,
+        image_mime=request.image_mime,
     )
     return result
 
@@ -48,6 +52,8 @@ async def orchestrate_stream_endpoint(request: OrchestrateRequest, client=Depend
             conversation_id=request.conversation_id,
             cleanup_agent=request.cleanup_agent,
             tier=request.tier,
+            image_base64=request.image_base64,
+            image_mime=request.image_mime,
         ),
         media_type="text/event-stream",
     )

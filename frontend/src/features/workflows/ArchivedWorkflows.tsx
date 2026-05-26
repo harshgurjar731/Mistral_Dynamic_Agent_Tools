@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
-  GitBranch, FolderArchive, RotateCcw, RefreshCw, ArrowLeft
+  FolderArchive, RotateCcw, RefreshCw, ArrowLeft
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowsApi } from '../../api/workflows';
@@ -13,7 +13,7 @@ const containerVariants = {
 };
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 24 } },
 };
 
 /* ── Workflow Card ─────────────────────────────────────────────────────── */
@@ -36,7 +36,7 @@ function ArchivedWorkflowCard({
           </div>
           <div>
             <p className="text-sm font-semibold text-[var(--color-text-secondary)] font-mono line-through">{String(wf.name)}</p>
-            {wf.description && <p className="text-xs text-[var(--color-text-muted)] mt-0.5 line-clamp-1">{String(wf.description)}</p>}
+            {!!wf.description && <p className="text-xs text-[var(--color-text-muted)] mt-0.5 line-clamp-1">{String(wf.description)}</p>}
           </div>
         </div>
       </div>
@@ -46,7 +46,7 @@ function ArchivedWorkflowCard({
         <span className="text-[10px] font-medium bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full text-[var(--color-text-muted)] uppercase tracking-wider">
           {steps.length} step{steps.length !== 1 ? 's' : ''}
         </span>
-        {wf.is_deployed && (
+        {!!wf.is_deployed && (
           <span className="ml-auto text-[10px] bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded-full uppercase font-medium flex items-center gap-1">
             Deployed
           </span>

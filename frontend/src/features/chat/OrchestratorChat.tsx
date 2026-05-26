@@ -53,7 +53,7 @@ export default function Orchestrator() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [steps, streamingResponse]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const q = input.trim();
     if (!q || isProcessing) return;
     
@@ -230,7 +230,7 @@ export default function Orchestrator() {
           <div className="relative border-l border-[var(--color-border-subtle)] ml-4 md:ml-8 space-y-8 pb-8">
             
             <AnimatePresence>
-              {steps.map((step, index) => (
+              {steps.map((step) => (
                 <motion.div 
                   key={step.id}
                   initial={{ opacity: 0, x: -20 }}

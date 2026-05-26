@@ -18,7 +18,7 @@ const containerVariants = {
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: string) => void; onClick: () => void }) {
@@ -70,7 +70,7 @@ export default function AgentStudio() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', model: 'default-large-latest', instructions: '', description: '', tier: 'foundation' });
+  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' });
 
   const { data, isLoading } = useQuery({
     queryKey: [...QK.agents(), search],
@@ -80,7 +80,7 @@ export default function AgentStudio() {
 
   const createMut = useMutation({
     mutationFn: () => agentsApi.create(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'default-large-latest', instructions: '', description: '', tier: 'foundation' }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' }); },
   });
 
   const deleteMut = useMutation({
@@ -136,9 +136,9 @@ export default function AgentStudio() {
                 <div>
                   <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Model</label>
                   <select value={form.model} onChange={e => setForm({ ...form, model: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
-                    <option className="bg-[var(--color-bg-surface)] text-white">default-large-latest</option>
-                    <option className="bg-[var(--color-bg-surface)] text-white">default-medium-latest</option>
-                    <option className="bg-[var(--color-bg-surface)] text-white">default-small-latest</option>
+                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-large-latest</option>
+                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-medium-latest</option>
+                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
                     <option className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
                   </select>
                 </div>

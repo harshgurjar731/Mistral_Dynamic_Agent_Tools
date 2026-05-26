@@ -9,6 +9,8 @@ from typing import AsyncGenerator
 from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
 from app.services.tool_registry import execute_tool
+from app.config import map_model_name
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
         if data.get("agent_id"):
             kwargs["agent_id"] = data["agent_id"]
         if data.get("model"):
-            kwargs["model"] = data["model"]
+            kwargs["model"] = map_model_name(data["model"])
         elif not data.get("agent_id"):
             kwargs["model"] = "mistral-large-latest"
 
@@ -155,7 +157,7 @@ async def stream_chat_completion(client: Mistral, data: dict) -> AsyncGenerator[
         if data.get("agent_id"):
             kwargs["agent_id"] = data["agent_id"]
         if data.get("model"):
-            kwargs["model"] = data["model"]
+            kwargs["model"] = map_model_name(data["model"])
         elif not data.get("agent_id"):
             kwargs["model"] = "mistral-large-latest"
         if data.get("temperature") is not None:
