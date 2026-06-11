@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon } from 'lucide-react';
+import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer } from 'lucide-react';
 import { agentsApi } from '../../api/agents';
 import { orchestratorApi } from '../../api/orchestrator';
 import { uploadsApi } from '../../api/uploads';
@@ -36,7 +36,15 @@ export default function AgentDetail() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Edit State
-  const [editForm, setEditForm] = useState({ name: '', model: '', instructions: '', description: '', tier: '' });
+  const [editForm, setEditForm] = useState({
+    name: '', model: '', instructions: '', description: '', tier: '',
+    temperature: null as number | null,
+    top_p: null as number | null,
+    max_tokens: null as number | null,
+    random_seed: null as number | null,
+    frequency_penalty: null as number | null,
+    presence_penalty: null as number | null,
+  });
 
   useEffect(() => {
     if (agent) {
@@ -45,7 +53,13 @@ export default function AgentDetail() {
         model: agent.model || 'mistral-large-latest',
         instructions: (agent as any).agent_instructions || agent.instructions || '',
         description: agent.description || '',
-        tier: agent.tier || 'foundation'
+        tier: agent.tier || 'foundation',
+        temperature: agent.temperature ?? null,
+        top_p: agent.top_p ?? null,
+        max_tokens: agent.max_tokens ?? null,
+        random_seed: agent.random_seed ?? null,
+        frequency_penalty: agent.frequency_penalty ?? null,
+        presence_penalty: agent.presence_penalty ?? null,
       });
     }
   }, [agent]);
@@ -181,7 +195,13 @@ export default function AgentDetail() {
     editForm.model !== agent.model ||
     editForm.instructions !== ((agent as any).agent_instructions || agent.instructions || '') ||
     editForm.description !== (agent.description || '') ||
-    editForm.tier !== (agent.tier || 'foundation')
+    editForm.tier !== (agent.tier || 'foundation') ||
+    editForm.temperature !== (agent.temperature ?? null) ||
+    editForm.top_p !== (agent.top_p ?? null) ||
+    editForm.max_tokens !== (agent.max_tokens ?? null) ||
+    editForm.random_seed !== (agent.random_seed ?? null) ||
+    editForm.frequency_penalty !== (agent.frequency_penalty ?? null) ||
+    editForm.presence_penalty !== (agent.presence_penalty ?? null)
   );
 
   return (
@@ -427,6 +447,105 @@ export default function AgentDetail() {
                     <span>Instructions</span>
                   </label>
                   <textarea value={editForm.instructions} onChange={e => setEditForm(f => ({...f, instructions: e.target.value}))} rows={8} className="w-full minimal-input rounded-md px-3 py-2 text-sm font-mono resize-y min-h-[150px] custom-scrollbar text-[var(--color-text-secondary)]" />
+                </div>
+
+                <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Thermometer size={14} className="text-orange-400" />
+                      <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider font-medium">Completion Parameters</p>
+                    </div>
+
+                    {/* Temperature Slider */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] text-[var(--color-text-secondary)] font-medium">Temperature</label>
+                        <span className="text-[11px] font-[family-name:var(--font-mono)] text-orange-400 bg-[rgba(251,146,60,0.1)] px-1.5 py-0.5 rounded">{editForm.temperature ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={editForm.temperature ?? 0.7}
+                        onChange={e => setEditForm(f => ({...f, temperature: parseFloat(e.target.value)}))}
+                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-[var(--color-bg-hover)] accent-orange-400"
+                      />
+                      <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] mt-0.5">
+                        <span>Precise</span><span>Creative</span>
+                      </div>
+                    </div>
+
+                    {/* Top P Slider */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] text-[var(--color-text-secondary)] font-medium">Top P</label>
+                        <span className="text-[11px] font-[family-name:var(--font-mono)] text-teal-400 bg-[rgba(45,212,191,0.1)] px-1.5 py-0.5 rounded">{editForm.top_p ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={editForm.top_p ?? 1}
+                        onChange={e => setEditForm(f => ({...f, top_p: parseFloat(e.target.value)}))}
+                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-[var(--color-bg-hover)] accent-teal-400"
+                      />
+                      <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] mt-0.5">
+                        <span>Focused</span><span>Diverse</span>
+                      </div>
+                    </div>
+
+                    {/* Max Tokens */}
+                    <div className="mb-4">
+                      <label className="block text-[11px] text-[var(--color-text-secondary)] font-medium mb-1.5">Max Tokens</label>
+                      <input
+                        type="number" min="1" max="128000" step="1"
+                        value={editForm.max_tokens ?? ''}
+                        onChange={e => setEditForm(f => ({...f, max_tokens: e.target.value ? parseInt(e.target.value) : null}))}
+                        placeholder="Default (model limit)"
+                        className="w-full minimal-input rounded-md px-3 py-2 text-sm font-[family-name:var(--font-mono)]"
+                      />
+                    </div>
+
+                    {/* Random Seed */}
+                    <div className="mb-4">
+                      <label className="block text-[11px] text-[var(--color-text-secondary)] font-medium mb-1.5">Random Seed</label>
+                      <input
+                        type="number" min="0" step="1"
+                        value={editForm.random_seed ?? ''}
+                        onChange={e => setEditForm(f => ({...f, random_seed: e.target.value ? parseInt(e.target.value) : null}))}
+                        placeholder="None (random)"
+                        className="w-full minimal-input rounded-md px-3 py-2 text-sm font-[family-name:var(--font-mono)]"
+                      />
+                    </div>
+
+                    {/* Frequency Penalty Slider */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] text-[var(--color-text-secondary)] font-medium">Frequency Penalty</label>
+                        <span className="text-[11px] font-[family-name:var(--font-mono)] text-violet-400 bg-[rgba(139,92,246,0.1)] px-1.5 py-0.5 rounded">{editForm.frequency_penalty ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="-2" max="2" step="0.1"
+                        value={editForm.frequency_penalty ?? 0}
+                        onChange={e => setEditForm(f => ({...f, frequency_penalty: parseFloat(e.target.value)}))}
+                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-[var(--color-bg-hover)] accent-violet-400"
+                      />
+                      <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] mt-0.5">
+                        <span>-2.0</span><span>0</span><span>2.0</span>
+                      </div>
+                    </div>
+
+                    {/* Presence Penalty Slider */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] text-[var(--color-text-secondary)] font-medium">Presence Penalty</label>
+                        <span className="text-[11px] font-[family-name:var(--font-mono)] text-rose-400 bg-[rgba(251,113,133,0.1)] px-1.5 py-0.5 rounded">{editForm.presence_penalty ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="-2" max="2" step="0.1"
+                        value={editForm.presence_penalty ?? 0}
+                        onChange={e => setEditForm(f => ({...f, presence_penalty: parseFloat(e.target.value)}))}
+                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-[var(--color-bg-hover)] accent-rose-400"
+                      />
+                      <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] mt-0.5">
+                        <span>-2.0</span><span>0</span><span>2.0</span>
+                      </div>
+                    </div>
                 </div>
 
                 <div className="pt-4 border-t border-[var(--color-border-subtle)]">

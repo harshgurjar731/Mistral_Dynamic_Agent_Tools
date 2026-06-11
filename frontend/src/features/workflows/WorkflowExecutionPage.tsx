@@ -4,7 +4,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Play, Loader2, CheckCircle2, AlertCircle, Clock, CircleDot,
   MessageSquare, Send, Bot, User, Zap, Server, ChevronDown, ChevronUp, TerminalSquare,
-  PanelRightClose, PanelRightOpen, Layers, ArrowDownRight, ArrowUpRight, ImagePlus, X as XIcon
+  PanelRightClose, PanelRightOpen, Layers, ArrowDownRight, ArrowUpRight, ImagePlus, X as XIcon,
+  GitMerge
 } from 'lucide-react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { workflowsApi } from '../../api/workflows';
@@ -134,13 +135,34 @@ function unescapeNewlines(str: string): string {
   return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
 }
 
-function StepDetails({ sr, index }: { sr: StepResult; index: number }) {
+function StepDetails({ sr, index, isParallelMember }: { sr: StepResult; index: number; isParallelMember?: boolean }) {
   const [expanded, setExpanded] = useState(true);
   const durationSec = sr.duration_ms ? (sr.duration_ms / 1000).toFixed(1) : null;
-  const displayName = sr.step_id.replace(/_/g, ' ');
+  const isParallelGroupStart = sr.step_id.startsWith('__parallel_') && sr.step_id.endsWith(':start');
+  const displayName = isParallelGroupStart
+    ? sr.step_id.replace('__parallel_', '').replace(':start', '').replace(/_/g, ' ')
+    : sr.step_id.replace(/_/g, ' ');
   const isCompleted = sr.status === 'completed';
   const isFailed = sr.status === 'failed';
   const isRunning = !isCompleted && !isFailed;
+
+  // Parallel group start markers get a special treatment
+  if (isParallelGroupStart) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: index * 0.05 }}
+        className="relative"
+      >
+        <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full border-2 border-[var(--color-bg-surface)] z-10 bg-cyan-500" />
+        <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2.5 flex items-center gap-2">
+          <GitMerge size={13} className="text-cyan-400 shrink-0" />
+          <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider">⚡ Parallel Group: {displayName}</span>
+        </div>
+      </motion.div>
+    );
+  }
 
   const dotColor = isCompleted ? 'bg-emerald-500' : isFailed ? 'bg-red-500' : 'bg-indigo-500 animate-pulse';
   const DotIcon = isCompleted ? CheckCircle2 : isFailed ? AlertCircle : CircleDot;
@@ -156,12 +178,14 @@ function StepDetails({ sr, index }: { sr: StepResult; index: number }) {
       {/* Timeline dot */}
       <div className={cn(
         'absolute -left-[31px] top-1 w-3 h-3 rounded-full border-2 border-[var(--color-bg-surface)] z-10',
+        isParallelMember ? 'ring-2 ring-cyan-500/30' : '',
         dotColor
       )} />
 
       {/* Step card */}
       <div className={cn(
         'rounded-xl border transition-all duration-200',
+        isParallelMember ? 'ml-2 border-l-2 border-l-cyan-500/40' : '',
         isCompleted ? 'bg-emerald-500/5 border-emerald-500/20' :
         isFailed ? 'bg-red-500/5 border-red-500/20' :
         'bg-indigo-500/5 border-indigo-500/20'
@@ -174,6 +198,7 @@ function StepDetails({ sr, index }: { sr: StepResult; index: number }) {
           <div className="flex items-center gap-2.5 min-w-0">
             <DotIcon size={14} className={dotIconColor} />
             <span className="text-sm font-semibold text-white capitalize truncate">{displayName}</span>
+            {isParallelMember && <Zap size={10} className="text-cyan-400 shrink-0" />}
             {isRunning && <Loader2 size={12} className="text-indigo-400 animate-spin shrink-0" />}
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -962,9 +987,21 @@ Do not output anything else after the JSON.`,
                       </div>
                     )}
 
-                    {steps.map((sr, idx) => (
-                      <StepDetails key={sr.step_id} sr={sr} index={idx} />
-                    ))}
+                    {steps.map((sr, idx) => {
+                      // Detect if this step follows a parallel group start marker
+                      const prevStep = idx > 0 ? steps[idx - 1] : null;
+                      const isInParallelGroup = prevStep?.step_id?.startsWith('__parallel_') && prevStep?.step_id?.endsWith(':start')
+                        || (idx > 1 && steps.slice(0, idx).some(s => s.step_id?.startsWith('__parallel_') && s.step_id?.endsWith(':start'))
+                            && !steps.slice(0, idx).some((s, i) => i > 0 && !s.step_id?.startsWith('__parallel_') && steps[i-1]?.step_id?.startsWith('__parallel_')));
+                      // Simplified: check if the step_id is NOT a parallel marker and the previous one was
+                      const isParallelMember = !sr.step_id.startsWith('__parallel_') && 
+                        steps.slice(0, idx).reverse().some(s => {
+                          if (s.step_id.startsWith('__parallel_') && s.step_id.endsWith(':start')) return true;
+                          if (!s.step_id.startsWith('__parallel_')) return false;
+                          return false;
+                        });
+                      return <StepDetails key={sr.step_id} sr={sr} index={idx} isParallelMember={isParallelMember} />;
+                    })}
                     
                     {isRunning && (
                       <motion.div

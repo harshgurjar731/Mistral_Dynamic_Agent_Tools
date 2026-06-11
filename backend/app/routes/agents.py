@@ -24,9 +24,16 @@ class CreateAgentRequest(BaseModel):
 
 class UpdateAgentRequest(BaseModel):
     name: Optional[str] = None
+    model: Optional[str] = None
     instructions: Optional[str] = None
     description: Optional[str] = None
     tier: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    max_tokens: Optional[int] = None
+    random_seed: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
 
 
 @router.get("/agents")

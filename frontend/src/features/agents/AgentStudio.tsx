@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Cpu, Search, Sparkles, X } from 'lucide-react';
+import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { agentsApi, type Agent } from '../../api/agents';
 import { QK } from '../../lib/queryClient';
@@ -37,12 +37,26 @@ function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: 
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium text-[var(--color-text-primary)] break-words">{agent.name}</h3>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
             <TierBadge tier={tier} />
             <span className="inline-block px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
               {agent.model}
             </span>
           </div>
+          {(agent.temperature != null || agent.top_p != null) && (
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+              {agent.temperature != null && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[rgba(251,146,60,0.1)] border border-[rgba(251,146,60,0.2)] text-[10px] font-[family-name:var(--font-mono)] text-orange-400">
+                  <Thermometer size={10} /> {agent.temperature}
+                </span>
+              )}
+              {agent.top_p != null && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[rgba(45,212,191,0.1)] border border-[rgba(45,212,191,0.2)] text-[10px] font-[family-name:var(--font-mono)] text-teal-400">
+                  <Gauge size={10} /> {agent.top_p}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed line-clamp-4 flex-1">

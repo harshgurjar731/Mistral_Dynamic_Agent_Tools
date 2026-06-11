@@ -2,10 +2,12 @@
 Workflow Engine — DAG executor for multi-step agent pipelines.
 Follows Mistral Beta Workflows API patterns.
 Uses SQLite for workflow definition persistence.
+Supports both sequential steps and parallel groups (asyncio.gather).
 """
 
 import json
 import uuid
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -123,7 +125,7 @@ def list_executions_for_workflow(workflow_name: str) -> list[WorkflowRun]:
     return sorted(executions, key=lambda x: x.start_time or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
 
-# ── DAG Execution ─────────────────────────────────────────────────────────
+# ── DAG Execution (hybrid sequential + parallel) ─────────────────────────
 
 async def execute_workflow(
     workflow_name: str,
@@ -132,8 +134,13 @@ async def execute_workflow(
     wait_for_result: bool = False,
 ) -> WorkflowRun:
     """
-    Execute a workflow by processing its DAG in topological order.
-    Follows Mistral Workflows API response structure.
+    Execute a workflow by processing its DAG.
+    Supports both sequential steps and parallel groups (asyncio.gather).
+
+    Parallel groups: steps sharing the same `parallel_group` value are
+    executed concurrently. Each parallel branch receives a snapshot copy
+    of variables to prevent race conditions. After all branches complete,
+    their outputs are merged back into the shared variable store.
     """
     workflow = get_workflow(workflow_name)
     if not workflow:
@@ -153,8 +160,15 @@ async def execute_workflow(
     logger.info("Starting workflow '%s' (execution_id=%s)", workflow_name, exec_id)
 
     step_map = {step.id: step for step in workflow.steps}
+
+    # Pre-compute parallel groups: {group_id: [step, step, ...]}
+    parallel_groups: dict[str, list] = {}
+    for step in workflow.steps:
+        if step.parallel_group:
+            parallel_groups.setdefault(step.parallel_group, []).append(step)
+
     current_step_id = workflow.entry_step
-    visited = set()
+    visited: set[str] = set()
     max_steps = 50  # safety cap
 
     try:
@@ -163,40 +177,124 @@ async def execute_workflow(
                 logger.warning("Cycle detected at step '%s', breaking", current_step_id)
                 break
 
-            visited.add(current_step_id)
             step = step_map.get(current_step_id)
-
             if not step:
                 raise ValueError(f"Step '{current_step_id}' not found in workflow")
 
-            logger.info("Executing step '%s' (type=%s)", step.id, step.type)
+            # ── Check if this step belongs to a parallel group ────────────
+            if step.parallel_group and step.parallel_group in parallel_groups:
+                group_id = step.parallel_group
+                group_steps = parallel_groups[group_id]
 
-            result = await run_step(step, run.variables)
-            run.step_results.append(result)
+                # Skip if we already executed this parallel group
+                if all(s.id in visited for s in group_steps):
+                    if group_steps[0].next_steps:
+                        current_step_id = group_steps[0].next_steps[0]
+                    else:
+                        current_step_id = None
+                    continue
 
-            if result.status == "failed":
-                run.status = WorkflowStatus.FAILED
-                run.result = {"error": result.error, "failed_step": step.id}
-                run.end_time = datetime.now(timezone.utc)
-                _execution_store[exec_id] = run
-                logger.error("Workflow '%s' failed at step '%s': %s", workflow_name, step.id, result.error)
-                return run
-
-            if result.output is not None:
-                # Always store under the canonical step output key
-                run.variables[f"step_{step.id}_output"] = (
-                    json.dumps(result.output) if isinstance(result.output, dict) else result.output
+                logger.info(
+                    "Executing parallel group '%s' — %d steps: %s",
+                    group_id, len(group_steps),
+                    [s.id for s in group_steps],
                 )
-                # Also spread dict keys for direct variable access
-                if isinstance(result.output, dict):
-                    run.variables.update(result.output)
 
-            if step.type == StepType.CONDITION and isinstance(result.output, dict):
-                current_step_id = result.output.get("next_step")
-            elif step.next_steps:
-                current_step_id = step.next_steps[0]
+                # Each parallel branch gets a snapshot copy of variables
+                # to prevent race conditions between concurrent steps
+                async def _run_parallel_step(s, vars_snapshot):
+                    return s, await run_step(s, vars_snapshot)
+
+                tasks = [
+                    _run_parallel_step(s, dict(run.variables))
+                    for s in group_steps
+                ]
+
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Process parallel results
+                group_failed = False
+                for item in results:
+                    if isinstance(item, Exception):
+                        run.status = WorkflowStatus.FAILED
+                        run.result = {"error": str(item), "failed_step": f"parallel_group:{group_id}"}
+                        run.end_time = datetime.now(timezone.utc)
+                        _execution_store[exec_id] = run
+                        logger.error("Parallel group '%s' failed: %s", group_id, item)
+                        group_failed = True
+                        break
+
+                    s, result = item
+                    run.step_results.append(result)
+                    visited.add(s.id)
+
+                    if result.status == "failed":
+                        run.status = WorkflowStatus.FAILED
+                        run.result = {"error": result.error, "failed_step": s.id}
+                        run.end_time = datetime.now(timezone.utc)
+                        _execution_store[exec_id] = run
+                        logger.error(
+                            "Workflow '%s' failed at parallel step '%s': %s",
+                            workflow_name, s.id, result.error,
+                        )
+                        group_failed = True
+                        break
+
+                    # Store step output
+                    if result.output is not None:
+                        run.variables[f"step_{s.id}_output"] = (
+                            json.dumps(result.output)
+                            if isinstance(result.output, dict)
+                            else result.output
+                        )
+                        if isinstance(result.output, dict):
+                            run.variables.update(result.output)
+
+                if group_failed:
+                    return run
+
+                # Advance to the shared join step (all parallel steps share next_steps)
+                if group_steps[0].next_steps:
+                    current_step_id = group_steps[0].next_steps[0]
+                else:
+                    current_step_id = None
+
+                logger.info(
+                    "Parallel group '%s' completed — advancing to '%s'",
+                    group_id, current_step_id,
+                )
+
             else:
-                current_step_id = None
+                # ── Sequential execution (unchanged from original) ────────
+                visited.add(current_step_id)
+                logger.info("Executing step '%s' (type=%s)", step.id, step.type)
+
+                result = await run_step(step, run.variables)
+                run.step_results.append(result)
+
+                if result.status == "failed":
+                    run.status = WorkflowStatus.FAILED
+                    run.result = {"error": result.error, "failed_step": step.id}
+                    run.end_time = datetime.now(timezone.utc)
+                    _execution_store[exec_id] = run
+                    logger.error("Workflow '%s' failed at step '%s': %s", workflow_name, step.id, result.error)
+                    return run
+
+                if result.output is not None:
+                    # Always store under the canonical step output key
+                    run.variables[f"step_{step.id}_output"] = (
+                        json.dumps(result.output) if isinstance(result.output, dict) else result.output
+                    )
+                    # Also spread dict keys for direct variable access
+                    if isinstance(result.output, dict):
+                        run.variables.update(result.output)
+
+                if step.type == StepType.CONDITION and isinstance(result.output, dict):
+                    current_step_id = result.output.get("next_step")
+                elif step.next_steps:
+                    current_step_id = step.next_steps[0]
+                else:
+                    current_step_id = None
 
         run.status = WorkflowStatus.COMPLETED
         run.end_time = datetime.now(timezone.utc)

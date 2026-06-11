@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ReactFlow,
   Background,
@@ -21,13 +21,14 @@ import {
   ArrowLeft, Play, X, Cpu, Wrench, HelpCircle,
   Shuffle, GitBranch, Loader2, Clock, Server,
   Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
-  Copy, EyeOff,
+  Copy, EyeOff, Zap, Thermometer, Save, Check,
 } from 'lucide-react';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 import WorkflowHistoryPanel from './WorkflowHistoryPanel';
 import { TierBadge } from '../../components/ui/TierBadge';
+import { agentsApi, type Agent } from '../../api/agents';
 import dagre from 'dagre';
 
 /* ── Type helpers ────────────────────────────────────────────────────── */
@@ -38,6 +39,7 @@ interface WorkflowStep {
   description?: string;
   config: Record<string, unknown>;
   next_steps: string[];
+  parallel_group?: string;
 }
 
 interface WorkflowDef {
@@ -260,7 +262,14 @@ function AgentNode({ data }: { data: Record<string, unknown> }) {
       >
         {/* Tier Indicator row */}
         <div className="px-3.5 py-2 bg-white/[0.01] border-b border-white/5 flex items-center justify-between gap-1.5">
-          <TierBadge tier={tier} />
+          <div className="flex items-center gap-1.5">
+            <TierBadge tier={tier} />
+            {data.parallelGroup && (
+              <span className="text-[8px] bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono text-cyan-300 flex items-center gap-0.5">
+                <Zap size={7} /> Parallel
+              </span>
+            )}
+          </div>
           <span className="text-[8px] bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono text-white/50">mistral</span>
         </div>
 
@@ -382,6 +391,12 @@ function ToolNode({ data }: { data: Record<string, unknown> }) {
       >
         {/* Input: Arguments */}
         <div className="flex flex-col">
+          {data.parallelGroup && (
+            <div className="px-3.5 py-1.5 bg-cyan-500/5 border-b border-white/5 flex items-center gap-1">
+              <Zap size={8} className="text-cyan-400" />
+              <span className="text-[8px] font-mono text-cyan-300">Parallel group</span>
+            </div>
+          )}
           <PortRow
             label="Arguments"
             direction={direction}
@@ -612,6 +627,12 @@ function TransformNode({ data }: { data: Record<string, unknown> }) {
         onClick={onClick}
       >
         <div className="flex flex-col">
+          {data.parallelGroup && (
+            <div className="px-3.5 py-1.5 bg-cyan-500/5 border-b border-white/5 flex items-center gap-1">
+              <Zap size={8} className="text-cyan-400" />
+              <span className="text-[8px] font-mono text-cyan-300">Parallel group</span>
+            </div>
+          )}
           <PortRow
             label="Source attributes"
             direction={direction}
@@ -691,7 +712,7 @@ function buildGraph(
       id: step.id,
       type: step.type,
       position: { x: 0, y: 0 },
-      data: { ...commonData, ...typeSpecific, direction },
+      data: { ...commonData, ...typeSpecific, direction, parallelGroup: step.parallel_group },
     };
   });
 
@@ -805,6 +826,10 @@ function buildGraph(
         targetHandle = nextStepObj ? getTargetHandleId(nextStepObj.type) : '';
       }
 
+      // Detect if this edge connects to/from a parallel group
+      const isParallelEdge = step.parallel_group != null || (nextStepObj && nextStepObj.parallel_group != null);
+      const edgeColor = isBackward ? '#a78bfa' : (isParallelEdge ? '#06b6d4' : '#6366f1');
+
       edges.push({
         id: `${step.id}->${next}`,
         source: step.id,
@@ -813,12 +838,17 @@ function buildGraph(
         targetHandle,
         type: 'smoothstep',
         animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, color: isBackward ? '#a78bfa' : '#6366f1' },
+        label: isParallelEdge && !isBackward ? '⚡' : undefined,
+        markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
         style: { 
-          stroke: isBackward ? '#a78bfa' : '#6366f1', 
-          strokeWidth: 2,
+          stroke: edgeColor, 
+          strokeWidth: isParallelEdge ? 2.5 : 2,
           strokeDasharray: isBackward ? '4 4' : undefined,
         },
+        ...(isParallelEdge && !isBackward ? {
+          labelStyle: { fill: '#06b6d4', fontSize: 10, fontWeight: 700 },
+          labelBgStyle: { fill: 'var(--color-bg-base)', fillOpacity: 0.8 },
+        } : {}),
       });
     }
 
@@ -1013,6 +1043,63 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
 
   const theme = typeColors[step.type] ?? typeColors.agent;
 
+  // ── Agent detail fetching & editing ──────────────────────────────────
+  const agentId = step.type === 'agent' ? (step.config?.agent_id as string | undefined) : undefined;
+  const qc = useQueryClient();
+
+  const { data: agentData, isLoading: isLoadingAgent } = useQuery({
+    queryKey: [...QK.agents(), agentId],
+    queryFn: () => agentsApi.get(agentId!).then(r => r.data),
+    enabled: !!agentId,
+  });
+
+  const [agentEditForm, setAgentEditForm] = useState<{
+    temperature: number | null;
+    top_p: number | null;
+    max_tokens: number | null;
+    random_seed: number | null;
+    frequency_penalty: number | null;
+    presence_penalty: number | null;
+  }>({
+    temperature: null, top_p: null, max_tokens: null,
+    random_seed: null, frequency_penalty: null, presence_penalty: null,
+  });
+
+  const [agentSaveSuccess, setAgentSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    if (agentData) {
+      setAgentEditForm({
+        temperature: agentData.temperature ?? null,
+        top_p: agentData.top_p ?? null,
+        max_tokens: agentData.max_tokens ?? null,
+        random_seed: agentData.random_seed ?? null,
+        frequency_penalty: agentData.frequency_penalty ?? null,
+        presence_penalty: agentData.presence_penalty ?? null,
+      });
+      setAgentSaveSuccess(false);
+    }
+  }, [agentData]);
+
+  const agentHasChanges = agentData && (
+    agentEditForm.temperature !== (agentData.temperature ?? null) ||
+    agentEditForm.top_p !== (agentData.top_p ?? null) ||
+    agentEditForm.max_tokens !== (agentData.max_tokens ?? null) ||
+    agentEditForm.random_seed !== (agentData.random_seed ?? null) ||
+    agentEditForm.frequency_penalty !== (agentData.frequency_penalty ?? null) ||
+    agentEditForm.presence_penalty !== (agentData.presence_penalty ?? null)
+  );
+
+  const agentUpdateMut = useMutation({
+    mutationFn: () => agentsApi.update(agentId!, agentEditForm as Partial<Agent>),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+      qc.invalidateQueries({ queryKey: QK.agents() });
+      setAgentSaveSuccess(true);
+      setTimeout(() => setAgentSaveSuccess(false), 3000);
+    },
+  });
+
   const parentSteps = useMemo(() => {
     return workflow.steps.filter(s => {
       if (s.next_steps?.includes(step.id)) return true;
@@ -1171,6 +1258,149 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                   </div>
                 )}
               </>
+            )}
+
+            {/* ── Agent Completion Parameters (editable) ──────────── */}
+            {step.type === 'agent' && agentId && (
+              <div className="mt-2 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Thermometer size={13} className="text-orange-400" />
+                    <h4 className="text-xs uppercase tracking-wider text-white font-bold">Agent Parameters</h4>
+                  </div>
+                  {agentHasChanges && (
+                    <button
+                      onClick={() => agentUpdateMut.mutate()}
+                      disabled={agentUpdateMut.isPending}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 text-[10px] font-semibold text-indigo-300 transition-all"
+                    >
+                      <Save size={10} />
+                      {agentUpdateMut.isPending ? 'Saving…' : 'Save'}
+                    </button>
+                  )}
+                  {agentSaveSuccess && !agentHasChanges && (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                      <Check size={10} /> Saved
+                    </span>
+                  )}
+                </div>
+
+                {isLoadingAgent ? (
+                  <div className="space-y-3 animate-pulse">
+                    {[...Array(4)].map((_, i) => (
+                      <div key={i} className="space-y-1.5">
+                        <div className="h-2.5 w-1/3 rounded bg-white/5" />
+                        <div className="h-5 w-full rounded bg-white/5" />
+                      </div>
+                    ))}
+                  </div>
+                ) : agentData ? (
+                  <div className="space-y-3 bg-black/20 border border-white/5 rounded-xl p-3.5">
+                    {/* Agent Name & Model (read-only) */}
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/5">
+                      <div className="min-w-0">
+                        <p className="text-[9px] uppercase tracking-wider text-white/40 font-bold mb-0.5">Agent</p>
+                        <p className="text-xs font-medium text-white truncate">{agentData.name}</p>
+                      </div>
+                      <span className="shrink-0 text-[9px] bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded font-mono text-indigo-300">{agentData.model}</span>
+                    </div>
+
+                    {/* Temperature */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-white/60 font-medium">Temperature</span>
+                        <span className="text-[10px] font-mono text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded">{agentEditForm.temperature ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={agentEditForm.temperature ?? 0.7}
+                        onChange={e => setAgentEditForm(f => ({...f, temperature: parseFloat(e.target.value)}))}
+                        className="w-full h-1 rounded-full appearance-none cursor-pointer bg-white/10 accent-orange-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-white/30 mt-0.5">
+                        <span>Precise</span><span>Creative</span>
+                      </div>
+                    </div>
+
+                    {/* Top P */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-white/60 font-medium">Top P</span>
+                        <span className="text-[10px] font-mono text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded">{agentEditForm.top_p ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="0" max="1" step="0.05"
+                        value={agentEditForm.top_p ?? 1}
+                        onChange={e => setAgentEditForm(f => ({...f, top_p: parseFloat(e.target.value)}))}
+                        className="w-full h-1 rounded-full appearance-none cursor-pointer bg-white/10 accent-teal-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-white/30 mt-0.5">
+                        <span>Focused</span><span>Diverse</span>
+                      </div>
+                    </div>
+
+                    {/* Max Tokens */}
+                    <div>
+                      <span className="text-[10px] text-white/60 font-medium block mb-1">Max Tokens</span>
+                      <input
+                        type="number" min="1" max="128000" step="1"
+                        value={agentEditForm.max_tokens ?? ''}
+                        onChange={e => setAgentEditForm(f => ({...f, max_tokens: e.target.value ? parseInt(e.target.value) : null}))}
+                        placeholder="Default"
+                        className="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-indigo-500/50 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white/90 placeholder:text-white/25 outline-none transition-colors"
+                      />
+                    </div>
+
+                    {/* Random Seed */}
+                    <div>
+                      <span className="text-[10px] text-white/60 font-medium block mb-1">Random Seed</span>
+                      <input
+                        type="number" min="0" step="1"
+                        value={agentEditForm.random_seed ?? ''}
+                        onChange={e => setAgentEditForm(f => ({...f, random_seed: e.target.value ? parseInt(e.target.value) : null}))}
+                        placeholder="None (random)"
+                        className="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-indigo-500/50 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white/90 placeholder:text-white/25 outline-none transition-colors"
+                      />
+                    </div>
+
+                    {/* Frequency Penalty */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-white/60 font-medium">Frequency Penalty</span>
+                        <span className="text-[10px] font-mono text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">{agentEditForm.frequency_penalty ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="-2" max="2" step="0.1"
+                        value={agentEditForm.frequency_penalty ?? 0}
+                        onChange={e => setAgentEditForm(f => ({...f, frequency_penalty: parseFloat(e.target.value)}))}
+                        className="w-full h-1 rounded-full appearance-none cursor-pointer bg-white/10 accent-violet-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-white/30 mt-0.5">
+                        <span>-2.0</span><span>0</span><span>2.0</span>
+                      </div>
+                    </div>
+
+                    {/* Presence Penalty */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-white/60 font-medium">Presence Penalty</span>
+                        <span className="text-[10px] font-mono text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded">{agentEditForm.presence_penalty ?? '—'}</span>
+                      </div>
+                      <input
+                        type="range" min="-2" max="2" step="0.1"
+                        value={agentEditForm.presence_penalty ?? 0}
+                        onChange={e => setAgentEditForm(f => ({...f, presence_penalty: parseFloat(e.target.value)}))}
+                        className="w-full h-1 rounded-full appearance-none cursor-pointer bg-white/10 accent-rose-400"
+                      />
+                      <div className="flex justify-between text-[8px] text-white/30 mt-0.5">
+                        <span>-2.0</span><span>0</span><span>2.0</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-white/30 italic">Agent not found on server.</p>
+                )}
+              </div>
             )}
 
             {step.type === 'tool' && (

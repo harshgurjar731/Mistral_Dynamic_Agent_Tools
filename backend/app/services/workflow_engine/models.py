@@ -39,6 +39,7 @@ class WorkflowStep(BaseModel):
     # For transform steps: {"transform_code": "..."}
     next_steps: list[str] = Field(default_factory=list)
     description: Optional[str] = None
+    parallel_group: Optional[str] = None  # Steps sharing the same group ID run concurrently via asyncio.gather()
 
 
 class WorkflowDefinition(BaseModel):

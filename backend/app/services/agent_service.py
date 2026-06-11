@@ -7,10 +7,24 @@ and SDK client for create/update/delete.
 import logging
 import httpx
 from mistralai.client import Mistral
+from mistralai.client.models.completionargs import CompletionArgs
 from app.config import settings, map_model_name
 from app.exceptions import MistralAPIError, AgentNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_completion_args(agent: dict) -> dict:
+    """Extract completion_args from a raw Mistral agent dict into a flat dict."""
+    ca = agent.get("completion_args") or {}
+    return {
+        "temperature": ca.get("temperature"),
+        "top_p": ca.get("top_p"),
+        "max_tokens": ca.get("max_tokens"),
+        "random_seed": ca.get("random_seed"),
+        "frequency_penalty": ca.get("frequency_penalty"),
+        "presence_penalty": ca.get("presence_penalty"),
+    }
 
 # Direct HTTP client for endpoints where SDK has sentinel issues
 _http_client = httpx.Client(
@@ -78,12 +92,15 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": agent.get("tools", []),
                     "created_at": str(agent.get("created_at", "")),
                     "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+                    **_extract_completion_args(agent),
                 })
             else:
                 meta = getattr(agent, "metadata", None)
                 explicit_tier = meta.get("tier") if isinstance(meta, dict) else None
                 a_name = getattr(agent, "name", "") or ""
                 a_instr = getattr(agent, "instructions", "") or ""
+                ca_obj = getattr(agent, "completion_args", None)
+                ca_dict = ca_obj.model_dump() if ca_obj and hasattr(ca_obj, "model_dump") else {}
                 agents.append({
                     "id": getattr(agent, "id", None),
                     "name": a_name,
@@ -93,6 +110,12 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": getattr(agent, "tools", []),
                     "created_at": str(getattr(agent, "created_at", "")),
                     "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+                    "temperature": ca_dict.get("temperature"),
+                    "top_p": ca_dict.get("top_p"),
+                    "max_tokens": ca_dict.get("max_tokens"),
+                    "random_seed": ca_dict.get("random_seed"),
+                    "frequency_penalty": ca_dict.get("frequency_penalty"),
+                    "presence_penalty": ca_dict.get("presence_penalty"),
                 })
         # Paginated response format for frontend useInfiniteQuery
         total_pages = 1 if len(agents) < page_size else page + 2
@@ -135,6 +158,7 @@ async def get_agent(client: Mistral, agent_id: str) -> dict:
             "tools": agent.get("tools", []),
             "created_at": str(agent.get("created_at", "")),
             "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+            **_extract_completion_args(agent),
         }
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -180,10 +204,18 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             update_kwargs["instructions"] = data["instructions"]
         if "description" in data:
             update_kwargs["description"] = data["description"]
+        if "model" in data:
+            update_kwargs["model"] = map_model_name(data["model"])
         if "tier" in data:
             existing_metadata = getattr(agent, "metadata", {}) or {}
             existing_metadata["tier"] = data["tier"]
             update_kwargs["metadata"] = existing_metadata
+
+        # Build CompletionArgs if any completion parameter is provided
+        completion_fields = ["temperature", "top_p", "max_tokens", "random_seed", "frequency_penalty", "presence_penalty"]
+        ca_data = {k: data[k] for k in completion_fields if k in data}
+        if ca_data:
+            update_kwargs["completion_args"] = CompletionArgs(**ca_data)
 
         agent = client.beta.agents.update(**update_kwargs)
         return {"id": agent.id, "name": getattr(agent, "name", None)}

@@ -675,6 +675,7 @@ Never omit Tier-1 steps — they are mandatory in every workflow.
   "type": "agent",
   "tier": "foundation | domain | use_case",
   "description": "What this step accomplishes (one sentence)",
+  "parallel_group": null,
   "config": {{
     "agent_id": "<agent ID from Agents list>",
     "query_template": "<detailed instruction — see Query Template Standard>",
@@ -688,6 +689,7 @@ Never omit Tier-1 steps — they are mandatory in every workflow.
   "id": "snake_case_step_id",
   "type": "tool",
   "description": "What this step does",
+  "parallel_group": null,
   "config": {{
     "tool_name": "<tool name>",
     "arguments": {{"param": "{{{{variable_name}}}}"}}
@@ -714,6 +716,7 @@ Never omit Tier-1 steps — they are mandatory in every workflow.
   "id": "snake_case_step_id",
   "type": "transform",
   "description": "What reshaping this step performs",
+  "parallel_group": null,
   "config": {{
     "mappings": {{"output_key": "{{{{source_variable}}}}"}}
   }},
@@ -776,8 +779,8 @@ Every query_template must contain ALL of the following:
 
 ## CRITICAL DAG rules
 
-1. LINEAR BY DEFAULT — Build a simple chain unless branching is explicitly
-   required. Last step must have "next_steps": [].
+1. LINEAR BY DEFAULT — Build a simple chain unless branching or parallelism is
+   explicitly required. Last step must have "next_steps": [].
 2. entry_step must equal the id of the first element in steps[].
 3. output_step must equal the id of the last step that produces the final result.
 4. No orphan steps — every step must be reachable from entry_step.
@@ -794,6 +797,70 @@ Every query_template must contain ALL of the following:
      ## Recommendations (if applicable)
      ## Next Steps (if applicable)
    The final step agent must use output_contract: "markdown_report".
+9. Use parallel_group for independent steps — see Parallel Execution below.
+
+## Parallel Execution (Fan-out / Fan-in)
+
+When multiple steps are INDEPENDENT (they share the same input variables and
+do NOT depend on each other's output), group them for parallel execution to
+reduce total workflow time. This uses asyncio.gather() under the hood.
+
+### How to declare a parallel group:
+1. Set "parallel_group": "<group_id>" on each step in the group (e.g. "pg_core")
+2. ALL steps in the group MUST have the SAME "next_steps" (the join/merge step)
+3. The step BEFORE the group must list ALL parallel step IDs in its "next_steps"
+4. No step in a parallel group may reference step_<other_parallel_step>_output
+   (they run concurrently so outputs are not available to each other)
+5. parallel_group is null for sequential steps (the default)
+6. condition steps MUST NOT use parallel_group (branching is sequential)
+
+### When to use parallel execution:
+- Multiple agent steps that all read from the SAME upstream output
+- Independent analysis tasks (e.g. risk + eligibility + compliance checks)
+- Data enrichment steps that query different sources independently
+- When 3 or more independent core processing steps exist between guardrails
+
+### When NOT to use parallel execution:
+- Steps where step B needs step A's output → MUST be sequential
+- Condition steps (branching is inherently sequential)
+- Foundation guardrail steps (jailbreak_moderation, output_moderation) → sequential
+- Only 1-2 steps total in the core → not worth parallelizing
+
+### Example — parallel group in a workflow:
+Given steps: topic_control → [risk_assessment, eligibility_check, compliance_review] → merge_results → reviewer
+
+topic_control has next_steps: ["risk_assessment", "eligibility_check", "compliance_review"]
+
+Each parallel step:
+{{
+  "id": "risk_assessment",
+  "type": "agent",
+  "parallel_group": "pg_core_analysis",
+  "config": {{ ... }},
+  "next_steps": ["merge_results"]
+}}
+{{
+  "id": "eligibility_check",
+  "type": "agent",
+  "parallel_group": "pg_core_analysis",
+  "config": {{ ... }},
+  "next_steps": ["merge_results"]
+}}
+{{
+  "id": "compliance_review",
+  "type": "agent",
+  "parallel_group": "pg_core_analysis",
+  "config": {{ ... }},
+  "next_steps": ["merge_results"]
+}}
+
+The merge_results step then references all three:
+step_risk_assessment_output, step_eligibility_check_output, step_compliance_review_output
+
+### Optimization rule:
+For workflows with 3+ independent core processing steps between the
+foundation guardrails, ALWAYS use parallel_group. This is the primary
+optimization target — it can reduce total workflow time by 50-70%.
 
 Respond with ONLY the valid JSON WorkflowDefinition. No markdown, no commentary.
 """

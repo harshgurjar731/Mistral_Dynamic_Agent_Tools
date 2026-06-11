@@ -9,6 +9,12 @@ export interface Agent {
   tools?: unknown[];
   tier?: string;
   created_at?: string;
+  temperature?: number | null;
+  top_p?: number | null;
+  max_tokens?: number | null;
+  random_seed?: number | null;
+  frequency_penalty?: number | null;
+  presence_penalty?: number | null;
 }
 
 export interface PaginatedAgents {
