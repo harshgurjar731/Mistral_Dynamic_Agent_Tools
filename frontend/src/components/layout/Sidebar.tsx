@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BotMessageSquare, Wrench, GitBranch, MessageSquare,
-  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2
+  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Library
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState, useMemo } from 'react';
@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { to: '/workflows',     icon: GitBranch,        label: 'Workflows' },
   { to: '/conversations', icon: MessageSquare,    label: 'Conversations' },
   { to: '/mcp',           icon: Server,           label: 'MCP Servers' },
+  { to: '/libraries',     icon: Library,          label: 'Libraries' },
   { to: '/health',        icon: Activity,         label: 'Health' },
 ];
 

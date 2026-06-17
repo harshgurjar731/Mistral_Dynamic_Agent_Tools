@@ -83,9 +83,15 @@ def _parse_agent_config(raw_text: str) -> dict:
 
 def _sse(data, event: str = "message") -> str:
     """Format as a typed SSE event line."""
-    payload = json.dumps(data) if not isinstance(data, str) else data
-    if isinstance(payload, str):
-        payload = payload.replace("\n", "\ndata: ")
+    if isinstance(data, str):
+        payload = data
+    else:
+        try:
+            payload = json.dumps(data)
+        except (TypeError, ValueError):
+            # Fallback for non-serializable SDK objects (e.g. ToolReferenceChunk)
+            payload = str(data)
+    payload = payload.replace("\n", "\ndata: ")
     return f"event: {event}\ndata: {payload}\n\n"
 
 
@@ -675,10 +681,24 @@ def _extract_stream_chunk(event) -> Optional[str]:
     
     # Mistral Beta API format
     data_type = getattr(data, "type", None)
+
+    # Skip non-text chunk types (e.g. ToolReferenceChunk, citation chunks)
+    # These are SDK objects that are not JSON-serializable and contain no user-facing text.
+    _skip_types = {"tool_reference", "tool_reference.delta", "citation"}
+    if data_type in _skip_types:
+        return None
+
     if data_type == "message.output.delta":
         content = getattr(data, "content", None)
-        if content:
+        if isinstance(content, str):
             return content
+        # content might be a non-string SDK object (e.g. ToolReferenceChunk);
+        # try extracting .text from it, otherwise skip.
+        if content is not None:
+            text = getattr(content, "text", None)
+            if isinstance(text, str):
+                return text
+        return None
 
     # Standard API format
     choices = getattr(data, "choices", None)
@@ -687,9 +707,10 @@ def _extract_stream_chunk(event) -> Optional[str]:
             delta = getattr(choice, "delta", None)
             if delta:
                 content = getattr(delta, "content", None)
-                if content:
+                if isinstance(content, str):
                     return content
     content = getattr(data, "content", None)
     if isinstance(content, str):
         return content
     return None
+

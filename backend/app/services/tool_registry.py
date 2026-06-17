@@ -18,6 +18,7 @@ BUILTIN_TOOLS = {
     "web_search": {"type": "web_search"},
     "code_interpreter": {"type": "code_interpreter"},
     "image_generation": {"type": "image_generation"},
+    "document_library": {"type": "document_library"},
 }
 
 FUNCTION_TOOLS = {
@@ -125,13 +126,37 @@ async def refresh_dynamic_tools():
     logger.info("Refreshed %d dynamic tools from Docker Tool Service", len(_dynamic_tool_schemas))
 
 
-def get_tools(tool_keys: List[str]) -> List[dict]:
-    """Resolve a list of tool key names into their full tool definitions."""
+def get_tools(tool_keys: List[str], document_library_ids: List[str] | None = None) -> List[dict]:
+    """Resolve a list of tool key names into their full tool definitions.
+    
+    Handles document_library specially:
+    - If `document_library_ids` is provided and 'document_library' is in tool_keys,
+      builds the proper {type: document_library, library_ids: [...]} spec.
+    - Also supports encoded keys like 'document_library:lib-id-1,lib-id-2'
+      where library IDs are embedded in the key itself.
+    """
     tools = []
     for key in tool_keys:
-        key = key.strip().lower()
-        if key in ALL_TOOLS:
-            tools.append(ALL_TOOLS[key])
+        raw_key = key.strip()
+        lower_key = raw_key.lower()
+
+        # Handle document_library with encoded library IDs (e.g. "document_library:id1,id2")
+        if lower_key.startswith("document_library:"):
+            _, ids_str = raw_key.split(":", 1)
+            lib_ids = [lid.strip() for lid in ids_str.split(",") if lid.strip()]
+            if lib_ids:
+                tools.append({"type": "document_library", "library_ids": lib_ids})
+            continue
+
+        # Handle plain "document_library" key with separately-provided IDs
+        if lower_key == "document_library":
+            if document_library_ids:
+                tools.append({"type": "document_library", "library_ids": document_library_ids})
+            # Skip if no library IDs — document_library requires at least one
+            continue
+
+        if lower_key in ALL_TOOLS:
+            tools.append(ALL_TOOLS[lower_key])
     return tools
 
 

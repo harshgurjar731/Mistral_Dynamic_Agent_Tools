@@ -5,7 +5,7 @@ Aligned with Mistral OpenAPI spec endpoints.
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from app.dependencies import get_mistral_client
 from app.services import agent_service
@@ -20,6 +20,7 @@ class CreateAgentRequest(BaseModel):
     description: Optional[str] = None
     tier: Optional[str] = None
     tools: list = []
+    document_library_ids: Optional[List[str]] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -34,6 +35,8 @@ class UpdateAgentRequest(BaseModel):
     random_seed: Optional[int] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
+    tools: Optional[list] = None
+    document_library_ids: Optional[List[str]] = None
 
 
 @router.get("/agents")

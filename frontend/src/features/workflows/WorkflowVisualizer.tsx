@@ -264,7 +264,7 @@ function AgentNode({ data }: { data: Record<string, unknown> }) {
         <div className="px-3.5 py-2 bg-white/[0.01] border-b border-white/5 flex items-center justify-between gap-1.5">
           <div className="flex items-center gap-1.5">
             <TierBadge tier={tier} />
-            {data.parallelGroup && (
+            {!!data.parallelGroup && (
               <span className="text-[8px] bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono text-cyan-300 flex items-center gap-0.5">
                 <Zap size={7} /> Parallel
               </span>
@@ -391,7 +391,7 @@ function ToolNode({ data }: { data: Record<string, unknown> }) {
       >
         {/* Input: Arguments */}
         <div className="flex flex-col">
-          {data.parallelGroup && (
+          {!!data.parallelGroup && (
             <div className="px-3.5 py-1.5 bg-cyan-500/5 border-b border-white/5 flex items-center gap-1">
               <Zap size={8} className="text-cyan-400" />
               <span className="text-[8px] font-mono text-cyan-300">Parallel group</span>
@@ -627,7 +627,7 @@ function TransformNode({ data }: { data: Record<string, unknown> }) {
         onClick={onClick}
       >
         <div className="flex flex-col">
-          {data.parallelGroup && (
+          {!!data.parallelGroup && (
             <div className="px-3.5 py-1.5 bg-cyan-500/5 border-b border-white/5 flex items-center gap-1">
               <Zap size={8} className="text-cyan-400" />
               <span className="text-[8px] font-mono text-cyan-300">Parallel group</span>

@@ -1,0 +1,2025 @@
+=== Doc 1 ===
+Products
+Studio
+Agents
+Agents Introduction
+What are AI agents?
+AI agents are autonomous systems powered by large language models (LLMs) that, given high-level instructions, can plan, use tools, carry out processing steps, and take actions to achieve specific goals. These agents use advanced natural language processing to understand and execute complex tasks, and can collaborate with each other to achieve more sophisticated outcomes.
+Our Agents and Conversations API allows developers to build such agents, leveraging multiple features such as:
+Multiple mutlimodal models available,
+text and vision models
+.
+Persistent state
+across conversations.
+Ability to have conversations with
+base models
+,
+a single agent
+, and
+multiple agents
+.
+Built-in connector tools for
+code execution
+,
+web search
+,
+image generation
+and
+document library
+out of the box.
+Handoff capability
+to use different agents as part of a workflow, allowing agents to call other agents.
+Features supported via our chat completions endpoint are also supported, such as:
+Structured Outputs
+Document Understanding
+Tool Usage
+Citations
+More informations
+Copy section link
+More informations
+Agents & Conversations
+: Basic explanations and code snippets around our Agents and Conversations API.
+Tools
+: Make tools accessible to any Agent.
+Websearch
+: In-depth explanation of our web search built-in connector tool.
+Code Interpreter
+: In-depth explanation of our code interpreter for code execution built-in connector tool.
+Image Generation
+: In-depth explanation of our image generation built-in connector tool.
+Document Library
+: A RAG built-in tool enabling Agents to search through your
+Libraries
+.
+Function Calling
+: Use function calling to create custom tools.
+Connectors
+: Register MCP servers as managed Connectors and use them as tools in conversations and Agents.
+Handoffs
+: Relay tasks and use other agents as tools in agentic workflows.
+Cookbooks
+Copy section link
+Cookbooks
+For more information and guides on how to use our Agents, we have the following cookbooks:
+Github Agent
+Linear Tickets
+Financial Analyst
+Travel Assistant
+Food Diet Companion
+FAQ
+Copy section link
+FAQ
+Which models are supported?
+
+=== Doc 2 ===
+Products
+Studio
+Agents
+Agents & Conversations
+Agents & Conversations
+Agents is a feature that allows developers to create predefined models with their own system prompts and tools. In the other hand, Conversations is a feature that allows developers to create a history of interactions with an assistant that use Agents or our models directly.
+Objects
+Copy section link
+Objects
+We introduce three new main objects that our API makes use of:
+Agents
+: A set of pre-selected values to augment model abilities, such as tools, instructions, and completion parameters.
+Conversation
+: A history of interactions, past events and entries with an assistant, such as messages and tool executions, Conversations can be started by an Agent or a Model.
+Entry
+: An action that can be created by the user or an assistant. It brings a more flexible and expressive representation of interactions between a user and one or multiple assistants. This allows for more control over describing events.
+Tip
+You can create Conversations without creating Agents. These two APIs are independent.
+To find all details visit our
+Agents
+and
+Conversations
+API spec.
+Agents
+Copy section link
+Agents
+Agent Creation and Management
+Agents are a set of pre-selected values, such as tools, instructions, and completion parameters, that will define the behavior of the model.
+Agent Creation
+Agent Update
+When creating an Agent, there are multiple parameters and values that need to be set in advance. These are:
+model
+: The model your agent will use among our available models for chat completion.
+description
+: The agent description, related to the task it must accomplish or the use case at stake.
+name
+: The name of your agent.
+instructions
+optional
+: The main instructions of the agent, also known as the system prompt. This must accurately describe the main task of your agent.
+tools
+optional
+: A list of tools the model can make use of. There are currently different
+types
+of tools:
+function
+: User-defined tools, with similar usage to the standard function calling used with chat completion.
+web_search
+/
+web_search_premium
+: Our built-in tool for web search.
+code_interpreter
+: Our built-in tool for code execution.
+image_generation
+: Our built-in tool for image generation.
+document_library
+: Our built-in RAG tool for knowledge grounding and search on custom data.
+completion_args
+optional
+: Standard chat completion sampler arguments. All chat completion arguments are accepted.
+Creating an Agent
+Copy section link
+Creating an Agent
+python
+typescript
+curl
+Output
+V2
+V1
+import
+os
+from
+mistralai
+.
+client
+import
+Mistral
+api_key
+=
+os
+.
+environ
+[
+"MISTRAL_API_KEY"
+]
+client
+=
+Mistral
+(
+api_key
+)
+simple_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-medium-latest"
+,
+description
+=
+"A simple Agent with persistent state."
+,
+name
+=
+"Simple Agent"
+)
+import
+os
+from
+mistralai
+.
+client
+import
+Mistral
+api_key
+=
+os
+.
+environ
+[
+"MISTRAL_API_KEY"
+]
+client
+=
+Mistral
+(
+api_key
+)
+simple_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-medium-latest"
+,
+description
+=
+"A simple Agent with persistent state."
+,
+name
+=
+"Simple Agent"
+)
+When creating an agent, you will receive an Agent object with an agent ID. You can then use that ID to have conversations.
+Here is an example of a Web Search Agent using our built-in tool:
+python
+typescript
+curl
+Output
+websearch_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-medium-latest"
+,
+description
+=
+"Agent able to search information over the web, such as news, weather, sport results..."
+,
+name
+=
+"Websearch Agent"
+,
+instructions
+=
+"You have the ability to perform web searches with `web_search` to find up-to-date information."
+,
+tools
+=
+[
+{
+"type"
+:
+"web_search"
+}
+]
+,
+completion_args
+=
+{
+"temperature"
+:
+0.3
+,
+"top_p"
+:
+0.95
+,
+}
+)
+websearch_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-medium-latest"
+,
+description
+=
+"Agent able to search information over the web, such as news, weather, sport results..."
+,
+name
+=
+"Websearch Agent"
+,
+instructions
+=
+"You have the ability to perform web searches with `web_search` to find up-to-date information."
+,
+tools
+=
+[
+{
+"type"
+:
+"web_search"
+}
+]
+,
+completion_args
+=
+{
+"temperature"
+:
+0.3
+,
+"top_p"
+:
+0.95
+,
+}
+)
+You can find more information
+here
+.
+Conversations
+Copy section link
+Conversations
+Conversations
+In the other hand, Conversations are a history of interactions with an assistant. They are more flexible and expressive than the Chat Completion API, allowing for more control over describing events.
+Once your agent is created, you can
+start
+conversations at any point while keeping the same conversation persistent. You first start a conversation by providing:
+agent_id
+: The ID of the agent, created during the Agent creation.
+inputs
+: The message to start the conversation with. It can be either a string with the first user message or question, or the history of messages.
+Tip
+You can start and continue conversations without creating Agents. These two APIs are independent, in that case you can use the
+model
+parameter instead of
+agent_id
+.
+Creating a Conversation will return a conversation ID.
+To
+continue
+the conversation and append the exchanges as you go, you provide two values:
+conversation_id
+: The ID created during the conversation start or append that maps to the internally stored conversation history.
+inputs
+: The next message or reply. It can be either a string or a list of messages.
+A new Conversation ID is provided at each append.
+You can also
+opt out
+from the automatic storing with
+store=False
+; this will make the new history not being stored on our cloud.
+If the agent has guardrails configured, they are automatically applied to all conversations. You can override them by passing a
+guardrails
+field directly on
+POST /v1/conversations
+requests with a model. See
+Custom guardrails
+for details.
+We also provide the parameter
+handoff_execution
+, which currently has two modes:
+server
+or
+client
+.
+server
+: Runs the handoff as expected internally on our cloud servers; this is the default setting.
+client
+: When a handoff is triggered, a response is provided directly to the user, enabling them to handle the handoff with control.
+For more information regarding handoffs visit
+this section
+.
+How to manage conversations
+Copy section link
+How to manage conversations
+Below you can find examples of how to create and manage conversations.
+Starting
+Continue
+retrieve
+Restart
+Streaming
+As previously mentioned, you can start a conversation at any given point with your custom Agent or with a specific model of your choice.
+To start a conversation with an Agent, you need to provide the Agent ID and the inputs.
+python
+typescript
+curl
+Output
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+agent_id
+=
+simple_agent
+.
+id
+,
+inputs
+=
+"Who is Albert Einstein?"
+,
+# inputs=[{"role": "user", "content": "Who is Albert Einstein?"}] is also valid
+# store=False
+)
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+agent_id
+=
+simple_agent
+.
+id
+,
+inputs
+=
+"Who is Albert Einstein?"
+,
+# inputs=[{"role": "user", "content": "Who is Albert Einstein?"}] is also valid
+# store=False
+)
+Without an Agent, querying Conversations would look like so:
+python
+typescript
+curl
+Output
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+model
+=
+"mistral-medium-latest"
+,
+inputs
+=
+[
+{
+"role"
+:
+"user"
+,
+"content"
+:
+"Who is Albert Einstein?"
+}
+]
+)
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+model
+=
+"mistral-medium-latest"
+,
+inputs
+=
+[
+{
+"role"
+:
+"user"
+,
+"content"
+:
+"Who is Albert Einstein?"
+}
+]
+)
+
+=== Doc 3 ===
+Products
+Studio
+Agents
+Agent Tools
+Tools
+Agents can use tools to interact with the external world, these can be APIs, databases, or other services, increasing the capabilities of your agent and extending its functionality beyond its own knowledge base and fixed environment.
+Tool types
+Copy section link
+Tool types
+We provide a variety of different
+types
+of tools agents can use.
+Type
+Description
+Web Search
+Built-in. Search the web for up-to-date information not in the agent's knowledge.
+Code Interpreter
+Built-in. Run code and generate plots, useful for data analysis, visualization, or sandboxed execution.
+Image Generation
+Built-in. Generate images based on a prompt or description.
+Document Library
+Built-in. Search through documents uploaded to your
+Libraries
+, enabling RAG to answer questions based on specific information.
+Function Calling
+Custom local tools: functions defined in your environment that can be called by the agent. Execution happens locally.
+Connectors
+Register MCP servers as managed Connectors. Tools are discovered automatically and executed server-side.
+Built-in tools
+Copy section link
+Built-in tools
+Built-in tools are ready out of the box. They can be called at any point, and all execution happens in our internal environment. They're also available for users to use directly via Conversations without creating an Agent first.
+General usage
+Copy section link
+General usage
+These built-in tools are only available when using the Agents and/or Conversations APIs.
+To use them, specify the tool in the
+tools
+parameter when creating an Agent or calling the Conversations API.
+Tip
+You can use multiple tools at the same time!
+python
+typescript
+curl
+agent creation
+direct conversation
+agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"<model>"
+,
+name
+=
+"<name_of_the_agent>"
+,
+description
+=
+"<description>"
+,
+instructions
+=
+"<instructions_or_system_prompt>"
+,
+tools
+=
+[
+<
+list_of_tools
+>
+]
+)
+agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"<model>"
+,
+name
+=
+"<name_of_the_agent>"
+,
+description
+=
+"<description>"
+,
+instructions
+=
+"<instructions_or_system_prompt>"
+,
+tools
+=
+[
+<
+list_of_tools
+>
+]
+)
+
+=== Doc 4 ===
+Products
+Studio
+Agents
+Handoffs
+Handoffs
+When creating and using Agents, often with access to specific tools, there are moments where it is desired to call other Agents mid-action. To elaborate and engineer workflows for diverse tasks that you may want automated, this ability to give Agents tasks or hand over a conversation to other agents is called
+Handoffs
+.
+Create an Agentic Workflow
+Copy section link
+Create an Agentic Workflow
+When creating a workflow powered by Handoffs, we first need to create all the Agents that our workflow will use.
+There is no limit to how many chained Handoffs a workflow can have. You are free to create multiple Agents using diverse tools, models and handoffs, and orchestrate your own workflow using these Agents.
+Create Multiple Agents
+Copy section link
+Create Multiple Agents
+First things first, let's create diverse Agents with multiple tasks and capabilities.
+python
+typescript
+curl
+V2
+V1
+from
+mistralai
+.
+client
+import
+CompletionArgs
+,
+ResponseFormat
+,
+JSONSchema
+from
+pydantic
+import
+BaseModel
+class
+CalcResult
+(
+BaseModel
+)
+:
+reasoning
+:
+str
+result
+:
+str
+# Create your agents
+finance_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Agent used to answer financial related requests"
+,
+name
+=
+"finance-agent"
+,
+)
+web_search_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Agent that can search online for any information if needed"
+,
+name
+=
+"websearch-agent"
+,
+tools
+=
+[
+{
+"type"
+:
+"web_search"
+}
+]
+,
+)
+ecb_interest_rate_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Can find the current interest rate of the European central bank"
+,
+name
+=
+"ecb-interest-rate-agent"
+,
+tools
+=
+[
+{
+"type"
+:
+"function"
+,
+"function"
+:
+{
+"name"
+:
+"get_european_central_bank_interest_rate"
+,
+"description"
+:
+"Retrieve the real interest rate of European central bank."
+,
+"parameters"
+:
+{
+"type"
+:
+"object"
+,
+"properties"
+:
+{
+"date"
+:
+{
+"type"
+:
+"string"
+,
+}
+,
+}
+,
+"required"
+:
+[
+"date"
+,
+]
+}
+,
+}
+,
+}
+,
+]
+,
+)
+graph_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+name
+=
+"graph-drawing-agent"
+,
+description
+=
+"Agent used to create graphs using the code interpreter tool."
+,
+instructions
+=
+"Use the code interpreter tool when you have to draw a graph."
+,
+tools
+=
+[
+{
+"type"
+:
+"code_interpreter"
+}
+]
+)
+calculator_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+name
+=
+"calculator-agent"
+,
+description
+=
+"Agent used to make detailed calculations"
+,
+instructions
+=
+"When doing calculations explain step by step what you are doing."
+,
+completion_args
+=
+CompletionArgs
+(
+response_format
+=
+ResponseFormat
+(
+type
+=
+"json_schema"
+,
+json_schema
+=
+JSONSchema
+(
+name
+=
+"calc_result"
+,
+schema
+=
+CalcResult
+.
+model_json_schema
+(
+)
+,
+)
+)
+)
+)
+from
+mistralai
+.
+client
+import
+CompletionArgs
+,
+ResponseFormat
+,
+JSONSchema
+from
+pydantic
+import
+BaseModel
+class
+CalcResult
+(
+BaseModel
+)
+:
+reasoning
+:
+str
+result
+:
+str
+# Create your agents
+finance_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Agent used to answer financial related requests"
+,
+name
+=
+"finance-agent"
+,
+)
+web_search_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Agent that can search online for any information if needed"
+,
+name
+=
+"websearch-agent"
+,
+tools
+=
+[
+{
+"type"
+:
+"web_search"
+}
+]
+,
+)
+ecb_interest_rate_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+description
+=
+"Can find the current interest rate of the European central bank"
+,
+name
+=
+"ecb-interest-rate-agent"
+,
+tools
+=
+[
+{
+"type"
+:
+"function"
+,
+"function"
+:
+{
+"name"
+:
+"get_european_central_bank_interest_rate"
+,
+"description"
+:
+"Retrieve the real interest rate of European central bank."
+,
+"parameters"
+:
+{
+"type"
+:
+"object"
+,
+"properties"
+:
+{
+"date"
+:
+{
+"type"
+:
+"string"
+,
+}
+,
+}
+,
+"required"
+:
+[
+"date"
+,
+]
+}
+,
+}
+,
+}
+,
+]
+,
+)
+graph_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+name
+=
+"graph-drawing-agent"
+,
+description
+=
+"Agent used to create graphs using the code interpreter tool."
+,
+instructions
+=
+"Use the code interpreter tool when you have to draw a graph."
+,
+tools
+=
+[
+{
+"type"
+:
+"code_interpreter"
+}
+]
+)
+calculator_agent
+=
+client
+.
+beta
+.
+agents
+.
+create
+(
+model
+=
+"mistral-large-latest"
+,
+name
+=
+"calculator-agent"
+,
+description
+=
+"Agent used to make detailed calculations"
+,
+instructions
+=
+"When doing calculations explain step by step what you are doing."
+,
+completion_args
+=
+CompletionArgs
+(
+response_format
+=
+ResponseFormat
+(
+type
+=
+"json_schema"
+,
+json_schema
+=
+JSONSchema
+(
+name
+=
+"calc_result"
+,
+schema
+=
+CalcResult
+.
+model_json_schema
+(
+)
+,
+)
+)
+)
+)
+Define Handoffs Responsabilities
+Copy section link
+Define Handoffs Responsabilities
+Once all our Agents created, we update our previous defined Agents with a list of
+handoffs
+available.
+python
+typescript
+curl
+# Allow the finance_agent to handoff the conversation to the ecb_interest_rate_agent or web_search_agent
+finance_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+finance_agent
+.
+id
+,
+handoffs
+=
+[
+ecb_interest_rate_agent
+.
+id
+,
+web_search_agent
+.
+id
+]
+)
+# Allow the ecb_interest_rate_agent to handoff the conversation to the graph_agent or calculator_agent
+ecb_interest_rate_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+ecb_interest_rate_agent
+.
+id
+,
+handoffs
+=
+[
+graph_agent
+.
+id
+,
+calculator_agent
+.
+id
+]
+)
+# Allow the web_search_agent to handoff the conversation to the graph_agent or calculator_agent
+web_search_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+web_search_agent
+.
+id
+,
+handoffs
+=
+[
+graph_agent
+.
+id
+,
+calculator_agent
+.
+id
+]
+)
+# Allow the finance_agent to handoff the conversation to the ecb_interest_rate_agent or web_search_agent
+finance_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+finance_agent
+.
+id
+,
+handoffs
+=
+[
+ecb_interest_rate_agent
+.
+id
+,
+web_search_agent
+.
+id
+]
+)
+# Allow the ecb_interest_rate_agent to handoff the conversation to the graph_agent or calculator_agent
+ecb_interest_rate_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+ecb_interest_rate_agent
+.
+id
+,
+handoffs
+=
+[
+graph_agent
+.
+id
+,
+calculator_agent
+.
+id
+]
+)
+# Allow the web_search_agent to handoff the conversation to the graph_agent or calculator_agent
+web_search_agent
+=
+client
+.
+beta
+.
+agents
+.
+update
+(
+agent_id
+=
+web_search_agent
+.
+id
+,
+handoffs
+=
+[
+graph_agent
+.
+id
+,
+calculator_agent
+.
+id
+]
+)
+How it Works
+Copy section link
+How it Works
+Our workflow and behavior are defined, now we can run it.
+We created 5 agents, some of them have access to built-in tools, and others to local tools like
+get_european_central_bank_interest_rate
+.
+It is now possible to have a chain of actions by sending a request to the
+finance_agent
+.
+We also provide the parameter
+handoff_execution
+, which currently has two modes:
+server
+or
+client
+.
+server
+: Runs the handoff as expected internally on our cloud servers; this is the default setting.
+client
+: When a handoff is triggered, a response is provided directly to the user, enabling them to handle the handoff with control.
+Let’s trigger two different behaviors as examples:
+Example A
+Example B
+"Fetch the current US bank interest rate and calculate the compounded effect if investing for the next 10y"
+The first example asks for the US central bank interest rate, so we expect to involve the
+websearch-agent
+and then to calculate the compounded interest over 10 years. This should use the
+calculator-agent
+to do this.
+python
+typescript
+curl
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+agent_id
+=
+finance_agent
+.
+id
+,
+inputs
+=
+"Fetch the current US bank interest rate and calculate the compounded effect if investing for the next 10y"
+)
+response
+=
+client
+.
+beta
+.
+conversations
+.
+start
+(
+agent_id
+=
+finance_agent
+.
+id
+,
+inputs
+=
+"Fetch the current US bank interest rate and calculate the compounded effect if investing for the next 10y"
+)
+Output Events
+Copy section link
+Output Events
+Below, you can see the output events of the conversation in order of appearance for the example above.
+Conversation started: conv_067f7fce0aba70728000b32dcb0ac7e5
+## Event type: agent.handoff
+agent_id
+=
+'ag_067f7fce04517b60800013b213ff2acb'
+agent_name
+=
+'websearch-agent'
+object
+=
+'conversation.entry'
+type
+=
+'agent.handoff'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+18
+,
+952817
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'handoff_067f7fce2f3f7423800094104f3e3589'
+## Event type: tool.execution
+name
+=
+'web_search'
+object
+=
+'conversation.entry'
+type
+=
+'tool.execution'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+12996
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'tool_exec_067f7fce7035747e800085153507b345'
+## Event type: message.output
+content
+=
+[
+TextChunk
+(
+text
+=
+'The current US bank interest rate is 4.50 percent'
+,
+type
+=
+'text'
+)
+, ToolReferenceChunk
+(
+tool
+=
+'web_search'
+,
+title
+=
+'United States Fed Funds Interest Rate'
+,
+type
+=
+'tool_reference'
+,
+url
+=
+'https://tradingeconomics.com/united-states/interest-rate'
+)
+, TextChunk
+(
+text
+=
+'.\n\nI will now handoff the conversation to the calculator agent to calculate the compounded effect if investing for the next 10 years.'
+,
+type
+=
+'text'
+)
+]
+object
+=
+'conversation.entry'
+type
+=
+'message.output'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+14612
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'msg_067f7fce703b7e01800045b2309a0750'
+agent_id
+=
+'ag_067f7fce04517b60800013b213ff2acb'
+model
+=
+'mistral-medium-latest'
+role
+=
+'assistant'
+## Event type: agent.handoff
+agent_id
+=
+'ag_067f7fce017f71a580001bf69f2cc11e'
+agent_name
+=
+'calculator-agent'
+object
+=
+'conversation.entry'
+type
+=
+'agent.handoff'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+14726
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'handoff_067f7fce703c753680006aedb42ba7b7'
+## Event type: message.output
+content
+=
+' {"result": "The future value of the investment after 10 years is $1,540.10.", "reasoning": "To calculate the compounded effect of investing at the current US bank interest rate of 4.50% for the next 10 years, we use the formula for compound interest: A = P(1 + r/n)^(nt), where A is the amount of money accumulated after n years, including interest. P is the principal amount (the initial amount of money). r is the annual interest rate (decimal). n is the number of times that interest is compounded per year. t is the time the money is invested for, in years. Assuming an initial investment (P) of $1,000, an annual interest rate (r) of 4.50% (or 0.045 as a decimal), compounded annually (n = 1), over 10 years (t = 10): A = 1000(1 + 0.045/1)^(1*10) = 1000(1 + 0.045)^10 = 1000(1.045)^10 ≈ 1540.10. Therefore, the future value of the investment after 10 years is approximately $1,540.10."}'
+object
+=
+'conversation.entry'
+type
+=
+'message.output'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+30
+,
+145207
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'msg_067f7fcee2527cf08000744d983639dc'
+agent_id
+=
+'ag_067f7fce017f71a580001bf69f2cc11e'
+model
+=
+'mistral-medium-latest'
+role
+=
+'assistant'
+Conversation started: conv_067f7fce0aba70728000b32dcb0ac7e5
+## Event type: agent.handoff
+agent_id
+=
+'ag_067f7fce04517b60800013b213ff2acb'
+agent_name
+=
+'websearch-agent'
+object
+=
+'conversation.entry'
+type
+=
+'agent.handoff'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+18
+,
+952817
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'handoff_067f7fce2f3f7423800094104f3e3589'
+## Event type: tool.execution
+name
+=
+'web_search'
+object
+=
+'conversation.entry'
+type
+=
+'tool.execution'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+12996
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'tool_exec_067f7fce7035747e800085153507b345'
+## Event type: message.output
+content
+=
+[
+TextChunk
+(
+text
+=
+'The current US bank interest rate is 4.50 percent'
+,
+type
+=
+'text'
+)
+, ToolReferenceChunk
+(
+tool
+=
+'web_search'
+,
+title
+=
+'United States Fed Funds Interest Rate'
+,
+type
+=
+'tool_reference'
+,
+url
+=
+'https://tradingeconomics.com/united-states/interest-rate'
+)
+, TextChunk
+(
+text
+=
+'.\n\nI will now handoff the conversation to the calculator agent to calculate the compounded effect if investing for the next 10 years.'
+,
+type
+=
+'text'
+)
+]
+object
+=
+'conversation.entry'
+type
+=
+'message.output'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+14612
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'msg_067f7fce703b7e01800045b2309a0750'
+agent_id
+=
+'ag_067f7fce04517b60800013b213ff2acb'
+model
+=
+'mistral-medium-latest'
+role
+=
+'assistant'
+## Event type: agent.handoff
+agent_id
+=
+'ag_067f7fce017f71a580001bf69f2cc11e'
+agent_name
+=
+'calculator-agent'
+object
+=
+'conversation.entry'
+type
+=
+'agent.handoff'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+23
+,
+14726
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'handoff_067f7fce703c753680006aedb42ba7b7'
+## Event type: message.output
+content
+=
+' {"result": "The future value of the investment after 10 years is $1,540.10.", "reasoning": "To calculate the compounded effect of investing at the current US bank interest rate of 4.50% for the next 10 years, we use the formula for compound interest: A = P(1 + r/n)^(nt), where A is the amount of money accumulated after n years, including interest. P is the principal amount (the initial amount of money). r is the annual interest rate (decimal). n is the number of times that interest is compounded per year. t is the time the money is invested for, in years. Assuming an initial investment (P) of $1,000, an annual interest rate (r) of 4.50% (or 0.045 as a decimal), compounded annually (n = 1), over 10 years (t = 10): A = 1000(1 + 0.045/1)^(1*10) = 1000(1 + 0.045)^10 = 1000(1.045)^10 ≈ 1540.10. Therefore, the future value of the investment after 10 years is approximately $1,540.10."}'
+object
+=
+'conversation.entry'
+type
+=
+'message.output'
+created_at
+=
+datetime.datetime
+(
+2025
+,
+4
+,
+10
+,
+17
+,
+16
+,
+30
+,
+145207
+,
+tzinfo
+=
+TzInfo
+(
+UTC
+))
+id
+=
+'msg_067f7fcee2527cf08000744d983639dc'
+agent_id
+=
+'ag_067f7fce017f71a580001bf69f2cc11e'
+model
+=
+'mistral-medium-latest'
+role
+=
+'assistant'
+
+=== Doc 5 ===
+Products
+Studio
+Workflows
+Getting Started
+Overview
+What is Mistral Workflows?
+i
+Information
+Workflows is in
+public preview
+. We don't plan major changes to APIs and features, but they might still happen. We'll notify you in advance when they do.
+Mistral Workflows is a platform for building
+production-grade AI workflows
+: multi-step processes that combine LLM calls, tool use, external APIs, and human input. They survive crashes, restarts, and failures of any individual step.
+You write workflows in code. The platform handles execution: durability, retries, scheduling, streaming, observability, and integration with the rest of Mistral.
+What workflows solve
+Copy section link
+What workflows solve
+LLM applications often need to do more than answer one prompt. They orchestrate multiple model calls, wait for human approvals, hit external APIs, and run for minutes, hours, or days. Building this on raw infrastructure means writing your own retries, your own state machine, and your own recovery logic — and watching half of it break the first time a process restarts.
+Workflows take that off your plate:
+Crashes don't lose work.
+Every step is recorded in an event history. When a process dies, another one resumes from the last completed step.
+Retries are first-class.
+Configure backoff per activity; the platform handles the rest.
+Long-running orchestration.
+Pause a workflow on a human signal or external event; resume when input arrives. Workflows run from seconds to months.
+Observable by default.
+Events stream live, history is queryable, and OpenTelemetry traces work without extra wiring.
+AI primitives included.
+Run an agent loop, stream LLM tokens to clients, and call Mistral's API without writing the integration code.
+Durable execution is powered by
+Temporal
+, an open-source engine for fault-tolerant workflow orchestration.
+When to use workflows
+Copy section link
+When to use workflows
+Reach for workflows when you need:
+Multi-step LLM pipelines that must survive crashes and restarts.
+Human-in-the-loop processes that pause for hours or days.
+Scheduled or recurring AI tasks (cron-style or one-shot).
+Multi-agent orchestration with hand-offs and shared state.
+Anything you currently build with a queue, a state machine, and a lot of retry code.
+If you're calling a single LLM endpoint with no orchestration, plain SDK calls are enough.
+Composing with the rest of Mistral
+Copy section link
+Composing with the rest of Mistral
+Workflows are the durable execution layer for AI applications you build on Mistral. When you compose other building blocks —
+Agents
+,
+Judges
+,
+Datasets
+, and more — inside a workflow, they inherit its durability, retries, observability, and human-in-the-loop primitives.
+You can call a workflow you build from:
+The Mistral API
+:
+POST /v1/workflows/{name}/execute
+from any client, in any language.
+Studio
+: trigger executions from the UI, with input forms generated from your workflow signature, and watch them run on a live execution timeline.
+Vibe Work
+: workflows appear as assistants that users can invoke in a conversation.
+What runs where
+Copy section link
+What runs where
+Workflows runs in
+hybrid mode
+: we host the orchestrator, and your workflow and activity code runs in your environment.
+Your environment
+holds the code you write (typically in your repository) and the workers that execute it. Workers run on your laptop for local development, or in your own infrastructure such as Kubernetes or virtual machines for production.
+The Studio environment
+holds the orchestrator (state, history, task dispatch) behind a public REST API and the Studio UI. Workers connect outbound; the orchestrator does not initiate connections into your network.
+For enterprise customers, the Studio environment can also run in your private cloud or on-premises.
+i
+Information
+Hybrid mode
+: your data stays where you want it. Workflow inputs and outputs flow through the platform, but you can keep them under your control:
+Encryption at the SDK layer
+: the SDK encrypts payloads before they leave your worker; the platform stores ciphertext only.
+Payload offloading
+: the platform offloads inputs and outputs above 2MB to
+your
+blob storage (S3, GCS, or Azure), keeping only references on its side.
+For details, see
+Payload offloading
+and
+Encryption
+.
+Next steps
+Copy section link
+Next steps
+If you want to
+Start here
+Install the SDK
+Installation
+See a working workflow in 5 minutes
+Your First Workflow
+Understand how the pieces fit together
+Core concepts
+Build an LLM agent inside a workflow
+Durable Agents
+Schedule a recurring workflow
+Scheduling
+

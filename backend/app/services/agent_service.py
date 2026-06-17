@@ -184,7 +184,17 @@ async def create_agent(client: Mistral, data: dict) -> dict:
             create_kwargs["metadata"] = {"tier": data["tier"]}
         if data.get("tools"):
             from app.services.tool_registry import get_tools
-            create_kwargs["tools"] = get_tools(data["tools"])
+            create_kwargs["tools"] = get_tools(
+                data["tools"],
+                document_library_ids=data.get("document_library_ids"),
+            )
+        elif data.get("document_library_ids"):
+            # Only document_library tool, no other tools
+            from app.services.tool_registry import get_tools
+            create_kwargs["tools"] = get_tools(
+                ["document_library"],
+                document_library_ids=data["document_library_ids"],
+            )
 
         agent = client.beta.agents.create(**create_kwargs)
         return {"id": agent.id, "name": getattr(agent, "name", None), "model": getattr(agent, "model", None)}
@@ -216,6 +226,17 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
         ca_data = {k: data[k] for k in completion_fields if k in data}
         if ca_data:
             update_kwargs["completion_args"] = CompletionArgs(**ca_data)
+
+        # Handle tools update (including document_library)
+        if "tools" in data or "document_library_ids" in data:
+            from app.services.tool_registry import get_tools
+            tool_keys = data.get("tools", [])
+            doc_lib_ids = data.get("document_library_ids")
+            if tool_keys or doc_lib_ids:
+                update_kwargs["tools"] = get_tools(
+                    tool_keys,
+                    document_library_ids=doc_lib_ids,
+                )
 
         agent = client.beta.agents.update(**update_kwargs)
         return {"id": agent.id, "name": getattr(agent, "name", None)}

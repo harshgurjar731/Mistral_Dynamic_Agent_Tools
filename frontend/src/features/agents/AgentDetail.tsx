@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer } from 'lucide-react';
+import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer, Library, Check, ChevronDown } from 'lucide-react';
 import { agentsApi } from '../../api/agents';
+import { librariesApi } from '../../api/libraries';
 import { orchestratorApi } from '../../api/orchestrator';
 import { uploadsApi } from '../../api/uploads';
 import { useSessionStore } from '../../store/sessionStore';
@@ -398,7 +399,7 @@ export default function AgentDetail() {
             exit={{ width: 0, opacity: 0 }}
             className="border-l border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] flex flex-col overflow-y-auto shrink-0 custom-scrollbar"
           >
-            <div className="p-6 w-[320px]">
+            <div className="p-6 pb-32 w-[320px]">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-sm font-semibold text-white tracking-tight">Agent Configuration</h3>
                 {hasChanges && (
@@ -553,7 +554,7 @@ export default function AgentDetail() {
                     {agent.tools && agent.tools.length > 0 ? (
                         <div className="flex flex-wrap gap-2">
                             {agent.tools.map((t: any, i: number) => {
-                                const tName = typeof t === 'string' ? t : (t?.function?.name || t?.name || 'Unknown Tool');
+                                const tName = typeof t === 'string' ? t : (t?.function?.name || t?.type || t?.name || 'Unknown Tool');
                                 return (
                                     <span key={`${tName}-${i}`} className="px-2 py-1 rounded bg-[rgba(255,255,255,0.05)] border border-[var(--color-border-subtle)] text-[10px] font-mono text-white">
                                         {tName}
@@ -565,8 +566,266 @@ export default function AgentDetail() {
                         <p className="text-xs text-[var(--color-text-muted)] italic">No tools equipped.</p>
                     )}
                 </div>
+
+                {/* Document Library Tool */}
+                <DocumentLibrarySection agentId={id!} agent={agent} />
               </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+
+/* ─── Document Library Tool Section ──────────────────────────────────── */
+
+function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: any }) {
+  const qc = useQueryClient();
+
+  // Detect if the agent already has document_library equipped
+  const existingDocLib = (agent.tools || []).find((t: any) => t?.type === 'document_library');
+  const existingLibIds: string[] = existingDocLib?.library_ids || [];
+
+  const [enabled, setEnabled] = useState(!!existingDocLib);
+  const [selectedIds, setSelectedIds] = useState<string[]>(existingLibIds);
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  // Fetch available libraries
+  const { data: libraries = [] } = useQuery({
+    queryKey: QK.libraries(),
+    queryFn: () => librariesApi.list().then(r => r.data),
+  });
+
+  // Derive stable primitives for the dependency array to avoid infinite re-render loops.
+  // existingDocLib and existingLibIds are new object/array refs every render — cannot be used as deps directly.
+  const hasDocLib = !!existingDocLib;
+  const libIdsKey = existingLibIds.join(',');
+
+  useEffect(() => {
+    setEnabled(hasDocLib);
+    setSelectedIds(libIdsKey ? libIdsKey.split(',') : []);
+    setShowDropdown(false);
+  }, [agentId, hasDocLib, libIdsKey]);
+
+  const toggleLibrary = (id: string) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+    );
+  };
+
+  // Build full tool list: keep non-document_library tools + optionally add document_library
+  const buildToolKeys = (): string[] => {
+    const existing = (agent.tools || [])
+      .filter((t: any) => t?.type !== 'document_library')
+      .map((t: any) => {
+        if (typeof t === 'string') return t;
+        if (t?.function?.name) return t.function.name;
+        return t?.type || '';
+      })
+      .filter(Boolean);
+
+    if (enabled && selectedIds.length > 0) {
+      existing.push('document_library');
+    }
+    return existing;
+  };
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      const payload: any = {
+        tools: buildToolKeys(),
+      };
+      if (enabled && selectedIds.length > 0) {
+        payload.document_library_ids = selectedIds;
+      }
+      return agentsApi.update(agentId, payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+      qc.invalidateQueries({ queryKey: QK.agents() });
+    },
+  });
+
+  const hasLibChanges =
+    (enabled !== !!existingDocLib) ||
+    (enabled && JSON.stringify(selectedIds.sort()) !== JSON.stringify(existingLibIds.sort()));
+
+  return (
+    <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Library size={14} className="text-indigo-400" />
+          <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider font-medium">
+            Document Library
+          </p>
+        </div>
+
+        {/* Toggle Switch */}
+        <button
+          onClick={() => {
+            const newEnabled = !enabled;
+            setEnabled(newEnabled);
+            if (!newEnabled) {
+              // Toggling OFF — immediately save to remove document_library from agent
+              setSelectedIds([]);
+              setShowDropdown(false);
+              const toolsWithout = (agent.tools || [])
+                .filter((t: any) => t?.type !== 'document_library')
+                .map((t: any) => {
+                  if (typeof t === 'string') return t;
+                  if (t?.function?.name) return t.function.name;
+                  return t?.type || '';
+                })
+                .filter(Boolean);
+              agentsApi.update(agentId, { tools: toolsWithout }).then(() => {
+                qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+                qc.invalidateQueries({ queryKey: QK.agents() });
+              });
+            }
+          }}
+          className={cn(
+            'relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none',
+            enabled ? 'bg-indigo-500' : 'bg-[var(--color-bg-hover)]',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+              enabled ? 'translate-x-4' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {enabled && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className={showDropdown ? "overflow-visible" : "overflow-hidden"}
+          >
+            <p className="text-[11px] text-[var(--color-text-muted)] mb-3">
+              Select libraries for the agent to search through when answering questions.
+            </p>
+
+            {/* Selected Libraries Chips */}
+            {selectedIds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {selectedIds.map(id => {
+                  const lib = libraries.find(l => l.id === id);
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[rgba(99,102,241,0.1)] border border-[rgba(99,102,241,0.2)] text-[10px] text-indigo-400 font-medium"
+                    >
+                      {lib?.name || id.slice(0, 8)}
+                      <button
+                        onClick={() => toggleLibrary(id)}
+                        className="hover:text-white transition-colors"
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Library Multi-Select Dropdown */}
+            <div className="relative mb-3">
+              <button
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="w-full minimal-input rounded-md px-3 py-2 text-sm text-left flex items-center justify-between"
+              >
+                <span className={selectedIds.length === 0 ? 'text-[var(--color-text-muted)]' : 'text-white'}>
+                  {selectedIds.length === 0
+                    ? 'Select libraries…'
+                    : `${selectedIds.length} ${selectedIds.length === 1 ? 'library' : 'libraries'} selected`}
+                </span>
+                <ChevronDown
+                  size={16}
+                  className={cn('text-[var(--color-text-muted)] transition-transform duration-200', showDropdown ? 'rotate-180' : '')}
+                />
+              </button>
+
+              <AnimatePresence>
+                {showDropdown && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10 cursor-default"
+                      onClick={() => setShowDropdown(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      className="absolute z-20 mt-1 w-full bg-[#121824] border border-[var(--color-border-subtle)] rounded-lg shadow-2xl overflow-hidden py-1 max-h-48 overflow-y-auto custom-scrollbar"
+                    >
+                      {libraries.length === 0 ? (
+                        <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] text-center italic">
+                          No libraries available. Create one first.
+                        </div>
+                      ) : (
+                        libraries.map(lib => {
+                          const isSelected = selectedIds.includes(lib.id);
+                          return (
+                            <button
+                              key={lib.id}
+                              onClick={() => toggleLibrary(lib.id)}
+                              className={cn(
+                                'w-full px-3 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-[var(--color-bg-hover)] transition-colors',
+                                isSelected ? 'bg-[rgba(99,102,241,0.1)]' : '',
+                              )}
+                            >
+                              <div
+                                className={cn(
+                                  'w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors',
+                                  isSelected
+                                    ? 'bg-indigo-500 border-indigo-500'
+                                    : 'border-[var(--color-border-subtle)]',
+                                )}
+                              >
+                                {isSelected && <Check size={10} className="text-white" />}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <span className="text-[var(--color-text-primary)] font-medium block truncate">
+                                  {lib.name}
+                                </span>
+                                {lib.description && (
+                                  <span className="text-[10px] text-[var(--color-text-muted)] block truncate">
+                                    {lib.description}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] shrink-0">
+                                {lib.document_count ?? 0} docs
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Save Button */}
+            {hasLibChanges && (
+              <motion.button
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => saveMut.mutate()}
+                disabled={saveMut.isPending || (enabled && selectedIds.length === 0)}
+                className="w-full btn-primary px-3 py-2 text-xs rounded-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                <Save size={12} />
+                {saveMut.isPending ? 'Saving…' : 'Save Document Library'}
+              </motion.button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

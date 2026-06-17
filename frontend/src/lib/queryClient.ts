@@ -24,4 +24,6 @@ export const QK = {
   pendingTools:  ()         => ['tools', 'pending'] as const,
   mcpServers:    ()         => ['mcp-servers'] as const,
   health:        ()         => ['health'] as const,
+  libraries:     ()         => ['libraries'] as const,
+  libraryDocs:   (id: string) => ['libraries', id, 'documents'] as const,
 };

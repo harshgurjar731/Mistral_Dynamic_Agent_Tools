@@ -14,6 +14,7 @@ import WorkflowExecutionPage from './features/workflows/WorkflowExecutionPage';
 import ConversationMgr from './features/conversations/ConversationManager';
 import McpRegistry from './features/mcp/McpRegistry';
 import HealthDashboard from './features/health/HealthDashboard';
+import LibraryManager from './features/libraries/LibraryManager';
 
 function NotFound() {
   return (
@@ -44,6 +45,7 @@ const router = createBrowserRouter([
       { path: 'workflows/:workflowName/execute', element: <WorkflowExecutionPage /> },
       { path: 'conversations',         element: <ConversationMgr /> },
       { path: 'mcp',                   element: <McpRegistry /> },
+      { path: 'libraries',              element: <LibraryManager /> },
       { path: 'health',                element: <HealthDashboard /> },
       { path: '*',                     element: <NotFound /> },
     ],

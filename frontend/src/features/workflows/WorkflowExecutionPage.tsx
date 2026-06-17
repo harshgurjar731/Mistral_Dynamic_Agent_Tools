@@ -989,10 +989,6 @@ Do not output anything else after the JSON.`,
 
                     {steps.map((sr, idx) => {
                       // Detect if this step follows a parallel group start marker
-                      const prevStep = idx > 0 ? steps[idx - 1] : null;
-                      const isInParallelGroup = prevStep?.step_id?.startsWith('__parallel_') && prevStep?.step_id?.endsWith(':start')
-                        || (idx > 1 && steps.slice(0, idx).some(s => s.step_id?.startsWith('__parallel_') && s.step_id?.endsWith(':start'))
-                            && !steps.slice(0, idx).some((s, i) => i > 0 && !s.step_id?.startsWith('__parallel_') && steps[i-1]?.step_id?.startsWith('__parallel_')));
                       // Simplified: check if the step_id is NOT a parallel marker and the previous one was
                       const isParallelMember = !sr.step_id.startsWith('__parallel_') && 
                         steps.slice(0, idx).reverse().some(s => {
