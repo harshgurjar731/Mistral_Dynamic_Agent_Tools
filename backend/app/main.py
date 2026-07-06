@@ -40,7 +40,15 @@ logging.getLogger("mistralai.workflows.core.temporal.temporal_client").setLevel(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown lifecycle."""
+    """Startup / shutdown lifecycle.
+
+    Starts the Mistral Workflows worker supervisor as a background subprocess
+    so you only need ``uvicorn app.main:app --reload`` to run everything.
+    """
+    import os
+    import sys
+    import subprocess
+
     logger.info("🚀 Starting Mistral Dynamic Agent Backend …")
     init_mistral_client()
     logger.info("✅ Mistral client initialized")
@@ -53,7 +61,47 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Could not refresh dynamic tools: %s (Tool Service may not be running)", e)
 
+    # ── Start Mistral Workflows worker as a managed subprocess ──────────
+    worker_proc = None
+    if settings.MISTRAL_WORKER_ENABLED:
+        try:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            worker_script = os.path.join(backend_dir, "app", "services", "mistral_worker.py")
+
+            # Note: We use subprocess.Popen instead of asyncio.create_subprocess_exec
+            # because uvicorn sets the event loop to SelectorEventLoop on Windows,
+            # which raises NotImplementedError for async subprocesses.
+            worker_proc = subprocess.Popen(
+                [sys.executable, worker_script],
+                cwd=backend_dir,
+                env={**os.environ},
+                stdout=None,
+                stderr=None,
+            )
+            logger.info("✅ Mistral worker supervisor started (pid=%d)", worker_proc.pid)
+        except Exception as e:
+            logger.error("⚠️ Could not start Mistral worker:", exc_info=True)
+            worker_proc = None
+    else:
+        logger.info("ℹ️ Mistral worker disabled (MISTRAL_WORKER_ENABLED=false)")
+
     yield
+
+    # ── Shutdown: stop the worker subprocess ────────────────────────────
+    if worker_proc and worker_proc.poll() is None:
+        logger.info("🛑 Stopping Mistral worker supervisor (pid=%d)…", worker_proc.pid)
+        try:
+            worker_proc.terminate()
+            try:
+                # wait() on Windows Popen takes timeout in seconds and raises TimeoutExpired
+                worker_proc.wait(timeout=8.0)
+            except subprocess.TimeoutExpired:
+                logger.warning("Worker did not exit in 8s — killing forcefully.")
+                worker_proc.kill()
+                worker_proc.wait()
+            logger.info("✅ Worker stopped.")
+        except Exception as e:
+            logger.warning("Error stopping worker: %s", e)
 
     logger.info("🛑 Shutting down …")
 

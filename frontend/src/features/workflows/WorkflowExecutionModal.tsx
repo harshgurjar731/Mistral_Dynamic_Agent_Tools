@@ -9,6 +9,7 @@ import { workflowsApi } from '../../api/workflows';
 import { chatApi } from '../../api/chat';
 import { cn } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
@@ -669,7 +670,7 @@ Do not output anything else after the JSON.`,
                 )}
                 <span className="whitespace-pre-wrap break-words">{msg.content}</span>
               </div>
-            : <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
+            : <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown></div>}
         </div>
       </div>
     );
