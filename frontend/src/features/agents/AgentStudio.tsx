@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge } from 'lucide-react';
@@ -122,67 +123,73 @@ export default function AgentStudio() {
         </button>
       </div>
 
-      {/* Create form Modal/Panel */}
-      <AnimatePresence>
-        {showCreate && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-            animate={{ opacity: 1, height: 'auto', marginBottom: 32 }}
-            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="surface-card rounded-xl p-6">
-              <div className="flex items-center justify-between mb-6">
+      {/* Create form Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {showCreate && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
+              <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-xl w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl"
+            >
+              <div className="flex items-center justify-between p-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
                 <div className="flex items-center gap-2">
                   <Sparkles size={16} className="text-white" />
                   <h2 className="text-sm font-medium text-white">Create New Agent</h2>
                 </div>
-                <button onClick={() => setShowCreate(false)} className="text-[var(--color-text-muted)] hover:text-white transition-colors">
+                <button onClick={() => setShowCreate(false)} className="text-[var(--color-text-muted)] hover:text-white transition-colors p-1 rounded-md hover:bg-[var(--color-bg-hover)]">
                   <X size={16} />
                 </button>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div>
-                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Name</label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Code Reviewer" className="w-full minimal-input rounded-md px-3 py-2 text-sm" />
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  <div>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Name</label>
+                    <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Code Reviewer" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Model</label>
+                    <select value={form.model} onChange={e => setForm({ ...form, model: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all">
+                      <option className="bg-[var(--color-bg-surface)] text-white">mistral-large-latest</option>
+                      <option className="bg-[var(--color-bg-surface)] text-white">mistral-medium-latest</option>
+                      <option className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
+                      <option className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Tier</label>
+                    <select value={form.tier} onChange={e => setForm({ ...form, tier: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all">
+                      <option value="foundation" className="bg-[var(--color-bg-surface)] text-white">Foundation</option>
+                      <option value="domain" className="bg-[var(--color-bg-surface)] text-white">Domain</option>
+                      <option value="use_case" className="bg-[var(--color-bg-surface)] text-white">Use Case</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Model</label>
-                  <select value={form.model} onChange={e => setForm({ ...form, model: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
-                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-large-latest</option>
-                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-medium-latest</option>
-                    <option className="bg-[var(--color-bg-surface)] text-white">mistral-small-latest</option>
-                    <option className="bg-[var(--color-bg-surface)] text-white">codestral-latest</option>
-                  </select>
+                <div className="mb-6">
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Description</label>
+                  <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Brief description of the agent's purpose" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
                 </div>
-                <div>
-                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Tier</label>
-                  <select value={form.tier} onChange={e => setForm({ ...form, tier: e.target.value })} className="w-full minimal-input rounded-md px-3 py-2 text-sm appearance-none cursor-pointer">
-                    <option value="foundation" className="bg-[var(--color-bg-surface)] text-white">Foundation</option>
-                    <option value="domain" className="bg-[var(--color-bg-surface)] text-white">Domain</option>
-                    <option value="use_case" className="bg-[var(--color-bg-surface)] text-white">Use Case</option>
-                  </select>
+                <div className="mb-2">
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">System Instructions</label>
+                  <textarea value={form.instructions} onChange={e => setForm({ ...form, instructions: e.target.value })} rows={4} placeholder="You are a helpful assistant that…" className="w-full minimal-input rounded-md px-3 py-2 text-sm font-[family-name:var(--font-mono)] resize-y min-h-[100px] focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all outline-none" />
                 </div>
               </div>
-              <div className="mb-6">
-                <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Description</label>
-                <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Brief description of the agent's purpose" className="w-full minimal-input rounded-md px-3 py-2 text-sm" />
-              </div>
-              <div className="mb-6">
-                <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">System Instructions</label>
-                <textarea value={form.instructions} onChange={e => setForm({ ...form, instructions: e.target.value })} rows={4} placeholder="You are a helpful assistant that…" className="w-full minimal-input rounded-md px-3 py-2 text-sm font-[family-name:var(--font-mono)] resize-y min-h-[100px]" />
-              </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-[var(--color-border-subtle)]">
-                <button onClick={() => setShowCreate(false)} className="btn-secondary px-4 py-2 text-sm rounded-md">Cancel</button>
-                <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn-primary px-4 py-2 text-sm rounded-md disabled:opacity-50">
+              <div className="flex justify-end gap-3 p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] mt-auto">
+                <button onClick={() => setShowCreate(false)} className="btn-secondary px-4 py-2 text-sm rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">Cancel</button>
+                <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn-primary px-4 py-2 text-sm rounded-md disabled:opacity-50 transition-all hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]">
                   {createMut.isPending ? 'Creating…' : 'Create Agent'}
                 </button>
               </div>
+              </motion.div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Search */}
       <div className="relative mb-6">
@@ -216,18 +223,22 @@ export default function AgentStudio() {
       ) : agents.length === 0 ? (
         <motion.div 
           initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[400px] gap-4 bg-[rgba(15,20,28,0.4)] backdrop-blur-xl border border-[rgba(255,255,255,0.05)] shadow-[inset_0_0_30px_rgba(0,0,0,0.2)] w-full mt-2"
+          className="relative overflow-hidden text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[50vh] gap-4 bg-[var(--color-bg-surface)] backdrop-blur-xl border border-[var(--color-border-subtle)] shadow-xl w-full mt-2 group"
         >
-          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-[rgba(6,182,212,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+          {/* Background Glow */}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--color-bg-base)] pointer-events-none" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-cyan-500/10 rounded-full blur-[80px] pointer-events-none group-hover:bg-cyan-500/20 transition-all duration-700" />
+          
+          <div className="relative z-10 w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-[rgba(6,182,212,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(6,182,212,0.15)] group-hover:scale-110 transition-transform duration-500">
             <Cpu size={32} className="text-cyan-400" />
           </div>
-          <div>
-            <p className="text-base font-semibold text-[var(--color-text-primary)]">No agents found</p>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">Create a specialized AI agent to handle specific tasks and workflows.</p>
+          <div className="relative z-10">
+            <p className="text-xl font-semibold text-[var(--color-text-primary)]">No agents found</p>
+            <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">Create a specialized AI agent to handle specific tasks and workflows.</p>
           </div>
           <button 
             onClick={() => setShowCreate(true)} 
-            className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm rounded-lg mt-2"
+            className="relative z-10 btn-primary flex items-center gap-2 px-6 py-3 text-sm rounded-lg mt-4 shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] transition-all"
           >
             <Plus size={16} /> Create Agent
           </button>

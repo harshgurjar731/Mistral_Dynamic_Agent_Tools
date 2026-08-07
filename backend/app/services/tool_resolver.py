@@ -246,6 +246,48 @@ class ToolResolver:
             pass
         return {"error": "MCP health check failed"}
 
+    async def delete_mcp_server(self, name: str) -> dict:
+        """Delete an MCP server."""
+        try:
+            resp = await self._client.delete(f"/mcp/servers/{name}")
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def disconnect_mcp_server(self, name: str) -> dict:
+        """Disconnect an MCP server."""
+        try:
+            resp = await self._client.post(f"/mcp/servers/{name}/disconnect")
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def reconnect_mcp_server(self, name: str) -> dict:
+        """Reconnect an MCP server."""
+        try:
+            resp = await self._client.post(f"/mcp/servers/{name}/reconnect")
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def get_mcp_server_tools(self, name: str) -> dict:
+        """Get tools from an MCP server."""
+        try:
+            resp = await self._client.get(f"/mcp/servers/{name}/tools")
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.warning("Failed to get MCP server tools: %s", e)
+        return {"tools": []}
+
+    async def publish_tool_to_mcp(self, tool_id: int, server_name: str) -> dict:
+        """Publish a tool to an MCP server."""
+        try:
+            resp = await self._client.post(f"/tools/{tool_id}/publish-mcp", json={"server_name": server_name})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
+
 
 # Singleton instance
 tool_resolver = ToolResolver()

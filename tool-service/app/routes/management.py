@@ -1,16 +1,24 @@
 """
-Management Routes — Tool listing, approval, rejection.
+Management Routes — Tool listing, approval, rejection, and MCP publishing.
 """
 
 import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ToolRecord
 from app.schemas import ToolResponse, ToolListResponse, ApproveRejectResponse, ToolUpdateRequest
 from app.services.synthesis_service import approve_tool, reject_tool, delete_tool, update_tool
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["Management"])
+
+
+class PublishMcpRequest(BaseModel):
+    server_name: str
 
 
 def _record_to_response(record: ToolRecord) -> ToolResponse:
@@ -25,6 +33,8 @@ def _record_to_response(record: ToolRecord) -> ToolResponse:
         source_code=record.source_code,
         sandbox_output=record.sandbox_output,
         created_at=record.created_at,
+        mcp_published=record.mcp_published if record.mcp_published else False,
+        mcp_server_name=record.mcp_server_name,
     )
 
 
@@ -87,3 +97,71 @@ def update(tool_id: int, request: ToolUpdateRequest, db: Session = Depends(get_d
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+
+@router.post("/tools/{tool_id}/publish-mcp")
+async def publish_to_mcp(tool_id: int, request: PublishMcpRequest,
+                          db: Session = Depends(get_db)):
+    """
+    Publish an approved tool to a specific MCP server.
+    Steps:
+      1. Validate tool exists and is approved
+      2. POST code to remote MCP server's deploy API
+      3. Register Mistral Connector (idempotent)
+      4. Mark mcp_published in DB
+      5. Re-discover tools on that server
+    """
+    from app.services.mcp_manager import mcp_manager
+    from app.services.mcp_publisher import deploy_to_mcp_server, ensure_connector_registered
+
+    record = db.query(ToolRecord).filter_by(id=tool_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    if record.status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved tools can be published to MCP")
+
+    # Check if already published to this server
+    if record.mcp_published and record.mcp_server_name == request.server_name:
+        return {"status": "already_published", "tool_name": record.name,
+                "server_name": request.server_name}
+
+    # Get the server URL from mcp_manager
+    server = mcp_manager.servers.get(request.server_name)
+    if not server:
+        raise HTTPException(status_code=400,
+                            detail=f"MCP server '{request.server_name}' not found. Register it first.")
+
+    schema = json.loads(record.schema_json)
+
+    # Step 1: Deploy code to remote MCP server
+    try:
+        await deploy_to_mcp_server(server.url, record.name, record.source_code, schema)
+    except Exception as e:
+        logger.error("Failed to deploy tool '%s' to MCP server '%s': %s",
+                     record.name, request.server_name, e)
+        raise HTTPException(status_code=502,
+                            detail=f"Failed to deploy to MCP server: {str(e)}")
+
+    # Step 2: Register as Mistral Connector (best-effort)
+    connector_id = None
+    try:
+        connector_id = await ensure_connector_registered(server.url, request.server_name)
+    except Exception as e:
+        logger.warning("Connector registration skipped: %s", e)
+
+    # Step 3: Update DB
+    record.mcp_published = True
+    record.mcp_server_name = request.server_name
+    db.commit()
+
+    # Step 4: Re-discover tools on that server
+    tools = await mcp_manager.get_server_tools(request.server_name)
+
+    return {
+        "status": "published",
+        "tool_name": record.name,
+        "server_name": request.server_name,
+        "connector_id": connector_id,
+        "mcp_tools_count": len(tools),
+    }
+

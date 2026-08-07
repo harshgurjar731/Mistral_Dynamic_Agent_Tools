@@ -4,6 +4,7 @@ Application settings loaded from environment variables.
 
 from pydantic_settings import BaseSettings
 from typing import List
+import os
 
 
 class Settings(BaseSettings):
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     TOOL_SERVICE_URL: str = "http://localhost:9000"
 
     # Database
-    DATABASE_URL: str = "sqlite:///./sql_app.db"
+    DATABASE_URL: str = f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sql_app.db')}"
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"

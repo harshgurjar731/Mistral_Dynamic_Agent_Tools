@@ -346,43 +346,134 @@ class WorkflowPlanningLayer(Layer):
                 ctx.emit("compiled", json.dumps({"workflow_name": workflow_name, "error": str(e)}))
 
             # Phase 5c: Register on Mistral server
-            ctx.emit("status", "Checking Mistral server registration…")
+            ctx.emit("status", "Registering workflow on Mistral server…")
             mistral_workflow_id = None
+            worker_deployment = os.environ.get("DEPLOYMENT_NAME", "default")
             try:
-                def _check_registration():
+                def _register_on_mistral():
+                    headers = {
+                        "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                        "Content-Type": "application/json",
+                    }
+
+                    # Step 1: Check if already registered
+                    existing_id = None
                     try:
                         r = httpx.get(
                             "https://api.mistral.ai/v1/workflows",
                             headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
-                            timeout=5.0,
+                            timeout=8.0,
                         )
                         if r.status_code == 200:
                             for wf in r.json().get("workflows", []):
                                 if wf.get("name") == workflow_name:
-                                    return wf.get("id")
-                    except Exception:
-                        pass
-                    return None
+                                    existing_id = wf.get("id")
+                                    break
+                    except Exception as e:
+                        logger.warning("Failed to list existing workflows: %s", e)
 
-                mistral_workflow_id = await asyncio.to_thread(_check_registration)
+                    # Step 2: Register with worker_deployment so the Mistral
+                    # server routes execution tasks to our worker's queue.
+                    reg_body = {
+                        "name": workflow_name,
+                        "worker_deployment": worker_deployment,
+                        "worker_identifier": worker_deployment,
+                    }
+                    if workflow_def.description:
+                        reg_body["description"] = workflow_def.description
+
+                    if existing_id:
+                        # Try PUT, then PATCH, then DELETE+POST
+                        resp = None
+                        for method, url in [
+                            ("PUT",   f"/v1/workflows/{existing_id}"),
+                            ("PATCH", f"/v1/workflows/{existing_id}"),
+                        ]:
+                            try:
+                                fn = httpx.put if method == "PUT" else httpx.patch
+                                resp = fn(
+                                    f"https://api.mistral.ai{url}",
+                                    headers=headers,
+                                    json=reg_body,
+                                    timeout=15.0,
+                                )
+                                if resp.status_code in (200, 201, 204):
+                                    logger.info("%s /v1/workflows/%s → %d", method, existing_id, resp.status_code)
+                                    break
+                                logger.warning("%s returned %d: %s", method, resp.status_code, resp.text[:100])
+                                resp = None
+                            except Exception as e:
+                                logger.warning("%s failed: %s", method, e)
+                                resp = None
+
+                        if resp and resp.status_code in (200, 201, 204):
+                            return existing_id
+                        # Last resort: delete and recreate
+                        try:
+                            httpx.delete(
+                                f"https://api.mistral.ai/v1/workflows/{existing_id}",
+                                headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+                                timeout=15.0,
+                            )
+                        except Exception:
+                            pass
+                        resp = httpx.post(
+                            "https://api.mistral.ai/v1/workflows",
+                            headers=headers,
+                            json=reg_body,
+                            timeout=15.0,
+                        )
+                        if resp.status_code in (200, 201):
+                            return resp.json().get("id")
+                        return None
+                    else:
+                        # New workflow — POST to create
+                        resp = httpx.post(
+                            "https://api.mistral.ai/v1/workflows",
+                            headers=headers,
+                            json=reg_body,
+                            timeout=15.0,
+                        )
+                        if resp.status_code in (200, 201):
+                            return resp.json().get("id")
+                        logger.warning(
+                            "POST /v1/workflows returned %d: %s",
+                            resp.status_code, resp.text[:200],
+                        )
+                        return None
+
+                mistral_workflow_id = await asyncio.to_thread(_register_on_mistral)
 
                 if mistral_workflow_id:
                     workflow_def.is_deployed = True
                     workflow_def.id = mistral_workflow_id
+                    # Baseline for change tracking: a planner-authored workflow
+                    # that is live must compare as clean until someone edits it
+                    # in the visual builder.
+                    workflow_def.published_hash = workflow_def.semantic_hash()
                     save_workflow(workflow_def)
-                    logger.info("Workflow '%s' confirmed on Mistral (id=%s)", workflow_name, mistral_workflow_id)
+                    logger.info(
+                        "Workflow '%s' registered on Mistral (id=%s, worker_deployment='%s')",
+                        workflow_name, mistral_workflow_id, worker_deployment,
+                    )
                     ctx.emit("registered", json.dumps({
                         "workflow_name": workflow_name,
                         "mistral_workflow_id": mistral_workflow_id,
+                        "worker_deployment": worker_deployment,
                     }))
                 else:
+                    logger.warning(
+                        "Could not register workflow '%s' on Mistral server. "
+                        "It is saved locally and will run via the local DAG engine.",
+                        workflow_name,
+                    )
                     ctx.emit("registered", json.dumps({
                         "workflow_name": workflow_name,
-                        "error": "Workflow compiled and saved locally. It will auto-register when the Mistral worker connects.",
+                        "error": "Server registration failed. Workflow saved locally — it will run via the local DAG engine.",
                     }))
             except Exception as e:
-                logger.error("Workflow registration check failed: %s", e)
-                ctx.emit("fatal_error", json.dumps({"error": f"Registration check failed: {e}"}))
+                logger.error("Workflow registration failed: %s", e)
+                ctx.emit("fatal_error", json.dumps({"error": f"Registration failed: {e}"}))
                 return ctx
 
             # Final done

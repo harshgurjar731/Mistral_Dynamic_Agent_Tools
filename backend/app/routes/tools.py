@@ -131,3 +131,34 @@ async def execute_mcp_tool(server_name: str, tool_name: str, request: Request):
 async def mcp_health_check():
     """Proxy → Docker Tool Service: ping all MCP servers."""
     return await tool_resolver.mcp_health_check()
+
+
+@router.delete("/mcp/servers/{server_name}")
+async def delete_mcp_server(server_name: str):
+    """Proxy → Docker Tool Service: delete an MCP server."""
+    return await tool_resolver.delete_mcp_server(server_name)
+
+
+@router.post("/mcp/servers/{server_name}/disconnect")
+async def disconnect_mcp_server(server_name: str):
+    """Proxy → Docker Tool Service: disconnect an MCP server."""
+    return await tool_resolver.disconnect_mcp_server(server_name)
+
+
+@router.post("/mcp/servers/{server_name}/reconnect")
+async def reconnect_mcp_server(server_name: str):
+    """Proxy → Docker Tool Service: reconnect an MCP server."""
+    return await tool_resolver.reconnect_mcp_server(server_name)
+
+
+@router.get("/mcp/servers/{server_name}/tools")
+async def get_mcp_server_tools(server_name: str):
+    """Proxy → Docker Tool Service: get tools from an MCP server."""
+    return await tool_resolver.get_mcp_server_tools(server_name)
+
+
+@router.post("/tools/{tool_id}/publish-mcp")
+async def publish_tool_to_mcp(tool_id: int, request: Request):
+    """Proxy → Docker Tool Service: publish a tool to an MCP server."""
+    body = await request.json()
+    return await tool_resolver.publish_tool_to_mcp(tool_id, body.get("server_name", ""))

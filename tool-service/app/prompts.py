@@ -57,7 +57,7 @@ The generated file must follow this layout in this order:
 
   [1] allowed imports only — all at the top, no inline imports
   [2] REQUEST_TIMEOUT = 10  (use this constant for every HTTP call timeout)
-  [3] def run(...) -> dict:  (the one and only function)
+  [3] def run(**kwargs) -> dict:  (the one and only function - MUST use **kwargs to catch unexpected arguments)
         [a] docstring — one sentence: what the function does and what it returns
         [b] input validation block — validate every parameter before use
         [c] core logic wrapped in layered try/except (see Section 3)
@@ -99,7 +99,7 @@ SECTION 3 — Layered error handling (mandatory pattern)
 ═══════════════════════════════════════════════════════════
 Structure ALL functions using this exact exception layer order:
 
-  def run(...) -> dict:
+  def run(**kwargs) -> dict:
       \"\"\"Docstring.\"\"\"
 
       # ── Layer 0: Input validation ──────────────────────────────────────
@@ -196,7 +196,7 @@ tools, omit Layers 2–5 but keep Layers 0, 1, and the outer catch.
 ═══════════════════════════════════════════════════════════
 SECTION 4 — Input validation rules
 ═══════════════════════════════════════════════════════════
-Before any logic runs, validate every parameter:
+Before any logic runs, extract parameters from kwargs and validate every parameter:
 
 - str parameters: check isinstance(value, str) and value.strip() != ""
 - int/float parameters: check isinstance(value, (int, float)) and valid range
@@ -304,7 +304,7 @@ Before outputting the final code, verify every item below. Fix and re-check
 before emitting if anything is unchecked.
 
   [ ] File starts with imports, then REQUEST_TIMEOUT = 10, then def run()
-  [ ] Function is named exactly `run` and annotated `-> dict`
+  [ ] Function is named exactly `run`, accepts `**kwargs`, and is annotated `-> dict`
   [ ] Docstring is present and describes what the function returns
   [ ] Every parameter is validated in Layer 0 before any logic runs
   [ ] No parameter is silently coerced or given a fabricated default

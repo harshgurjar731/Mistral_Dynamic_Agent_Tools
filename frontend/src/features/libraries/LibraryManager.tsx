@@ -165,45 +165,51 @@ function LibraryList({ onSelect }: { onSelect: (lib: LibraryType) => void }) {
         </button>
       </div>
 
-      {/* Create Library Panel */}
-      <AnimatePresence>
-        {showCreate && (
-          <motion.div
-            initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-            animate={{ opacity: 1, height: 'auto', marginBottom: 32 }}
-            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="surface-card rounded-xl p-6">
-              <div className="flex items-center justify-between mb-6">
+      {/* Create Library Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {showCreate && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
+              <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-xl w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl"
+            >
+              <div className="flex items-center justify-between p-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
                 <div className="flex items-center gap-2">
                   <Sparkles size={16} className="text-white" />
                   <h2 className="text-sm font-medium text-white">Create New Library</h2>
                 </div>
-                <button onClick={() => setShowCreate(false)} className="text-[var(--color-text-muted)] hover:text-white transition-colors">
+                <button onClick={() => setShowCreate(false)} className="text-[var(--color-text-muted)] hover:text-white transition-colors p-1 rounded-md hover:bg-[var(--color-bg-hover)]">
                   <X size={16} />
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div>
-                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Name</label>
-                  <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Product Documentation" className="w-full minimal-input rounded-md px-3 py-2 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Description</label>
-                  <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What kind of documents are in this library?" className="w-full minimal-input rounded-md px-3 py-2 text-sm" />
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  <div>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Name</label>
+                    <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Product Documentation" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Description</label>
+                    <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What kind of documents are in this library?" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-[var(--color-border-subtle)]">
-                <button onClick={() => setShowCreate(false)} className="btn-secondary px-4 py-2 text-sm rounded-md">Cancel</button>
-                <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn-primary px-4 py-2 text-sm rounded-md disabled:opacity-50">
+              <div className="flex justify-end gap-3 p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] mt-auto">
+                <button onClick={() => setShowCreate(false)} className="btn-secondary px-4 py-2 text-sm rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">Cancel</button>
+                <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn-primary px-4 py-2 text-sm rounded-md disabled:opacity-50 transition-all hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]">
                   {createMut.isPending ? 'Creating...' : 'Create Library'}
                 </button>
               </div>
+              </motion.div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Search */}
       <div className="relative mb-6">
@@ -841,13 +847,18 @@ function RenameModal({ name, description, onNameChange, onDescChange, onSave, is
 function EmptyState() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-      className="text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[400px] gap-4 bg-[rgba(15,20,28,0.4)] backdrop-blur-xl border border-[rgba(255,255,255,0.05)] shadow-[inset_0_0_30px_rgba(0,0,0,0.2)] w-full mt-2">
-      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500/10 to-violet-500/10 border border-[rgba(99,102,241,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(99,102,241,0.15)]">
+      className="relative overflow-hidden text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[50vh] gap-4 bg-[var(--color-bg-surface)] backdrop-blur-xl border border-[var(--color-border-subtle)] shadow-xl w-full mt-2 group"
+    >
+      {/* Background Glow */}
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--color-bg-base)] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-indigo-500/10 rounded-full blur-[80px] pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-700" />
+      
+      <div className="relative z-10 w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500/10 to-violet-500/10 border border-[rgba(99,102,241,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(99,102,241,0.15)] group-hover:scale-110 transition-transform duration-500">
         <Library size={32} className="text-indigo-400" />
       </div>
-      <div>
-        <p className="text-base font-semibold text-[var(--color-text-primary)]">No libraries found</p>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">Create a document library to enable RAG for your agents.</p>
+      <div className="relative z-10">
+        <p className="text-xl font-semibold text-[var(--color-text-primary)]">No libraries found</p>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">Create a document library to enable RAG for your agents.</p>
       </div>
     </motion.div>
   );

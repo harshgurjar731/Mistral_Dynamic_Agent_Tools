@@ -21,7 +21,7 @@ import {
   ArrowLeft, Play, X, Cpu, Wrench, HelpCircle,
   Shuffle, GitBranch, Loader2, Clock, Server,
   Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
-  Copy, EyeOff, Zap, Thermometer, Save, Check,
+  Copy, EyeOff, Zap, Thermometer, Save, Check, Pencil,
 } from 'lucide-react';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
@@ -1528,12 +1528,12 @@ export default function WorkflowVisualizer() {
   });
 
   const { data: wfData, isLoading } = useQuery({
-    queryKey: [...QK.workflows(), workflowName],
-    queryFn: () => workflowsApi.get(workflowName!).then(r => r.data),
+    queryKey: QK.workflow(workflowName ?? ''),
+    queryFn: () => workflowsApi.get(workflowName!).then(r => r.data.workflow),
     enabled: !!workflowName,
   });
 
-  const workflow: WorkflowDef | null = wfData?.workflow ?? null;
+  const workflow: WorkflowDef | null = wfData ?? null;
 
   const selectedStep = useMemo(() => {
     if (!selectedStepId || !workflow) return null;
@@ -1612,6 +1612,13 @@ export default function WorkflowVisualizer() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate(`/workflows/${encodeURIComponent(workflowName!)}/edit`)}
+            className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-sm rounded-md whitespace-nowrap"
+            title="Open in the visual builder"
+          >
+            <Pencil size={14} /> Edit
+          </button>
           <button
             onClick={() => exportMutation.mutate()}
             disabled={exportMutation.isPending}

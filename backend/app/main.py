@@ -20,7 +20,7 @@ from app.exceptions import (
     conversation_not_found_handler, tool_service_error_handler,
     workflow_error_handler, generic_error_handler,
 )
-from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries
+from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +35,8 @@ logging.getLogger("mistralai.workflows.core.config").setLevel(logging.WARNING)
 logging.getLogger("mistralai.workflows.core.config.config_discovery").setLevel(logging.WARNING)
 logging.getLogger("mistralai.workflows.core.temporal").setLevel(logging.WARNING)
 logging.getLogger("mistralai.workflows.core.temporal.temporal_client").setLevel(logging.WARNING)
+# Suppress stale Temporal workflow activation replay errors (not actionable)
+logging.getLogger("temporalio.worker._workflow").setLevel(logging.CRITICAL)
 
 
 
@@ -52,6 +54,11 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Mistral Dynamic Agent Backend …")
     init_mistral_client()
     logger.info("✅ Mistral client initialized")
+
+    # Create ORM tables (remote_servers, etc.)
+    from app.database import create_tables
+    import app.remote_server_model  # noqa: F401 — register model with Base
+    create_tables()
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools
@@ -142,6 +149,7 @@ app.include_router(orchestrator.router, prefix=settings.API_PREFIX)
 app.include_router(tools.router, prefix=settings.API_PREFIX)
 app.include_router(uploads.router, prefix=settings.API_PREFIX)
 app.include_router(libraries.router, prefix=settings.API_PREFIX)
+app.include_router(remote_servers.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

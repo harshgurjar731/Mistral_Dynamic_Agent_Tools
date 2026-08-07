@@ -127,6 +127,127 @@ def _build_multimodal_messages(query: str, variables: dict) -> list[dict[str, An
         return [{"role": "user", "content": query}]
 
 
+def _first_choice_message(response: Any) -> Any:
+    """Pull the assistant message out of a completion response, or None.
+
+    The message is not guaranteed to be present: a choice can come back with a
+    null message when the model produced nothing (content filter, an aborted
+    generation, a length stop with no content). Reading ``.message.content``
+    directly is what produced ``'NoneType' object has no attribute 'content'``.
+    """
+    choices = getattr(response, "choices", None)
+    if not choices and isinstance(response, dict):
+        choices = response.get("choices")
+    if not choices:
+        return None
+
+    choice = choices[0]
+    if isinstance(choice, dict):
+        return choice.get("message") or choice.get("delta")
+    # `delta` is the streaming-shaped equivalent; accept either.
+    return getattr(choice, "message", None) or getattr(choice, "delta", None)
+
+
+def _finish_reason(response: Any) -> str:
+    """Best-effort finish_reason for diagnostics when a message is missing."""
+    choices = getattr(response, "choices", None)
+    if not choices and isinstance(response, dict):
+        choices = response.get("choices")
+    if not choices:
+        return "no choices"
+    choice = choices[0]
+    reason = (
+        choice.get("finish_reason") if isinstance(choice, dict)
+        else getattr(choice, "finish_reason", None)
+    )
+    return str(reason) if reason is not None else "unknown"
+
+
+def _message_text(msg: Any) -> str:
+    """Normalise assistant content to plain text.
+
+    Content is a string for ordinary replies but a list of typed chunks for
+    multimodal or reference-annotated ones. Everything downstream does
+    ``.strip()`` and regex over this value, so a list has to be flattened here
+    rather than blowing up further along.
+    """
+    if msg is None:
+        return ""
+
+    content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for chunk in content:
+            if isinstance(chunk, str):
+                parts.append(chunk)
+                continue
+            text = chunk.get("text") if isinstance(chunk, dict) else getattr(chunk, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return "".join(parts)
+
+    return str(content)
+
+
+def _message_tool_calls(msg: Any) -> list:
+    """Tool calls requested by the assistant, or an empty list."""
+    if msg is None:
+        return []
+    calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+    return list(calls) if calls else []
+
+
+def _parse_tool_call(tc: Any, round_num: int) -> tuple[str, str, str, dict] | None:
+    """Unpack one tool call into ``(id, name, raw_arguments, parsed_arguments)``.
+
+    Returns None when the call carries no usable function name, so the caller
+    can keep the assistant message and the tool results consistent instead of
+    dropping one side of the pair.
+    """
+    if isinstance(tc, dict):
+        fn = tc.get("function") or {}
+        call_id = tc.get("id")
+        name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
+        raw_args = fn.get("arguments") if isinstance(fn, dict) else getattr(fn, "arguments", None)
+    else:
+        fn = getattr(tc, "function", None)
+        call_id = getattr(tc, "id", None)
+        name = getattr(fn, "name", None) if fn is not None else None
+        raw_args = getattr(fn, "arguments", None) if fn is not None else None
+
+    if not name:
+        return None
+
+    if not call_id:
+        call_id = f"tc_{round_num}_{name}"
+
+    if raw_args is None:
+        raw_args = "{}"
+
+    if isinstance(raw_args, str):
+        try:
+            arguments = json.loads(raw_args) if raw_args.strip() else {}
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Tool call '%s' had unparseable arguments: %.200s", name, raw_args)
+            arguments = {}
+    elif isinstance(raw_args, dict):
+        arguments = raw_args
+        raw_args = json.dumps(raw_args)
+    else:
+        arguments = {}
+        raw_args = "{}"
+
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    return str(call_id), str(name), raw_args, arguments
+
+
 class SafeDict(dict):
     """A dictionary that returns the key placeholder when a key is missing during string formatting."""
     def __missing__(self, key):
@@ -230,17 +351,25 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
             MAX_TOOL_ROUNDS = 10
             result_text = ""
+            content = ""
 
             for round_num in range(MAX_TOOL_ROUNDS):
                 response = client.agents.complete(**base_kwargs, messages=messages)
 
-                if not response.choices:
-                    logger.warning("Step '%s' round %d — no choices returned", step.id, round_num)
+                msg = _first_choice_message(response)
+                if msg is None:
+                    # A choice with no message is a real API outcome (content
+                    # filter, empty generation). Stop the loop and fall through
+                    # to the non-empty-output guarantee rather than crashing:
+                    # one silent agent should not fail the whole workflow.
+                    logger.warning(
+                        "Step '%s' round %d — no assistant message returned (finish_reason=%s)",
+                        step.id, round_num, _finish_reason(response),
+                    )
                     break
 
-                msg = response.choices[0].message
-                content = msg.content or ""
-                tool_calls = getattr(msg, "tool_calls", None) or []
+                content = _message_text(msg)
+                tool_calls = _message_tool_calls(msg)
 
                 if not tool_calls:
                     # No tool calls → agent produced final text answer
@@ -257,47 +386,55 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                     step.id, round_num, len(tool_calls),
                 )
 
-                # Append the assistant's tool-call message to conversation
-                assistant_msg: dict[str, Any] = {"role": "assistant", "content": content or ""}
-                # Build tool_calls list for the message
-                tc_list = []
-                for tc in tool_calls:
-                    fn = getattr(tc, "function", None)
-                    if fn:
-                        tc_list.append({
-                            "id": getattr(tc, "id", f"tc_{round_num}_{fn.name}"),
+                # Parse every call up front. A call we cannot read must not be
+                # skipped silently: the assistant message and the tool results
+                # have to stay in lockstep, or the next round replays the same
+                # request and the loop spins until MAX_TOOL_ROUNDS.
+                parsed_calls = [_parse_tool_call(tc, round_num) for tc in tool_calls]
+                parsed_calls = [c for c in parsed_calls if c is not None]
+
+                if not parsed_calls:
+                    logger.warning(
+                        "Step '%s' round %d — %d tool call(s) requested but none could be parsed; "
+                        "using the text answer instead",
+                        step.id, round_num, len(tool_calls),
+                    )
+                    result_text = content
+                    break
+
+                # Append the assistant's tool-call message to the conversation
+                assistant_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": content or "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
                             "type": "function",
-                            "function": {"name": fn.name, "arguments": fn.arguments},
-                        })
-                if tc_list:
-                    assistant_msg["tool_calls"] = tc_list
+                            "function": {"name": name, "arguments": raw_args},
+                        }
+                        for call_id, name, raw_args, _ in parsed_calls
+                    ],
+                }
                 messages.append(assistant_msg)
 
-                # Execute each tool and build tool-result messages
-                for tc in tool_calls:
-                    fn = getattr(tc, "function", None)
-                    if not fn:
-                        continue
+                # Execute each tool and append its result
+                for call_id, tool_name, _raw_args, arguments in parsed_calls:
+                    logger.info(
+                        "Step '%s' — executing tool '%s' with args: %.200s",
+                        step.id, tool_name, str(arguments)[:200],
+                    )
 
-                    tc_id = getattr(tc, "id", f"tc_{round_num}_{fn.name}")
-                    tool_name = fn.name
-                    try:
-                        arguments = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
-                    except (json.JSONDecodeError, TypeError):
-                        arguments = {}
-
-                    logger.info("Step '%s' — executing tool '%s' with args: %.200s", step.id, tool_name, str(arguments)[:200])
-
-                    # Call tool-service
                     tool_result = _execute_tool_via_service(tool_name, arguments)
-                    logger.info("Step '%s' — tool '%s' result: %.300s", step.id, tool_name, str(tool_result)[:300])
+                    logger.info(
+                        "Step '%s' — tool '%s' result: %.300s",
+                        step.id, tool_name, str(tool_result)[:300],
+                    )
 
-                    # Append tool result message
                     messages.append({
                         "role": "tool",
                         "name": tool_name,
                         "content": json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result,
-                        "tool_call_id": tc_id,
+                        "tool_call_id": call_id,
                     })
 
                 # If this was the last allowed round, use whatever content we got

@@ -10,3 +10,4 @@ export const toolsApi = {
   delete:      (id: string | number) => api.delete(`/api/tools/${id}`),
   update:      (id: string | number, payload: { source_code: string; description: string }) => api.put(`/api/tools/${id}`, payload),
 };
+

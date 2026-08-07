@@ -18,9 +18,12 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:////app/db/tool_service.db"
 
-    # MCP (future)
+    # MCP
     MCP_SERVERS_ENABLED: bool = False
-    MCP_REGISTRY_PATH: str = "mcp_servers/mcp_registry.json"
+    MCP_REGISTRY_PATH: str = "db/mcp_registry.json"
+
+    # Mistral Connector (auto-populated after first MCP connector registration)
+    MISTRAL_CONNECTOR_ID: str = ""
 
     class Config:
         env_file = ".env"

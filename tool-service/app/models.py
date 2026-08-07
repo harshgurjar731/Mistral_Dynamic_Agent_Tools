@@ -2,7 +2,7 @@
 SQLAlchemy models for Tool Service.
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -21,3 +21,6 @@ class ToolRecord(Base):
     status = Column(String, nullable=False, default="pending_approval")  # pending_approval | approved | rejected
     sandbox_output = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    mcp_published = Column(Boolean, nullable=False, default=False)
+    mcp_server_name = Column(String, nullable=True)
+

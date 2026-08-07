@@ -53,6 +53,8 @@ class ToolResponse(BaseModel):
     source_code: Optional[str] = None
     sandbox_output: Optional[str] = None
     created_at: Optional[datetime] = None
+    mcp_published: bool = False
+    mcp_server_name: Optional[str] = None
 
     class Config:
         from_attributes = True

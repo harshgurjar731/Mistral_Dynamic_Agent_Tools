@@ -9,12 +9,16 @@ import ToolLifecycle from './features/tools/ToolLifecycle';
 import WorkflowDashboard from './features/workflows/WorkflowDashboard';
 import ArchivedWorkflows from './features/workflows/ArchivedWorkflows';
 import WorkflowPlanner from './features/workflows/WorkflowPlanner';
+import WorkflowCreateChooser from './features/workflows/WorkflowCreateChooser';
+import WorkflowBuilder from './features/workflows/builder/WorkflowBuilder';
 import WorkflowVisualizer from './features/workflows/WorkflowVisualizer';
 import WorkflowExecutionPage from './features/workflows/WorkflowExecutionPage';
 import ConversationMgr from './features/conversations/ConversationManager';
 import McpRegistry from './features/mcp/McpRegistry';
+import McpServerDetail from './features/mcp/McpServerDetail';
 import HealthDashboard from './features/health/HealthDashboard';
 import LibraryManager from './features/libraries/LibraryManager';
+import RemoteServerDetail from './features/mcp/RemoteServerDetail';
 
 function NotFound() {
   return (
@@ -39,12 +43,19 @@ const router = createBrowserRouter([
       { path: 'agents/:id',            element: <AgentDetail /> },
       { path: 'tools',                 element: <ToolLifecycle /> },
       { path: 'workflows',             element: <WorkflowDashboard /> },
-      { path: 'workflows/new',         element: <WorkflowPlanner /> },
+      // /workflows/new forks into the two authoring modes; both land on a
+      // WorkflowDefinition that the visual builder can reopen later.
+      { path: 'workflows/new',         element: <WorkflowCreateChooser /> },
+      { path: 'workflows/new/ai',      element: <WorkflowPlanner /> },
+      { path: 'workflows/new/visual',  element: <WorkflowBuilder /> },
       { path: 'workflows/archived',    element: <ArchivedWorkflows /> },
       { path: 'workflows/:workflowName', element: <WorkflowVisualizer /> },
+      { path: 'workflows/:workflowName/edit',    element: <WorkflowBuilder /> },
       { path: 'workflows/:workflowName/execute', element: <WorkflowExecutionPage /> },
       { path: 'conversations',         element: <ConversationMgr /> },
       { path: 'mcp',                   element: <McpRegistry /> },
+      { path: 'mcp/:serverName',         element: <McpServerDetail /> },
+      { path: 'remote-servers/:id',      element: <RemoteServerDetail /> },
       { path: 'libraries',              element: <LibraryManager /> },
       { path: 'health',                element: <HealthDashboard /> },
       { path: '*',                     element: <NotFound /> },

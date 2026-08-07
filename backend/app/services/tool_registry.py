@@ -105,11 +105,13 @@ NATIVE_EXECUTORS = {
 }
 
 
-# ── Public API ──────────────────────────────────────────────────────────────
+# Track which tools are MCP-published (tool_name -> server_name)
+_mcp_published_tools: dict[str, str] = {}
+
 
 async def refresh_dynamic_tools():
     """Fetch dynamic tool schemas from Docker Tool Service."""
-    global _dynamic_tool_schemas
+    global _dynamic_tool_schemas, _mcp_published_tools
     from app.services.tool_resolver import tool_resolver
 
     tools = await tool_resolver.list_tools()
@@ -123,7 +125,17 @@ async def refresh_dynamic_tools():
                 if name not in AVAILABLE_TOOL_KEYS:
                     AVAILABLE_TOOL_KEYS.append(name)
 
-    logger.info("Refreshed %d dynamic tools from Docker Tool Service", len(_dynamic_tool_schemas))
+            # Track MCP-published status
+            if tool.get("mcp_published"):
+                _mcp_published_tools[name] = tool.get("mcp_server_name", "")
+
+    logger.info("Refreshed %d dynamic tools (%d MCP-published) from Docker Tool Service",
+                len(_dynamic_tool_schemas), len(_mcp_published_tools))
+
+
+def get_mcp_published_tools() -> dict[str, str]:
+    """Return dict of tool names that are published to remote MCP (name -> server)."""
+    return _mcp_published_tools
 
 
 def get_tools(tool_keys: List[str], document_library_ids: List[str] | None = None) -> List[dict]:

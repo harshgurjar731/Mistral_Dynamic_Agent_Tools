@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, X, Wrench, FlaskConical, Sparkles, Shield, Edit2, Trash2, Code2 } from 'lucide-react';
+import { Check, X, Wrench, FlaskConical, Sparkles, Shield, Edit2, Trash2, Code2, Globe, Send, CheckCircle, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toolsApi } from '../../api/tools';
+import { remoteServersApi } from '../../api/remoteServers';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 
@@ -20,11 +21,11 @@ const itemVariants = {
 };
 
 export default function ToolLifecycle() {
-  const [tab, setTab] = useState<'active' | 'pending' | 'synthesize'>('active');
+  const [tab, setTab] = useState<'active' | 'pending'>('active');
+  const [showSynthesizeModal, setShowSynthesizeModal] = useState(false);
   const tabs = [
     { key: 'active' as const, label: 'Active Tools' },
     { key: 'pending' as const, label: 'Pending Review' },
-    { key: 'synthesize' as const, label: 'Synthesize' },
   ];
 
   return (
@@ -34,28 +35,36 @@ export default function ToolLifecycle() {
         <p className="text-sm text-[var(--color-text-muted)] mt-1">Synthesize, review, and manage dynamic tools.</p>
       </div>
 
-      {/* Segmented Control */}
-      <div className="flex items-center gap-1 bg-[var(--color-bg-surface)] p-1 rounded-lg border border-[var(--color-border-subtle)] w-fit mb-8">
-        {tabs.map(t => (
-          <button 
-            key={t.key} 
-            onClick={() => setTab(t.key)} 
-            className={cn(
-              'relative px-4 py-1.5 text-sm font-medium rounded-md transition-colors z-10',
-              tab === t.key ? 'text-[var(--color-bg-base)]' : 'text-[var(--color-text-muted)] hover:text-white'
-            )}
-          >
-            {tab === t.key && (
-              <motion.div
-                layoutId="tool-tab-indicator"
-                className="absolute inset-0 bg-white rounded-md"
-                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                style={{ zIndex: -1 }}
-              />
-            )}
-            {t.label}
-          </button>
-        ))}
+      {/* Segmented Control & Actions */}
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div className="flex items-center gap-1 bg-[var(--color-bg-surface)] p-1 rounded-lg border border-[var(--color-border-subtle)] w-fit">
+          {tabs.map(t => (
+            <button 
+              key={t.key} 
+              onClick={() => setTab(t.key)} 
+              className={cn(
+                'relative px-4 py-1.5 text-sm font-medium rounded-md transition-colors z-10',
+                tab === t.key ? 'text-[var(--color-bg-base)]' : 'text-[var(--color-text-muted)] hover:text-white'
+              )}
+            >
+              {tab === t.key && (
+                <motion.div
+                  layoutId="tool-tab-indicator"
+                  className="absolute inset-0 bg-white rounded-md"
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  style={{ zIndex: -1 }}
+                />
+              )}
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <button 
+          onClick={() => setShowSynthesizeModal(true)} 
+          className="btn-primary flex items-center gap-2 px-5 py-2 text-sm rounded-md shadow-sm hover:shadow-md transition-all"
+        >
+          <Sparkles size={16} /> Synthesize Tool
+        </button>
       </div>
 
       <AnimatePresence mode="wait">
@@ -68,8 +77,13 @@ export default function ToolLifecycle() {
         >
           {tab === 'active' && <ActiveTools />}
           {tab === 'pending' && <PendingTools />}
-          {tab === 'synthesize' && <SynthesizePanel />}
         </motion.div>
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSynthesizeModal && (
+          <SynthesizeToolModal onClose={() => setShowSynthesizeModal(false)} />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -102,9 +116,11 @@ function ActiveTools() {
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-[family-name:var(--font-mono)] font-medium text-[var(--color-text-primary)] block truncate">{String(tool.name)}</span>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.2)]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-success)]" />
-                <span className="text-[10px] font-medium text-[var(--color-accent-success)] uppercase tracking-wider">Active</span>
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.2)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-success)]" />
+                  <span className="text-[10px] font-medium text-[var(--color-accent-success)] uppercase tracking-wider">Active</span>
+                </div>
               </div>
             </div>
             {!!tool.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1 line-clamp-4">{String(tool.description)}</p>}
@@ -139,7 +155,7 @@ function PendingTools() {
     <motion.div variants={containerVariants} initial="hidden" animate="show" className="space-y-3">
       {data.map((tool: Record<string, unknown>) => (
         <motion.div key={String(tool.id)} variants={itemVariants} className="surface-card rounded-xl overflow-hidden">
-          <div className="flex items-center gap-4 px-5 py-4">
+          <div className="flex flex-wrap items-center gap-4 px-5 py-4">
             <div className="w-8 h-8 rounded-md bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center">
               <Shield size={14} className="text-[var(--color-accent-warning)]" />
             </div>
@@ -147,11 +163,11 @@ function PendingTools() {
               <span className="font-[family-name:var(--font-mono)] text-sm font-medium text-[var(--color-text-primary)] block mb-0.5">{String(tool.name)}</span>
               <span className="text-[10px] text-[var(--color-accent-warning)] uppercase tracking-wider font-medium">Pending Review</span>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => approve.mutate(String(tool.id))} disabled={approve.isPending} className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-transparent">
+            <div className="flex flex-wrap gap-2 mt-2 sm:mt-0 sm:ml-auto w-full sm:w-auto">
+              <button onClick={() => approve.mutate(String(tool.id))} disabled={approve.isPending} className="btn-primary flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-transparent flex-1 sm:flex-none">
                 <Check size={14} /> Approve
               </button>
-              <button onClick={() => reject.mutate(String(tool.id))} disabled={reject.isPending} className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-[var(--color-accent-danger)] hover:bg-[rgba(239,68,68,0.1)] hover:border-[rgba(239,68,68,0.2)]">
+              <button onClick={() => reject.mutate(String(tool.id))} disabled={reject.isPending} className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-[var(--color-accent-danger)] hover:bg-[rgba(239,68,68,0.1)] hover:border-[rgba(239,68,68,0.2)] flex-1 sm:flex-none">
                 <X size={14} /> Reject
               </button>
             </div>
@@ -162,7 +178,7 @@ function PendingTools() {
   );
 }
 
-function SynthesizePanel() {
+function SynthesizeToolModal({ onClose }: { onClose: () => void }) {
   const [task, setTask] = useState('');
   const qc = useQueryClient();
   const synthesis = useMutation({
@@ -170,56 +186,70 @@ function SynthesizePanel() {
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.pendingTools() }),
   });
 
-  return (
-    <div className="max-w-2xl">
-      <div className="surface-card rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-8 h-8 rounded-md bg-white flex items-center justify-center">
-            <Sparkles size={14} className="text-black" />
-          </div>
-          <div>
-            <h2 className="text-sm font-medium text-[var(--color-text-primary)]">Tool Synthesizer</h2>
-            <p className="text-xs text-[var(--color-text-muted)]">Describe the utility — Codestral will generate, lint, and sandbox.</p>
-          </div>
-        </div>
-        <div className="mb-6">
-          <label className="block text-xs text-[var(--color-text-muted)] mb-2 uppercase tracking-wider font-medium">Task Description</label>
-          <textarea value={task} onChange={e => setTask(e.target.value)} rows={4} placeholder="e.g. A function that fetches the weather for a given city." className="w-full minimal-input rounded-md px-4 py-3 text-sm resize-none focus:bg-[var(--color-bg-hover)]" />
-        </div>
-        <button onClick={() => synthesis.mutate()} disabled={task.length < 10 || synthesis.isPending} className="w-full btn-primary px-4 py-2.5 text-sm rounded-md flex items-center justify-center gap-2 disabled:opacity-50">
-          <FlaskConical size={16} />
-          {synthesis.isPending ? 'Synthesizing...' : 'Synthesize Tool'}
-        </button>
-      </div>
-
-      <AnimatePresence>
-        {synthesis.data && synthesis.data.status !== 'error' && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-            className="mt-4 surface-card rounded-xl p-4 border-[rgba(16,185,129,0.3)] bg-[rgba(16,185,129,0.02)] flex items-center gap-3"
-          >
-            <div className="w-6 h-6 rounded-full bg-[rgba(16,185,129,0.1)] flex items-center justify-center flex-shrink-0">
-              <Check size={12} className="text-[var(--color-accent-success)]" />
-            </div>
-            <p className="text-sm text-[var(--color-text-secondary)]">Tool generated successfully and moved to the <span className="text-[var(--color-text-primary)] font-medium">Pending Review</span> queue.</p>
-          </motion.div>
-        )}
-        {synthesis.data && synthesis.data.status === 'error' && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-            className="mt-4 surface-card rounded-xl p-4 border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.02)] flex items-start gap-3"
-          >
-            <div className="w-6 h-6 rounded-full bg-[rgba(239,68,68,0.1)] flex items-center justify-center flex-shrink-0 mt-0.5">
-              <X size={12} className="text-[var(--color-accent-danger)]" />
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        onClick={e => e.stopPropagation()}
+        className="bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-xl w-full max-w-2xl overflow-hidden flex flex-col shadow-2xl"
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-md bg-white flex items-center justify-center">
+              <Sparkles size={14} className="text-black" />
             </div>
             <div>
-              <p className="text-sm font-medium text-[var(--color-text-primary)]">Synthesis Failed</p>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">{synthesis.data.message || "An unknown error occurred."}</p>
+              <h2 className="text-sm font-medium text-[var(--color-text-primary)]">Tool Synthesizer</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">Describe the utility — Codestral will generate, lint, and sandbox.</p>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          </div>
+          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-white p-1 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6">
+          <div className="mb-6">
+            <label className="block text-xs text-[var(--color-text-muted)] mb-2 uppercase tracking-wider font-medium">Task Description</label>
+            <textarea value={task} onChange={e => setTask(e.target.value)} rows={4} placeholder="e.g. A function that fetches the weather for a given city." className="w-full minimal-input rounded-md px-4 py-3 text-sm resize-none focus:ring-2 focus:ring-[var(--color-border-focus)] focus:bg-[var(--color-bg-hover)] transition-all outline-none" />
+          </div>
+          <button onClick={() => synthesis.mutate()} disabled={task.length < 10 || synthesis.isPending} className="w-full btn-primary px-4 py-2.5 text-sm rounded-md flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]">
+            <FlaskConical size={16} />
+            {synthesis.isPending ? 'Synthesizing...' : 'Synthesize Tool'}
+          </button>
+
+          <AnimatePresence>
+            {synthesis.data && synthesis.data.status !== 'error' && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                className="mt-4 surface-card rounded-xl p-4 border-[rgba(16,185,129,0.3)] bg-[rgba(16,185,129,0.02)] flex items-center gap-3"
+              >
+                <div className="w-6 h-6 rounded-full bg-[rgba(16,185,129,0.1)] flex items-center justify-center flex-shrink-0">
+                  <Check size={12} className="text-[var(--color-accent-success)]" />
+                </div>
+                <p className="text-sm text-[var(--color-text-secondary)]">Tool generated successfully and moved to the <span className="text-[var(--color-text-primary)] font-medium">Pending Review</span> queue.</p>
+              </motion.div>
+            )}
+            {synthesis.data && synthesis.data.status === 'error' && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                className="mt-4 surface-card rounded-xl p-4 border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.02)] flex items-start gap-3"
+              >
+                <div className="w-6 h-6 rounded-full bg-[rgba(239,68,68,0.1)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <X size={12} className="text-[var(--color-accent-danger)]" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[var(--color-text-primary)]">Synthesis Failed</p>
+                  <p className="text-sm text-[var(--color-text-secondary)] mt-1">{synthesis.data.message || "An unknown error occurred."}</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 
@@ -227,14 +257,18 @@ function EmptyState({ icon: Icon, text }: { icon: React.ComponentType<{ size: nu
   return (
     <motion.div 
           initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[400px] gap-4 bg-[rgba(15,20,28,0.4)] backdrop-blur-xl border border-[rgba(255,255,255,0.05)] shadow-[inset_0_0_30px_rgba(0,0,0,0.2)] w-full mt-2"
+          className="relative overflow-hidden text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[50vh] gap-4 bg-[var(--color-bg-surface)] backdrop-blur-xl border border-[var(--color-border-subtle)] shadow-xl w-full mt-2 group"
     >
-      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-[rgba(236,72,153,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
+      {/* Background Glow */}
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--color-bg-base)] pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-pink-500/10 rounded-full blur-[80px] pointer-events-none group-hover:bg-pink-500/20 transition-all duration-700" />
+
+      <div className="relative z-10 w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-[rgba(236,72,153,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(236,72,153,0.15)] group-hover:scale-110 transition-transform duration-500">
         <Icon size={32} className="text-pink-400" />
       </div>
-      <div>
-        <p className="text-base font-semibold text-[var(--color-text-primary)]">Nothing to show</p>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">{text}</p>
+      <div className="relative z-10">
+        <p className="text-xl font-semibold text-[var(--color-text-primary)]">Nothing to show</p>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">{text}</p>
       </div>
     </motion.div>
   );
@@ -266,10 +300,44 @@ function SkeletonGrid() {
 export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject }: { tool: Record<string, any>; onClose: () => void; isPending?: boolean; onApprove?: () => void; onReject?: () => void; }) {
   const qc = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [showRemotePicker, setShowRemotePicker] = useState(false);
+  const [selectedRemoteServer, setSelectedRemoteServer] = useState<number | null>(null);
+  const [reachability, setReachability] = useState<Record<number, { status: 'checking' | 'reachable' | 'unreachable', data?: any }>>({});
+  const [sendSuccess, setSendSuccess] = useState<{serverName: string, response?: any} | null>(null);
   const initialDesc = tool.schema?.function?.description || tool.description || '';
   const [editForm, setEditForm] = useState({
     description: initialDesc,
     source_code: tool.source_code || ''
+  });
+
+  // Remote servers for send picker
+  const { data: remoteServers = [] } = useQuery({
+    queryKey: QK.remoteServers(),
+    queryFn: () => remoteServersApi.list().then(r => Array.isArray(r.data) ? r.data : []),
+    enabled: showRemotePicker,
+  });
+
+  const checkServer = async (id: number, url: string) => {
+    setReachability(prev => ({ ...prev, [id]: { status: 'checking' } }));
+    try {
+      const res = await remoteServersApi.check(url);
+      setReachability(prev => ({ ...prev, [id]: { status: res.data.reachable ? 'reachable' : 'unreachable', data: res.data.health } }));
+    } catch {
+      setReachability(prev => ({ ...prev, [id]: { status: 'unreachable' } }));
+    }
+  };
+
+  const sendMut = useMutation({
+    mutationFn: () => remoteServersApi.sendTool(selectedRemoteServer!, tool.id),
+    onSuccess: (res) => {
+      const serverName = (remoteServers as Record<string, unknown>[]).find(s => s.id === selectedRemoteServer)?.name;
+      setSendSuccess({
+        serverName: String(serverName || 'remote server'),
+        response: res.data.remote_response
+      });
+      setShowRemotePicker(false);
+      setSelectedRemoteServer(null);
+    },
   });
 
   const updateMut = useMutation({
@@ -336,46 +404,146 @@ export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {!isEditing && !isPending ? (
-              <>
-                <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-                  <Edit2 size={14} /> Edit
-                </button>
-                {!['get_weather', 'calculate', 'search_knowledge', 'create_document', 'send_email'].includes(tool.name) && (
-                  <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-400 px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-                    <Trash2 size={14} /> {deleteMut.isPending ? 'Deleting...' : 'Delete'}
-                  </button>
-                )}
-              </>
-            ) : isEditing ? (
-              <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="flex items-center gap-2 text-xs font-medium bg-[var(--color-bg-hover)] text-white hover:bg-[var(--color-bg-surface)] px-3 py-1.5 rounded-md transition-colors">
-                <Check size={14} /> {updateMut.isPending ? 'Saving...' : 'Save Changes'}
-              </button>
-            ) : null}
-
-            {isPending && !isEditing && (
-              <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-3 py-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-                  <Edit2 size={14} /> Edit
-              </button>
-            )}
-
-            {isPending && (
-              <>
-                <button onClick={() => rejectMut.mutate()} disabled={rejectMut.isPending} className="flex items-center gap-2 text-xs font-medium text-[var(--color-accent-danger)] hover:bg-[rgba(239,68,68,0.1)] px-3 py-1.5 rounded-md transition-colors ml-2">
-                  <X size={14} /> Reject
-                </button>
-                <button onClick={handleSaveAndApprove} disabled={updateMut.isPending || approveMut.isPending} className="flex items-center gap-2 text-xs font-medium bg-[var(--color-accent-success)] text-black hover:bg-[#34d399] px-3 py-1.5 rounded-md transition-colors ml-2 shadow-lg shadow-[rgba(16,185,129,0.2)]">
-                  <Check size={14} /> {updateMut.isPending || approveMut.isPending ? 'Processing...' : (isEditing ? 'Save & Approve' : 'Approve')}
-                </button>
-              </>
-            )}
-            <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-white p-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors ml-2 border-l border-[var(--color-border-subtle)] pl-4">
+            <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-white p-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
               <X size={16} />
             </button>
           </div>
         </div>
         
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-transparent">
+          {/* Remote Server Picker Dropdown */}
+          <AnimatePresence>
+            {showRemotePicker && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-4 mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-cyan-300 font-semibold mb-3 flex items-center gap-2">
+                    <Globe size={12} /> Select Remote Server
+                  </h4>
+                  {remoteServers.length === 0 ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-[var(--color-text-muted)]">No remote servers configured.</p>
+                      <div className="bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-lg p-4">
+                        <h5 className="text-xs font-semibold text-[var(--color-text-primary)] mb-2 flex items-center gap-2">
+                          <ArrowRight size={12} className="text-cyan-400" /> How to add a remote server
+                        </h5>
+                        <ol className="text-xs text-[var(--color-text-secondary)] space-y-1.5 list-decimal list-inside">
+                          <li>Navigate to <span className="text-cyan-400 font-medium">MCP Servers</span> page from the sidebar</li>
+                          <li>Switch to the <span className="text-cyan-400 font-medium">Remote Servers</span> tab</li>
+                          <li>Click <span className="text-cyan-400 font-medium">Add Server</span> and enter the server URL</li>
+                          <li>Come back here and select your server to send the tool code</li>
+                        </ol>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(remoteServers as Record<string, unknown>[]).map((s) => {
+                        const sId = s.id as number;
+                        const statusObj = reachability[sId];
+                        const status = statusObj?.status;
+                        return (
+                          <label
+                            key={sId}
+                            className={cn(
+                              'flex flex-col gap-2 px-3 py-2.5 rounded-md cursor-pointer transition-colors border',
+                              selectedRemoteServer === sId
+                                ? 'bg-cyan-500/10 border-cyan-500/30'
+                                : 'bg-[var(--color-bg-base)] border-[var(--color-border-subtle)] hover:border-cyan-500/20'
+                            )}
+                          >
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="radio"
+                                name="remote-server"
+                                value={sId}
+                                checked={selectedRemoteServer === sId}
+                                onChange={() => setSelectedRemoteServer(sId)}
+                                className="accent-cyan-400"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm font-medium text-white block">{String(s.name)}</span>
+                                <span className="text-xs text-[var(--color-text-muted)] font-mono block truncate">{String(s.url)}</span>
+                              </div>
+                              {/* Reachability indicator */}
+                              <div className="flex items-center gap-2">
+                                {status === 'reachable' && <CheckCircle size={14} className="text-emerald-400" />}
+                                {status === 'unreachable' && <AlertCircle size={14} className="text-red-400" />}
+                                {status === 'checking' && <Loader2 size={14} className="text-indigo-400 animate-spin" />}
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); checkServer(sId, String(s.url)); }}
+                                  disabled={status === 'checking'}
+                                  className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium uppercase tracking-wider"
+                                >
+                                  Check
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {status === 'reachable' && statusObj?.data && (
+                              <div className="mt-1 ml-6 text-[10px] text-[var(--color-text-muted)] bg-black/20 p-2 rounded border border-[var(--color-border-subtle)] font-mono">
+                                <div className="text-emerald-400/80 font-semibold mb-1">Server Health Info</div>
+                                {statusObj.data.service && <div>Service: {statusObj.data.service}</div>}
+                                {statusObj.data.tools_loaded !== undefined && <div>Tools Loaded: {statusObj.data.tools_loaded}</div>}
+                              </div>
+                            )}
+                          </label>
+                        );
+                      })}
+                      <button
+                        onClick={() => sendMut.mutate()}
+                        disabled={!selectedRemoteServer || sendMut.isPending}
+                        className="w-full mt-2 px-4 py-2 text-sm rounded-md bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        <Send size={14} />
+                        {sendMut.isPending ? 'Sending...' : 'Send to ' + ((remoteServers as Record<string, unknown>[]).find(s => s.id === selectedRemoteServer)?.name || '...')}
+                      </button>
+                      {sendMut.isError && (
+                        <p className="text-xs text-red-400 mt-1">Failed to send: {(sendMut.error as Error).message}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Send success banner */}
+          <AnimatePresence>
+            {sendSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                className="flex flex-col gap-3 px-4 py-3 rounded-lg bg-[rgba(16,185,129,0.08)] border border-[rgba(16,185,129,0.25)] w-full"
+              >
+                <div className="flex items-start gap-3 w-full">
+                  <CheckCircle size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-emerald-300">
+                      Tool code sent successfully to <span className="font-semibold text-white">{sendSuccess.serverName}</span>. It will be available as an MCP tool once the remote server processes it.
+                    </p>
+                  </div>
+                  <button onClick={() => setSendSuccess(null)} className="text-[var(--color-text-muted)] hover:text-white shrink-0">
+                    <X size={14} />
+                  </button>
+                </div>
+                {sendSuccess.response && (
+                  <div className="ml-7 bg-black/30 rounded border border-emerald-500/20 p-3 max-h-[150px] overflow-y-auto custom-scrollbar">
+                    <h5 className="text-[10px] uppercase tracking-wider font-semibold text-emerald-500/70 mb-1">Remote Server Response</h5>
+                    <pre className="text-[11px] font-mono text-emerald-100/70 whitespace-pre-wrap leading-relaxed">
+                      {JSON.stringify(sendSuccess.response, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Description */}
           <div>
             <h4 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-2 flex items-center gap-2">
@@ -430,6 +598,52 @@ export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject
                 </pre>
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Sticky Footer Actions */}
+        <div className="flex flex-wrap items-center justify-end gap-2 p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] mt-auto">
+          {!isEditing && !isPending ? (
+            <>
+              {/* Send to Remote button — only for approved tools */}
+              {tool.status === 'approved' && (
+                <button
+                  onClick={() => setShowRemotePicker(!showRemotePicker)}
+                  className="flex items-center justify-center gap-2 text-xs font-medium bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 px-4 py-2 rounded-md transition-colors border border-cyan-500/30 w-full sm:w-auto"
+                >
+                  <Globe size={14} /> Send to Remote
+                </button>
+              )}
+              <button onClick={() => setIsEditing(true)} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
+                <Edit2 size={14} /> Edit
+              </button>
+              {!['get_weather', 'calculate', 'search_knowledge', 'create_document', 'send_email'].includes(tool.name) && (
+                <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-400 px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
+                  <Trash2 size={14} /> {deleteMut.isPending ? 'Deleting...' : 'Delete'}
+                </button>
+              )}
+            </>
+          ) : isEditing ? (
+            <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium bg-[var(--color-bg-hover)] text-white hover:bg-[var(--color-bg-surface)] px-4 py-2 rounded-md transition-colors w-full sm:w-auto">
+              <Check size={14} /> {updateMut.isPending ? 'Saving...' : 'Save Changes'}
+            </button>
+          ) : null}
+
+          {isPending && !isEditing && (
+            <button onClick={() => setIsEditing(true)} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
+                <Edit2 size={14} /> Edit
+            </button>
+          )}
+
+          {isPending && (
+            <>
+              <button onClick={() => rejectMut.mutate()} disabled={rejectMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-accent-danger)] hover:bg-[rgba(239,68,68,0.1)] px-4 py-2 rounded-md transition-colors w-full sm:w-auto">
+                <X size={14} /> Reject
+              </button>
+              <button onClick={handleSaveAndApprove} disabled={updateMut.isPending || approveMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium bg-[var(--color-accent-success)] text-black hover:bg-[#34d399] px-4 py-2 rounded-md transition-colors shadow-lg shadow-[rgba(16,185,129,0.2)] w-full sm:w-auto">
+                <Check size={14} /> {updateMut.isPending || approveMut.isPending ? 'Processing...' : (isEditing ? 'Save & Approve' : 'Approve')}
+              </button>
+            </>
           )}
         </div>
       </motion.div>

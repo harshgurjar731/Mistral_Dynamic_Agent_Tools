@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import {
   GitBranch, Play, Archive, Loader2, Plus, Eye,
   RefreshCw, Sparkles, FolderArchive, Server, Zap,
+  Pencil, AlertTriangle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { workflowsApi } from '../../api/workflows';
@@ -24,6 +25,7 @@ function WorkflowCard({
   onArchive,
   onExecute,
   onView,
+  onEdit,
   onRegister,
   isRegistering,
 }: {
@@ -31,12 +33,16 @@ function WorkflowCard({
   onArchive: () => void;
   onExecute: () => void;
   onView: () => void;
+  onEdit: () => void;
   onRegister: () => void;
   isRegistering: boolean;
 }) {
   const steps = (wf.steps as unknown[]) ?? [];
   const isDeployed = Boolean(wf.is_deployed);
   const mistralId = wf.id as string | undefined;
+  const needsPublish = Boolean(wf.has_unpublished_changes);
+  // Workflows discovered on Mistral but absent locally have no steps to edit.
+  const isEditable = steps.length > 0;
 
   return (
     <motion.div variants={itemVariants} className="surface-card rounded-xl p-5 group flex flex-col h-full gap-4">
@@ -81,6 +87,16 @@ function WorkflowCard({
             <Zap size={10} /> Local
           </span>
         )}
+
+        {/* Edited since it was last published to Mistral */}
+        {needsPublish && (
+          <span
+            title="This workflow has been edited since it was last published"
+            className="flex items-center gap-1 text-[10px] bg-amber-400/10 text-amber-400 border border-amber-400/25 px-2 py-0.5 rounded-full uppercase font-medium shrink-0"
+          >
+            <AlertTriangle size={10} /> Unpublished
+          </span>
+        )}
       </div>
 
       {/* Actions row */}
@@ -91,6 +107,16 @@ function WorkflowCard({
         >
           <Eye size={12} /> View
         </button>
+
+        {isEditable && (
+          <button
+            onClick={onEdit}
+            className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md flex-1 justify-center"
+            title="Open in the visual builder"
+          >
+            <Pencil size={12} /> Edit
+          </button>
+        )}
 
         {!isDeployed && (
           <button
@@ -181,7 +207,7 @@ export default function WorkflowDashboard() {
             onClick={() => navigate('/workflows/new')}
             className="btn-primary flex items-center gap-2 px-4 py-2 text-sm rounded-md"
           >
-            <Sparkles size={15} /> Plan New Workflow
+            <Sparkles size={15} /> New Workflow
           </button>
         </div>
       </div>
@@ -222,14 +248,15 @@ export default function WorkflowDashboard() {
           <div>
             <p className="text-base font-semibold text-[var(--color-text-primary)]">No workflows yet</p>
             <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">
-              Get started by planning your first dynamic multi-agent pipeline. It will be registered on Mistral automatically.
+              Build your first multi-agent pipeline — describe the goal and let the planner assemble
+              it, or drag agents onto a canvas yourself.
             </p>
           </div>
           <button
             onClick={() => navigate('/workflows/new')}
             className="btn-primary flex items-center gap-2 px-5 py-2.5 text-sm rounded-lg mt-2"
           >
-            <Plus size={16} /> Plan Workflow
+            <Plus size={16} /> New Workflow
           </button>
         </motion.div>
       ) : (
@@ -244,6 +271,7 @@ export default function WorkflowDashboard() {
               onArchive={() => archiveMut.mutate(String(wf.name))}
               onExecute={() => navigate(`/workflows/${encodeURIComponent(String(wf.name))}/execute`)}
               onView={() => navigate(`/workflows/${encodeURIComponent(String(wf.name))}`)}
+              onEdit={() => navigate(`/workflows/${encodeURIComponent(String(wf.name))}/edit`)}
               onRegister={() => registerMut.mutate(String(wf.name))}
               isRegistering={registeringName === String(wf.name)}
             />

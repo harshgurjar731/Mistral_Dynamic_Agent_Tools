@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import json
+import time
 from typing import AsyncGenerator
 
 import httpx
@@ -23,11 +24,14 @@ from app.dependencies import get_mistral_client
 from app.services.workflow_engine.models import (
     CreateWorkflowRequest, ExecuteWorkflowRequest,
     WorkflowExecutionResponse, WorkflowListResponse, WorkflowDefinition,
+    UpdateWorkflowRequest, ValidateWorkflowRequest, ValidationResponse,
+    ScriptResponse, BuilderCatalogResponse, CatalogAgent, CatalogTool,
 )
 from app.services.workflow_engine.engine import (
     save_workflow, get_workflow, list_workflows, delete_workflow,
     execute_workflow, get_execution, list_executions_for_workflow,
 )
+from app.services.workflow_engine.validation import validate_workflow, format_errors
 from app.services import workflow_planner
 from app.services.mistral_workflows_compiler import compile_workflow_to_python
 
@@ -188,9 +192,329 @@ async def plan_workflow_endpoint(request: PlanWorkflowRequest):
 
 @router.post("/workflows")
 async def create_workflow(request: CreateWorkflowRequest):
-    """Create a new workflow definition."""
-    name = save_workflow(request.definition)
-    return {"workflow_name": name, "message": "Workflow created", "steps": len(request.definition.steps)}
+    """Create a new workflow definition.
+
+    Validates the DAG and refuses to overwrite an existing workflow — use
+    ``PUT /workflows/{name}`` to update. Saving does **not** publish: the
+    definition is stored as a draft until ``POST /workflows/{name}/publish``.
+    """
+    definition = request.definition
+
+    if get_workflow(definition.name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Workflow '{definition.name}' already exists. Use PUT to update it.",
+        )
+
+    result = validate_workflow(definition)
+    if not result.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Workflow definition is invalid: {format_errors(result)}",
+        )
+
+    # A freshly created draft has never been published.
+    definition.published_hash = None
+    definition.is_deployed = False
+
+    name = save_workflow(definition)
+    return {
+        "workflow_name": name,
+        "message": "Workflow created",
+        "steps": len(definition.steps),
+        "warnings": [i.model_dump() for i in result.issues if i.severity == "warning"],
+    }
+
+
+@router.put("/workflows/{workflow_name}")
+async def update_workflow(workflow_name: str, request: UpdateWorkflowRequest):
+    """Draft-save an existing workflow definition.
+
+    Deployment bookkeeping (``id``, ``is_deployed``, ``published_hash``) is
+    carried over from the stored record rather than trusted from the client, so
+    a save can never silently claim a workflow is published. Whether the edit
+    diverges from what is live is then derived by comparing hashes.
+    """
+    existing = get_workflow(workflow_name)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+
+    definition = request.definition
+
+    if definition.name != workflow_name:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Workflow name cannot be changed on update "
+                f"('{workflow_name}' → '{definition.name}'). The name is baked into the "
+                "compiled module and the Mistral registration."
+            ),
+        )
+
+    result = validate_workflow(definition)
+    if not result.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Workflow definition is invalid: {format_errors(result)}",
+        )
+
+    # Preserve server-owned fields.
+    definition.id = existing.id
+    definition.is_deployed = existing.is_deployed
+    definition.published_hash = existing.published_hash
+    definition.archived = existing.archived
+
+    # Back-fill a baseline for workflows deployed before publish-hash tracking
+    # existed: what is currently stored is, by definition, what is live. Without
+    # this their first edit would compare against nothing and look already-published.
+    if definition.is_deployed and not definition.published_hash:
+        definition.published_hash = existing.semantic_hash()
+
+    save_workflow(definition)
+
+    return {
+        "workflow_name": workflow_name,
+        "message": "Workflow saved",
+        "steps": len(definition.steps),
+        "is_deployed": definition.is_deployed,
+        "has_unpublished_changes": definition.has_unpublished_changes,
+        "warnings": [i.model_dump() for i in result.issues if i.severity == "warning"],
+    }
+
+
+# ── Builder support ───────────────────────────────────────────────────────────
+
+@router.post("/workflows/validate", response_model=ValidationResponse)
+async def validate_workflow_endpoint(request: ValidateWorkflowRequest):
+    """Validate a definition without persisting it.
+
+    Used for live feedback in the visual builder, so it always returns 200 —
+    the issue list is the payload, not an error condition.
+    """
+    return validate_workflow(request.definition)
+
+
+@router.post("/workflows/script/preview", response_model=ScriptResponse)
+async def preview_script(request: ValidateWorkflowRequest):
+    """Compile an unsaved definition to Mistral Workflows SDK Python.
+
+    Lets the builder show the generated script for a workflow that has not been
+    saved yet. Nothing is written to disk.
+    """
+    definition = request.definition
+    result = validate_workflow(definition)
+    if not result.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot compile an invalid workflow: {format_errors(result)}",
+        )
+
+    code = compile_workflow_to_python(definition)
+    return ScriptResponse(
+        workflow_name=definition.name,
+        code=code,
+        line_count=code.count("\n") + 1,
+        stale=True,  # never written to disk
+    )
+
+
+@router.get("/workflows/{workflow_name}/script", response_model=ScriptResponse)
+async def get_workflow_script(workflow_name: str):
+    """Return the compiled script for a saved workflow.
+
+    ``stale`` reports whether the file currently on disk — the one the worker
+    has loaded — differs from what the stored definition compiles to. That is
+    the signal that the workflow needs publishing.
+    """
+    workflow = get_workflow(workflow_name)
+    if not workflow:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+
+    code = compile_workflow_to_python(workflow)
+
+    stale = True
+    file_path = os.path.join(
+        os.path.abspath(os.path.join(os.getcwd(), settings.MISTRAL_WORKFLOWS_DIR)),
+        f"workflow_{workflow_name}.py",
+    )
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                stale = f.read() != code
+        except OSError as e:
+            logger.warning("Could not read compiled workflow at %s: %s", file_path, e)
+
+    return ScriptResponse(
+        workflow_name=workflow_name,
+        code=code,
+        line_count=code.count("\n") + 1,
+        stale=stale,
+    )
+
+
+@router.post("/workflows/{workflow_name}/publish")
+async def publish_workflow(workflow_name: str):
+    """Compile, deploy and register a saved workflow on Mistral.
+
+    This is the explicit promotion step: saving keeps edits local, publishing
+    makes them live. On success the definition's ``published_hash`` is stamped
+    so subsequent edits are detectable as unpublished.
+    """
+    workflow = get_workflow(workflow_name)
+    if not workflow:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+
+    result = validate_workflow(workflow)
+    if not result.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot publish an invalid workflow: {format_errors(result)}",
+        )
+
+    # Reuse the register path — it writes the compiled module the worker runs
+    # and waits for the worker to register it with Mistral.
+    registration = await register_workflow_on_mistral(workflow_name)
+    action = registration.get("server_action")
+
+    # Only a genuine failure is fatal. `pending_worker` means the module is on
+    # disk and the worker simply has not finished reloading — the publish did
+    # succeed, so failing here would be wrong (and was the cause of the 502).
+    if action == "error":
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Workflow compiled locally but could not be registered on Mistral: "
+                f"{registration.get('detail', 'unknown error')}"
+            ),
+        )
+
+    # Re-read: register_workflow_on_mistral() persists id / is_deployed / hash.
+    published = get_workflow(workflow_name) or workflow
+    pending = action == "pending_worker"
+
+    logger.info(
+        "Workflow '%s' published (action=%s, hash=%s)",
+        workflow_name, action, (published.published_hash or "")[:12],
+    )
+
+    return {
+        **registration,
+        "message": (
+            "Workflow published — waiting for the worker to finish registering it."
+            if pending
+            else "Workflow published"
+        ),
+        "registration_pending": pending,
+        "published_hash": published.published_hash,
+        "has_unpublished_changes": False,
+        "warnings": [i.model_dump() for i in result.issues if i.severity == "warning"],
+    }
+
+
+@router.get("/workflows/builder/catalog", response_model=BuilderCatalogResponse)
+async def get_builder_catalog():
+    """Everything the builder palette needs, in one round trip.
+
+    Agents and tools are fetched concurrently; either failing degrades to an
+    empty list rather than failing the whole palette, so the builder still
+    opens when the Tool Service is down.
+    """
+    from app.services import agent_service
+    from app.services.tool_resolver import tool_resolver
+    from app.services.tool_registry import ALL_TOOLS, BUILTIN_TOOLS
+
+    client = get_mistral_client()
+
+    agents_resp, tool_records = await asyncio.gather(
+        agent_service.list_agents(client, page=0, page_size=200),
+        tool_resolver.list_tools(),
+        return_exceptions=True,
+    )
+
+    agents: list[CatalogAgent] = []
+    if isinstance(agents_resp, Exception):
+        logger.warning("Builder catalog: could not list agents: %s", agents_resp)
+    else:
+        for item in agents_resp.get("items", []):
+            if not item.get("id"):
+                continue
+            raw_tools = item.get("tools") or []
+            tool_names: list[str] = []
+            for t in raw_tools:
+                if isinstance(t, dict):
+                    tool_names.append(
+                        t.get("function", {}).get("name") or t.get("type") or ""
+                    )
+                elif isinstance(t, str):
+                    tool_names.append(t)
+            agents.append(CatalogAgent(
+                id=item["id"],
+                name=item.get("name") or item["id"],
+                model=item.get("model") or "mistral-large-latest",
+                description=item.get("description"),
+                tier=item.get("tier"),
+                tools=[t for t in tool_names if t],
+            ))
+
+    tools: list[CatalogTool] = []
+
+    # Mistral-native capabilities — executed platform-side, always available.
+    for key in BUILTIN_TOOLS:
+        tools.append(CatalogTool(
+            name=key,
+            description=f"Mistral built-in capability: {key.replace('_', ' ')}",
+            source="builtin",
+        ))
+
+    # Locally-executed function tools registered in the backend.
+    for key, spec in ALL_TOOLS.items():
+        if key in BUILTIN_TOOLS or spec.get("type") != "function":
+            continue
+        fn = spec.get("function", {})
+        tools.append(CatalogTool(
+            name=key,
+            description=fn.get("description"),
+            parameters=fn.get("parameters", {}).get("properties", {}),
+            required=fn.get("parameters", {}).get("required", []),
+            source="native",
+        ))
+
+    # Synthesised tools living in the Tool Service.
+    if isinstance(tool_records, Exception):
+        logger.warning("Builder catalog: could not list tools: %s", tool_records)
+    else:
+        known = {t.name for t in tools}
+        for record in tool_records:
+            if record.get("status") != "approved":
+                continue
+            schema = record.get("schema", {}) or {}
+            fn = schema.get("function", {}) or {}
+            name = fn.get("name") or record.get("name")
+            if not name or name in known:
+                continue
+            known.add(name)
+            params = fn.get("parameters", {}) or {}
+            tools.append(CatalogTool(
+                name=name,
+                description=fn.get("description"),
+                parameters=params.get("properties", {}),
+                required=params.get("required", []),
+                status=record.get("status", "approved"),
+                source="dynamic",
+            ))
+
+    return BuilderCatalogResponse(
+        agents=sorted(agents, key=lambda a: a.name.lower()),
+        tools=sorted(tools, key=lambda t: t.name.lower()),
+        models=[
+            "mistral-large-latest",
+            "mistral-medium-latest",
+            "mistral-small-latest",
+            "open-mistral-nemo",
+            "codestral-latest",
+        ],
+        tiers=["foundation", "domain", "use_case"],
+    )
 
 
 @router.get("/workflows", response_model=WorkflowListResponse)
@@ -765,20 +1089,86 @@ async def get_workflow_executions(workflow_name: str):
 
 
 # ── Register (manual trigger) ─────────────────────────────────────────────────
+#
+# How a code workflow actually reaches Mistral
+# --------------------------------------------
+# It is registered by the *worker*, not over REST. When a ``workflow_<name>.py``
+# file lands in MISTRAL_WORKFLOWS_DIR, the supervisor restarts the inner worker,
+# which imports the module and registers the workflow class with the Mistral
+# scheduler on connect.
+#
+# ``POST /v1/workflows`` does exist, but it is the worker SDK's own
+# self-registration contract: it requires ``definitions``, ``deployment_name``
+# and ``worker_name`` — the worker process's identity, which this service cannot
+# invent. Calling it by hand returns 422, which is what previously made publish
+# fail for a brand-new workflow even though the worker went on to register it
+# seconds later.
+#
+# The rest of the surface is narrow: there is no DELETE, PATCH returns 405, and
+# ``PUT /v1/workflows/{id}`` accepts metadata only (display_name, description,
+# available_in_chat_assistant).
+#
+# So: write the file, then wait for the worker to do the registration.
+
+# How long to wait for the worker to restart and register a new workflow.
+# A cold restart is ~10-15s (watchfiles debounce + SDK import + Temporal connect).
+REGISTRATION_WAIT_SECONDS = float(os.environ.get("WORKFLOW_REGISTRATION_WAIT", "30"))
+REGISTRATION_POLL_SECONDS = 1.5
+
+
+def _find_remote_workflow(workflow_name: str) -> dict | None:
+    """Look a workflow up on Mistral by name. Returns the record or None."""
+    resp = _mistral_get("/v1/workflows")
+    if resp and resp.status_code == 200:
+        try:
+            for wf in resp.json().get("workflows", []):
+                if wf.get("name") == workflow_name:
+                    return wf
+        except Exception as e:
+            logger.warning("Could not parse /v1/workflows response: %s", e)
+    return None
+
+
+def _sync_remote_metadata(remote_id: str, workflow: WorkflowDefinition) -> None:
+    """Push description to Mistral. Best effort — never fatal.
+
+    WorkflowUpdateRequest accepts only display_name, description and
+    available_in_chat_assistant; routing hints sent here would be ignored.
+    """
+    if not workflow.description:
+        return
+
+    resp = _mistral_put(f"/v1/workflows/{remote_id}", {"description": workflow.description})
+    if resp is None or resp.status_code not in (200, 201, 204):
+        status = resp.status_code if resp else "no response"
+        detail = resp.text[:200] if resp else ""
+        logger.warning("Metadata sync for '%s' returned %s: %s", workflow.name, status, detail)
+    else:
+        logger.info("Synced metadata for workflow '%s'", workflow.name)
+
+
+async def _await_worker_registration(workflow_name: str, timeout_s: float) -> dict | None:
+    """Poll until the worker has registered the workflow, or the wait runs out."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        await asyncio.sleep(REGISTRATION_POLL_SECONDS)
+        remote = await asyncio.to_thread(_find_remote_workflow, workflow_name)
+        if remote:
+            return remote
+    return None
+
 
 @router.post("/workflows/{workflow_name}/register")
-async def register_workflow_on_mistral(workflow_name: str):
-    """
-    Compile the workflow to SDK Python, write it to the worker directory,
-    AND register/update it on the Mistral server with the correct
-    worker_deployment so the server routes executions to our worker.
+async def register_workflow_on_mistral(workflow_name: str, wait_seconds: float | None = None):
+    """Compile the workflow and get it onto Mistral.
 
-    The two-step process:
-      1. Write workflow_<name>.py to MISTRAL_WORKFLOWS_DIR so the local
-         worker picks it up on hot-reload.
-      2. POST /v1/workflows on the Mistral server (create or update) with
-         worker_deployment=WORKER_DEPLOYMENT so the server knows which
-         Temporal task queue to dispatch execution tasks to.
+    Writes ``workflow_<name>.py`` for the worker to pick up, then waits for the
+    worker to register it. ``server_action`` reports what happened:
+
+    - ``updated`` — already registered; metadata refreshed
+    - ``registered`` — the worker registered it within the wait window
+    - ``pending_worker`` — file written, registration still in flight (not an error)
+    - ``error`` — compilation or an unexpected failure
     """
     workflow = get_workflow(workflow_name)
     if not workflow:
@@ -791,99 +1181,77 @@ async def register_workflow_on_mistral(workflow_name: str):
     )
     os.makedirs(workflows_dir, exist_ok=True)
     file_path = os.path.join(workflows_dir, f"workflow_{workflow_name}.py")
+
+    previous_code: str | None = None
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                previous_code = f.read()
+        except OSError:
+            pass
+
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)
     logger.info("Wrote compiled workflow to %s", file_path)
 
-    # ── Step 2: register on Mistral server with worker_deployment ─────────
-    # This is what tells the Mistral server which Temporal task queue to
-    # route execution tasks to. Without this the server has no routing info
-    # and dispatches to its own default queue, which our worker never polls.
+    # An unchanged module does not retrigger the file watcher, so the worker
+    # will not restart and there is no registration to wait for.
+    code_changed = previous_code != code
+
+    # ── Step 2: let the worker register it ───────────────────────────────
     server_result: dict = {}
     try:
-        # Check if already registered so we PATCH instead of POST
-        existing_id: str | None = None
-        list_resp = _mistral_get("/v1/workflows")
-        if list_resp and list_resp.status_code == 200:
-            for wf in list_resp.json().get("workflows", []):
-                if wf.get("name") == workflow_name:
-                    existing_id = wf.get("id")
-                    break
+        remote = await asyncio.to_thread(_find_remote_workflow, workflow_name)
 
-        reg_body = {
-            "name": workflow_name,
-            "worker_deployment": WORKER_DEPLOYMENT,
-            # Some API versions use worker_identifier instead
-            "worker_identifier": WORKER_DEPLOYMENT,
-        }
-        if workflow.description:
-            reg_body["description"] = workflow.description
-
-        if existing_id:
-            # Try PUT first (standard REST update), then PATCH, then
-            # DELETE+POST recreate — Mistral API version determines which works.
-            action = "updated"
-            resp = None
-            for method, url, body in [
-                ("PUT",   f"/v1/workflows/{existing_id}", reg_body),
-                ("PATCH", f"/v1/workflows/{existing_id}", reg_body),
-            ]:
-                try:
-                    fn = httpx.put if method == "PUT" else httpx.patch
-                    resp = fn(
-                        f"https://api.mistral.ai{url}",
-                        headers={**_mistral_headers(), "Content-Type": "application/json"},
-                        json=body,
-                        timeout=15.0,
-                    )
-                    if resp.status_code in (200, 201, 204):
-                        logger.info("%s /v1/workflows/%s → %d", method, existing_id, resp.status_code)
-                        break
-                    logger.warning("%s returned %d: %s", method, resp.status_code, resp.text[:100])
-                    resp = None
-                except Exception as e:
-                    logger.warning("%s failed: %s", method, e)
-                    resp = None
-
-            if resp is None or resp.status_code not in (200, 201, 204):
-                # Last resort: delete and recreate with worker_deployment set
-                logger.info("PUT/PATCH failed — trying DELETE + POST recreate")
-                try:
-                    del_resp = httpx.delete(
-                        f"https://api.mistral.ai/v1/workflows/{existing_id}",
-                        headers=_mistral_headers(),
-                        timeout=15.0,
-                    )
-                    logger.info("DELETE /v1/workflows/%s → %d", existing_id, del_resp.status_code)
-                except Exception as e:
-                    logger.warning("DELETE failed: %s", e)
-                resp = _mistral_post("/v1/workflows", reg_body)
-                action = "recreated"
+        if remote:
+            await asyncio.to_thread(_sync_remote_metadata, remote["id"], workflow)
+            server_result = {"server_action": "updated", "remote_id": remote["id"]}
+        elif not settings.MISTRAL_WORKER_ENABLED:
+            server_result = {
+                "server_action": "pending_worker",
+                "detail": (
+                    "Compiled and written to disk. MISTRAL_WORKER_ENABLED is false, so no "
+                    "worker is running to register it — executions will fall back to the "
+                    "local DAG engine."
+                ),
+            }
         else:
-            resp = _mistral_post("/v1/workflows", reg_body)
-            action = "created"
-
-        if resp and resp.status_code in (200, 201):
-            data = resp.json()
-            remote_id = data.get("id", existing_id or "")
-            server_result = {"server_action": action, "remote_id": remote_id}
-            # Update local cache
-            workflow.is_deployed = True
-            workflow.id = remote_id
-            save_workflow(workflow)
+            wait = REGISTRATION_WAIT_SECONDS if wait_seconds is None else wait_seconds
             logger.info(
-                "Workflow '%s' %s on Mistral server (id=%s, worker_deployment='%s')",
-                workflow_name, action, remote_id, WORKER_DEPLOYMENT,
+                "Waiting up to %.0fs for the worker to register '%s'%s",
+                wait, workflow_name, "" if code_changed else " (module unchanged)",
             )
-        else:
-            status = resp.status_code if resp else "no response"
-            body = resp.text[:200] if resp else ""
-            logger.warning(
-                "Mistral server registration returned %s: %s", status, body
+            remote = await _await_worker_registration(workflow_name, wait)
+
+            if remote:
+                await asyncio.to_thread(_sync_remote_metadata, remote["id"], workflow)
+                server_result = {"server_action": "registered", "remote_id": remote["id"]}
+            else:
+                server_result = {
+                    "server_action": "pending_worker",
+                    "detail": (
+                        f"Compiled and written to disk, but the worker had not registered it "
+                        f"within {wait:.0f}s. It normally appears a few seconds after the "
+                        f"worker reloads."
+                    ),
+                }
+
+        if remote:
+            workflow.is_deployed = True
+            workflow.id = remote["id"]
+            logger.info(
+                "Workflow '%s' %s on Mistral (id=%s, deployment='%s')",
+                workflow_name, server_result["server_action"], remote["id"], WORKER_DEPLOYMENT,
             )
-            server_result = {"server_action": "failed", "detail": f"{status}: {body}"}
+
+        # The compiled module on disk is what the worker runs, so the definition
+        # counts as published once it is written — whether or not the remote
+        # registration has caught up yet.
+        workflow.published_hash = workflow.semantic_hash()
+        save_workflow(workflow)
+
     except Exception as e:
-        logger.warning("Mistral server registration failed: %s", e)
+        logger.error("Registration failed for '%s': %s", workflow_name, e, exc_info=True)
         server_result = {"server_action": "error", "detail": str(e)}
 
     return {

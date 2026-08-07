@@ -3,11 +3,13 @@ Database setup — SQLAlchemy + SQLite.
 """
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+Base = declarative_base()
 
 connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
@@ -21,6 +23,13 @@ except Exception as e:
     logger.error(f"Failed to initialize database engine: {e}")
     engine = None
     SessionLocal = None
+
+
+def create_tables():
+    """Create all ORM-defined tables (safe to call multiple times)."""
+    if engine:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified")
 
 
 def get_db():
