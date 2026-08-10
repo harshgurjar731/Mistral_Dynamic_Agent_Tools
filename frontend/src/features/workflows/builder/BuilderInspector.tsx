@@ -13,6 +13,8 @@ import {
   Copy,
   Flag,
   Loader2,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Settings2,
   Trash2,
@@ -669,6 +671,7 @@ export default function BuilderInspector({
   const issuesForStep = useBuilderStore((s) => s.issuesForStep);
 
   const [idDraft, setIdDraft] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   const step = (definition.steps ?? []).find((s) => s.id === selectedStepId) ?? null;
   const variables = useMemo(
@@ -676,17 +679,42 @@ export default function BuilderInspector({
     [definition, selectedStepId],
   );
 
-  const panelClass =
-    'w-[300px] shrink-0 flex flex-col border-l border-[var(--color-border-subtle)] bg-[rgba(11,15,22,0.75)] backdrop-blur-md min-h-0';
+  const panelClass = cn(
+    'shrink-0 flex flex-col border-l border-[var(--color-border-subtle)] bg-[rgba(11,15,22,0.75)] backdrop-blur-md min-h-0 transition-[width] duration-150 ease-in-out overflow-hidden',
+    collapsed ? 'w-10' : 'w-[300px]',
+  );
+
+  const toggleButton = (
+    <button
+      type="button"
+      onClick={() => setCollapsed((c) => !c)}
+      title={collapsed ? 'Expand inspector' : 'Collapse inspector'}
+      aria-label={collapsed ? 'Expand inspector' : 'Collapse inspector'}
+      className="w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-bg-hover)] transition-colors shrink-0"
+    >
+      {collapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+    </button>
+  );
+
+  if (collapsed) {
+    return (
+      <aside className={panelClass}>
+        <div className="flex items-center justify-center py-3 border-b border-[var(--color-border-subtle)] shrink-0">
+          {toggleButton}
+        </div>
+      </aside>
+    );
+  }
 
   if (!step) {
     return (
       <aside className={panelClass}>
         <div className="flex items-center gap-2 px-3.5 py-3 border-b border-[var(--color-border-subtle)] shrink-0">
           <Settings2 size={13} className="text-[var(--color-text-muted)]" />
-          <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)] flex-1 min-w-0 truncate">
             Workflow settings
           </p>
+          {toggleButton}
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
           <WorkflowSettings />
@@ -724,6 +752,7 @@ export default function BuilderInspector({
         >
           <Trash2 size={12} />
         </button>
+        {toggleButton}
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">

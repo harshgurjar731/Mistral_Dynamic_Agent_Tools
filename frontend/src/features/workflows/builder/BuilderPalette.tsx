@@ -12,6 +12,8 @@ import {
   Cpu,
   GitBranch,
   MousePointerSquareDashed,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Search,
@@ -149,6 +151,7 @@ export default function BuilderPalette({
   onCreateTool,
 }: Props) {
   const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
 
   const needle = query.trim().toLowerCase();
 
@@ -180,11 +183,33 @@ export default function BuilderPalette({
   const iconButton =
     'w-6 h-6 rounded-md flex items-center justify-center border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] text-[var(--color-text-muted)] hover:text-white hover:border-[rgba(99,102,241,0.4)] transition-colors shrink-0';
 
+  const toggleButton = (
+    <button
+      type="button"
+      onClick={() => setCollapsed((c) => !c)}
+      title={collapsed ? 'Expand palette' : 'Collapse palette'}
+      aria-label={collapsed ? 'Expand palette' : 'Collapse palette'}
+      className="w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-bg-hover)] transition-colors shrink-0"
+    >
+      {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+    </button>
+  );
+
+  if (collapsed) {
+    return (
+      <aside className="w-10 shrink-0 flex flex-col border-r border-[var(--color-border-subtle)] bg-[rgba(11,15,22,0.75)] backdrop-blur-md min-h-0 transition-[width] duration-150 ease-in-out overflow-hidden">
+        <div className="flex items-center justify-center py-3 border-b border-[var(--color-border-subtle)] shrink-0">
+          {toggleButton}
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="w-[268px] shrink-0 flex flex-col border-r border-[var(--color-border-subtle)] bg-[rgba(11,15,22,0.75)] backdrop-blur-md min-h-0">
-      {/* Search */}
-      <div className="p-2.5 border-b border-[var(--color-border-subtle)]">
-        <div className="relative">
+    <aside className="w-[268px] shrink-0 flex flex-col border-r border-[var(--color-border-subtle)] bg-[rgba(11,15,22,0.75)] backdrop-blur-md min-h-0 transition-[width] duration-150 ease-in-out overflow-hidden">
+      {/* Header with toggle */}
+      <div className="flex items-center gap-2 px-2.5 py-2.5 border-b border-[var(--color-border-subtle)] shrink-0">
+        <div className="relative flex-1 min-w-0">
           <Search
             size={13}
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none"
@@ -197,6 +222,7 @@ export default function BuilderPalette({
             className="minimal-input w-full rounded-lg pl-8 pr-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-border-focus)]"
           />
         </div>
+        {toggleButton}
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
