@@ -735,11 +735,93 @@ async def run_transform_step(step: WorkflowStep, variables: dict) -> StepResult:
         return StepResult(step_id=step.id, status="failed", error=str(e), duration_ms=duration)
 
 
+def resolve_connector_arguments(step: WorkflowStep, variables: dict) -> dict:
+    """Render a connector step's argument template against the workflow variables.
+
+    Shared with the compiled Workflows module, which calls this from inside its
+    generated activities — so a connector call receives identical arguments
+    whether it runs locally or on a Mistral worker.
+    """
+    config = step.config or {}
+    template = config.get("arguments", config.get("arguments_template", {})) or {}
+    if not isinstance(template, dict):
+        return {}
+
+    arguments = {}
+    for key, value in template.items():
+        if isinstance(value, str) and "{{" in value:
+            arguments[key] = substitute_double_brackets(value, variables)
+        else:
+            arguments[key] = value
+    return arguments
+
+
+async def run_connector_step(step: WorkflowStep, variables: dict) -> StepResult:
+    """Call a single tool on a Mistral Connector.
+
+    This is the *local* execution path — used by the in-process DAG engine and
+    by dev runs. When the same definition is compiled and deployed, the emitted
+    module calls the connector through the Workflows SDK's injected
+    ``ToolCallClient`` instead, so credentials resolve against the triggering
+    user rather than this backend's API key. Both paths read the same step
+    config, which is what keeps a local run faithful to a deployed one.
+    """
+    start = time.time()
+    config = step.config or {}
+    connector_id = config.get("connector_id") or config.get("connector_name") or ""
+    tool_name = config.get("tool_name", "")
+
+    try:
+        from app.services import connector_service
+
+        if not connector_id:
+            raise ValueError("Connector step is missing 'connector_id'")
+        if not tool_name:
+            raise ValueError("Connector step is missing 'tool_name'")
+
+        # Arguments are templated the same way tool steps template theirs, so
+        # {{variables}} behave identically across both step kinds.
+        arguments = resolve_connector_arguments(step, variables)
+
+        logger.info(
+            "Step '%s' — calling connector '%s' tool '%s'", step.id, connector_id, tool_name
+        )
+        raw = await connector_service.call_connector_tool(
+            connector_id,
+            tool_name,
+            arguments,
+            credentials_name=config.get("credentials_name"),
+        )
+        output = connector_service.flatten_tool_result(raw)
+
+        duration = (time.time() - start) * 1000
+        out_str = str(output)
+        return StepResult(
+            step_id=step.id,
+            status="completed",
+            output=output,
+            duration_ms=duration,
+            input_preview=json.dumps(arguments)[:1000],
+            output_preview=out_str[:1000] + "..." if len(out_str) > 1000 else out_str,
+        )
+    except Exception as e:
+        duration = (time.time() - start) * 1000
+        logger.error("Connector step '%s' failed: %s", step.id, e)
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=str(e),
+            duration_ms=duration,
+            input_preview=json.dumps(config.get("arguments", {}))[:1000],
+        )
+
+
 # ── Step Runner Dispatcher ─────────────────────────────────────────────────
 
 STEP_RUNNERS = {
     StepType.AGENT: run_agent_step,
     StepType.TOOL: run_tool_step,
+    StepType.CONNECTOR: run_connector_step,
     StepType.CONDITION: run_condition_step,
     StepType.TRANSFORM: run_transform_step,
 }

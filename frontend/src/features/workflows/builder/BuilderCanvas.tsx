@@ -39,6 +39,7 @@ import { useBuilderStore } from './useBuilderStore';
 import {
   BuilderAgentNode,
   BuilderConditionNode,
+  BuilderConnectorNode,
   BuilderToolNode,
   BuilderTransformNode,
 } from './BuilderNodes';
@@ -49,33 +50,36 @@ import {
   makeLogicStep,
   uniqueStepId,
 } from './graphModel';
-import type { CatalogAgent, CatalogTool } from '../../../api/workflowBuilder';
+import type { CatalogAgent, CatalogConnector, CatalogTool } from '../../../api/workflowBuilder';
 import { cn } from '../../../lib/utils';
 
 /** Payload written to dataTransfer by palette items. */
 export interface DragPayload {
-  kind: 'agent' | 'tool' | 'logic';
+  kind: 'agent' | 'tool' | 'connector' | 'logic';
   agent?: CatalogAgent;
   tool?: CatalogTool;
+  connector?: CatalogConnector;
   logic?: 'condition' | 'transform';
 }
 
 export const DRAG_MIME = 'application/x-mistral-workflow-step';
 
 /**
- * A second, payload-free MIME type set only when dragging a tool.
+ * A second, payload-free MIME type set when dragging anything that attaches to
+ * an agent rather than becoming a step of its own — tools and connectors.
  *
  * `dataTransfer.getData()` returns "" during dragover for security reasons —
  * only `types` is readable. Advertising the kind as its own type is what lets
  * the canvas highlight valid agent targets while the drag is still in flight.
  */
-export const DRAG_TOOL_HINT = 'application/x-mistral-tool';
+export const DRAG_ATTACH_HINT = 'application/x-mistral-agent-attachment';
 
 // Module-level so the identity is stable — a new object each render makes
 // ReactFlow remount every node.
 const BUILDER_NODE_TYPES = {
   agent: BuilderAgentNode,
   tool: BuilderToolNode,
+  connector: BuilderConnectorNode,
   condition: BuilderConditionNode,
   transform: BuilderTransformNode,
 };
@@ -118,13 +122,23 @@ function ToolbarButton({
 export interface CanvasProps {
   /** Catalog agents, keyed by id — agent nodes read their tools from here. */
   agentsById: Record<string, CatalogAgent>;
+  /** Catalog connectors, keyed by id — agent nodes resolve names from here. */
+  connectorsById: Record<string, CatalogConnector>;
   /** Attach a tool to the agent bound to a step. Resolves when Mistral is updated. */
   onAttachTool: (stepId: string, tool: CatalogTool) => void;
+  /** Attach a connector to the agent bound to a step. Same contract as a tool. */
+  onAttachConnector: (stepId: string, connector: CatalogConnector) => void;
   /** Surface a message when a gesture cannot be completed. */
   onNotify: (kind: 'success' | 'error', message: string) => void;
 }
 
-function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
+function CanvasInner({
+  agentsById,
+  connectorsById,
+  onAttachTool,
+  onAttachConnector,
+  onNotify,
+}: CanvasProps) {
   const definition = useBuilderStore((s) => s.definition);
   const selectedStepId = useBuilderStore((s) => s.selectedStepId);
   const validation = useBuilderStore((s) => s.validation);
@@ -145,7 +159,11 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
   const [direction, setDirection] = useState<'TB' | 'LR'>('TB');
   const [showMinimap, setShowMinimap] = useState(true);
   // Agent step currently under a dragged tool, for the drop-target highlight.
-  const [toolDropTargetId, setToolDropTargetId] = useState<string | null>(null);
+  const [attachTargetId, setAttachTargetId] = useState<string | null>(null);
+  // Picked connection. Held here rather than in the store because it is pure
+  // canvas UI — nothing else in the builder needs to know which edge is
+  // highlighted, and it must not survive into the saved definition.
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const didInitialFit = useRef(false);
 
@@ -155,9 +173,19 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
         selectedId: selectedStepId,
         issues: validation?.issues ?? [],
         agentsById,
-        toolDropTargetId,
+        connectorsById,
+        attachTargetId,
+        selectedEdgeId,
       }),
-    [definition, selectedStepId, validation, agentsById, toolDropTargetId],
+    [
+      definition,
+      selectedStepId,
+      validation,
+      agentsById,
+      connectorsById,
+      attachTargetId,
+      selectedEdgeId,
+    ],
   );
 
   // Fit the view once, when the first steps appear — refitting on every change
@@ -210,11 +238,47 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
   );
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => select(node.id),
+    (_: React.MouseEvent, node: Node) => {
+      setSelectedEdgeId(null);
+      select(node.id);
+    },
     [select],
   );
 
-  const onPaneClick = useCallback(() => select(null), [select]);
+  // Edge and step selection are mutually exclusive: Delete has to act on
+  // exactly one thing, and picking an edge while a step is selected would make
+  // it ambiguous which one the key removes.
+  const onEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.stopPropagation();
+      select(null);
+      setSelectedEdgeId(edge.id);
+    },
+    [select],
+  );
+
+  const removeEdge = useCallback(
+    (edgeId: string) => {
+      const edge = edges.find((e) => e.id === edgeId);
+      if (!edge) return;
+      const kind = (edge.data?.kind as 'next' | 'true' | 'false') ?? 'next';
+      disconnect(edge.source, edge.target, kind);
+      setSelectedEdgeId(null);
+    },
+    [edges, disconnect],
+  );
+
+  const onPaneClick = useCallback(() => {
+    select(null);
+    setSelectedEdgeId(null);
+  }, [select]);
+
+  // Resolved from the derived edges, so a selection left dangling by an edit
+  // elsewhere (a step renamed or removed) simply stops rendering.
+  const selectedEdge = useMemo(
+    () => (selectedEdgeId ? (edges.find((e) => e.id === selectedEdgeId) ?? null) : null),
+    [edges, selectedEdgeId],
+  );
 
   /* ── Drop from palette ────────────────────────────────────────────── */
 
@@ -224,28 +288,29 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
     (event: React.DragEvent) => {
       event.preventDefault();
 
-      const draggingTool = event.dataTransfer.types.includes(DRAG_TOOL_HINT);
-      if (!draggingTool || !instance) {
+      const draggingAttachment = event.dataTransfer.types.includes(DRAG_ATTACH_HINT);
+      if (!draggingAttachment || !instance) {
         event.dataTransfer.dropEffect = 'copy';
-        if (toolDropTargetId) setToolDropTargetId(null);
+        if (attachTargetId) setAttachTargetId(null);
         return;
       }
 
       const point = instance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const target = agentStepAt(definition, point);
-      // A tool has nowhere to go except onto an agent, so say so with the cursor.
+      // Tools and connectors have nowhere to go except onto an agent, so say so
+      // with the cursor.
       event.dataTransfer.dropEffect = target ? 'copy' : 'none';
-      setToolDropTargetId(target?.id ?? null);
+      setAttachTargetId(target?.id ?? null);
     },
-    [instance, definition, toolDropTargetId],
+    [instance, definition, attachTargetId],
   );
 
-  const onDragLeave = useCallback(() => setToolDropTargetId(null), []);
+  const onDragLeave = useCallback(() => setAttachTargetId(null), []);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
-      setToolDropTargetId(null);
+      setAttachTargetId(null);
       if (!instance) return;
 
       const raw = event.dataTransfer.getData(DRAG_MIME);
@@ -264,15 +329,20 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
         y: event.clientY,
       });
 
-      // ── Tools are not steps ──────────────────────────────────────────
-      // They cannot execute on their own: the agent's model decides when to
-      // call them. So a tool drop attaches to the agent underneath it.
-      if (payload.kind === 'tool' && payload.tool) {
+      // ── Tools and connectors are not steps ───────────────────────────
+      // Neither executes on its own: the agent's model decides when to call
+      // them and with what arguments. So both drops attach to the agent
+      // underneath, and both fail the same way when there isn't one.
+      if (
+        (payload.kind === 'tool' && payload.tool) ||
+        (payload.kind === 'connector' && payload.connector)
+      ) {
+        const noun = payload.kind === 'tool' ? 'Tools' : 'Connectors';
         const target = agentStepAt(definition, position);
         if (!target) {
           onNotify(
             'error',
-            'Tools run through an agent — drop this onto an agent step to attach it.',
+            `${noun} run through an agent — drop this onto an agent step to attach it.`,
           );
           return;
         }
@@ -281,7 +351,11 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
           select(target.id);
           return;
         }
-        onAttachTool(target.id, payload.tool);
+        if (payload.kind === 'tool' && payload.tool) {
+          onAttachTool(target.id, payload.tool);
+        } else if (payload.connector) {
+          onAttachConnector(target.id, payload.connector);
+        }
         select(target.id);
         return;
       }
@@ -298,7 +372,7 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
       addStep(step, { x: Math.round(position.x), y: Math.round(position.y) });
       select(step.id);
     },
-    [instance, definition, addStep, select, onAttachTool, onNotify],
+    [instance, definition, addStep, select, onAttachTool, onAttachConnector, onNotify],
   );
 
   /* ── Keyboard ─────────────────────────────────────────────────────── */
@@ -324,17 +398,25 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
       } else if (mod && event.key.toLowerCase() === 'y') {
         event.preventDefault();
         redo();
-      } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedStepId) {
-        event.preventDefault();
-        removeStep(selectedStepId);
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        // ReactFlow's own delete handling is disabled (deleteKeyCode={null}),
+        // so both step and connection deletion run through here.
+        if (selectedEdgeId) {
+          event.preventDefault();
+          removeEdge(selectedEdgeId);
+        } else if (selectedStepId) {
+          event.preventDefault();
+          removeStep(selectedStepId);
+        }
       } else if (event.key === 'Escape') {
         select(null);
+        setSelectedEdgeId(null);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undo, redo, removeStep, select, selectedStepId]);
+  }, [undo, redo, removeStep, select, selectedStepId, selectedEdgeId, removeEdge]);
 
   const isEmpty = definition.steps.length === 0;
 
@@ -354,6 +436,7 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
         onConnect={onConnect}
         onEdgesDelete={onEdgesDelete}
         onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
         onInit={setInstance}
         connectionLineType={ConnectionLineType.SmoothStep}
@@ -379,12 +462,33 @@ function CanvasInner({ agentsById, onAttachTool, onNotify }: CanvasProps) {
             nodeColor={(node) => {
               if (node.type === 'agent') return '#818cf8';
               if (node.type === 'tool') return '#f472b6';
+              if (node.type === 'connector') return '#34d399';
               if (node.type === 'condition') return '#fbbf24';
               return '#22d3ee';
             }}
           />
         )}
       </ReactFlow>
+
+      {/* Selected connection — an explicit button, because a keyboard-only
+          delete is undiscoverable on a line you just clicked. */}
+      {selectedEdge && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-xl bg-[rgba(15,20,28,0.94)] border border-[rgba(129,140,248,0.45)] backdrop-blur-md shadow-lg z-10">
+          <span className="text-[11px] text-[var(--color-text-secondary)] font-mono">
+            {selectedEdge.source} → {selectedEdge.target}
+          </span>
+          <button
+            type="button"
+            onClick={() => removeEdge(selectedEdge.id)}
+            title="Delete connection (Del)"
+            aria-label="Delete connection"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] text-[11px] text-[var(--color-text-muted)] hover:text-red-400 hover:border-red-400/40 transition-colors"
+          >
+            <Trash2 size={12} />
+            Delete
+          </button>
+        </div>
+      )}
 
       {/* Canvas toolbar */}
       <div className="absolute top-3 right-3 flex items-center gap-1.5 p-1.5 rounded-xl bg-[rgba(15,20,28,0.92)] border border-[var(--color-border-subtle)] backdrop-blur-md shadow-lg z-10">

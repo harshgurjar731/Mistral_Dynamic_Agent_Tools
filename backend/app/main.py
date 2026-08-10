@@ -20,7 +20,7 @@ from app.exceptions import (
     conversation_not_found_handler, tool_service_error_handler,
     workflow_error_handler, generic_error_handler,
 )
-from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers
+from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers, connectors
 
 logging.basicConfig(
     level=logging.INFO,
@@ -150,6 +150,7 @@ app.include_router(tools.router, prefix=settings.API_PREFIX)
 app.include_router(uploads.router, prefix=settings.API_PREFIX)
 app.include_router(libraries.router, prefix=settings.API_PREFIX)
 app.include_router(remote_servers.router, prefix=settings.API_PREFIX)
+app.include_router(connectors.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

@@ -1,4 +1,5 @@
 import { api } from './client';
+import type { ConnectorRef } from './connectors';
 
 export interface Agent {
   id: string;
@@ -7,6 +8,11 @@ export interface Agent {
   description?: string;
   instructions?: string;
   tools?: unknown[];
+  /**
+   * Connectors attached to this agent, read back off its `tools` array.
+   * Omitting the field on update keeps them; sending [] detaches them all.
+   */
+  connectors?: ConnectorRef[];
   tier?: string;
   created_at?: string;
   temperature?: number | null;

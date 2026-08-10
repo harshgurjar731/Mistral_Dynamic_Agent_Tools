@@ -14,6 +14,7 @@ import {
   MousePointerSquareDashed,
   PanelLeftClose,
   PanelLeftOpen,
+  Plug,
   Plus,
   RefreshCw,
   Search,
@@ -21,8 +22,8 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react';
-import type { CatalogAgent, CatalogTool } from '../../../api/workflowBuilder';
-import { DRAG_MIME, DRAG_TOOL_HINT, type DragPayload } from './BuilderCanvas';
+import type { CatalogAgent, CatalogConnector, CatalogTool } from '../../../api/workflowBuilder';
+import { DRAG_MIME, DRAG_ATTACH_HINT, type DragPayload } from './BuilderCanvas';
 import { STEP_META } from './graphModel';
 import { getTierConfig } from '../../../components/ui/TierBadge';
 import { cn } from '../../../lib/utils';
@@ -30,6 +31,7 @@ import { cn } from '../../../lib/utils';
 interface Props {
   agents: CatalogAgent[];
   tools: CatalogTool[];
+  connectors: CatalogConnector[];
   isLoading: boolean;
   onRefresh: () => void;
   onCreateAgent: () => void;
@@ -38,9 +40,11 @@ interface Props {
 
 function startDrag(event: React.DragEvent, payload: DragPayload) {
   event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
-  // Tools get a second, payload-free type so the canvas can recognise them
-  // mid-drag and highlight the agents they can attach to.
-  if (payload.kind === 'tool') event.dataTransfer.setData(DRAG_TOOL_HINT, '1');
+  // Tools and connectors get a second, payload-free type so the canvas can
+  // recognise them mid-drag and highlight the agents they can attach to.
+  if (payload.kind === 'tool' || payload.kind === 'connector') {
+    event.dataTransfer.setData(DRAG_ATTACH_HINT, '1');
+  }
   event.dataTransfer.effectAllowed = 'copy';
 }
 
@@ -145,6 +149,7 @@ const TOOL_SOURCE_STYLE: Record<CatalogTool['source'], { label: string; classNam
 export default function BuilderPalette({
   agents,
   tools,
+  connectors,
   isLoading,
   onRefresh,
   onCreateAgent,
@@ -178,6 +183,18 @@ export default function BuilderPalette({
               (t.description ?? '').toLowerCase().includes(needle),
           ),
     [tools, needle],
+  );
+
+  const filteredConnectors = useMemo(
+    () =>
+      !needle
+        ? connectors
+        : connectors.filter(
+            (c) =>
+              c.name.toLowerCase().includes(needle) ||
+              (c.description ?? '').toLowerCase().includes(needle),
+          ),
+    [connectors, needle],
   );
 
   const iconButton =
@@ -353,6 +370,55 @@ export default function BuilderPalette({
           })}
         </Section>
 
+        {/* Connectors — external services Mistral holds credentials for */}
+        <Section
+          title="Connectors"
+          count={filteredConnectors.length}
+          icon={<Plug size={12} />}
+          defaultOpen={filteredConnectors.length > 0}
+        >
+          <p className="flex items-start gap-1.5 text-[9.5px] text-[var(--color-text-muted)] leading-relaxed px-1 pb-1">
+            <MousePointerSquareDashed size={11} className="shrink-0 mt-px" />
+            <span>
+              Drop a connector <strong className="text-[var(--color-text-secondary)]">onto an agent</strong>{' '}
+              to give it access to that service. The agent decides which of the connector's tools
+              to call.
+            </span>
+          </p>
+
+          {!isLoading && filteredConnectors.length === 0 && (
+            <p className="text-[10px] text-[var(--color-text-muted)] px-1 py-2 leading-relaxed">
+              {needle ? 'No connectors match your search.' : 'No connectors registered yet.'}
+            </p>
+          )}
+          {filteredConnectors.map((connector) => (
+            <DragCard
+              key={connector.id}
+              payload={{ kind: 'connector', connector }}
+              accent={STEP_META.connector.accent}
+              icon={<Plug size={12} />}
+              title={connector.name}
+              subtitle={connector.description ?? 'external service'}
+              tooltip={
+                connector.is_authenticated
+                  ? (connector.description ?? connector.name)
+                  : `${connector.name} — not authenticated. Connect it before running.`
+              }
+              badge={
+                !connector.is_authenticated ? (
+                  <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 text-amber-400 bg-amber-400/10 border-amber-400/30">
+                    auth
+                  </span>
+                ) : connector.is_directory ? (
+                  <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 text-indigo-300 bg-indigo-400/10 border-indigo-400/30">
+                    dir
+                  </span>
+                ) : undefined
+              }
+            />
+          ))}
+        </Section>
+
         {/* Logic */}
         <Section title="Logic" icon={<GitBranch size={12} />}>
           <DragCard
@@ -376,8 +442,8 @@ export default function BuilderPalette({
 
       <div className="px-3 py-2 border-t border-[var(--color-border-subtle)] shrink-0">
         <p className="text-[9.5px] text-[var(--color-text-muted)] leading-relaxed">
-          Agents and logic become steps on the canvas. Tools attach to an agent. Connect steps by
-          dragging from the dot at the bottom of a card.
+          Agents and logic become steps on the canvas. Tools and connectors attach to an agent.
+          Connect steps by dragging from the dot at the bottom of a card.
         </p>
       </div>
     </aside>

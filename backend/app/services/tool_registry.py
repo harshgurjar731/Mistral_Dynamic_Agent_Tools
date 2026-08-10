@@ -138,14 +138,22 @@ def get_mcp_published_tools() -> dict[str, str]:
     return _mcp_published_tools
 
 
-def get_tools(tool_keys: List[str], document_library_ids: List[str] | None = None) -> List[dict]:
+def get_tools(
+    tool_keys: List[str],
+    document_library_ids: List[str] | None = None,
+    connectors: List[dict] | None = None,
+) -> List[dict]:
     """Resolve a list of tool key names into their full tool definitions.
-    
+
     Handles document_library specially:
     - If `document_library_ids` is provided and 'document_library' is in tool_keys,
       builds the proper {type: document_library, library_ids: [...]} spec.
     - Also supports encoded keys like 'document_library:lib-id-1,lib-id-2'
       where library IDs are embedded in the key itself.
+
+    `connectors` are Mistral Connectors (MCP servers registered with Mistral).
+    They ride in the same array as everything else, as entries of type
+    "connector", and are appended after the named tools.
     """
     tools = []
     for key in tool_keys:
@@ -169,6 +177,11 @@ def get_tools(tool_keys: List[str], document_library_ids: List[str] | None = Non
 
         if lower_key in ALL_TOOLS:
             tools.append(ALL_TOOLS[lower_key])
+
+    if connectors:
+        from app.services.connector_service import build_connector_tool_specs
+        tools.extend(build_connector_tool_specs(connectors))
+
     return tools
 
 

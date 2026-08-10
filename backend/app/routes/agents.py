@@ -13,6 +13,14 @@ from app.services import agent_service
 router = APIRouter(tags=["Agents"])
 
 
+class ConnectorRef(BaseModel):
+    """A connector attached to an agent, with an optional tool allow/deny list."""
+    connector_id: str
+    include: Optional[List[str]] = None
+    exclude: Optional[List[str]] = None
+    requires_confirmation: Optional[List[str]] = None
+
+
 class CreateAgentRequest(BaseModel):
     name: str
     model: str = "mistral-large-latest"
@@ -21,6 +29,7 @@ class CreateAgentRequest(BaseModel):
     tier: Optional[str] = None
     tools: list = []
     document_library_ids: Optional[List[str]] = None
+    connectors: Optional[List[ConnectorRef]] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -37,6 +46,9 @@ class UpdateAgentRequest(BaseModel):
     presence_penalty: Optional[float] = None
     tools: Optional[list] = None
     document_library_ids: Optional[List[str]] = None
+    # Omitted (None) means "leave the attached connectors alone"; an explicit
+    # empty list detaches all of them.
+    connectors: Optional[List[ConnectorRef]] = None
 
 
 @router.get("/agents")

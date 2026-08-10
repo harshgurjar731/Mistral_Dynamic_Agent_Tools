@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer, Library, Check, ChevronDown } from 'lucide-react';
+import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer, Library, Check, ChevronDown, Plug } from 'lucide-react';
 import { agentsApi } from '../../api/agents';
+import { connectorsApi } from '../../api/connectors';
 import { librariesApi } from '../../api/libraries';
 import { orchestratorApi } from '../../api/orchestrator';
 import { uploadsApi } from '../../api/uploads';
@@ -570,6 +571,9 @@ export default function AgentDetail() {
 
                 {/* Document Library Tool */}
                 <DocumentLibrarySection agentId={id!} agent={agent} />
+
+                {/* Mistral Connectors */}
+                <ConnectorsSection agentId={id!} agent={agent} />
               </div>
             </div>
           </motion.div>
@@ -579,6 +583,149 @@ export default function AgentDetail() {
   );
 }
 
+
+/* ─── Mistral Connectors Section ─────────────────────────────────────── */
+
+/**
+ * Attach connectors to this agent.
+ *
+ * A connector rides in the agent's `tools` array as an entry of type
+ * "connector", so the platform runs its tools and holds its credentials. The
+ * model decides which of the connector's tools to call — attaching one grants
+ * the whole set unless it is narrowed on the Connectors page.
+ */
+function ConnectorsSection({ agentId, agent }: { agentId: string; agent: any }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const attachedIds: string[] = (agent.connectors || [])
+    .map((c: any) => c?.connector_id)
+    .filter(Boolean);
+
+  const { data, isLoading } = useQuery({
+    queryKey: QK.connectors(),
+    queryFn: () => connectorsApi.list().then((r) => r.data),
+  });
+
+  const available = data?.items ?? [];
+
+  const saveMut = useMutation({
+    // Only `connectors` is sent: the backend leaves `tools` untouched when the
+    // key is absent, so attaching a connector cannot clobber the agent's tools.
+    mutationFn: (ids: string[]) =>
+      agentsApi.update(agentId, {
+        connectors: ids.map((connector_id) => ({ connector_id })),
+      } as any),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+      qc.invalidateQueries({ queryKey: QK.agents() });
+      qc.invalidateQueries({ queryKey: QK.builderCatalog() });
+    },
+  });
+
+  const toggle = (connectorId: string) => {
+    const next = attachedIds.includes(connectorId)
+      ? attachedIds.filter((x) => x !== connectorId)
+      : [...attachedIds, connectorId];
+    saveMut.mutate(next);
+  };
+
+  const attached = available.filter((c) => attachedIds.includes(c.id));
+
+  return (
+    <div className="pt-4 border-t border-[var(--color-border-subtle)]">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Plug size={14} className="text-emerald-400" />
+          <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider font-medium">
+            Connectors
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-white transition-colors"
+        >
+          {open ? 'Done' : 'Manage'}
+          <ChevronDown size={11} className={cn('transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
+
+      {!open && (
+        attached.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {attached.map((c) => (
+              <span
+                key={c.id}
+                title={c.is_authenticated ? c.description : `${c.name} — not connected`}
+                className={cn(
+                  'px-2 py-1 rounded border text-[10px] font-mono',
+                  c.is_authenticated
+                    ? 'bg-emerald-400/10 border-emerald-400/25 text-emerald-300'
+                    : 'bg-amber-400/10 border-amber-400/25 text-amber-300',
+                )}
+              >
+                {c.name}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--color-text-muted)] italic">No connectors attached.</p>
+        )
+      )}
+
+      {open && (
+        <div className="space-y-1.5">
+          {isLoading && (
+            <p className="text-xs text-[var(--color-text-muted)]">Loading connectors…</p>
+          )}
+          {!isLoading && available.length === 0 && (
+            <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+              No connectors registered. Add one from the Connectors page.
+            </p>
+          )}
+          {available.map((c) => {
+            const isOn = attachedIds.includes(c.id);
+            return (
+              <button
+                key={c.id}
+                onClick={() => toggle(c.id)}
+                disabled={saveMut.isPending}
+                className={cn(
+                  'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg border text-left transition-colors disabled:opacity-50',
+                  isOn
+                    ? 'border-emerald-400/30 bg-emerald-400/8'
+                    : 'border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-hover)]',
+                )}
+              >
+                <div
+                  className={cn(
+                    'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0',
+                    isOn
+                      ? 'bg-emerald-400 border-emerald-400'
+                      : 'border-[var(--color-border-subtle)]',
+                  )}
+                >
+                  {isOn && <Check size={9} className="text-black" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-white truncate">{c.name}</p>
+                  {c.description && (
+                    <p className="text-[10px] text-[var(--color-text-muted)] truncate">
+                      {c.description}
+                    </p>
+                  )}
+                </div>
+                {!c.is_authenticated && (
+                  <span className="text-[9px] text-amber-400 shrink-0">not connected</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ─── Document Library Tool Section ──────────────────────────────────── */
 
@@ -619,7 +766,9 @@ function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: an
   // Build full tool list: keep non-document_library tools + optionally add document_library
   const buildToolKeys = (): string[] => {
     const existing = (agent.tools || [])
-      .filter((t: any) => t?.type !== 'document_library')
+      // Connectors are carried over by the backend when `connectors` is
+      // omitted; emitting them here as a tool key would be meaningless.
+      .filter((t: any) => t?.type !== 'document_library' && t?.type !== 'connector')
       .map((t: any) => {
         if (typeof t === 'string') return t;
         if (t?.function?.name) return t.function.name;

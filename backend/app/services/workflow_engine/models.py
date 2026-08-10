@@ -13,6 +13,7 @@ from enum import Enum
 class StepType(str, Enum):
     AGENT = "agent"
     TOOL = "tool"
+    CONNECTOR = "connector"
     CONDITION = "condition"
     TRANSFORM = "transform"
 
@@ -52,6 +53,8 @@ class WorkflowStep(BaseModel):
     config: dict = Field(default_factory=dict)
     # For agent steps: {"agent_id": "...", "query_template": "..."} or {"model": "...", "instructions": "..."}
     # For tool steps: {"tool_name": "...", "arguments_template": {}}
+    # For connector steps: {"connector_id": "...", "connector_name": "...",
+    #                       "tool_name": "...", "arguments": {}, "credentials_name": "..."}
     # For condition steps: {"expression": "...", "true_step": "...", "false_step": "..."}
     # For transform steps: {"transform_code": "..."}
     next_steps: list[str] = Field(default_factory=list)
@@ -225,6 +228,9 @@ class CatalogAgent(BaseModel):
     description: Optional[str] = None
     tier: Optional[str] = None
     tools: list[str] = Field(default_factory=list)
+    # Connector ids attached to this agent — the canvas badges them so it is
+    # obvious which agents can already reach an external service.
+    connectors: list[str] = Field(default_factory=list)
 
 
 class CatalogTool(BaseModel):
@@ -237,9 +243,22 @@ class CatalogTool(BaseModel):
     source: str = "dynamic"   # "native" | "dynamic" | "builtin"
 
 
+class CatalogConnector(BaseModel):
+    """A Mistral Connector available to drop onto the builder canvas."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    icon_url: Optional[str] = None
+    is_directory: bool = False
+    is_authenticated: bool = False
+    active: bool = True
+    tools: list[CatalogTool] = Field(default_factory=list)
+
+
 class BuilderCatalogResponse(BaseModel):
     """Everything the builder palette needs, in one round trip."""
     agents: list[CatalogAgent] = Field(default_factory=list)
     tools: list[CatalogTool] = Field(default_factory=list)
+    connectors: list[CatalogConnector] = Field(default_factory=list)
     models: list[str] = Field(default_factory=list)
     tiers: list[str] = Field(default_factory=list)

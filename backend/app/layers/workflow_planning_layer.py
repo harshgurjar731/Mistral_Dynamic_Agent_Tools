@@ -63,7 +63,7 @@ class WorkflowPlanningLayer(Layer):
         from app.services.tool_registry import refresh_dynamic_tools, get_tools
         from app.services.workflow_engine.engine import save_workflow
         from app.services.workflow_engine.models import WorkflowDefinition
-        from app.services import agent_service
+        from app.services import agent_service, connector_service
 
         goal = ctx.query
         client = ctx.client
@@ -85,16 +85,32 @@ class WorkflowPlanningLayer(Layer):
                     pass
                 return []
 
-            # ── PARALLEL: fetch tools, agents, and workflows concurrently ──
-            existing_tools, agents_resp, existing_workflows = await asyncio.gather(
+            # ── PARALLEL: fetch tools, agents, workflows and connectors ──
+            (
+                existing_tools,
+                agents_resp,
+                existing_workflows,
+                (connector_descriptions, connector_ids),
+            ) = await asyncio.gather(
                 tool_resolver.list_tools(),
                 agent_service.list_agents(client, page=0, page_size=100),
                 _fetch_workflows(),
+                connector_service.describe_for_prompt(),
             )
 
             existing_tool_names = [t.get("name", "") for t in existing_tools]
             all_agents = [
-                {"id": a["id"], "name": a["name"], "tier": a.get("tier", "foundation"), "instructions": a.get("instructions", "")}
+                {
+                    "id": a["id"],
+                    "name": a["name"],
+                    "tier": a.get("tier", "foundation"),
+                    "instructions": a.get("instructions", ""),
+                    "connectors": [
+                        ref["connector_id"]
+                        for ref in (a.get("connectors") or [])
+                        if ref.get("connector_id")
+                    ],
+                }
                 for a in agents_resp.get("items", [])
             ]
 
@@ -113,6 +129,7 @@ class WorkflowPlanningLayer(Layer):
                             existing_domain_agents=json.dumps(domain_agents, indent=2),
                             existing_usecase_agents=json.dumps(usecase_agents, indent=2),
                             existing_tools=json.dumps(existing_tool_names, indent=2),
+                            existing_connectors=connector_descriptions,
                             existing_workflows=json.dumps(existing_workflows, indent=2),
                             goal=goal,
                         ),
@@ -205,6 +222,9 @@ class WorkflowPlanningLayer(Layer):
                         "model": map_model_name(agent_spec.get("model", "mistral-large-latest")),
                         "tier": agent_spec.get("tier", "foundation"),
                         "tools": agent_spec.get("tools", []),
+                        # What the agent already has attached in Mistral, not
+                        # what this plan asked for — reuse never re-attaches.
+                        "connectors": existing_agent.get("connectors", []),
                         "description": agent_spec.get("description", ""),
                         "output_contract": agent_spec.get("output_contract", ""),
                         "output_contract_detail": agent_spec.get("output_contract_detail", ""),
@@ -225,7 +245,14 @@ class WorkflowPlanningLayer(Layer):
                     agent_name = agent_spec.get("agent_name", agent_spec.get("name", "WorkflowAgent"))
                     async with agent_semaphore:
                         tool_keys = agent_spec.get("tools", [])
-                        tool_definitions = get_tools(tool_keys)
+                        # Ignore any connector id the model did not get from the
+                        # inventory — an unknown id fails agent creation outright.
+                        agent_connectors = [
+                            {"connector_id": cid}
+                            for cid in (agent_spec.get("connectors") or [])
+                            if cid in connector_ids
+                        ]
+                        tool_definitions = get_tools(tool_keys, connectors=agent_connectors)
 
                         instructions = agent_spec.get(
                             "agent_instructions",
@@ -261,6 +288,7 @@ class WorkflowPlanningLayer(Layer):
                             "model": map_model_name(agent_spec.get("model", "mistral-large-latest")),
                             "tier": agent_spec.get("tier", "foundation"),
                             "tools": tool_keys,
+                            "connectors": [c["connector_id"] for c in agent_connectors],
                             "description": agent_spec.get("description", ""),
                             "output_contract": agent_spec.get("output_contract", ""),
                             "output_contract_detail": agent_spec.get("output_contract_detail", ""),
@@ -291,6 +319,7 @@ class WorkflowPlanningLayer(Layer):
                         "role": "user",
                         "content": WORKFLOW_DAG_USER_PROMPT.format(
                             agents_json=json.dumps(created_agents, indent=2),
+                            existing_connectors=connector_descriptions,
                             goal=goal,
                             requirements_json=json.dumps(requirements, indent=2),
                         ),

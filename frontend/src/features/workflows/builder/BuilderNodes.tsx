@@ -9,7 +9,7 @@
 
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { AlertTriangle, Cpu, Flag, GitBranch, Shuffle, Wrench, XCircle } from 'lucide-react';
+import { AlertTriangle, Cpu, Flag, GitBranch, Plug, Shuffle, Wrench, XCircle } from 'lucide-react';
 import type { ValidationIssue, WorkflowStep } from '../../../api/workflowBuilder';
 import { STEP_META } from './graphModel';
 import { getTierConfig } from '../../../components/ui/TierBadge';
@@ -23,10 +23,12 @@ interface NodeData extends Record<string, unknown> {
   hasWarning: boolean;
   /** Tools bound to this step's agent on Mistral (agent steps only). */
   agentTools?: string[];
+  /** Connector names attached to this step's agent (agent steps only). */
+  agentConnectors?: string[];
   /** The bound agent id is not in the catalog — probably deleted on Mistral. */
   agentMissing?: boolean;
-  /** A tool is being dragged over this node. */
-  isToolDropTarget?: boolean;
+  /** A tool or connector is being dragged over this node. */
+  isAttachTarget?: boolean;
 }
 
 const HANDLE_STYLE: React.CSSProperties = {
@@ -82,9 +84,9 @@ function NodeShell({
   children,
   customSourceHandles,
 }: ShellProps) {
-  const { step, isEntry, hasError, hasWarning, isToolDropTarget } = data;
+  const { step, isEntry, hasError, hasWarning, isAttachTarget } = data;
 
-  const borderColor = isToolDropTarget
+  const borderColor = isAttachTarget
     ? '#f472b6'
     : hasError
       ? 'rgba(248,113,113,0.75)'
@@ -98,13 +100,13 @@ function NodeShell({
     <div
       className={cn(
         'rounded-xl backdrop-blur-md bg-[rgba(13,18,30,0.92)] transition-all duration-200 overflow-hidden',
-        selected || isToolDropTarget ? 'border-2' : 'border',
+        selected || isAttachTarget ? 'border-2' : 'border',
       )}
       style={{
         borderColor,
         width: '100%',
         height: '100%',
-        boxShadow: isToolDropTarget
+        boxShadow: isAttachTarget
           ? '0 0 0 4px rgba(244,114,182,0.22), 0 14px 34px rgba(0,0,0,0.6)'
           : selected
             ? `0 0 0 3px rgba(${glow},0.14), 0 14px 34px rgba(0,0,0,0.6)`
@@ -204,6 +206,8 @@ export const BuilderAgentNode = memo(function BuilderAgentNode({
   const tierCfg = getTierConfig(tier ?? undefined);
   const tools = nodeData.agentTools ?? [];
   const visibleTools = tools.slice(0, 3);
+  const connectors = nodeData.agentConnectors ?? [];
+  const visibleConnectors = connectors.slice(0, 2);
 
   return (
     <NodeShell
@@ -222,7 +226,7 @@ export const BuilderAgentNode = memo(function BuilderAgentNode({
         <Wrench size={9} className="text-[var(--color-text-muted)] shrink-0" />
         {tools.length === 0 ? (
           <span className="text-[9px] text-[var(--color-text-muted)] italic">
-            {nodeData.isToolDropTarget ? 'drop to attach' : 'no tools'}
+            {nodeData.isAttachTarget ? 'drop to attach' : 'no tools'}
           </span>
         ) : (
           <>
@@ -243,6 +247,36 @@ export const BuilderAgentNode = memo(function BuilderAgentNode({
           </>
         )}
       </div>
+
+      {/* Connectors the agent may reach. Same binding, separate row so the
+          external-service reach of an agent is readable at a glance. */}
+      {(connectors.length > 0 || nodeData.isAttachTarget) && (
+        <div className="flex items-center gap-1 flex-wrap">
+          <Plug size={9} className="text-[var(--color-text-muted)] shrink-0" />
+          {connectors.length === 0 ? (
+            <span className="text-[9px] text-[var(--color-text-muted)] italic">
+              no connectors
+            </span>
+          ) : (
+            <>
+              {visibleConnectors.map((name) => (
+                <span
+                  key={name}
+                  title={name}
+                  className="px-1 py-px rounded bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.25)] text-[8.5px] font-mono text-[#6ee7b7] max-w-[74px] truncate"
+                >
+                  {name}
+                </span>
+              ))}
+              {connectors.length > visibleConnectors.length && (
+                <span className="text-[8.5px] text-[var(--color-text-muted)]">
+                  +{connectors.length - visibleConnectors.length}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {tier && (
         <span
@@ -288,6 +322,38 @@ export const BuilderToolNode = memo(function BuilderToolNode({ data, selected }:
       >
         direct call
       </span>
+    </NodeShell>
+  );
+});
+
+/* ── Connector ──────────────────────────────────────────────────────────── */
+
+export const BuilderConnectorNode = memo(function BuilderConnectorNode({
+  data,
+  selected,
+}: NodeProps) {
+  const nodeData = data as NodeData;
+  const cfg = nodeData.step.config ?? {};
+  const meta = STEP_META.connector;
+  const args = cfg.arguments as Record<string, unknown> | undefined;
+  const argCount = args ? Object.keys(args).length : 0;
+
+  return (
+    <NodeShell
+      data={nodeData}
+      selected={selected}
+      icon={<Plug size={12} />}
+      accent={meta.accent}
+      glow={meta.glow}
+      typeLabel="Connector"
+    >
+      <Field
+        label="service"
+        value={(cfg.connector_name as string) || (cfg.connector_id as string)}
+        mono
+      />
+      <Field label="tool" value={(cfg.tool_name as string) || 'not set'} mono />
+      <Field label="args" value={argCount > 0 ? `${argCount} mapped` : 'none'} />
     </NodeShell>
   );
 });

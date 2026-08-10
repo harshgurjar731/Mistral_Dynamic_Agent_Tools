@@ -39,6 +39,7 @@ def _parse_agent_config(raw_text: str) -> dict:
     config.setdefault("agent_name", "Dynamic Agent")
     config.setdefault("model", "mistral-large-latest")
     config.setdefault("tools", [])
+    config.setdefault("connectors", [])
     config.setdefault("temperature", 0.5)
     config.setdefault("description", "Dynamically created agent")
     config.setdefault("agent_instructions", "")
@@ -99,9 +100,12 @@ class AgentResolverLayer(Layer):
             get_tools,
             AVAILABLE_TOOL_KEYS,
         )
+        from app.services import connector_service
 
         # ── Step 1: Analyse query ───────────────────────────────────────
         ctx.emit("status", "Analysing your query…")
+
+        connector_descriptions, connector_ids = await connector_service.describe_for_prompt()
 
         try:
             result = ctx.client.chat.complete(
@@ -113,6 +117,8 @@ class AgentResolverLayer(Layer):
                         "content": ORCHESTRATOR_USER_PROMPT.format(
                             tool_descriptions=get_tool_descriptions(),
                             tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
+                            connector_descriptions=connector_descriptions,
+                            connector_ids=json.dumps(connector_ids),
                             user_query=ctx.query,
                         ),
                     },
@@ -143,6 +149,7 @@ class AgentResolverLayer(Layer):
             "agent_name": agent_config["agent_name"],
             "model": agent_config["model"],
             "tools": agent_config["tools"],
+            "connectors": agent_config.get("connectors", []),
             "tier": agent_config.get("tier", "foundation"),
         }))
 
@@ -154,7 +161,20 @@ class AgentResolverLayer(Layer):
         # ── Step 2: Create the dynamic agent ────────────────────────────
         ctx.emit("status", f"Creating {agent_config['agent_name']}…")
 
-        tool_definitions = get_tools(agent_config["tools"])
+        # Drop any connector the model invented or that is not currently
+        # attachable — an unknown id would fail agent creation outright.
+        chosen_connectors = [
+            {"connector_id": cid}
+            for cid in (agent_config.get("connectors") or [])
+            if cid in connector_ids
+        ]
+        if chosen_connectors:
+            logger.info(
+                "Attaching %d connector(s) to dynamic agent: %s",
+                len(chosen_connectors), [c["connector_id"] for c in chosen_connectors],
+            )
+
+        tool_definitions = get_tools(agent_config["tools"], connectors=chosen_connectors)
         instructions_text = str(agent_config.get("agent_instructions", "") or "")
         logger.info("Creating agent with instructions (%d chars): %.300s", len(instructions_text), instructions_text)
 

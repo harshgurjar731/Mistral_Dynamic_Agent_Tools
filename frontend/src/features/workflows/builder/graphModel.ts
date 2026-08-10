@@ -13,6 +13,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { MarkerType } from '@xyflow/react';
 import type {
   CatalogAgent,
+  CatalogConnector,
   NodeLayout,
   StepType,
   ValidationIssue,
@@ -23,9 +24,11 @@ import type {
 /* ── Node geometry ──────────────────────────────────────────────────────── */
 
 export const NODE_SIZE: Record<StepType, { width: number; height: number }> = {
-  // Agents are taller than the rest: they carry a row of attached tool chips.
-  agent: { width: 260, height: 156 },
+  // Agents are taller than the rest: they carry rows of attached tool and
+  // connector chips.
+  agent: { width: 260, height: 178 },
   tool: { width: 260, height: 128 },
+  connector: { width: 260, height: 128 },
   condition: { width: 260, height: 126 },
   transform: { width: 260, height: 112 },
 };
@@ -45,6 +48,12 @@ export const STEP_META: Record<
     accent: '#f472b6',
     glow: '244,114,182',
     hint: 'Calls a single tool with templated arguments',
+  },
+  connector: {
+    label: 'Connector',
+    accent: '#34d399',
+    glow: '52,211,153',
+    hint: 'Calls one tool on an external service registered with Mistral',
   },
   condition: {
     label: 'Condition',
@@ -123,6 +132,18 @@ export function makeAgentStep(agent: CatalogAgent, id: string): WorkflowStep {
 // older definitions still render and execute; the builder just never creates
 // new ones.
 
+// NOTE: there is deliberately no makeConnectorStep, for the same reason there
+// is no makeToolStep.
+//
+// A connector is a capability, not a stage: attaching one to an agent lets the
+// model decide which of its tools to call and with what arguments, which is
+// almost always what you want. So connectors attach to agents exactly as tools
+// do, and the palette drags onto an agent rather than onto the canvas.
+//
+// The `connector` step type still exists and still executes — the AI planner
+// emits one for a deterministic call whose arguments are already known, and
+// older workflows may contain them. The inspector keeps them editable.
+
 export function makeLogicStep(type: 'condition' | 'transform', id: string): WorkflowStep {
   if (type === 'condition') {
     return {
@@ -183,20 +204,24 @@ export interface BuildGraphOptions {
    * agent — the catalog is the only thing that reflects reality.
    */
   agentsById?: Record<string, CatalogAgent>;
-  /** Step id being hovered as a tool drop target. */
-  toolDropTargetId?: string | null;
+  /** Connectors by id, for resolving an agent's attached connector names. */
+  connectorsById?: Record<string, CatalogConnector>;
+  /** Step id being hovered as a drop target for a tool or connector. */
+  attachTargetId?: string | null;
+  /** Edge id currently picked, so it can be highlighted and deleted. */
+  selectedEdgeId?: string | null;
   /** Step ids currently executing/completed, when previewing a run. */
   highlight?: Record<string, string>;
 }
 
-/** Step ids an agent-bound tool can legally be dropped onto. */
+/** Step ids an agent attachment (tool or connector) can legally be dropped onto. */
 export function isAgentStep(step: WorkflowStep | undefined): boolean {
   return step?.type === 'agent';
 }
 
 /**
  * The agent step at a canvas position, or null. Used to decide whether a tool
- * being dragged is over a valid target.
+ * or connector being dragged is over a valid target.
  */
 export function agentStepAt(
   definition: WorkflowDefinition,
@@ -260,8 +285,12 @@ export function definitionToFlow(
         hasError: stepIssues.some((i) => i.severity === 'error'),
         hasWarning: stepIssues.some((i) => i.severity === 'warning'),
         agentTools: agent?.tools ?? [],
+        // Resolved to names for display; ids are meaningless on a card.
+        agentConnectors: (agent?.connectors ?? []).map(
+          (cid) => options.connectorsById?.[cid]?.name ?? cid,
+        ),
         agentMissing: Boolean(agentId) && options.agentsById !== undefined && !agent,
-        isToolDropTarget: options.toolDropTargetId === step.id,
+        isAttachTarget: options.attachTargetId === step.id,
         highlight: options.highlight?.[step.id],
       },
     };
@@ -274,14 +303,16 @@ export function definitionToFlow(
     // Regular continuations
     for (const target of step.next_steps ?? []) {
       if (!stepById.has(target)) continue;
-      edges.push(makeEdge(step, target, 'next'));
+      edges.push(makeEdge(step, target, 'next', options.selectedEdgeId));
     }
     // Condition branches carry their own labels and colours
     if (step.type === 'condition') {
       for (const branch of ['true_step', 'false_step'] as const) {
         const target = step.config?.[branch];
         if (typeof target !== 'string' || !target || !stepById.has(target)) continue;
-        edges.push(makeEdge(step, target, branch === 'true_step' ? 'true' : 'false'));
+        edges.push(
+          makeEdge(step, target, branch === 'true_step' ? 'true' : 'false', options.selectedEdgeId),
+        );
       }
     }
   }
@@ -297,26 +328,40 @@ const EDGE_STYLE: Record<EdgeKind, { stroke: string; label?: string }> = {
   false: { stroke: 'rgba(248,113,113,0.85)', label: 'false' },
 };
 
-function makeEdge(step: WorkflowStep, target: string, kind: EdgeKind): Edge {
+function makeEdge(
+  step: WorkflowStep,
+  target: string,
+  kind: EdgeKind,
+  selectedEdgeId?: string | null,
+): Edge {
   const style = EDGE_STYLE[kind];
   const isParallel = Boolean(step.parallel_group);
+  const id = `${step.id}->${target}:${kind}`;
+  const selected = selectedEdgeId === id;
+  // A selected connection is brightened and thickened rather than recoloured,
+  // so the true/false branch colours still read while it is picked.
+  const stroke = selected ? '#818cf8' : style.stroke;
+
   return {
-    id: `${step.id}->${target}:${kind}`,
+    id,
     source: step.id,
     target,
     type: 'smoothstep',
     animated: isParallel,
+    selected,
     label: style.label,
-    labelStyle: { fill: style.stroke, fontSize: 10, fontWeight: 700 },
+    labelStyle: { fill: stroke, fontSize: 10, fontWeight: 700 },
     labelBgStyle: { fill: '#0b1018' },
     labelBgPadding: [4, 2] as [number, number],
     labelBgBorderRadius: 4,
     style: {
-      stroke: style.stroke,
-      strokeWidth: 1.6,
+      stroke,
+      strokeWidth: selected ? 3 : 1.6,
       strokeDasharray: isParallel ? '6 4' : undefined,
     },
-    markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke, width: 16, height: 16 },
+    // Widens the invisible hit area: a 1.6px line is near-impossible to click.
+    interactionWidth: 18,
+    markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
     data: { kind },
   };
 }

@@ -10,11 +10,47 @@ The generated file:
   - Uses determinism-safe helpers (workflow.now(), workflow.uuid4())
   - Sets execution_timeout=timedelta(hours=24) for long-running workflows
   - Supports parallel execution groups via asyncio.gather()
+  - Declares a connector slot per referenced Mistral Connector, so connector
+    calls resolve credentials through the platform instead of this backend
 """
 
 import json
+import re
 from datetime import timedelta
 from app.services.workflow_engine.models import WorkflowDefinition, StepType
+
+
+# ── Connector slots ─────────────────────────────────────────────────────────
+
+
+def _connector_slot_key(step) -> tuple[str, str]:
+    """Identify the connector slot a step needs: (connector name, credentials name).
+
+    Credentials are part of the key because two steps hitting the same
+    connector with different named credentials are two distinct slots as far as
+    the Workflows SDK is concerned.
+    """
+    cfg = step.config or {}
+    name = cfg.get("connector_name") or cfg.get("connector_id") or ""
+    return str(name), str(cfg.get("credentials_name") or "")
+
+
+def _slot_var(name: str, credentials_name: str) -> str:
+    """Python identifier for a connector slot."""
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", f"{name}_{credentials_name}".strip("_")).strip("_").lower()
+    return f"_connector_{slug or 'default'}"
+
+
+def _collect_connector_slots(workflow_def: WorkflowDefinition) -> dict[tuple[str, str], str]:
+    """Map every distinct connector slot in the DAG to its generated variable name."""
+    slots: dict[tuple[str, str], str] = {}
+    for step in workflow_def.steps:
+        if step.type != StepType.CONNECTOR:
+            continue
+        key = _connector_slot_key(step)
+        if key[0] and key not in slots:
+            slots[key] = _slot_var(*key)
+    return slots
 
 
 def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
@@ -26,6 +62,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
     same `parallel_group` value are executed concurrently via asyncio.gather().
     """
     lines: list[str] = []
+    connector_slots = _collect_connector_slots(workflow_def)
 
     # ── Imports ──────────────────────────────────────────────────────────────
     lines += [
@@ -38,6 +75,19 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "from pydantic import BaseModel",
         "import mistralai.workflows as workflows",
         "from mistralai.workflows import workflow",
+    ]
+
+    if connector_slots:
+        lines += [
+            "from mistralai.workflows import Depends",
+            "from mistralai.workflows.plugins.mistralai.connectors import (",
+            "    ToolCallClient,",
+            "    connector,",
+            "    uses_connectors,",
+            ")",
+        ]
+
+    lines += [
         "",
         "# Ensure backend path is available for step_runners",
         "backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), \"../backend\"))",
@@ -48,6 +98,25 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "from app.services.workflow_engine.models import WorkflowStep, StepType",
         "",
     ]
+
+    # ── Connector slots ──────────────────────────────────────────────────────
+    # Declared at module scope so the SDK can discover them when the worker
+    # imports this file, before any workflow is instantiated.
+    if connector_slots:
+        lines += [
+            "from app.services.workflow_engine.step_runners import resolve_connector_arguments",
+            "from app.services.connector_service import flatten_tool_result",
+            "",
+            "# ── Connector slots (credentials resolved by the platform) ──────────",
+        ]
+        for (name, credentials_name), var in connector_slots.items():
+            if credentials_name:
+                lines.append(
+                    f"{var} = connector({json.dumps(name)}, credentials_name={json.dumps(credentials_name)})"
+                )
+            else:
+                lines.append(f"{var} = connector({json.dumps(name)})")
+        lines.append("")
 
     # ── Input model ──────────────────────────────────────────────────────────
     lines += [
@@ -68,6 +137,35 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         # converted to Python None/True/False (embedding raw JSON as a Python
         # dict literal would cause NameError on 'null').
         step_json_repr = repr(step_json)  # safely quoted string for embedding
+
+        slot_var = connector_slots.get(_connector_slot_key(step)) if step.type == StepType.CONNECTOR else None
+
+        if slot_var:
+            # Connector activities cannot delegate to run_step(): the SDK
+            # injects the ToolCallClient through the activity signature, and
+            # that client is what carries the caller's credentials. Only the
+            # argument templating is shared with the local runner.
+            tool_name = (step.config or {}).get("tool_name", "")
+            lines += [
+                f"@workflows.activity(",
+                f"    start_to_close_timeout=timedelta(seconds={timeout_sec}),",
+                f"    retry_policy_max_attempts=3,",
+                f")",
+                f"async def run_{workflow_def.name}_{step.id}(",
+                f"    variables: Dict[str, Any],",
+                f"    _client: ToolCallClient = Depends({slot_var}),",
+                f") -> Any:",
+                f"    \"\"\"Activity for step: {step.id} (connector)\"\"\"",
+                f"    step_def = WorkflowStep.model_validate(json.loads({step_json_repr}))",
+                f"    arguments = resolve_connector_arguments(step_def, variables)",
+                f"    result = await _client.call_tool(",
+                f"        tool_name={json.dumps(tool_name)},",
+                f"        arguments=arguments,",
+                f"    )",
+                f"    return flatten_tool_result(result)",
+                "",
+            ]
+            continue
 
         lines += [
             f"@workflows.activity(",
@@ -98,13 +196,28 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
     display_name = workflow_def.name.replace("_", " ").title()
     description = (workflow_def.description or display_name).replace('"', "'")
 
-    lines += [
-        f"@workflows.workflow.define(",
+    define_args = [
         f"    name=\"{workflow_def.name}\",",
         f"    workflow_display_name=\"{display_name}\",",
         f"    workflow_description=\"{description}\",",
         f"    execution_timeout=timedelta(hours=24),",
+    ]
+    # on_behalf_of runs the workflow under the triggering user's identity, so a
+    # connector resolves *their* credentials rather than the worker's. Only set
+    # when connectors are involved — it changes who a deployment runs as.
+    if connector_slots:
+        define_args.append("    on_behalf_of=True,")
+
+    lines += [
+        f"@workflows.workflow.define(",
+        *define_args,
         f")",
+    ]
+
+    if connector_slots:
+        lines.append(f"@uses_connectors({', '.join(connector_slots.values())})")
+
+    lines += [
         f"class {class_name}:",
         f"    \"\"\"Durable workflow: {description}\"\"\"",
         "",

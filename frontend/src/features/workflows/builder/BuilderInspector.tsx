@@ -22,12 +22,16 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import type {
   CatalogAgent,
+  CatalogConnector,
   CatalogTool,
   InputField,
   WorkflowStep,
 } from '../../../api/workflowBuilder';
+import { connectorsApi } from '../../../api/connectors';
+import { QK } from '../../../lib/queryClient';
 import { useBuilderStore } from './useBuilderStore';
 import { STEP_META, availableVariables, unresolvedPlaceholders } from './graphModel';
 import { cn } from '../../../lib/utils';
@@ -35,11 +39,16 @@ import { cn } from '../../../lib/utils';
 interface Props {
   agents: CatalogAgent[];
   tools: CatalogTool[];
+  connectors: CatalogConnector[];
   tiers: string[];
   /** Replace the tool set on a Mistral agent. Attach and detach both go through here. */
   onSetAgentTools: (agentId: string, toolNames: string[]) => void;
+  /** Replace the connector set on a Mistral agent. Same contract as tools. */
+  onSetAgentConnectors: (agentId: string, connectorIds: string[]) => void;
   /** An agent tool update is in flight. */
   toolsPending: boolean;
+  /** An agent connector update is in flight. */
+  connectorsPending: boolean;
 }
 
 const inputClass =
@@ -261,16 +270,22 @@ function AgentStepEditor({
   step,
   agents,
   tools,
+  connectors,
   variables,
   onSetAgentTools,
+  onSetAgentConnectors,
   toolsPending,
+  connectorsPending,
 }: {
   step: WorkflowStep;
   agents: CatalogAgent[];
   tools: CatalogTool[];
+  connectors: CatalogConnector[];
   variables: { name: string; origin: string }[];
   onSetAgentTools: (agentId: string, toolNames: string[]) => void;
+  onSetAgentConnectors: (agentId: string, connectorIds: string[]) => void;
   toolsPending: boolean;
+  connectorsPending: boolean;
 }) {
   const updateStepConfig = useBuilderStore((s) => s.updateStepConfig);
   const cfg = step.config ?? {};
@@ -343,7 +358,132 @@ function AgentStepEditor({
         onSetTools={onSetAgentTools}
         pending={toolsPending}
       />
+
+      <AgentConnectorManager
+        agent={agents.find((a) => a.id === cfg.agent_id) ?? null}
+        connectors={connectors}
+        onSetConnectors={onSetAgentConnectors}
+        pending={connectorsPending}
+      />
     </Group>
+  );
+}
+
+/**
+ * Connector attachment for the bound agent — the tool manager's twin.
+ *
+ * Same storage (the agent's `tools` array on Mistral), same blast radius, and
+ * so the same warning. The difference worth surfacing is authentication: an
+ * unauthenticated connector attaches fine and then fails at call time, which is
+ * a far more confusing failure than a missing tool.
+ */
+function AgentConnectorManager({
+  agent,
+  connectors,
+  onSetConnectors,
+  pending,
+}: {
+  agent: CatalogAgent | null;
+  connectors: CatalogConnector[];
+  onSetConnectors: (agentId: string, connectorIds: string[]) => void;
+  pending: boolean;
+}) {
+  const [adding, setAdding] = useState('');
+
+  if (!agent) return null;
+
+  const attached = agent.connectors ?? [];
+  const available = connectors.filter((c) => !attached.includes(c.id));
+  const byId = new Map(connectors.map((c) => [c.id, c]));
+
+  return (
+    <div>
+      <label className={labelClass}>
+        Connectors the agent may reach
+        {pending && <Loader2 size={9} className="inline ml-1.5 animate-spin align-baseline" />}
+      </label>
+
+      {attached.length === 0 ? (
+        <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed mb-2">
+          No connectors attached. This agent cannot reach any external service.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {attached.map((connectorId) => {
+            const connector = byId.get(connectorId);
+            const name = connector?.name ?? connectorId;
+            const unauthenticated = connector && !connector.is_authenticated;
+            return (
+              <span
+                key={connectorId}
+                title={
+                  unauthenticated
+                    ? `${name} — not authenticated; calls will fail at run time`
+                    : name
+                }
+                className={cn(
+                  'group inline-flex items-center gap-1 pl-1.5 pr-1 py-0.5 rounded text-[9.5px] font-mono border',
+                  unauthenticated
+                    ? 'bg-amber-400/10 border-amber-400/25 text-amber-300'
+                    : 'bg-[rgba(52,211,153,0.1)] border-[rgba(52,211,153,0.25)] text-[#6ee7b7]',
+                )}
+              >
+                {name}
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    onSetConnectors(
+                      agent.id,
+                      attached.filter((c) => c !== connectorId),
+                    )
+                  }
+                  title={`Detach ${name}`}
+                  aria-label={`Detach ${name}`}
+                  className="opacity-60 hover:text-red-400 transition-colors disabled:opacity-40"
+                >
+                  <X size={9} />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      <select
+        value={adding}
+        disabled={pending || available.length === 0}
+        onChange={(e) => {
+          const id = e.target.value;
+          if (!id) return;
+          onSetConnectors(agent.id, [...attached, id]);
+          setAdding('');
+        }}
+        className={cn(inputClass, 'font-mono')}
+      >
+        <option value="" className="bg-[#0d121e]">
+          {connectors.length === 0
+            ? '— no connectors registered —'
+            : available.length === 0
+              ? '— all connectors attached —'
+              : '+ attach a connector…'}
+        </option>
+        {available.map((c) => (
+          <option key={c.id} value={c.id} className="bg-[#0d121e]">
+            {c.name}
+            {c.is_authenticated ? '' : ' · not connected'}
+          </option>
+        ))}
+      </select>
+
+      <p className="flex items-start gap-1 text-[9.5px] text-amber-400/90 mt-1.5 leading-relaxed">
+        <AlertTriangle size={10} className="shrink-0 mt-px" />
+        <span>
+          Connectors belong to the agent, not this step — changing them affects every workflow
+          that uses <strong>{agent.name}</strong>.
+        </span>
+      </p>
+    </div>
   );
 }
 
@@ -570,6 +710,200 @@ function ToolStepEditor({
   );
 }
 
+/**
+ * Editor for a connector step — pick the service, pick one of its tools, then
+ * template the arguments.
+ *
+ * The tool list is fetched here rather than shipped in the builder catalog:
+ * expanding every connector's tools would cost one API call per connector on
+ * every builder open, and only the selected one is ever needed.
+ */
+function ConnectorStepEditor({
+  step,
+  connectors,
+  variables,
+}: {
+  step: WorkflowStep;
+  connectors: CatalogConnector[];
+  variables: { name: string; origin: string }[];
+}) {
+  const updateStepConfig = useBuilderStore((s) => s.updateStepConfig);
+  const cfg = step.config ?? {};
+  const connectorId = (cfg.connector_id as string) ?? '';
+  const toolName = (cfg.tool_name as string) ?? '';
+  const args = (cfg.arguments as Record<string, unknown>) ?? {};
+  const credentialsName = (cfg.credentials_name as string) ?? '';
+
+  const [activeArg, setActiveArg] = useState<string | null>(null);
+
+  const connector = connectors.find((c) => c.id === connectorId);
+
+  const { data: toolData, isLoading: toolsLoading } = useQuery({
+    queryKey: QK.connectorTools(connectorId),
+    queryFn: () => connectorsApi.tools(connectorId).then((r) => r.data),
+    enabled: Boolean(connectorId),
+  });
+
+  const connectorTools = toolData?.tools ?? [];
+  const selectedTool = connectorTools.find((t) => t.name === toolName);
+
+  const setArg = (key: string, value: string) =>
+    updateStepConfig(step.id, { arguments: { ...args, [key]: value } });
+
+  return (
+    <Group title="Connector">
+      {connector && !connector.is_authenticated && (
+        <div className="flex items-start gap-1.5 rounded-md px-2 py-1.5 border border-amber-400/25 bg-amber-400/8">
+          <AlertTriangle size={11} className="text-amber-400 shrink-0 mt-px" />
+          <p className="text-[9.5px] text-amber-300 leading-relaxed">
+            <strong>{connector.name}</strong> is not authenticated. This step will fail at run
+            time until credentials are added on the Connectors page.
+          </p>
+        </div>
+      )}
+
+      <div>
+        <label className={labelClass}>Service</label>
+        <select
+          value={connectorId}
+          onChange={(e) => {
+            const picked = connectors.find((c) => c.id === e.target.value);
+            // Changing the service invalidates the tool and its arguments —
+            // they belong to a schema that no longer applies.
+            updateStepConfig(step.id, {
+              connector_id: e.target.value,
+              connector_name: picked?.name ?? '',
+              tool_name: '',
+              arguments: {},
+            });
+          }}
+          className={cn(inputClass, 'font-mono')}
+        >
+          <option value="" className="bg-[#0d121e]">
+            — select a connector —
+          </option>
+          {connectors.map((c) => (
+            <option key={c.id} value={c.id} className="bg-[#0d121e]">
+              {c.name}
+              {c.is_authenticated ? '' : ' (not connected)'}
+            </option>
+          ))}
+        </select>
+        {connector?.description && (
+          <p className="text-[9.5px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+            {connector.description}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label className={labelClass}>Tool</label>
+        {toolsLoading ? (
+          <p className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)] py-1">
+            <Loader2 size={10} className="animate-spin" />
+            Loading tools…
+          </p>
+        ) : (
+          <select
+            value={toolName}
+            disabled={!connectorId}
+            onChange={(e) => {
+              const tool = connectorTools.find((t) => t.name === e.target.value);
+              const seeded: Record<string, string> = {};
+              for (const param of Object.keys(tool?.parameters ?? {})) {
+                seeded[param] = (args[param] as string) ?? `{{${param}}}`;
+              }
+              updateStepConfig(step.id, { tool_name: e.target.value, arguments: seeded });
+            }}
+            className={cn(inputClass, 'font-mono disabled:opacity-40')}
+          >
+            <option value="" className="bg-[#0d121e]">
+              — select a tool —
+            </option>
+            {connectorTools.map((t) => (
+              <option key={t.name} value={t.name} className="bg-[#0d121e]">
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {connectorId && !toolsLoading && connectorTools.length === 0 && (
+          <p className="text-[9.5px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+            No tools listed — the connector may need authenticating, or its server is unreachable.
+          </p>
+        )}
+        {selectedTool?.description && (
+          <p className="text-[9.5px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+            {selectedTool.description}
+          </p>
+        )}
+      </div>
+
+      {selectedTool && Object.keys(selectedTool.parameters ?? {}).length > 0 && (
+        <div>
+          <label className={labelClass}>Arguments</label>
+          <div className="space-y-2">
+            {Object.entries(selectedTool.parameters).map(([param, schema]) => {
+              const required = selectedTool.required?.includes(param);
+              const value = (args[param] as string) ?? '';
+              const info = schema as { type?: string; description?: string } | undefined;
+              return (
+                <div key={param}>
+                  <div className="flex items-baseline gap-1.5 mb-1">
+                    <span className="text-[10px] font-mono text-[var(--color-text-secondary)]">
+                      {param}
+                    </span>
+                    <span className="text-[9px] text-[var(--color-text-muted)]">
+                      {info?.type ?? 'string'}
+                    </span>
+                    {required && <span className="text-[9px] text-red-400">required</span>}
+                  </div>
+                  <input
+                    value={value}
+                    onChange={(e) => setArg(param, e.target.value)}
+                    onFocus={() => setActiveArg(param)}
+                    placeholder={`{{${param}}}`}
+                    title={info?.description}
+                    className={cn(inputClass, 'font-mono')}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          {activeArg && (
+            <VariablePicker
+              variables={variables}
+              onInsert={(token) => setArg(activeArg, `${(args[activeArg] as string) ?? ''}${token}`)}
+            />
+          )}
+        </div>
+      )}
+
+      {selectedTool && Object.keys(selectedTool.parameters ?? {}).length === 0 && (
+        <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+          This tool takes no parameters.
+        </p>
+      )}
+
+      <div>
+        <label className={labelClass}>Credentials</label>
+        <input
+          value={credentialsName}
+          onChange={(e) =>
+            updateStepConfig(step.id, { credentials_name: e.target.value.trim() || null })
+          }
+          placeholder="default"
+          className={cn(inputClass, 'font-mono')}
+        />
+        <p className="text-[9.5px] text-[var(--color-text-muted)] mt-1 leading-relaxed">
+          Name of a stored credential to pin this call to. Leave blank to use the default for
+          whoever triggers the workflow.
+        </p>
+      </div>
+    </Group>
+  );
+}
+
 function ConditionStepEditor({
   step,
   variables,
@@ -657,9 +991,12 @@ function TransformStepEditor({ step }: { step: WorkflowStep }) {
 export default function BuilderInspector({
   agents,
   tools,
+  connectors,
   tiers,
   onSetAgentTools,
+  onSetAgentConnectors,
   toolsPending,
+  connectorsPending,
 }: Props) {
   const definition = useBuilderStore((s) => s.definition);
   const selectedStepId = useBuilderStore((s) => s.selectedStepId);
@@ -815,13 +1152,19 @@ export default function BuilderInspector({
             step={step}
             agents={agents}
             tools={tools}
+            connectors={connectors}
             variables={variables}
             onSetAgentTools={onSetAgentTools}
+            onSetAgentConnectors={onSetAgentConnectors}
             toolsPending={toolsPending}
+            connectorsPending={connectorsPending}
           />
         )}
         {step.type === 'tool' && (
           <ToolStepEditor step={step} tools={tools} variables={variables} />
+        )}
+        {step.type === 'connector' && (
+          <ConnectorStepEditor step={step} connectors={connectors} variables={variables} />
         )}
         {step.type === 'condition' && (
           <ConditionStepEditor step={step} variables={variables} />

@@ -21,7 +21,7 @@ import {
   ArrowLeft, Play, X, Cpu, Wrench, HelpCircle,
   Shuffle, GitBranch, Loader2, Clock, Server,
   Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
-  Copy, EyeOff, Zap, Thermometer, Save, Check, Pencil,
+  Copy, EyeOff, Zap, Thermometer, Save, Check, Pencil, Plug,
 } from 'lucide-react';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
@@ -435,6 +435,98 @@ function ToolNode({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+/**
+ * Connector step — a direct call to one tool on an external service.
+ *
+ * The builder no longer creates these (connectors attach to agents there), but
+ * the AI planner emits them for deterministic calls, so the read-only view has
+ * to render them properly rather than falling back to an unstyled node.
+ */
+function ConnectorNode({ data }: { data: Record<string, unknown> }) {
+  const direction = data.direction as 'TB' | 'LR' | undefined;
+  const isTB = direction === 'TB';
+  const selected = data.selected as boolean;
+  const onClick = data.onClick as () => void;
+  const args = data.args as Record<string, unknown> | undefined;
+
+  return (
+    <div className="relative">
+      {isTB && (
+        <>
+          <Handle
+            type="target"
+            id="args-input"
+            position={Position.Top}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+          <Handle
+            type="source"
+            id="connector-output"
+            position={Position.Bottom}
+            style={{ left: '50%' }}
+            className="!bg-[#090b13] !w-3 !h-3 !border-2 !border-[rgba(255,255,255,0.25)] hover:!bg-[#6366f1] !transition-all !rounded-full !z-10"
+          />
+        </>
+      )}
+
+      <NodeCard
+        icon={<Plug size={13} className="text-white shrink-0" />}
+        title={data.label as string}
+        subtitle={
+          data.toolName
+            ? `${data.connectorName ?? 'connector'} · ${data.toolName}`
+            : (data.connectorName as string)
+        }
+        accentClass="bg-gradient-to-r from-emerald-500 to-teal-600"
+        borderClass="border-emerald-500/80"
+        glowColor="52,211,153"
+        selected={selected}
+        onClick={onClick}
+      >
+        <div className="flex flex-col">
+          {!!data.parallelGroup && (
+            <div className="px-3.5 py-1.5 bg-cyan-500/5 border-b border-white/5 flex items-center gap-1">
+              <Zap size={8} className="text-cyan-400" />
+              <span className="text-[8px] font-mono text-cyan-300">Parallel group</span>
+            </div>
+          )}
+          <PortRow
+            label="Arguments"
+            direction={direction}
+            type="target"
+            handleId="args-input"
+            dotColor="text-emerald-400 bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+            side="left"
+          />
+        </div>
+
+        {typeof args === 'object' && args !== null && Object.keys(args).length > 0 && (
+          <div className="px-3.5 py-2 text-[9px] bg-black/25 flex flex-wrap gap-1 border-t border-white/5">
+            {Object.keys(args).slice(0, 3).map(arg => (
+              <span key={arg} className="px-1 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 font-mono text-white/80">{arg}</span>
+            ))}
+            {Object.keys(args).length > 3 && (
+              <span className="px-1 py-0.5 rounded bg-white/5 text-white/40">+{Object.keys(args).length - 3} more</span>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-col border-t border-white/5">
+          <PortRow
+            label="Service response"
+            direction={direction}
+            type="source"
+            handleId="connector-output"
+            dotColor="text-teal-400 bg-teal-400 shadow-[0_0_8px_rgba(20,184,166,0.5)]"
+            side="right"
+          />
+        </div>
+      </NodeCard>
+    </div>
+  );
+}
+
 function ConditionNode({ data }: { data: Record<string, unknown> }) {
   const direction = data.direction as 'TB' | 'LR' | undefined;
   const isTB = direction === 'TB';
@@ -663,19 +755,20 @@ function TransformNode({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-const NODE_TYPES = { agent: AgentNode, tool: ToolNode, condition: ConditionNode, transform: TransformNode };
+const NODE_TYPES = { agent: AgentNode, tool: ToolNode, connector: ConnectorNode, condition: ConditionNode, transform: TransformNode };
 
 /* ── DAG layout helper ───────────────────────────────────────────────── */
 function getSourceHandleId(stepType: string): string {
   if (stepType === 'agent') return 'outcome-output';
   if (stepType === 'tool') return 'tool-output';
+  if (stepType === 'connector') return 'connector-output';
   if (stepType === 'transform') return 'trans-output';
   return '';
 }
 
 function getTargetHandleId(stepType: string): string {
   if (stepType === 'agent') return 'query-input';
-  if (stepType === 'tool') return 'args-input';
+  if (stepType === 'tool' || stepType === 'connector') return 'args-input';
   if (stepType === 'transform') return 'source-input';
   if (stepType === 'condition') return 'eval-input';
   return '';
@@ -702,6 +795,12 @@ function buildGraph(
       typeSpecific = { agent_id: step.config?.agent_id, queryTemplate: step.config?.query_template, tier: step.tier };
     } else if (step.type === 'tool') {
       typeSpecific = { toolName: step.config?.tool_name, args: step.config?.arguments };
+    } else if (step.type === 'connector') {
+      typeSpecific = {
+        connectorName: step.config?.connector_name ?? step.config?.connector_id,
+        toolName: step.config?.tool_name,
+        args: step.config?.arguments,
+      };
     } else if (step.type === 'condition') {
       typeSpecific = { expression: step.config?.expression };
     } else if (step.type === 'transform') {
@@ -738,7 +837,7 @@ function buildGraph(
       nodeHeight = 280;
     } else if (node.type === 'condition') {
       nodeHeight = 260;
-    } else if (node.type === 'tool') {
+    } else if (node.type === 'tool' || node.type === 'connector') {
       nodeHeight = 220;
     } else if (node.type === 'transform') {
       nodeHeight = 200;
@@ -777,7 +876,7 @@ function buildGraph(
       nodeHeight = 280;
     } else if (node.type === 'condition') {
       nodeHeight = 260;
-    } else if (node.type === 'tool') {
+    } else if (node.type === 'tool' || node.type === 'connector') {
       nodeHeight = 220;
     } else if (node.type === 'transform') {
       nodeHeight = 200;
@@ -1188,7 +1287,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                       className="px-2.5 py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/5 hover:border-white/20 text-xs font-mono text-white/80 transition-all flex items-center gap-1.5 group shrink-0"
                     >
                       <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", 
-                        p.type === 'agent' ? 'bg-indigo-500' : p.type === 'tool' ? 'bg-pink-500' : p.type === 'condition' ? 'bg-amber-500' : 'bg-teal-500'
+                        p.type === 'agent' ? 'bg-indigo-500' : p.type === 'tool' ? 'bg-pink-500' : p.type === 'connector' ? 'bg-emerald-500' : p.type === 'condition' ? 'bg-amber-500' : 'bg-teal-500'
                       )} />
                       <span className="truncate max-w-[120px]">{p.id}</span>
                       <ChevronRight size={10} className="text-white/20 group-hover:text-white/60 transition-transform group-hover:translate-x-0.5" />
@@ -1214,7 +1313,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
                       className="px-2.5 py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/5 hover:border-white/20 text-xs font-mono text-white/80 transition-all flex items-center gap-1.5 group shrink-0"
                     >
                       <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", 
-                        c.type === 'agent' ? 'bg-indigo-500' : c.type === 'tool' ? 'bg-pink-500' : c.type === 'condition' ? 'bg-amber-500' : 'bg-teal-500'
+                        c.type === 'agent' ? 'bg-indigo-500' : c.type === 'tool' ? 'bg-pink-500' : c.type === 'connector' ? 'bg-emerald-500' : c.type === 'condition' ? 'bg-amber-500' : 'bg-teal-500'
                       )} />
                       <span className="truncate max-w-[120px]">{c.id}</span>
                       <ChevronRight size={10} className="text-white/20 group-hover:text-white/60 transition-transform group-hover:translate-x-0.5" />

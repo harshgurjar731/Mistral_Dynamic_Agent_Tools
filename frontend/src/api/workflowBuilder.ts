@@ -2,7 +2,7 @@ import { api } from './client';
 
 /* ── Definition types (mirror backend workflow_engine/models.py) ────────── */
 
-export type StepType = 'agent' | 'tool' | 'condition' | 'transform';
+export type StepType = 'agent' | 'tool' | 'connector' | 'condition' | 'transform';
 export type WorkflowSourceKind = 'planner' | 'builder';
 
 export interface NodeLayout {
@@ -82,6 +82,8 @@ export interface CatalogAgent {
   description?: string | null;
   tier?: string | null;
   tools: string[];
+  /** Connector ids already attached to this agent. */
+  connectors: string[];
 }
 
 export interface CatalogTool {
@@ -93,9 +95,26 @@ export interface CatalogTool {
   source: 'builtin' | 'native' | 'dynamic';
 }
 
+/**
+ * A Mistral Connector available to the builder. Its tools are *not* included —
+ * the catalog would need one extra API call per connector to expand them, so
+ * the inspector fetches them for the selected connector instead.
+ */
+export interface CatalogConnector {
+  id: string;
+  name: string;
+  description?: string | null;
+  icon_url?: string | null;
+  is_directory: boolean;
+  is_authenticated: boolean;
+  active: boolean;
+  tools: CatalogTool[];
+}
+
 export interface BuilderCatalog {
   agents: CatalogAgent[];
   tools: CatalogTool[];
+  connectors: CatalogConnector[];
   models: string[];
   tiers: string[];
 }

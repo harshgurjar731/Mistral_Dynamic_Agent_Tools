@@ -26,6 +26,7 @@ from app.services.workflow_engine.models import (
     WorkflowExecutionResponse, WorkflowListResponse, WorkflowDefinition,
     UpdateWorkflowRequest, ValidateWorkflowRequest, ValidationResponse,
     ScriptResponse, BuilderCatalogResponse, CatalogAgent, CatalogTool,
+    CatalogConnector,
 )
 from app.services.workflow_engine.engine import (
     save_workflow, get_workflow, list_workflows, delete_workflow,
@@ -415,19 +416,24 @@ async def publish_workflow(workflow_name: str):
 async def get_builder_catalog():
     """Everything the builder palette needs, in one round trip.
 
-    Agents and tools are fetched concurrently; either failing degrades to an
-    empty list rather than failing the whole palette, so the builder still
-    opens when the Tool Service is down.
+    Agents, tools and connectors are fetched concurrently; any of them failing
+    degrades to an empty list rather than failing the whole palette, so the
+    builder still opens when the Tool Service or the Connectors API is down.
+
+    Connector *tools* are deliberately not expanded here — that would be one
+    extra API call per connector on every builder open. The inspector fetches
+    them for the selected connector instead.
     """
-    from app.services import agent_service
+    from app.services import agent_service, connector_service
     from app.services.tool_resolver import tool_resolver
     from app.services.tool_registry import ALL_TOOLS, BUILTIN_TOOLS
 
     client = get_mistral_client()
 
-    agents_resp, tool_records = await asyncio.gather(
+    agents_resp, tool_records, connector_resp = await asyncio.gather(
         agent_service.list_agents(client, page=0, page_size=200),
         tool_resolver.list_tools(),
+        connector_service.list_connectors(),
         return_exceptions=True,
     )
 
@@ -454,6 +460,11 @@ async def get_builder_catalog():
                 description=item.get("description"),
                 tier=item.get("tier"),
                 tools=[t for t in tool_names if t],
+                connectors=[
+                    ref["connector_id"]
+                    for ref in (item.get("connectors") or [])
+                    if ref.get("connector_id")
+                ],
             ))
 
     tools: list[CatalogTool] = []
@@ -503,9 +514,28 @@ async def get_builder_catalog():
                 source="dynamic",
             ))
 
+    # Mistral Connectors — MCP servers the platform hosts credentials for.
+    connectors: list[CatalogConnector] = []
+    if isinstance(connector_resp, Exception):
+        logger.warning("Builder catalog: could not list connectors: %s", connector_resp)
+    else:
+        for record in connector_resp.get("items", []):
+            if not record.get("id"):
+                continue
+            connectors.append(CatalogConnector(
+                id=record["id"],
+                name=record.get("name") or record["id"],
+                description=record.get("description"),
+                icon_url=record.get("icon_url"),
+                is_directory=record.get("is_directory", False),
+                is_authenticated=record.get("is_authenticated", False),
+                active=record.get("active", True),
+            ))
+
     return BuilderCatalogResponse(
         agents=sorted(agents, key=lambda a: a.name.lower()),
         tools=sorted(tools, key=lambda t: t.name.lower()),
+        connectors=sorted(connectors, key=lambda c: c.name.lower()),
         models=[
             "mistral-large-latest",
             "mistral-medium-latest",

@@ -27,6 +27,7 @@ import {
 import {
   workflowBuilderApi,
   type BuilderCatalog,
+  type CatalogConnector,
   type CatalogTool,
   type ValidationResult,
   type WorkflowDefinition,
@@ -43,7 +44,9 @@ import BuilderInspector from './BuilderInspector';
 import { JsonPanel, ScriptPanel, ValidationBar } from './BuilderPanels';
 import { CreateAgentModal, CreateToolModal } from './CreateModals';
 
-const EMPTY_CATALOG: BuilderCatalog = { agents: [], tools: [], models: [], tiers: [] };
+const EMPTY_CATALOG: BuilderCatalog = {
+  agents: [], tools: [], connectors: [], models: [], tiers: [],
+};
 
 function errorMessage(err: unknown, fallback: string): string {
   const anyErr = err as { response?: { data?: { detail?: unknown } }; message?: string };
@@ -95,6 +98,11 @@ export default function WorkflowBuilder() {
     [catalog.agents],
   );
 
+  const connectorsById = useMemo(
+    () => Object.fromEntries(catalog.connectors.map((c) => [c.id, c])),
+    [catalog.connectors],
+  );
+
   /* ── Agent tool binding ───────────────────────────────────────────── */
 
   // Tools live on the Mistral agent, not on the workflow step: `run_agent_step`
@@ -138,6 +146,54 @@ export default function WorkflowBuilder() {
       setAgentTools(agentId, [...existing, tool.name]);
     },
     [definition.steps, agentsById, setAgentTools, showToast],
+  );
+
+  // Connectors live on the Mistral agent exactly as tools do, so attaching one
+  // is the same immediate write. `connectors` is sent alone: the backend leaves
+  // the tool set untouched when the key is absent.
+  const setAgentConnectorsMutation = useMutation({
+    mutationFn: ({ agentId, connectorIds }: { agentId: string; connectorIds: string[] }) =>
+      agentsApi.update(agentId, {
+        connectors: connectorIds.map((connector_id) => ({ connector_id })),
+      }),
+    onSuccess: (_data, { agentId, connectorIds }) => {
+      const name = agentsById[agentId]?.name ?? 'agent';
+      queryClient.invalidateQueries({ queryKey: QK.builderCatalog() });
+      queryClient.invalidateQueries({ queryKey: QK.agents() });
+      showToast(
+        'success',
+        connectorIds.length === 0
+          ? `Removed all connectors from ${name}.`
+          : `${name} now has ${connectorIds.length} connector${connectorIds.length === 1 ? '' : 's'}.`,
+      );
+    },
+    onError: (err) =>
+      showToast('error', errorMessage(err, 'Could not update the agent’s connectors.')),
+  });
+
+  const setAgentConnectors = useCallback(
+    (agentId: string, connectorIds: string[]) =>
+      setAgentConnectorsMutation.mutate({ agentId, connectorIds }),
+    [setAgentConnectorsMutation],
+  );
+
+  const attachConnectorToStep = useCallback(
+    (stepId: string, connector: CatalogConnector) => {
+      const step = definition.steps.find((s) => s.id === stepId);
+      const agentId = step?.config?.agent_id as string | undefined;
+      if (!agentId) return;
+
+      const existing = agentsById[agentId]?.connectors ?? [];
+      if (existing.includes(connector.id)) {
+        showToast(
+          'error',
+          `${agentsById[agentId]?.name ?? 'That agent'} already has ${connector.name}.`,
+        );
+        return;
+      }
+      setAgentConnectors(agentId, [...existing, connector.id]);
+    },
+    [definition.steps, agentsById, setAgentConnectors, showToast],
   );
 
   /* ── Load existing workflow in edit mode ──────────────────────────── */
@@ -439,6 +495,7 @@ export default function WorkflowBuilder() {
         <BuilderPalette
           agents={catalog.agents}
           tools={catalog.tools}
+          connectors={catalog.connectors}
           isLoading={catalogLoading}
           onRefresh={() => void refetchCatalog()}
           onCreateAgent={() => setShowAgentModal(true)}
@@ -451,7 +508,9 @@ export default function WorkflowBuilder() {
           <div className={cn('flex-1 flex flex-col min-h-0', tab !== 'canvas' && 'hidden')}>
             <BuilderCanvas
               agentsById={agentsById}
+              connectorsById={connectorsById}
               onAttachTool={attachToolToStep}
+              onAttachConnector={attachConnectorToStep}
               onNotify={showToast}
             />
           </div>
@@ -483,9 +542,12 @@ export default function WorkflowBuilder() {
         <BuilderInspector
           agents={catalog.agents}
           tools={catalog.tools}
+          connectors={catalog.connectors}
           tiers={catalog.tiers}
           onSetAgentTools={setAgentTools}
+          onSetAgentConnectors={setAgentConnectors}
           toolsPending={setAgentToolsMutation.isPending}
+          connectorsPending={setAgentConnectorsMutation.isPending}
         />
       </div>
 

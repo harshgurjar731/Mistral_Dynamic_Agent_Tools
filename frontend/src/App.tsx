@@ -19,6 +19,8 @@ import McpServerDetail from './features/mcp/McpServerDetail';
 import HealthDashboard from './features/health/HealthDashboard';
 import LibraryManager from './features/libraries/LibraryManager';
 import RemoteServerDetail from './features/mcp/RemoteServerDetail';
+import ConnectorRegistry from './features/connectors/ConnectorRegistry';
+import ConnectorDetail from './features/connectors/ConnectorDetail';
 
 function NotFound() {
   return (
@@ -53,6 +55,8 @@ const router = createBrowserRouter([
       { path: 'workflows/:workflowName/edit',    element: <WorkflowBuilder /> },
       { path: 'workflows/:workflowName/execute', element: <WorkflowExecutionPage /> },
       { path: 'conversations',         element: <ConversationMgr /> },
+      { path: 'connectors',            element: <ConnectorRegistry /> },
+      { path: 'connectors/:id',        element: <ConnectorDetail /> },
       { path: 'mcp',                   element: <McpRegistry /> },
       { path: 'mcp/:serverName',         element: <McpServerDetail /> },
       { path: 'remote-servers/:id',      element: <RemoteServerDetail /> },

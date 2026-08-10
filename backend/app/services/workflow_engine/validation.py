@@ -109,6 +109,44 @@ def _validate_tool_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
         )
 
 
+def _validate_connector_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
+    cfg = step.config or {}
+
+    if not (cfg.get("connector_id") or cfg.get("connector_name")):
+        yield _issue(
+            "error", "connector.missing_connector",
+            "Connector step must reference a connector.",
+            step.id, "connector_id",
+        )
+
+    if not cfg.get("tool_name"):
+        yield _issue(
+            "error", "connector.missing_tool",
+            "Connector step must specify which of the connector's tools to call.",
+            step.id, "tool_name",
+        )
+
+    args = cfg.get("arguments", cfg.get("arguments_template"))
+    if args is not None and not isinstance(args, dict):
+        yield _issue(
+            "error", "connector.bad_arguments",
+            "Connector arguments must be an object mapping parameter names to values or {{variables}}.",
+            step.id, "arguments",
+        )
+
+    # A connector step calls the tool directly with a hand-written argument
+    # template. That is the right shape for a deterministic pipeline stage, but
+    # when the arguments need to be *decided*, attaching the connector to an
+    # agent and letting the model call it is usually what the author wants.
+    if not args:
+        yield _issue(
+            "warning", "connector.no_arguments",
+            "Connector step passes no arguments. If the call needs arguments derived from "
+            "context, attach the connector to an agent instead and let it decide.",
+            step.id, "arguments",
+        )
+
+
 def _validate_condition_step(
     step: WorkflowStep, step_ids: set[str]
 ) -> Iterable[ValidationIssue]:
@@ -151,6 +189,7 @@ def _validate_transform_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
 _STEP_VALIDATORS = {
     StepType.AGENT: lambda s, ids: _validate_agent_step(s),
     StepType.TOOL: lambda s, ids: _validate_tool_step(s),
+    StepType.CONNECTOR: lambda s, ids: _validate_connector_step(s),
     StepType.CONDITION: _validate_condition_step,
     StepType.TRANSFORM: lambda s, ids: _validate_transform_step(s),
 }

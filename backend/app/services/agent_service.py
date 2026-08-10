@@ -14,6 +14,72 @@ from app.exceptions import MistralAPIError, AgentNotFoundError
 logger = logging.getLogger(__name__)
 
 
+def _connector_refs(tools) -> list[dict]:
+    """Read the connector selections back off an agent's `tools` array."""
+    from app.services.connector_service import extract_connector_refs
+
+    return extract_connector_refs(tools if isinstance(tools, list) else [])
+
+
+def _current_attachments(agent_id: str) -> dict:
+    """Read an agent's live `tools` array back into the three inputs of get_tools().
+
+    Reads the raw JSON rather than the SDK object: the parsing here matches
+    plain dicts, and the SDK hands back typed models that would silently yield
+    nothing. A failure degrades to "nothing attached" rather than raising —
+    losing an attachment is bad, but blocking an unrelated rename is worse.
+    """
+    from app.services.connector_service import extract_connector_refs
+
+    empty = {"tools": [], "document_library_ids": None, "connectors": []}
+    try:
+        raw = _http_client.get(f"/v1/agents/{agent_id}").json()
+    except Exception as e:
+        logger.warning("Could not read existing attachments for %s: %s", agent_id, e)
+        return empty
+
+    tools = raw.get("tools") or []
+    if not isinstance(tools, list):
+        return empty
+
+    tool_keys: list[str] = []
+    doc_lib_ids: list[str] | None = None
+
+    for tool in tools:
+        if isinstance(tool, str):
+            tool_keys.append(tool)
+            continue
+        if not isinstance(tool, dict):
+            continue
+
+        tool_type = tool.get("type")
+        if tool_type == "connector":
+            continue  # handled by extract_connector_refs
+        if tool_type == "document_library":
+            ids = tool.get("library_ids")
+            if isinstance(ids, list) and ids:
+                doc_lib_ids = ids
+                # Carried back as a tool key too, because that is how callers
+                # express "the library is attached". Keeping the two in step
+                # means an explicit `tools` list that drops the key detaches the
+                # library, even though the ids are still carried over.
+                tool_keys.append("document_library")
+            continue
+        if tool_type == "function":
+            name = (tool.get("function") or {}).get("name")
+            if name:
+                tool_keys.append(name)
+            continue
+        if tool_type:
+            tool_keys.append(tool_type)
+
+    return {
+        "tools": tool_keys,
+        "document_library_ids": doc_lib_ids,
+        "connectors": extract_connector_refs(tools),
+    }
+
+
 def _extract_completion_args(agent: dict) -> dict:
     """Extract completion_args from a raw Mistral agent dict into a flat dict."""
     ca = agent.get("completion_args") or {}
@@ -90,6 +156,7 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "description": agent.get("description"),
                     "instructions": a_instr,
                     "tools": agent.get("tools", []),
+                    "connectors": _connector_refs(agent.get("tools")),
                     "created_at": str(agent.get("created_at", "")),
                     "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
                     **_extract_completion_args(agent),
@@ -108,6 +175,7 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "description": getattr(agent, "description", None),
                     "instructions": a_instr,
                     "tools": getattr(agent, "tools", []),
+                    "connectors": _connector_refs(getattr(agent, "tools", None)),
                     "created_at": str(getattr(agent, "created_at", "")),
                     "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
                     "temperature": ca_dict.get("temperature"),
@@ -156,6 +224,7 @@ async def get_agent(client: Mistral, agent_id: str) -> dict:
             "description": agent.get("description"),
             "instructions": a_instr,
             "tools": agent.get("tools", []),
+            "connectors": _connector_refs(agent.get("tools")),
             "created_at": str(agent.get("created_at", "")),
             "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
             **_extract_completion_args(agent),
@@ -182,25 +251,23 @@ async def create_agent(client: Mistral, data: dict) -> dict:
             create_kwargs["description"] = data["description"]
         if data.get("tier"):
             create_kwargs["metadata"] = {"tier": data["tier"]}
-        if data.get("tools"):
-            from app.services.tool_registry import get_tools
-            create_kwargs["tools"] = get_tools(
-                data["tools"],
-                document_library_ids=data.get("document_library_ids"),
-            )
-        elif data.get("document_library_ids"):
-            # Only document_library tool, no other tools
-            from app.services.tool_registry import get_tools
-            create_kwargs["tools"] = get_tools(
-                ["document_library"],
-                document_library_ids=data["document_library_ids"],
-            )
+        # Tools, libraries and connectors all live in the same `tools` array —
+        # connectors are entries of type "connector", not a separate field — so
+        # they are resolved together and assigned once.
+        from app.services.tool_registry import get_tools
 
-        # Attach Mistral Connectors if provided (for MCP-published tools)
-        if data.get("connector_ids"):
-            create_kwargs["connectors"] = [
-                {"id": cid} for cid in data["connector_ids"]
-            ]
+        tool_keys = data.get("tools") or []
+        doc_lib_ids = data.get("document_library_ids")
+        if not tool_keys and doc_lib_ids:
+            tool_keys = ["document_library"]
+
+        tool_specs = get_tools(
+            tool_keys,
+            document_library_ids=doc_lib_ids,
+            connectors=data.get("connectors"),
+        )
+        if tool_specs:
+            create_kwargs["tools"] = tool_specs
 
         agent = client.beta.agents.create(**create_kwargs)
         return {"id": agent.id, "name": getattr(agent, "name", None), "model": getattr(agent, "model", None)}
@@ -233,17 +300,35 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
         if ca_data:
             update_kwargs["completion_args"] = CompletionArgs(**ca_data)
 
-        # Handle tools update (including document_library).
-        # An explicit empty list means "remove every tool" and must be sent
-        # through — skipping it would make detaching the last tool a silent
-        # no-op, leaving the agent able to call a tool the UI says it lost.
-        if "tools" in data or "document_library_ids" in data:
+        # Handle tools update (named tools, document_library and connectors).
+        #
+        # All three share one `tools` array on the agent, and the array is
+        # rebuilt wholesale on every update. So each of the three has to be
+        # supplied on every write, even when the caller only meant to change
+        # one of them. Anything the caller omits is carried over from the live
+        # agent; only an explicit value replaces it.
+        #
+        # This distinction matters both ways: omitting `tools` while attaching a
+        # connector must not strip the agent's tools, and passing `tools: []`
+        # must still remove them all — a silent no-op there would leave the
+        # agent able to call a tool the UI says it lost.
+        if "tools" in data or "document_library_ids" in data or "connectors" in data:
             from app.services.tool_registry import get_tools
-            tool_keys = data.get("tools", [])
-            doc_lib_ids = data.get("document_library_ids")
+
+            current = _current_attachments(agent_id)
+
+            tool_keys = data["tools"] if "tools" in data else current["tools"]
+            doc_lib_ids = (
+                data["document_library_ids"]
+                if "document_library_ids" in data
+                else current["document_library_ids"]
+            )
+            connectors = data["connectors"] if "connectors" in data else current["connectors"]
+
             update_kwargs["tools"] = get_tools(
                 tool_keys,
                 document_library_ids=doc_lib_ids,
+                connectors=connectors,
             )
 
         agent = client.beta.agents.update(**update_kwargs)
