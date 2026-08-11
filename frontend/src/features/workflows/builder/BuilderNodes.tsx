@@ -31,6 +31,46 @@ interface NodeData extends Record<string, unknown> {
   isAttachTarget?: boolean;
 }
 
+/**
+ * Re-render gate for every node type.
+ *
+ * `definitionToFlow` builds a fresh `data` object on each derivation, so the
+ * default shallow prop compare never matches and every node re-renders whenever
+ * anything anywhere changes. Comparing the fields that actually drive the
+ * render fixes that: a step object keeps its identity across derivations unless
+ * it was edited (the store mutates immutably), so an untouched node compares
+ * equal and skips entirely.
+ *
+ * Position props are deliberately ignored — ReactFlow positions nodes with a
+ * transform on the wrapper, and nothing in these components reads coordinates.
+ * That is what keeps a drag from re-rendering the node bodies.
+ */
+function sameStrings(a?: string[], b?: string[]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((value, i) => value === b[i]);
+}
+
+function areNodePropsEqual(prev: NodeProps, next: NodeProps): boolean {
+  if (prev.selected !== next.selected || prev.dragging !== next.dragging) return false;
+
+  const a = prev.data as NodeData;
+  const b = next.data as NodeData;
+
+  return (
+    a.step === b.step &&
+    a.isEntry === b.isEntry &&
+    a.hasError === b.hasError &&
+    a.hasWarning === b.hasWarning &&
+    a.isAttachTarget === b.isAttachTarget &&
+    a.agentMissing === b.agentMissing &&
+    a.highlight === b.highlight &&
+    a.issues.length === b.issues.length &&
+    sameStrings(a.agentTools, b.agentTools) &&
+    sameStrings(a.agentConnectors, b.agentConnectors)
+  );
+}
+
 const HANDLE_STYLE: React.CSSProperties = {
   width: 10,
   height: 10,
@@ -292,7 +332,7 @@ export const BuilderAgentNode = memo(function BuilderAgentNode({
       )}
     </NodeShell>
   );
-});
+}, areNodePropsEqual);
 
 /* ── Tool ───────────────────────────────────────────────────────────────── */
 
@@ -324,7 +364,7 @@ export const BuilderToolNode = memo(function BuilderToolNode({ data, selected }:
       </span>
     </NodeShell>
   );
-});
+}, areNodePropsEqual);
 
 /* ── Connector ──────────────────────────────────────────────────────────── */
 
@@ -356,7 +396,7 @@ export const BuilderConnectorNode = memo(function BuilderConnectorNode({
       <Field label="args" value={argCount > 0 ? `${argCount} mapped` : 'none'} />
     </NodeShell>
   );
-});
+}, areNodePropsEqual);
 
 /* ── Condition ──────────────────────────────────────────────────────────── */
 
@@ -400,7 +440,7 @@ export const BuilderConditionNode = memo(function BuilderConditionNode({
       />
     </NodeShell>
   );
-});
+}, areNodePropsEqual);
 
 /* ── Transform ──────────────────────────────────────────────────────────── */
 
@@ -430,7 +470,7 @@ export const BuilderTransformNode = memo(function BuilderTransformNode({
       <Field label="rule" value={summary} mono />
     </NodeShell>
   );
-});
+}, areNodePropsEqual);
 
 // The nodeTypes map lives in BuilderCanvas: exporting a non-component
 // alongside components here would break React Fast Refresh for this file.

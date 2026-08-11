@@ -196,7 +196,8 @@ export function outgoingTargets(step: WorkflowStep): string[] {
 }
 
 export interface BuildGraphOptions {
-  selectedId: string | null;
+  /** Every currently selected step. Multi-select drives bulk operations. */
+  selectedIds?: ReadonlySet<string>;
   issues: ValidationIssue[];
   /**
    * Agents from the catalog, keyed by id. Agent nodes read their tool list from
@@ -248,7 +249,7 @@ export function definitionToFlow(
   definition: WorkflowDefinition,
   options: BuildGraphOptions,
 ): { nodes: Node[]; edges: Edge[] } {
-  const { selectedId, issues } = options;
+  const { selectedIds, issues } = options;
   const steps = definition.steps ?? [];
 
   const issuesByStep = new Map<string, ValidationIssue[]>();
@@ -277,7 +278,7 @@ export function definitionToFlow(
       height: size.height,
       // Selection is driven by the store, not ReactFlow's internal flag, so the
       // inspector and canvas can never disagree about what is selected.
-      selected: selectedId === step.id,
+      selected: selectedIds?.has(step.id) ?? false,
       data: {
         step,
         isEntry: definition.entry_step === step.id,

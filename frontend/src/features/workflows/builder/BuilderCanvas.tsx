@@ -16,6 +16,7 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  applyNodeChanges,
   type Connection,
   type Edge,
   type Node,
@@ -26,14 +27,19 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   Columns,
+  Copy as CopyIcon,
   Eye,
   EyeOff,
+  Flag,
+  Grid3x3,
+  Keyboard,
   LayoutGrid,
   Maximize2,
   Redo2,
   Rows,
   Trash2,
   Undo2,
+  X as XIcon,
 } from 'lucide-react';
 import { useBuilderStore } from './useBuilderStore';
 import {
@@ -50,7 +56,12 @@ import {
   makeLogicStep,
   uniqueStepId,
 } from './graphModel';
-import type { CatalogAgent, CatalogConnector, CatalogTool } from '../../../api/workflowBuilder';
+import type {
+  CatalogAgent,
+  CatalogConnector,
+  CatalogTool,
+  WorkflowStep,
+} from '../../../api/workflowBuilder';
 import { cn } from '../../../lib/utils';
 
 /** Payload written to dataTransfer by palette items. */
@@ -74,6 +85,9 @@ export const DRAG_MIME = 'application/x-mistral-workflow-step';
  */
 export const DRAG_ATTACH_HINT = 'application/x-mistral-agent-attachment';
 
+/** Snap grid, in flow units. Matches the Background dot spacing. */
+const GRID: [number, number] = [22, 22];
+
 // Module-level so the identity is stable — a new object each render makes
 // ReactFlow remount every node.
 const BUILDER_NODE_TYPES = {
@@ -83,6 +97,56 @@ const BUILDER_NODE_TYPES = {
   condition: BuilderConditionNode,
   transform: BuilderTransformNode,
 };
+
+/** Shown in the shortcuts overlay. Keys are split on "+" to render as chips. */
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl+Z', 'Undo'],
+  ['Ctrl+Shift+Z', 'Redo'],
+  ['Ctrl+A', 'Select all steps'],
+  ['Ctrl+C', 'Copy selection'],
+  ['Ctrl+V', 'Paste (keeps edges inside the copy)'],
+  ['Ctrl+D', 'Duplicate selection'],
+  ['Del', 'Delete selection or picked connection'],
+  ['F', 'Zoom to selection, or fit the whole graph'],
+  ['Shift+drag', 'Rubber-band select'],
+  ['Ctrl+click', 'Add or remove one node from the selection'],
+  ['Right-click', 'Node menu'],
+  ['Esc', 'Clear selection'],
+  ['?', 'This panel'],
+];
+
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  disabled,
+  danger,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors',
+        disabled
+          ? 'text-[var(--color-text-muted)] opacity-40 cursor-not-allowed'
+          : danger
+            ? 'text-[var(--color-text-secondary)] hover:bg-red-500/10 hover:text-red-400'
+            : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-white',
+      )}
+    >
+      <span className="shrink-0">{icon}</span>
+      {label}
+    </button>
+  );
+}
 
 function ToolbarButton({
   onClick,
@@ -144,11 +208,14 @@ function CanvasInner({
   const validation = useBuilderStore((s) => s.validation);
   const select = useBuilderStore((s) => s.select);
   const addStep = useBuilderStore((s) => s.addStep);
-  const moveNode = useBuilderStore((s) => s.moveNode);
-  const commitLayout = useBuilderStore((s) => s.commitLayout);
+  const addSteps = useBuilderStore((s) => s.addSteps);
+  const moveNodes = useBuilderStore((s) => s.moveNodes);
   const connect = useBuilderStore((s) => s.connect);
   const disconnect = useBuilderStore((s) => s.disconnect);
   const removeStep = useBuilderStore((s) => s.removeStep);
+  const removeSteps = useBuilderStore((s) => s.removeSteps);
+  const duplicateStep = useBuilderStore((s) => s.duplicateStep);
+  const setEntryStep = useBuilderStore((s) => s.setEntryStep);
   const runAutoLayout = useBuilderStore((s) => s.runAutoLayout);
   const undo = useBuilderStore((s) => s.undo);
   const redo = useBuilderStore((s) => s.redo);
@@ -164,29 +231,64 @@ function CanvasInner({
   // canvas UI — nothing else in the builder needs to know which edge is
   // highlighted, and it must not survive into the saved definition.
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  // Multi-selection. The store keeps `selectedStepId` for the inspector, which
+  // edits one step at a time; this set is what bulk actions operate on.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [snapToGrid, setSnapToGrid] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; stepId: string } | null>(
+    null,
+  );
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  // Copied steps live in a ref: the clipboard is not rendered, so holding it in
+  // state would re-render the canvas for nothing.
+  const clipboardRef = useRef<WorkflowStep[]>([]);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const didInitialFit = useRef(false);
 
-  const { nodes, edges } = useMemo(
+  const derived = useMemo(
     () =>
       definitionToFlow(definition, {
-        selectedId: selectedStepId,
+        selectedIds,
         issues: validation?.issues ?? [],
         agentsById,
         connectorsById,
         attachTargetId,
         selectedEdgeId,
       }),
-    [
-      definition,
-      selectedStepId,
-      validation,
-      agentsById,
-      connectorsById,
-      attachTargetId,
-      selectedEdgeId,
-    ],
+    [definition, selectedIds, validation, agentsById, connectorsById, attachTargetId, selectedEdgeId],
   );
+
+  // The inspector follows the selection when exactly one node is picked;
+  // with several, editing a single step's fields would be misleading.
+  useEffect(() => {
+    if (selectedIds.size === 1) {
+      const [only] = selectedIds;
+      if (only !== selectedStepId) select(only);
+    } else if (selectedIds.size === 0 && selectedStepId) {
+      select(null);
+    }
+  }, [selectedIds, selectedStepId, select]);
+
+  /* ── Rendered graph ───────────────────────────────────────────────── */
+
+  // Nodes are held locally rather than passed straight from `derived`.
+  //
+  // A drag emits a position change per animation frame. Writing those to the
+  // store rebuilt the entire graph — every node object, every edge, every
+  // node's `data` — 60 times a second, which is what made the canvas crawl.
+  // Now ReactFlow mutates this local array during the gesture and the store
+  // hears about it exactly once, on drag end. The definition stays the source
+  // of truth; it just is not consulted mid-gesture.
+  const [nodes, setNodes] = useState<Node[]>(derived.nodes);
+  const edges = derived.edges;
+
+  // While a drag is in flight the store must not clobber the live positions.
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    if (draggingRef.current) return;
+    setNodes(derived.nodes);
+  }, [derived.nodes]);
 
   // Fit the view once, when the first steps appear — refitting on every change
   // would yank the viewport out from under someone mid-edit.
@@ -197,21 +299,56 @@ function CanvasInner({
     return () => clearTimeout(timer);
   }, [instance, nodes.length]);
 
+  // Per frame this is the only work that runs: a plain array transform. No
+  // store write, no graph rebuild, no validation, no re-derivation.
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      for (const change of changes) {
-        if (change.type === 'position' && change.position) {
-          moveNode(change.id, { x: change.position.x, y: change.position.y });
-          // dragging === false marks the end of the gesture: one history entry
-          // for the whole drag rather than one per animation frame.
-          if (change.dragging === false) commitLayout();
-        } else if (change.type === 'remove') {
-          removeStep(change.id);
-        }
+      setNodes((current) => applyNodeChanges(changes, current));
+
+      const removals = changes.filter((c) => c.type === 'remove').map((c) => c.id);
+      if (removals.length > 0) removeSteps(removals);
+
+      // Box-select and shift-click arrive here as `select` changes. Mirroring
+      // them into our own set keeps ReactFlow's selection and the derived
+      // `selected` flags from fighting each other.
+      const selections = changes.filter(
+        (c): c is NodeChange & { type: 'select'; id: string; selected: boolean } =>
+          c.type === 'select',
+      );
+      if (selections.length > 0) {
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const change of selections) {
+            if (change.selected) next.add(change.id);
+            else next.delete(change.id);
+          }
+          return next;
+        });
+        setSelectedEdgeId(null);
       }
     },
-    [moveNode, commitLayout, removeStep],
+    [removeSteps],
   );
+
+  const onNodeDragStart = useCallback(() => {
+    draggingRef.current = true;
+  }, []);
+
+  // One store write per gesture. Reading from the instance rather than local
+  // state picks up multi-node drags without tracking which nodes moved.
+  const onNodeDragStop = useCallback(() => {
+    draggingRef.current = false;
+    if (!instance) return;
+
+    const moved: Record<string, { x: number; y: number }> = {};
+    for (const node of instance.getNodes()) {
+      const at = definition.ui_layout?.[node.id];
+      const x = Math.round(node.position.x);
+      const y = Math.round(node.position.y);
+      if (!at || at.x !== x || at.y !== y) moved[node.id] = { x, y };
+    }
+    moveNodes(moved);
+  }, [instance, definition.ui_layout, moveNodes]);
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
@@ -237,12 +374,27 @@ function CanvasInner({
     [disconnect],
   );
 
-  const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      setSelectedEdgeId(null);
-      select(node.id);
+  // ReactFlow already emits `select` changes for clicks, including shift-click
+  // additive selection, so this only clears the edge picker and the menu.
+  const onNodeClick = useCallback(() => {
+    setSelectedEdgeId(null);
+    setContextMenu(null);
+  }, []);
+
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      const bounds = wrapperRef.current?.getBoundingClientRect();
+      setContextMenu({
+        x: event.clientX - (bounds?.left ?? 0),
+        y: event.clientY - (bounds?.top ?? 0),
+        stepId: node.id,
+      });
+      // Right-clicking outside the selection re-targets it, matching the way
+      // file managers and design tools behave.
+      setSelectedIds((current) => (current.has(node.id) ? current : new Set([node.id])));
     },
-    [select],
+    [],
   );
 
   // Edge and step selection are mutually exclusive: Delete has to act on
@@ -270,8 +422,81 @@ function CanvasInner({
 
   const onPaneClick = useCallback(() => {
     select(null);
+    setSelectedIds(new Set());
     setSelectedEdgeId(null);
+    setContextMenu(null);
   }, [select]);
+
+  /* ── Bulk actions ─────────────────────────────────────────────────── */
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(definition.steps.map((s) => s.id)));
+    setSelectedEdgeId(null);
+  }, [definition.steps]);
+
+  const copySelection = useCallback(() => {
+    const picked = definition.steps.filter((s) => selectedIds.has(s.id));
+    if (picked.length === 0) return 0;
+    clipboardRef.current = picked;
+    return picked.length;
+  }, [definition.steps, selectedIds]);
+
+  /**
+   * Paste the clipboard as fresh steps.
+   *
+   * Edges between copied steps are preserved and rewritten to the new ids;
+   * edges pointing outside the copied set are dropped, because duplicating a
+   * fan-out into the rest of the graph is almost never what is wanted.
+   */
+  const pasteClipboard = useCallback(() => {
+    const source = clipboardRef.current;
+    if (source.length === 0) return 0;
+
+    const taken = new Set(definition.steps.map((s) => s.id));
+    const idMap = new Map<string, string>();
+    for (const step of source) {
+      const fresh = uniqueStepId(`${step.id}_copy`, taken);
+      taken.add(fresh);
+      idMap.set(step.id, fresh);
+    }
+
+    const remap = (target: string) => idMap.get(target);
+    const layout: Record<string, { x: number; y: number }> = {};
+
+    const pasted = source.map((step) => {
+      const id = idMap.get(step.id)!;
+      const at = definition.ui_layout?.[step.id] ?? { x: 0, y: 0 };
+      layout[id] = { x: at.x + 40, y: at.y + 40 };
+
+      const config = { ...step.config };
+      if (step.type === 'condition') {
+        for (const key of ['true_step', 'false_step'] as const) {
+          const branch = config[key];
+          config[key] = typeof branch === 'string' ? (remap(branch) ?? '') : '';
+        }
+      }
+
+      return {
+        ...step,
+        id,
+        config,
+        next_steps: (step.next_steps ?? [])
+          .map(remap)
+          .filter((t: string | undefined): t is string => Boolean(t)),
+      };
+    });
+
+    addSteps(pasted, layout);
+    setSelectedIds(new Set(pasted.map((s) => s.id)));
+    return pasted.length;
+  }, [definition.steps, definition.ui_layout, addSteps]);
+
+  const deleteSelection = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    removeSteps([...selectedIds]);
+    setSelectedIds(new Set());
+    setContextMenu(null);
+  }, [selectedIds, removeSteps]);
 
   // Resolved from the derived edges, so a selection left dangling by an edit
   // elsewhere (a step renamed or removed) simply stops rendering.
@@ -390,33 +615,85 @@ function CanvasInner({
         return;
       }
 
+      const key = event.key.toLowerCase();
       const mod = event.ctrlKey || event.metaKey;
-      if (mod && event.key.toLowerCase() === 'z') {
-        event.preventDefault();
+      const take = () => event.preventDefault();
+
+      if (mod && key === 'z') {
+        take();
         if (event.shiftKey) redo();
         else undo();
-      } else if (mod && event.key.toLowerCase() === 'y') {
-        event.preventDefault();
+      } else if (mod && key === 'y') {
+        take();
         redo();
+      } else if (mod && key === 'a') {
+        take();
+        selectAll();
+      } else if (mod && key === 'c') {
+        const n = copySelection();
+        if (n > 0) {
+          take();
+          onNotify('success', `Copied ${n} step${n === 1 ? '' : 's'}.`);
+        }
+      } else if (mod && key === 'v') {
+        const n = pasteClipboard();
+        if (n > 0) {
+          take();
+          onNotify('success', `Pasted ${n} step${n === 1 ? '' : 's'}.`);
+        }
+      } else if (mod && key === 'd') {
+        // Duplicate is copy+paste in one gesture, so it also keeps inner edges.
+        if (selectedIds.size > 0) {
+          take();
+          copySelection();
+          pasteClipboard();
+        }
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         // ReactFlow's own delete handling is disabled (deleteKeyCode={null}),
         // so both step and connection deletion run through here.
         if (selectedEdgeId) {
-          event.preventDefault();
+          take();
           removeEdge(selectedEdgeId);
-        } else if (selectedStepId) {
-          event.preventDefault();
-          removeStep(selectedStepId);
+        } else if (selectedIds.size > 0) {
+          take();
+          deleteSelection();
         }
+      } else if (key === 'f' && !mod) {
+        take();
+        // Frame the selection when there is one, otherwise the whole graph.
+        instance?.fitView({
+          padding: 0.2,
+          duration: 400,
+          nodes: selectedIds.size > 0 ? [...selectedIds].map((id) => ({ id })) : undefined,
+        });
+      } else if (key === '?' || (event.shiftKey && key === '/')) {
+        take();
+        setShowShortcuts((v) => !v);
       } else if (event.key === 'Escape') {
         select(null);
+        setSelectedIds(new Set());
         setSelectedEdgeId(null);
+        setContextMenu(null);
+        setShowShortcuts(false);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undo, redo, removeStep, select, selectedStepId, selectedEdgeId, removeEdge]);
+  }, [
+    undo,
+    redo,
+    select,
+    selectedIds,
+    selectedEdgeId,
+    removeEdge,
+    selectAll,
+    copySelection,
+    pasteClipboard,
+    deleteSelection,
+    instance,
+    onNotify,
+  ]);
 
   const isEmpty = definition.steps.length === 0;
 
@@ -433,11 +710,15 @@ function CanvasInner({
         edges={edges}
         nodeTypes={BUILDER_NODE_TYPES}
         onNodesChange={onNodesChange}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onEdgesDelete={onEdgesDelete}
         onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
         onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
+        onPaneContextMenu={(e) => e.preventDefault()}
         onInit={setInstance}
         connectionLineType={ConnectionLineType.SmoothStep}
         connectionLineStyle={{ stroke: '#818cf8', strokeWidth: 2 }}
@@ -445,6 +726,15 @@ function CanvasInner({
         minZoom={0.2}
         maxZoom={1.6}
         deleteKeyCode={null}
+        // Shift+drag rubber-bands a selection; plain drag still pans, which is
+        // the muscle memory people bring from every other canvas tool.
+        selectionKeyCode="Shift"
+        multiSelectionKeyCode={['Meta', 'Control']}
+        snapToGrid={snapToGrid}
+        snapGrid={GRID}
+        // Above ~40 nodes the win from skipping off-screen nodes outweighs the
+        // per-viewport-change bookkeeping it costs.
+        onlyRenderVisibleElements={nodes.length > 40}
         className="!bg-[rgba(8,11,19,0.95)]"
         proOptions={{ hideAttribution: true }}
       >
@@ -490,6 +780,129 @@ function CanvasInner({
         </div>
       )}
 
+      {/* Multi-selection summary — bulk actions need a visible home. */}
+      {selectedIds.size > 1 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-xl bg-[rgba(15,20,28,0.94)] border border-[rgba(129,140,248,0.45)] backdrop-blur-md shadow-lg z-10">
+          <span className="text-[11px] text-[var(--color-text-secondary)]">
+            {selectedIds.size} steps selected
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              copySelection();
+              pasteClipboard();
+            }}
+            title="Duplicate selection (Ctrl+D)"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] text-[11px] text-[var(--color-text-muted)] hover:text-white transition-colors"
+          >
+            <CopyIcon size={12} />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelection}
+            title="Delete selection (Del)"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] text-[11px] text-[var(--color-text-muted)] hover:text-red-400 hover:border-red-400/40 transition-colors"
+          >
+            <Trash2 size={12} />
+            Delete
+          </button>
+        </div>
+      )}
+
+      {/* Right-click menu on a node */}
+      {contextMenu && (
+        <div
+          className="absolute z-20 min-w-[178px] py-1 rounded-xl bg-[rgba(15,20,28,0.97)] border border-[var(--color-border-subtle)] backdrop-blur-md shadow-2xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <MenuItem
+            icon={<Flag size={12} />}
+            label="Make entry step"
+            disabled={definition.entry_step === contextMenu.stepId}
+            onClick={() => {
+              setEntryStep(contextMenu.stepId);
+              setContextMenu(null);
+            }}
+          />
+          <MenuItem
+            icon={<CopyIcon size={12} />}
+            label={selectedIds.size > 1 ? `Duplicate ${selectedIds.size} steps` : 'Duplicate'}
+            onClick={() => {
+              if (selectedIds.size > 1) {
+                copySelection();
+                pasteClipboard();
+              } else {
+                duplicateStep(contextMenu.stepId);
+              }
+              setContextMenu(null);
+            }}
+          />
+          <MenuItem
+            icon={<Maximize2 size={12} />}
+            label="Zoom to this"
+            onClick={() => {
+              instance?.fitView({ padding: 0.4, duration: 400, nodes: [{ id: contextMenu.stepId }] });
+              setContextMenu(null);
+            }}
+          />
+          <div className="h-px bg-[var(--color-border-subtle)] my-1" />
+          <MenuItem
+            icon={<Trash2 size={12} />}
+            label={selectedIds.size > 1 ? `Delete ${selectedIds.size} steps` : 'Delete'}
+            danger
+            onClick={() => {
+              if (selectedIds.size > 1) deleteSelection();
+              else removeStep(contextMenu.stepId);
+              setContextMenu(null);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Shortcuts */}
+      {showShortcuts && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[420px] max-h-[80%] overflow-y-auto custom-scrollbar rounded-xl bg-[rgba(15,20,28,0.98)] border border-[var(--color-border-subtle)] shadow-2xl p-5"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">Keyboard shortcuts</h3>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                className="text-[var(--color-text-muted)] hover:text-white transition-colors"
+              >
+                <XIcon size={15} />
+              </button>
+            </div>
+            <div className="space-y-1">
+              {SHORTCUTS.map(([keys, description]) => (
+                <div key={description} className="flex items-center justify-between py-1.5">
+                  <span className="text-[11px] text-[var(--color-text-secondary)]">
+                    {description}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    {keys.split('+').map((k) => (
+                      <kbd
+                        key={k}
+                        className="px-1.5 py-0.5 rounded border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] text-[10px] font-mono text-[var(--color-text-muted)]"
+                      >
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Canvas toolbar */}
       <div className="absolute top-3 right-3 flex items-center gap-1.5 p-1.5 rounded-xl bg-[rgba(15,20,28,0.92)] border border-[var(--color-border-subtle)] backdrop-blur-md shadow-lg z-10">
         <ToolbarButton onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
@@ -512,10 +925,23 @@ function CanvasInner({
         >
           {direction === 'TB' ? <Rows size={14} /> : <Columns size={14} />}
         </ToolbarButton>
+        <ToolbarButton
+          onClick={() => setSnapToGrid((v) => !v)}
+          active={snapToGrid}
+          title={snapToGrid ? 'Snap to grid: on' : 'Snap to grid: off'}
+        >
+          <Grid3x3 size={14} />
+        </ToolbarButton>
         <div className="w-px h-5 bg-[var(--color-border-subtle)] mx-0.5" />
         <ToolbarButton
-          onClick={() => instance?.fitView({ padding: 0.2, duration: 500 })}
-          title="Fit to view"
+          onClick={() =>
+            instance?.fitView({
+              padding: 0.2,
+              duration: 500,
+              nodes: selectedIds.size > 0 ? [...selectedIds].map((id) => ({ id })) : undefined,
+            })
+          }
+          title={selectedIds.size > 0 ? 'Zoom to selection (F)' : 'Fit to view (F)'}
         >
           <Maximize2 size={14} />
         </ToolbarButton>
@@ -528,11 +954,18 @@ function CanvasInner({
         </ToolbarButton>
         <div className="w-px h-5 bg-[var(--color-border-subtle)] mx-0.5" />
         <ToolbarButton
-          onClick={() => selectedStepId && removeStep(selectedStepId)}
-          disabled={!selectedStepId}
-          title="Delete selected step (Del)"
+          onClick={deleteSelection}
+          disabled={selectedIds.size === 0}
+          title={
+            selectedIds.size > 1
+              ? `Delete ${selectedIds.size} selected steps (Del)`
+              : 'Delete selected step (Del)'
+          }
         >
           <Trash2 size={14} />
+        </ToolbarButton>
+        <ToolbarButton onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)">
+          <Keyboard size={14} />
         </ToolbarButton>
       </div>
 

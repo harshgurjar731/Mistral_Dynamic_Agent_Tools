@@ -65,6 +65,7 @@ export default function WorkflowBuilder() {
   const isEditMode = Boolean(workflowName);
 
   const definition = useBuilderStore((s) => s.definition);
+  const semanticRevision = useBuilderStore((s) => s.semanticRevision);
   const tab = useBuilderStore((s) => s.tab);
   const setTab = useBuilderStore((s) => s.setTab);
   const validation = useBuilderStore((s) => s.validation);
@@ -220,28 +221,37 @@ export default function WorkflowBuilder() {
 
   /* ── Live validation (debounced) ──────────────────────────────────── */
 
+  // Keyed on semanticRevision, not the definition object. Moving a node does
+  // not change what the workflow *does*, so it must not re-run validation —
+  // and when this depended on `definition`, every frame of a drag reset the
+  // debounce and queued another POST.
+  const definitionRef = useRef(definition);
+  definitionRef.current = definition;
+
   useEffect(() => {
-    if (definition.steps.length === 0) {
+    if (definitionRef.current.steps.length === 0) {
       setValidation(null);
       return;
     }
     const handle = setTimeout(() => {
       workflowBuilderApi
-        .validate(definition)
+        .validate(definitionRef.current)
         .then((r) => setValidation(r.data as ValidationResult))
         .catch(() => {
           /* validation is advisory; save/publish re-checks server-side */
         });
     }, 400);
     return () => clearTimeout(handle);
-  }, [definition, setValidation]);
+  }, [semanticRevision, setValidation]);
 
   /* ── Script compilation ───────────────────────────────────────────── */
 
-  // Keyed on the definition itself, so switching to the Script tab after an
-  // edit recompiles, and flipping back and forth serves the cached result.
+  // Keyed on semanticRevision so switching to the Script tab after an edit
+  // recompiles and flipping back and forth serves the cached result. Keying on
+  // the definition object made React Query JSON-hash the entire graph on every
+  // render, enabled or not.
   const scriptQuery = useQuery({
-    queryKey: [...QK.workflowScript(workflowName ?? '__draft__'), definition],
+    queryKey: [...QK.workflowScript(workflowName ?? '__draft__'), semanticRevision],
     queryFn: async () => {
       // A saved workflow reports whether the module on disk is stale; an
       // unsaved one can only be compiled in memory.

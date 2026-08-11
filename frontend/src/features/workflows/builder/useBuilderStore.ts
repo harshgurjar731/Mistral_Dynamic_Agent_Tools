@@ -8,9 +8,20 @@
  * History model
  * -------------
  * Every semantic mutation pushes the previous definition onto an undo stack.
- * Node drags are excluded: dragging emits a position update per frame, and
- * recording those would make undo useless. `commitLayout` is called once on
- * drag end for anything that should be undoable.
+ * Node drags are excluded: the canvas owns positions mid-gesture and calls
+ * `moveNodes` once on drag end, so a drag costs exactly one store write.
+ *
+ * Rapid edits of the same field — typing in the inspector — coalesce into a
+ * single history entry, so undo steps back a word at a time rather than a
+ * character at a time.
+ *
+ * Immutability
+ * ------------
+ * Every mutator returns new objects for what it touches and shares the rest,
+ * so `mutate` does NOT deep-clone the definition first. Cloning is reserved
+ * for values arriving from outside the store (`reset`, `replaceDefinition`,
+ * `duplicateStep`), where the caller may still hold a reference. A mutator
+ * that writes in place would corrupt the undo stack — keep them pure.
  */
 
 import { create } from 'zustand';
@@ -49,6 +60,12 @@ interface BuilderState {
   future: WorkflowDefinition[];
   /** Set when editing an existing workflow; null in create mode. */
   editingName: string | null;
+  /**
+   * Increments on every execution-affecting change, and never on a pure layout
+   * move. Use it as a query key instead of the definition object: keying on the
+   * object makes React Query hash the whole graph on every render.
+   */
+  semanticRevision: number;
 
   // Lifecycle
   reset: (definition?: WorkflowDefinition, editingName?: string | null) => void;
@@ -72,9 +89,13 @@ interface BuilderState {
   connect: (sourceId: string, targetId: string, branch?: 'true' | 'false') => void;
   disconnect: (sourceId: string, targetId: string, kind?: 'next' | 'true' | 'false') => void;
 
+  // Bulk
+  removeSteps: (stepIds: string[]) => void;
+  addSteps: (steps: WorkflowStep[], layout: Record<string, NodeLayout>) => void;
+
   // Layout
-  moveNode: (stepId: string, position: NodeLayout) => void;
-  commitLayout: () => void;
+  /** Commit the positions of everything that moved, once per drag gesture. */
+  moveNodes: (positions: Record<string, NodeLayout>) => void;
   runAutoLayout: (direction?: 'TB' | 'LR') => void;
 
   // UI
@@ -111,20 +132,68 @@ function semanticKey(d: WorkflowDefinition): string {
   });
 }
 
+/** Window in which repeated edits of the same field fold into one undo entry. */
+const COALESCE_MS = 700;
+
 export const useBuilderStore = create<BuilderState>((set, get) => {
-  /** Apply a semantic mutation, recording history and marking dirty. */
+  // Last coalescable mutation, so consecutive keystrokes in one field replace
+  // the previous history entry instead of pushing a new one.
+  let lastCoalesceKey: string | null = null;
+  let lastCoalesceAt = 0;
+
+  /** Apply a semantic mutation, recording history and marking dirty.
+   *
+   * `coalesceKey` groups rapid edits of one field: passing the same key twice
+   * within COALESCE_MS keeps the earlier snapshot as the single undo point.
+   */
   const mutate = (
     fn: (d: WorkflowDefinition) => WorkflowDefinition,
-    { record = true }: { record?: boolean } = {},
+    {
+      record = true,
+      coalesceKey,
+      layoutOnly = false,
+    }: { record?: boolean; coalesceKey?: string; layoutOnly?: boolean } = {},
   ) => {
-    const { definition, past } = get();
-    const next = fn(clone(definition));
+    const { definition, past, future, semanticRevision } = get();
+    // No defensive clone: mutators are pure and share untouched subtrees, which
+    // is what makes an undo stack of 100 definitions cheap.
+    const next = fn(definition);
+
+    // Bumped only when execution-affecting content changes, so consumers that
+    // must not re-run on a node drag (validation, script compilation) can key
+    // on a single integer instead of hashing the whole definition.
+    const revision = layoutOnly ? semanticRevision : semanticRevision + 1;
+
+    if (!record) {
+      set({ definition: next, dirty: true, semanticRevision: revision });
+      return;
+    }
+
+    const now = Date.now();
+    const coalescing =
+      coalesceKey !== undefined &&
+      coalesceKey === lastCoalesceKey &&
+      now - lastCoalesceAt < COALESCE_MS &&
+      past.length > 0;
+
+    lastCoalesceKey = coalesceKey ?? null;
+    lastCoalesceAt = now;
+
     set({
       definition: next,
       dirty: true,
-      past: record ? [...past, definition].slice(-HISTORY_LIMIT) : past,
-      future: record ? [] : get().future,
+      semanticRevision: revision,
+      // While coalescing the stack is left alone, so the entry already on top
+      // stays the state from before the burst started.
+      past: coalescing ? past : [...past, definition].slice(-HISTORY_LIMIT),
+      future: future.length === 0 ? future : [],
     });
+  };
+
+  /** Force the next mutation to start a fresh history entry. */
+  const breakCoalescing = () => {
+    lastCoalesceKey = null;
+    lastCoalesceAt = 0;
   };
 
   return {
@@ -137,6 +206,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     past: [],
     future: [],
     editingName: null,
+    semanticRevision: 0,
 
     // ── Lifecycle ────────────────────────────────────────────────────
     reset: (definition, editingName = null) => {
@@ -149,6 +219,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
       if (base.steps.length > 0 && Object.keys(base.ui_layout).length === 0) {
         base.ui_layout = autoLayout(base);
       }
+      breakCoalescing();
       set({
         definition: base,
         savedSnapshot: definition ? semanticKey(base) : null,
@@ -159,6 +230,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
         future: [],
         editingName,
         tab: 'canvas',
+        semanticRevision: get().semanticRevision + 1,
       });
     },
 
@@ -168,7 +240,10 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     },
 
     // ── Definition-level ─────────────────────────────────────────────
-    setMeta: (patch) => mutate((d) => ({ ...d, ...patch })),
+    setMeta: (patch) =>
+      mutate((d) => ({ ...d, ...patch }), {
+        coalesceKey: `meta:${Object.keys(patch).join(',')}`,
+      }),
 
     setInputSchema: (schema) => mutate((d) => ({ ...d, input_schema: schema })),
 
@@ -200,18 +275,24 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
       }),
 
     updateStep: (stepId, patch) =>
-      mutate((d) => ({
-        ...d,
-        steps: d.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
-      })),
+      mutate(
+        (d) => ({
+          ...d,
+          steps: d.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
+        }),
+        { coalesceKey: `step:${stepId}:${Object.keys(patch).join(',')}` },
+      ),
 
     updateStepConfig: (stepId, patch) =>
-      mutate((d) => ({
-        ...d,
-        steps: d.steps.map((s) =>
-          s.id === stepId ? { ...s, config: { ...s.config, ...patch } } : s,
-        ),
-      })),
+      mutate(
+        (d) => ({
+          ...d,
+          steps: d.steps.map((s) =>
+            s.id === stepId ? { ...s, config: { ...s.config, ...patch } } : s,
+          ),
+        }),
+        { coalesceKey: `config:${stepId}:${Object.keys(patch).join(',')}` },
+      ),
 
     removeStep: (stepId) => {
       mutate((d) => {
@@ -268,21 +349,55 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
     disconnect: (sourceId, targetId, kind = 'next') =>
       mutate((d) => ({ ...d, steps: disconnectSteps(d.steps, sourceId, targetId, kind) })),
 
-    // ── Layout ───────────────────────────────────────────────────────
-    // Dragging fires continuously, so position updates skip the history stack
-    // and do not set `dirty` on their own; commitLayout closes the gesture.
-    moveNode: (stepId, position) =>
-      set((state) => ({
-        definition: {
-          ...state.definition,
-          ui_layout: { ...state.definition.ui_layout, [stepId]: position },
-        },
-      })),
+    // ── Bulk ─────────────────────────────────────────────────────────
+    removeSteps: (stepIds) => {
+      const ids = stepIds.filter(Boolean);
+      if (ids.length === 0) return;
+      breakCoalescing();
+      mutate((d) => {
+        let steps = d.steps;
+        const ui_layout = { ...d.ui_layout };
+        for (const id of ids) {
+          steps = removeStepFrom(steps, id);
+          delete ui_layout[id];
+        }
+        return {
+          ...d,
+          steps,
+          ui_layout,
+          entry_step: ids.includes(d.entry_step) ? (steps[0]?.id ?? '') : d.entry_step,
+        };
+      });
+      if (ids.includes(get().selectedStepId ?? '')) set({ selectedStepId: null });
+    },
 
-    commitLayout: () => set({ dirty: true }),
+    /** Insert steps that already carry unique ids, with their positions. */
+    addSteps: (steps, layout) => {
+      if (steps.length === 0) return;
+      breakCoalescing();
+      mutate((d) => ({
+        ...d,
+        steps: [...d.steps, ...steps],
+        ui_layout: { ...d.ui_layout, ...layout },
+        entry_step: d.entry_step || steps[0].id,
+      }));
+    },
+
+    // ── Layout ───────────────────────────────────────────────────────
+    // The canvas owns positions during a drag and calls this once when the
+    // gesture ends, with every node that moved. That keeps a drag at one store
+    // write instead of one per animation frame — the difference between the
+    // whole graph being rebuilt 60 times a second and once.
+    moveNodes: (positions) => {
+      if (Object.keys(positions).length === 0) return;
+      breakCoalescing();
+      mutate((d) => ({ ...d, ui_layout: { ...d.ui_layout, ...positions } }), {
+        layoutOnly: true,
+      });
+    },
 
     runAutoLayout: (direction = 'TB') =>
-      mutate((d) => ({ ...d, ui_layout: autoLayout(d, direction) })),
+      mutate((d) => ({ ...d, ui_layout: autoLayout(d, direction) }), { layoutOnly: true }),
 
     // ── UI ───────────────────────────────────────────────────────────
     select: (stepId) => set({ selectedStepId: stepId }),
@@ -291,25 +406,30 @@ export const useBuilderStore = create<BuilderState>((set, get) => {
 
     // ── History ──────────────────────────────────────────────────────
     undo: () => {
-      const { past, future, definition } = get();
+      const { past, future, definition, semanticRevision } = get();
       if (past.length === 0) return;
       const previous = past[past.length - 1];
+      // A step back must not be folded into the burst that is being undone.
+      breakCoalescing();
       set({
         definition: previous,
         past: past.slice(0, -1),
         future: [definition, ...future].slice(0, HISTORY_LIMIT),
         dirty: true,
+        semanticRevision: semanticRevision + 1,
       });
     },
 
     redo: () => {
-      const { past, future, definition } = get();
+      const { past, future, definition, semanticRevision } = get();
       if (future.length === 0) return;
+      breakCoalescing();
       set({
         definition: future[0],
         past: [...past, definition].slice(-HISTORY_LIMIT),
         future: future.slice(1),
         dirty: true,
+        semanticRevision: semanticRevision + 1,
       });
     },
 
