@@ -64,6 +64,8 @@ class WorkflowPlanningLayer(Layer):
         from app.services.workflow_engine.engine import save_workflow
         from app.services.workflow_engine.models import WorkflowDefinition
         from app.services import agent_service, connector_service
+        from app.ontology import matcher as ontology_matcher
+        from app.ontology.vocab import AgentTier, Predicate, SubjectType
 
         goal = ctx.query
         client = ctx.client
@@ -85,6 +87,10 @@ class WorkflowPlanningLayer(Layer):
                     pass
                 return []
 
+            # Resolved before the fetch so the connector inventory can be
+            # narrowed in the same round trip as everything else.
+            scope = ontology_matcher.scope_for_goal(goal)
+
             # ── PARALLEL: fetch tools, agents, workflows and connectors ──
             (
                 existing_tools,
@@ -95,7 +101,7 @@ class WorkflowPlanningLayer(Layer):
                 tool_resolver.list_tools(),
                 agent_service.list_agents(client, page=0, page_size=100),
                 _fetch_workflows(),
-                connector_service.describe_for_prompt(),
+                connector_service.describe_for_prompt(scope),
             )
 
             existing_tool_names = [t.get("name", "") for t in existing_tools]
@@ -114,9 +120,39 @@ class WorkflowPlanningLayer(Layer):
                 for a in agents_resp.get("items", [])
             ]
 
-            foundation_agents = [a for a in all_agents if a.get("tier") == "foundation"]
-            domain_agents = [a for a in all_agents if a.get("tier") == "domain"]
-            usecase_agents = [a for a in all_agents if a.get("tier") == "use_case"]
+            # ── Ontology scoping ─────────────────────────────────────────
+            # Passing the whole inventory costs tokens, but the real damage is
+            # precision: a mortgage goal should never have to rule out a
+            # Medical Information Extractor. Narrow to the matched domain
+            # subtree, always keeping foundation agents — they are
+            # domain-agnostic by definition and reused in every workflow.
+            foundation_ids = {
+                a["id"] for a in all_agents
+                if a.get("tier") == AgentTier.FOUNDATION.value
+            }
+            in_scope = ontology_matcher.filter_subjects(
+                SubjectType.AGENT.value,
+                [a["id"] for a in all_agents],
+                scope,
+                Predicate.SERVES_DOMAIN.value,
+                always_include=foundation_ids,
+            )
+
+            scoped_agents = [a for a in all_agents if a["id"] in in_scope]
+            if scope["scoped"] and len(scoped_agents) < len(all_agents):
+                ctx.emit(
+                    "status",
+                    f"Scoped to {ontology_matcher.describe_scope(scope)} — "
+                    f"{len(scoped_agents)} of {len(all_agents)} agents in play",
+                )
+                logger.info(
+                    "Planner scope %s: %d/%d agents",
+                    scope["domains"], len(scoped_agents), len(all_agents),
+                )
+
+            foundation_agents = [a for a in scoped_agents if a.get("tier") == AgentTier.FOUNDATION.value]
+            domain_agents = [a for a in scoped_agents if a.get("tier") == AgentTier.DOMAIN.value]
+            usecase_agents = [a for a in scoped_agents if a.get("tier") == AgentTier.USE_CASE.value]
 
             analysis_result = client.chat.complete(
                 model=settings.MISTRAL_ORCHESTRATOR_MODEL,

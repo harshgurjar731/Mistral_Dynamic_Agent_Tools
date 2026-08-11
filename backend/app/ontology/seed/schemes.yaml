@@ -1,0 +1,223 @@
+# Seed vocabulary.
+#
+# Deliberately small. A vocabulary of eight terms fully applied is worth more
+# than sixty partially applied — retrieval that silently returns nothing is
+# harder to debug than retrieval that returns too much. Grow this from real
+# annotation gaps, not from speculation.
+#
+# Concept ids are dotted paths and must be globally unique. `parent` refers to
+# another concept id in the same scheme.
+
+schemes:
+  - id: agent_tier
+    label: Agent tier
+    description: >-
+      How broadly an agent applies. Drives the reuse policy the planner is
+      instructed to follow.
+
+  - id: domain
+    label: Business domain
+    description: >-
+      The line of business a resource serves. The primary axis the planner
+      narrows on before choosing agents.
+
+  - id: capability
+    label: Capability
+    description: >-
+      What a resource can do, or needs done. Agents require capabilities;
+      tools and connectors provide them.
+
+  - id: data_class
+    label: Data class
+    description: >-
+      Sensitivity of the data flowing through a step. Governs what may reach a
+      third-party connector.
+
+concepts:
+  # ── Agent tier — mirrors AgentTier in vocab.py ──────────────────────────
+  - id: agent_tier.foundation
+    scheme: agent_tier
+    label: Foundation
+    definition: Domain-agnostic safety, routing and quality gates. Always reused.
+    synonyms: [guardrail, moderation, safety]
+
+  - id: agent_tier.domain
+    scheme: agent_tier
+    label: Domain
+    definition: Business logic shared across the products of one domain.
+
+  - id: agent_tier.use_case
+    scheme: agent_tier
+    label: Use case
+    definition: Product-specific logic for a single product type.
+
+  # ── Domain ──────────────────────────────────────────────────────────────
+  - id: domain.lending
+    scheme: domain
+    label: Lending
+    definition: Credit assessment, affordability and loan decisioning.
+    synonyms: [loan, credit, finance, underwriting]
+
+  - id: domain.lending.mortgage
+    scheme: domain
+    parent: domain.lending
+    label: Mortgage
+    definition: Residential and commercial property lending.
+    synonyms: [home loan, property loan, ltv, residential]
+
+  - id: domain.lending.vehicle_finance
+    scheme: domain
+    parent: domain.lending
+    label: Vehicle finance
+    definition: Car, van and asset finance including balloon payments.
+    synonyms: [car loan, auto loan, vehicle loan, apr]
+
+  - id: domain.lending.personal_loan
+    scheme: domain
+    parent: domain.lending
+    label: Personal loan
+    definition: Unsecured personal lending.
+
+  - id: domain.insurance
+    scheme: domain
+    label: Insurance
+    definition: Policy quoting, underwriting and claims.
+    synonyms: [policy, claim, premium]
+
+  - id: domain.healthcare
+    scheme: domain
+    label: Healthcare
+    definition: Clinical triage, symptom analysis and medical guidance.
+    synonyms: [medical, clinical, diagnosis, symptom, patient]
+
+  - id: domain.customer_support
+    scheme: domain
+    label: Customer support
+    definition: Ticket triage, intent classification and resolution drafting.
+    synonyms: [ticket, helpdesk, support, resolution, intent]
+
+  # "Content" and "research" appear in almost any agent's instructions, so the
+  # default label match is overridden (a leading "!" replaces the phrase set)
+  # with terms that only occur when the work really is editorial.
+  - id: domain.content
+    scheme: domain
+    label: Content
+    definition: Research, drafting, editing and publishing workflows.
+    synonyms:
+      - "!blog post"
+      - "!content marketing"
+      - "!editorial"
+      - "!copywriting"
+      - "!article draft"
+      - "!publishing workflow"
+
+  - id: domain.engineering
+    scheme: domain
+    label: Engineering
+    definition: Software delivery, code review and repository operations.
+    synonyms: [software, code, repository, developer]
+
+  # Added after the first backfill flagged "Legal Contract Review Analyst" as
+  # matching no domain. Growing the vocabulary from real gaps is the intended
+  # loop — do not add terms speculatively.
+  - id: domain.legal
+    scheme: domain
+    label: Legal
+    definition: Contract review, obligations and regulatory analysis.
+    synonyms: [contract, clause, legal, regulatory, compliance review]
+
+  - id: domain.internal
+    scheme: domain
+    label: Internal
+    definition: >-
+      Scaffolding, fixtures and test resources. Annotating these keeps them out
+      of the planner's candidate set rather than leaving them untagged.
+    synonyms:
+      - "!test agent"
+      - "!test data"
+      - "!scratch"
+      - "!sandbox"
+      - "!fixture"
+
+  # ── Capability ──────────────────────────────────────────────────────────
+  - id: capability.reasoning
+    scheme: capability
+    label: Reasoning
+    definition: Pure model reasoning with no external system access.
+
+  - id: capability.reasoning.assessment
+    scheme: capability
+    parent: capability.reasoning
+    label: Assessment
+    definition: Scoring, eligibility and risk judgements.
+
+  - id: capability.reasoning.extraction
+    scheme: capability
+    parent: capability.reasoning
+    label: Extraction
+    definition: Pulling structured fields out of unstructured input.
+
+  - id: capability.reasoning.summarisation
+    scheme: capability
+    parent: capability.reasoning
+    label: Summarisation
+    definition: Condensing or rewriting content.
+
+  - id: capability.governance
+    scheme: capability
+    label: Governance
+    definition: Safety, moderation and output quality gates.
+    synonyms: [moderation, guardrail, review]
+
+  - id: capability.retrieval
+    scheme: capability
+    label: Retrieval
+    definition: Reading grounded knowledge — document libraries, web search.
+    synonyms: [rag, search, lookup]
+
+  - id: capability.integration
+    scheme: capability
+    label: Integration
+    definition: Reading from or acting on an external system.
+
+  - id: capability.integration.read
+    scheme: capability
+    parent: capability.integration
+    label: External read
+    definition: Reading data from a third-party service.
+
+  - id: capability.integration.write
+    scheme: capability
+    parent: capability.integration
+    label: External write
+    definition: >-
+      Creating or modifying state in a third-party service. Steps requiring
+      this are the ones worth gating behind confirmation.
+
+  - id: capability.computation
+    scheme: capability
+    label: Computation
+    definition: Deterministic calculation, code execution or data transformation.
+    synonyms: [calculation, code interpreter, transform]
+
+  # ── Data class ──────────────────────────────────────────────────────────
+  - id: data_class.public
+    scheme: data_class
+    label: Public
+    definition: No restriction on where this data may travel.
+
+  - id: data_class.internal
+    scheme: data_class
+    label: Internal
+    definition: Organisation-internal. Should not leave without review.
+
+  - id: data_class.financial
+    scheme: data_class
+    label: Financial
+    definition: Account numbers, balances, credit data.
+
+  - id: data_class.pii
+    scheme: data_class
+    label: Personal data
+    definition: Identifies a person. Must not reach a third-party connector.
+    synonyms: [personal, gdpr, sensitive]

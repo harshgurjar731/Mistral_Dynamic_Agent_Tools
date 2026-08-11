@@ -12,6 +12,7 @@ import logging
 import os
 import json
 import time
+from collections import Counter
 from typing import AsyncGenerator
 
 import httpx
@@ -26,7 +27,7 @@ from app.services.workflow_engine.models import (
     WorkflowExecutionResponse, WorkflowListResponse, WorkflowDefinition,
     UpdateWorkflowRequest, ValidateWorkflowRequest, ValidationResponse,
     ScriptResponse, BuilderCatalogResponse, CatalogAgent, CatalogTool,
-    CatalogConnector,
+    CatalogConnector, CatalogDomain,
 )
 from app.services.workflow_engine.engine import (
     save_workflow, get_workflow, list_workflows, delete_workflow,
@@ -285,6 +286,52 @@ async def update_workflow(workflow_name: str, request: UpdateWorkflowRequest):
 
 # ── Builder support ───────────────────────────────────────────────────────────
 
+async def _validate_with_ontology(definition) -> ValidationResponse:
+    """Structural validation plus the ontology constraints.
+
+    The two are separate because they need different things: structural rules
+    read only the definition, while ontology rules need live inventory to know
+    what each agent can actually reach. Inventory failures degrade to the
+    structural result rather than failing the request — a validator that goes
+    down when the Connectors API hiccups would block saving.
+    """
+    result = validate_workflow(definition)
+
+    try:
+        from app.ontology import constraints
+        from app.services import agent_service, connector_service
+
+        client = get_mistral_client()
+        agents_resp, connectors_resp = await asyncio.gather(
+            agent_service.list_agents(client, page=0, page_size=200),
+            connector_service.list_connectors(),
+            return_exceptions=True,
+        )
+
+        agents_by_id = (
+            {a["id"]: a for a in agents_resp.get("items", []) if a.get("id")}
+            if not isinstance(agents_resp, Exception) else {}
+        )
+        connectors_by_id = (
+            {c["id"]: c for c in connectors_resp.get("items", []) if c.get("id")}
+            if not isinstance(connectors_resp, Exception) else {}
+        )
+
+        extra = constraints.check(definition, agents_by_id, connectors_by_id)
+        if extra:
+            issues = [*result.issues, *extra]
+            return ValidationResponse(
+                valid=not any(i.severity == "error" for i in issues),
+                issues=issues,
+                error_count=sum(1 for i in issues if i.severity == "error"),
+                warning_count=sum(1 for i in issues if i.severity == "warning"),
+            )
+    except Exception as e:
+        logger.warning("Ontology validation skipped: %s", e)
+
+    return result
+
+
 @router.post("/workflows/validate", response_model=ValidationResponse)
 async def validate_workflow_endpoint(request: ValidateWorkflowRequest):
     """Validate a definition without persisting it.
@@ -292,7 +339,7 @@ async def validate_workflow_endpoint(request: ValidateWorkflowRequest):
     Used for live feedback in the visual builder, so it always returns 200 —
     the issue list is the payload, not an error condition.
     """
-    return validate_workflow(request.definition)
+    return await _validate_with_ontology(request.definition)
 
 
 @router.post("/workflows/script/preview", response_model=ScriptResponse)
@@ -365,7 +412,10 @@ async def publish_workflow(workflow_name: str):
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
 
-    result = validate_workflow(workflow)
+    # Publishing is the gate that matters — a capability gap or an egress
+    # violation must not reach a deployed worker, even if it was saved as a
+    # draft while the annotations were still incomplete.
+    result = await _validate_with_ontology(workflow)
     if not result.valid:
         raise HTTPException(
             status_code=422,
@@ -438,6 +488,23 @@ async def get_builder_catalog():
     )
 
     agents: list[CatalogAgent] = []
+    # Domain annotations for the whole page in one query, so faceting the
+    # palette costs one round trip rather than one per agent.
+    agent_domains: dict[str, list[str]] = {}
+    if not isinstance(agents_resp, Exception):
+        try:
+            from app.ontology import store as ontology_store
+            from app.ontology.vocab import Predicate, SubjectType
+
+            ids = [a["id"] for a in agents_resp.get("items", []) if a.get("id")]
+            bulk = ontology_store.annotations_for_many(SubjectType.AGENT.value, ids)
+            agent_domains = {
+                subject: annotations.get(Predicate.SERVES_DOMAIN.value, [])
+                for subject, annotations in bulk.items()
+            }
+        except Exception as e:
+            logger.warning("Builder catalog: could not load domain annotations: %s", e)
+
     if isinstance(agents_resp, Exception):
         logger.warning("Builder catalog: could not list agents: %s", agents_resp)
     else:
@@ -465,6 +532,7 @@ async def get_builder_catalog():
                     for ref in (item.get("connectors") or [])
                     if ref.get("connector_id")
                 ],
+                domains=agent_domains.get(item["id"], []),
             ))
 
     tools: list[CatalogTool] = []
@@ -532,10 +600,29 @@ async def get_builder_catalog():
                 active=record.get("active", True),
             ))
 
+    # Only domains that actually have agents — an empty facet is noise.
+    domains: list[CatalogDomain] = []
+    try:
+        from app.ontology import store as ontology_store
+        from app.ontology.vocab import Scheme
+
+        used = Counter(d for ds in agent_domains.values() for d in ds)
+        for concept in ontology_store.list_concepts(Scheme.DOMAIN.value):
+            if used.get(concept["id"]):
+                domains.append(CatalogDomain(
+                    id=concept["id"],
+                    label=concept["label"],
+                    parent_id=concept["parent_id"],
+                    agent_count=used[concept["id"]],
+                ))
+    except Exception as e:
+        logger.warning("Builder catalog: could not build domain facets: %s", e)
+
     return BuilderCatalogResponse(
         agents=sorted(agents, key=lambda a: a.name.lower()),
         tools=sorted(tools, key=lambda t: t.name.lower()),
         connectors=sorted(connectors, key=lambda c: c.name.lower()),
+        domains=sorted(domains, key=lambda d: d.label.lower()),
         models=[
             "mistral-large-latest",
             "mistral-medium-latest",

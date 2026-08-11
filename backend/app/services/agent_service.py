@@ -10,6 +10,8 @@ from mistralai.client import Mistral
 from mistralai.client.models.completionargs import CompletionArgs
 from app.config import settings, map_model_name
 from app.exceptions import MistralAPIError, AgentNotFoundError
+from app.ontology import store as annotation_store
+from app.ontology.vocab import DEFAULT_TIER, AgentTier, Predicate, SubjectType, coerce_tier
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +102,23 @@ _http_client = httpx.Client(
 )
 
 
-# ── Tier inference heuristic (when metadata.tier is absent) ────────────────
+# ── Tier resolution ────────────────────────────────────────────────────────
+#
+# Order of authority:
+#   1. an explicit annotation in the concept store  (authoritative)
+#   2. `metadata.tier` on the Mistral agent          (authoritative)
+#   3. the keyword heuristic below                   (last resort, lossy)
+#
+# The heuristic is kept only for agents created before annotation existed. It
+# matches substrings, which is exactly why it mis-filed
+# `foundation_final_response_generator` as a domain agent: the keyword reads
+# "final_response_generation" and the name ends "generator". Anything it
+# returns is a guess — annotate the agent to make it a fact.
 
 _FOUNDATION_KEYWORDS = [
     "jailbreak", "moderation", "moderator", "guardrail", "topic_control",
     "reviewer", "review_agent", "output_moderation", "final_response_generation",
-    "safety", "routing",
+    "final_response_generator", "safety", "routing",
 ]
 _USECASE_KEYWORDS = [
     "mortgage", "vehicle_finance", "vehicle_loan", "car_loan", "personal_loan",
@@ -114,22 +127,67 @@ _USECASE_KEYWORDS = [
 
 
 def _infer_tier(name: str, instructions: str = "") -> str:
-    """Infer the agent tier from its name and instructions when metadata is absent."""
+    """Guess the agent tier from its name and instructions. Fallback only."""
     name_lower = (name or "").lower().replace(" ", "_")
     instr_lower = (instructions or "").lower()
 
-    # Check foundation first
     for kw in _FOUNDATION_KEYWORDS:
         if kw in name_lower or kw in instr_lower:
-            return "foundation"
+            return AgentTier.FOUNDATION.value
 
-    # Check use-case specific
     for kw in _USECASE_KEYWORDS:
         if kw in name_lower:
-            return "use_case"
+            return AgentTier.USE_CASE.value
 
-    # Default to domain (not foundation) — most workflow agents are domain-level
-    return "domain"
+    # Most workflow agents are domain-level, so that is the safer default.
+    return DEFAULT_TIER.value
+
+
+def record_agent_annotations(agent_id: str, data: dict, source: str = "user") -> None:
+    """Mirror an agent's tier, domains and capabilities into the concept store.
+
+    Best-effort by design. Annotation improves planning and validation; it is
+    never what makes an agent work, so a store failure must not fail the create
+    or update that triggered it.
+    """
+    if not agent_id:
+        return
+
+    try:
+        # Only write a tier when one was actually supplied. Defaulting here
+        # would let a rename that carries no tier silently re-file the agent.
+        if data.get("tier"):
+            tier = coerce_tier(data["tier"])
+            annotation_store.set_annotations(
+                SubjectType.AGENT.value, agent_id, Predicate.HAS_TIER.value,
+                [f"agent_tier.{tier}"], source=source,
+            )
+
+        for key, predicate in (
+            ("domains", Predicate.SERVES_DOMAIN.value),
+            ("capabilities", Predicate.REQUIRES_CAPABILITY.value),
+            ("data_classes", Predicate.HANDLES_DATA_CLASS.value),
+        ):
+            if key in data and data[key] is not None:
+                annotation_store.set_annotations(
+                    SubjectType.AGENT.value, agent_id, predicate,
+                    data[key] or [], source=source,
+                )
+    except Exception as e:
+        logger.warning("Could not record annotations for agent %s: %s", agent_id, e)
+
+
+def _resolve_tier(agent_id: str | None, name: str, instructions: str, explicit: str | None) -> str:
+    """Apply the authority order above to land on a single tier value."""
+    if explicit:
+        return coerce_tier(explicit)
+
+    if agent_id:
+        annotated = annotation_store.tier_for_agent(agent_id)
+        if annotated:
+            return coerce_tier(annotated)
+
+    return _infer_tier(name, instructions)
 
 
 
@@ -142,6 +200,15 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
 
         # API returns an array directly per OpenAPI spec
         agent_list = data if isinstance(data, list) else data.get("data", data)
+
+        # One annotation query for the whole page. Resolving tiers one agent at
+        # a time here would be 40 round trips on a list endpoint.
+        agent_ids = [
+            (a.get("id") if isinstance(a, dict) else getattr(a, "id", None)) or ""
+            for a in agent_list
+        ]
+        annotated_tiers = annotation_store.tiers_for_agents(agent_ids)
+
         agents = []
         for agent in agent_list:
             if isinstance(agent, dict):
@@ -158,7 +225,11 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": agent.get("tools", []),
                     "connectors": _connector_refs(agent.get("tools")),
                     "created_at": str(agent.get("created_at", "")),
-                    "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+                    "tier": coerce_tier(
+                        explicit_tier
+                        or annotated_tiers.get(agent.get("id") or "")
+                        or _infer_tier(a_name, a_instr)
+                    ),
                     **_extract_completion_args(agent),
                 })
             else:
@@ -177,7 +248,11 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": getattr(agent, "tools", []),
                     "connectors": _connector_refs(getattr(agent, "tools", None)),
                     "created_at": str(getattr(agent, "created_at", "")),
-                    "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+                    "tier": coerce_tier(
+                        explicit_tier
+                        or annotated_tiers.get(getattr(agent, "id", "") or "")
+                        or _infer_tier(a_name, a_instr)
+                    ),
                     "temperature": ca_dict.get("temperature"),
                     "top_p": ca_dict.get("top_p"),
                     "max_tokens": ca_dict.get("max_tokens"),
@@ -226,7 +301,7 @@ async def get_agent(client: Mistral, agent_id: str) -> dict:
             "tools": agent.get("tools", []),
             "connectors": _connector_refs(agent.get("tools")),
             "created_at": str(agent.get("created_at", "")),
-            "tier": explicit_tier if explicit_tier else _infer_tier(a_name, a_instr),
+            "tier": _resolve_tier(agent.get("id"), a_name, a_instr, explicit_tier),
             **_extract_completion_args(agent),
         }
     except httpx.HTTPStatusError as e:
@@ -250,7 +325,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if data.get("description"):
             create_kwargs["description"] = data["description"]
         if data.get("tier"):
-            create_kwargs["metadata"] = {"tier": data["tier"]}
+            create_kwargs["metadata"] = {"tier": coerce_tier(data["tier"])}
         # Tools, libraries and connectors all live in the same `tools` array —
         # connectors are entries of type "connector", not a separate field — so
         # they are resolved together and assigned once.
@@ -270,6 +345,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
             create_kwargs["tools"] = tool_specs
 
         agent = client.beta.agents.create(**create_kwargs)
+        record_agent_annotations(agent.id, data, source="user")
         return {"id": agent.id, "name": getattr(agent, "name", None), "model": getattr(agent, "model", None)}
     except Exception as e:
         logger.error(f"Failed to create agent: {e}")
@@ -291,7 +367,7 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             update_kwargs["model"] = map_model_name(data["model"])
         if "tier" in data:
             existing_metadata = getattr(agent, "metadata", {}) or {}
-            existing_metadata["tier"] = data["tier"]
+            existing_metadata["tier"] = coerce_tier(data["tier"])
             update_kwargs["metadata"] = existing_metadata
 
         # Build CompletionArgs if any completion parameter is provided
@@ -332,6 +408,11 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             )
 
         agent = client.beta.agents.update(**update_kwargs)
+        # Only the keys the caller actually sent are re-annotated; omitting
+        # `tier` on a rename must not rewrite the agent's classification.
+        annotatable = {k: data[k] for k in ("tier", "domains", "capabilities", "data_classes") if k in data}
+        if annotatable:
+            record_agent_annotations(agent_id, annotatable, source="user")
         return {"id": agent.id, "name": getattr(agent, "name", None)}
     except Exception as e:
         if "not found" in str(e).lower():

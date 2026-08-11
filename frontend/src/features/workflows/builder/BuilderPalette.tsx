@@ -22,7 +22,12 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react';
-import type { CatalogAgent, CatalogConnector, CatalogTool } from '../../../api/workflowBuilder';
+import type {
+  CatalogAgent,
+  CatalogConnector,
+  CatalogDomain,
+  CatalogTool,
+} from '../../../api/workflowBuilder';
 import { DRAG_MIME, DRAG_ATTACH_HINT, type DragPayload } from './BuilderCanvas';
 import { STEP_META } from './graphModel';
 import { getTierConfig } from '../../../components/ui/TierBadge';
@@ -32,6 +37,7 @@ interface Props {
   agents: CatalogAgent[];
   tools: CatalogTool[];
   connectors: CatalogConnector[];
+  domains: CatalogDomain[];
   isLoading: boolean;
   onRefresh: () => void;
   onCreateAgent: () => void;
@@ -46,6 +52,34 @@ function startDrag(event: React.DragEvent, payload: DragPayload) {
     event.dataTransfer.setData(DRAG_ATTACH_HINT, '1');
   }
   event.dataTransfer.effectAllowed = 'copy';
+}
+
+function FacetChip({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'px-1.5 py-0.5 rounded text-[9.5px] border transition-colors',
+        active
+          ? 'bg-[rgba(99,102,241,0.18)] border-[rgba(99,102,241,0.5)] text-[#a5b4fc]'
+          : 'border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-white',
+      )}
+    >
+      {label}
+      {count !== undefined && <span className="ml-1 opacity-60 tabular-nums">{count}</span>}
+    </button>
+  );
 }
 
 function Section({
@@ -150,6 +184,7 @@ export default function BuilderPalette({
   agents,
   tools,
   connectors,
+  domains,
   isLoading,
   onRefresh,
   onCreateAgent,
@@ -157,21 +192,30 @@ export default function BuilderPalette({
 }: Props) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState(false);
+  const [domainFilter, setDomainFilter] = useState<string | null>(null);
 
   const needle = query.trim().toLowerCase();
 
-  const filteredAgents = useMemo(
-    () =>
-      !needle
-        ? agents
-        : agents.filter(
-            (a) =>
-              a.name.toLowerCase().includes(needle) ||
-              (a.description ?? '').toLowerCase().includes(needle) ||
-              (a.tier ?? '').toLowerCase().includes(needle),
-          ),
-    [agents, needle],
-  );
+  const filteredAgents = useMemo(() => {
+    let list = agents;
+
+    // Domain facet. Foundation agents are never filtered out — they are
+    // domain-agnostic by definition and belong in every workflow, so hiding
+    // them behind a domain filter would be actively misleading.
+    if (domainFilter) {
+      list = list.filter(
+        (a) => a.tier === 'foundation' || (a.domains ?? []).includes(domainFilter),
+      );
+    }
+
+    if (!needle) return list;
+    return list.filter(
+      (a) =>
+        a.name.toLowerCase().includes(needle) ||
+        (a.description ?? '').toLowerCase().includes(needle) ||
+        (a.tier ?? '').toLowerCase().includes(needle),
+    );
+  }, [agents, needle, domainFilter]);
 
   const filteredTools = useMemo(
     () =>
@@ -241,6 +285,27 @@ export default function BuilderPalette({
         </div>
         {toggleButton}
       </div>
+
+      {/* Domain facet — the same annotations that scope the planner narrow
+          the palette, so what you browse matches what the planner considers. */}
+      {domains.length > 0 && (
+        <div className="flex flex-wrap gap-1 px-2.5 py-2 border-b border-[var(--color-border-subtle)] shrink-0">
+          <FacetChip
+            active={domainFilter === null}
+            onClick={() => setDomainFilter(null)}
+            label="All"
+          />
+          {domains.map((d) => (
+            <FacetChip
+              key={d.id}
+              active={domainFilter === d.id}
+              onClick={() => setDomainFilter(domainFilter === d.id ? null : d.id)}
+              label={d.label}
+              count={d.agent_count}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
         {/* Agents */}

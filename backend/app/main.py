@@ -20,7 +20,7 @@ from app.exceptions import (
     conversation_not_found_handler, tool_service_error_handler,
     workflow_error_handler, generic_error_handler,
 )
-from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers, connectors
+from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers, connectors, ontology
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,10 +55,21 @@ async def lifespan(app: FastAPI):
     init_mistral_client()
     logger.info("✅ Mistral client initialized")
 
-    # Create ORM tables (remote_servers, etc.)
+    # Create ORM tables (remote_servers, ontology, etc.)
     from app.database import create_tables
     import app.remote_server_model  # noqa: F401 — register model with Base
+    import app.ontology.models       # noqa: F401 — register ontology tables with Base
     create_tables()
+
+    # Upsert the shipped vocabulary. Idempotent, so it is safe on every boot —
+    # this project has no migration tool, and the loader is what keeps the
+    # YAML and the database in step.
+    try:
+        from app.ontology.seed_loader import load_seed
+        summary = load_seed()
+        logger.info("✅ Ontology seeded: %s", summary)
+    except Exception as e:
+        logger.warning("⚠️ Ontology seed skipped: %s", e)
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools
@@ -151,6 +162,7 @@ app.include_router(uploads.router, prefix=settings.API_PREFIX)
 app.include_router(libraries.router, prefix=settings.API_PREFIX)
 app.include_router(remote_servers.router, prefix=settings.API_PREFIX)
 app.include_router(connectors.router, prefix=settings.API_PREFIX)
+app.include_router(ontology.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

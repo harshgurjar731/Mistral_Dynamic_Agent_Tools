@@ -175,6 +175,32 @@ async def get_connector(connector_id: str) -> dict:
     return _normalise(payload or {})
 
 
+def _annotate_connector(connector_id: str | None, domains: list[str] | None) -> None:
+    """Record what a connector provides, and which domains it serves.
+
+    Best-effort: annotation improves planning and validation but is never what
+    makes a connector work, so a store failure must not fail the create.
+    """
+    if not connector_id:
+        return
+    try:
+        from app.ontology import store as ontology_store
+        from app.ontology.vocab import Predicate, SubjectType
+
+        ontology_store.set_annotations(
+            SubjectType.CONNECTOR.value, connector_id,
+            Predicate.PROVIDES_CAPABILITY.value,
+            ["capability.integration.read"], source="user",
+        )
+        if domains:
+            ontology_store.set_annotations(
+                SubjectType.CONNECTOR.value, connector_id,
+                Predicate.SERVES_DOMAIN.value, domains, source="user",
+            )
+    except Exception as e:
+        logger.warning("Could not annotate connector %s: %s", connector_id, e)
+
+
 async def create_connector(data: dict) -> dict:
     """Register an MCP server URL as a custom connector.
 
@@ -201,6 +227,11 @@ async def create_connector(data: dict) -> dict:
     payload = await _request("POST", "/v1/connectors", "create connector", json=body)
     connector = _normalise(payload or {})
     logger.info("Created connector '%s' (id=%s)", connector.get("name"), connector.get("id"))
+
+    # Every connector reaches a system this platform does not control, so the
+    # read capability is a fact rather than a guess. Domains, if the caller
+    # supplied them, are recorded as stated.
+    _annotate_connector(connector.get("id"), data.get("domains"))
     return connector
 
 
@@ -454,13 +485,17 @@ def build_connector_tool_specs(connectors: list[dict] | None) -> list[dict]:
     return specs
 
 
-async def describe_for_prompt() -> tuple[str, list[str]]:
+async def describe_for_prompt(scope: dict | None = None) -> tuple[str, list[str]]:
     """Render the connector inventory for an LLM prompt.
 
     Returns ``(description_block, valid_ids)``. Unauthenticated connectors are
     listed but flagged, so the planner can see they exist without picking one
     that would fail at call time. Never raises: a planner that cannot see the
     connector list must still be able to plan.
+
+    ``scope`` narrows the list to connectors annotated within a domain subtree.
+    Unannotated connectors are always kept — a half-finished backfill must not
+    silently hide integrations from the planner.
     """
     try:
         payload = await list_connectors()
@@ -468,10 +503,27 @@ async def describe_for_prompt() -> tuple[str, list[str]]:
         logger.warning("Could not load connectors for prompt: %s", e)
         return "(none available)", []
 
+    items = payload.get("items", [])
+
+    if scope and scope.get("scoped"):
+        try:
+            from app.ontology import matcher as ontology_matcher
+            from app.ontology.vocab import Predicate, SubjectType
+
+            keep = ontology_matcher.filter_subjects(
+                SubjectType.CONNECTOR.value,
+                [c.get("id") for c in items],
+                scope,
+                Predicate.SERVES_DOMAIN.value,
+            )
+            items = [c for c in items if c.get("id") in keep]
+        except Exception as e:
+            logger.warning("Connector scoping failed, using full list: %s", e)
+
     lines: list[str] = []
     ids: list[str] = []
 
-    for connector in payload.get("items", []):
+    for connector in items:
         connector_id = connector.get("id")
         if not connector_id or not connector.get("active", True):
             continue

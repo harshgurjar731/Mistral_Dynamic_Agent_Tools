@@ -231,6 +231,8 @@ class CatalogAgent(BaseModel):
     # Connector ids attached to this agent — the canvas badges them so it is
     # obvious which agents can already reach an external service.
     connectors: list[str] = Field(default_factory=list)
+    # Domain concept ids, for faceting the palette.
+    domains: list[str] = Field(default_factory=list)
 
 
 class CatalogTool(BaseModel):
@@ -255,10 +257,19 @@ class CatalogConnector(BaseModel):
     tools: list[CatalogTool] = Field(default_factory=list)
 
 
+class CatalogDomain(BaseModel):
+    """A domain concept, for faceting the palette."""
+    id: str
+    label: str
+    parent_id: Optional[str] = None
+    agent_count: int = 0
+
+
 class BuilderCatalogResponse(BaseModel):
     """Everything the builder palette needs, in one round trip."""
     agents: list[CatalogAgent] = Field(default_factory=list)
     tools: list[CatalogTool] = Field(default_factory=list)
     connectors: list[CatalogConnector] = Field(default_factory=list)
+    domains: list[CatalogDomain] = Field(default_factory=list)
     models: list[str] = Field(default_factory=list)
     tiers: list[str] = Field(default_factory=list)

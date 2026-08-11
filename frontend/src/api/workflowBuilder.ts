@@ -84,6 +84,16 @@ export interface CatalogAgent {
   tools: string[];
   /** Connector ids already attached to this agent. */
   connectors: string[];
+  /** Domain concept ids this agent is annotated with. */
+  domains: string[];
+}
+
+/** A domain facet for the palette. Only domains with agents are returned. */
+export interface CatalogDomain {
+  id: string;
+  label: string;
+  parent_id?: string | null;
+  agent_count: number;
 }
 
 export interface CatalogTool {
@@ -115,6 +125,7 @@ export interface BuilderCatalog {
   agents: CatalogAgent[];
   tools: CatalogTool[];
   connectors: CatalogConnector[];
+  domains: CatalogDomain[];
   models: string[];
   tiers: string[];
 }

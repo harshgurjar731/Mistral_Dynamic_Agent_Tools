@@ -735,6 +735,41 @@ async def run_transform_step(step: WorkflowStep, variables: dict) -> StepResult:
         return StepResult(step_id=step.id, status="failed", error=str(e), duration_ms=duration)
 
 
+def _report_egress_policy(step: WorkflowStep, connector_id: str, tool_name: str) -> None:
+    """Log — but do not block — a restricted-data call to a third-party connector.
+
+    Deliberately report-only. A runtime block fails a workflow that already
+    passed validation, mid-execution, after the upstream steps have been paid
+    for; that is a worse outcome than the leak it prevents in most cases, and
+    the annotations driving it are still partly inferred. The publish-time
+    check in ``ontology.constraints`` is the gate that should stop this.
+
+    Read the WARNING lines this produces before anyone turns it into a block.
+    """
+    try:
+        from app.ontology import store as ontology_store
+        from app.ontology.vocab import RESTRICTED_DATA_CLASSES, Predicate, SubjectType
+
+        annotations = ontology_store.annotations_for(
+            SubjectType.CONNECTOR.value, connector_id
+        )
+        if not annotations.get(Predicate.EGRESSES_TO.value):
+            return
+
+        declared = (step.config or {}).get("data_classes") or []
+        restricted = [
+            c for c in declared if str(c).rsplit(".", 1)[-1] in RESTRICTED_DATA_CLASSES
+        ]
+        if restricted:
+            logger.warning(
+                "EGRESS POLICY (report-only): step '%s' sends %s to connector '%s' "
+                "(tool '%s'), which egresses to a third party.",
+                step.id, ", ".join(restricted), connector_id, tool_name,
+            )
+    except Exception as e:
+        logger.debug("Egress policy check skipped for step '%s': %s", step.id, e)
+
+
 def resolve_connector_arguments(step: WorkflowStep, variables: dict) -> dict:
     """Render a connector step's argument template against the workflow variables.
 
@@ -782,6 +817,8 @@ async def run_connector_step(step: WorkflowStep, variables: dict) -> StepResult:
         # Arguments are templated the same way tool steps template theirs, so
         # {{variables}} behave identically across both step kinds.
         arguments = resolve_connector_arguments(step, variables)
+
+        _report_egress_policy(step, connector_id, tool_name)
 
         logger.info(
             "Step '%s' — calling connector '%s' tool '%s'", step.id, connector_id, tool_name

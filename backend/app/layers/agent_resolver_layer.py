@@ -101,11 +101,16 @@ class AgentResolverLayer(Layer):
             AVAILABLE_TOOL_KEYS,
         )
         from app.services import connector_service
+        from app.ontology import matcher as ontology_matcher
 
         # ── Step 1: Analyse query ───────────────────────────────────────
         ctx.emit("status", "Analysing your query…")
 
-        connector_descriptions, connector_ids = await connector_service.describe_for_prompt()
+        # Narrow the connector inventory to the query's domain. A single-agent
+        # request needs one or two integrations at most; offering all 23 makes
+        # the choice harder, not easier.
+        scope = ontology_matcher.scope_for_goal(ctx.query)
+        connector_descriptions, connector_ids = await connector_service.describe_for_prompt(scope)
 
         try:
             result = ctx.client.chat.complete(

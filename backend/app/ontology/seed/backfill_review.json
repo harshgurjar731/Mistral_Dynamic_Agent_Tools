@@ -1,0 +1,1132 @@
+{
+  "note": "Review before applying. Delete or correct any wrong entry, then run apply_reviewed(). Entries with confidence 'low' matched no domain and are the ones most worth checking.",
+  "count": 63,
+  "proposals": [
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fdb2ae76274c68d89ff08f06e31a8",
+      "name": "Investigation Recommender",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.healthcare",
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fdb2ae88376d08a371eb9ab5e8884",
+      "name": "Treatment Plan Generator",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.use_case"
+        ],
+        "serves_domain": [
+          "domain.healthcare"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fdb2ae62e70329b0ef961362c6d99",
+      "name": "Preliminary Diagnosis Generator",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.healthcare"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fdb2ae51f7401830a0e5bf9b49fd1",
+      "name": "Medical Information Extractor",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.healthcare",
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd4da8af74d1abc1489ea4645ec3",
+      "name": "foundation_output_moderator",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fd5fb15f872ed8d2677eb95cf6f38",
+      "name": "Input agent",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": []
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d307287122ac038fa36569dee0",
+      "name": "GlobalAgent_Covenants and Conditions",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2fd0571b08ca76366ea450910",
+      "name": "GlobalAgent_Industry Analysis",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.insurance",
+          "domain.legal"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d3062071f58955728a69b1769c",
+      "name": "GlobalAgent_Collateral and Security",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.insurance",
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d30151736d88e981318c376c3a",
+      "name": "GlobalAgent_Qualitative Assessment",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.legal",
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d3085172b78883a60074d39384",
+      "name": "GlobalAgent_ESG Analysis",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d3003277bbab90c2d5373203c7",
+      "name": "GlobalAgent_Cash Flow Analysis",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval",
+          "capability.computation"
+        ],
+        "provides_capability": [
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2ff2375b2b3bd9fbeedfec556",
+      "name": "GlobalAgent_Ratio Analysis",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval",
+          "capability.computation"
+        ],
+        "provides_capability": [
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d30975752085540dac3d235b87",
+      "name": "GlobalAgent_Key Risks and Mitigants",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.legal",
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d30a7a72aa8367fb8a922b0592",
+      "name": "GlobalAgent_Appendix",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d303727009bed733dafc5b2c9f",
+      "name": "GlobalAgent_Facility Structure",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d30508747a9872cf574f022c65",
+      "name": "GlobalAgent_Policy Mapping",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.insurance",
+          "domain.legal"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d30bcc711b876bc16ceb628df6",
+      "name": "GlobalAgent_Orchestration",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval",
+          "capability.computation"
+        ],
+        "provides_capability": [
+          "capability.reasoning.extraction",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d3026573a99ca0c89243be8fcf",
+      "name": "GlobalAgent_Credit Risk Assessment",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2fe17721e9763e884bf6f12fa",
+      "name": "GlobalAgent_Financial Analysis",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2f8d772b9b1a787f837b01f81",
+      "name": "GlobalAgent_Executive Summary",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2fc017057b7499d8192da64b5",
+      "name": "GlobalAgent_Relationship Summary",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019fb7d2fa657051aa5dcc4bc501251f",
+      "name": "GlobalAgent_Client Overview",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.legal",
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f363aa79d77e4a02e937962f444df",
+      "name": "Resolution Generator",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.customer_support"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f363aa69172d5bff9bab2273abcb6",
+      "name": "Request Validator",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.customer_support",
+          "domain.legal"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f363aa56870f3940b5fb4654dd185",
+      "name": "Information Extractor",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.customer_support"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f363aa46074f8a4dc5526fe1dda41",
+      "name": "Support Intent Classifier",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.customer_support"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f3627303e72a68f7d1ac2b2e7a74e",
+      "name": "Financial Risk Assessor",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.lending"
+        ],
+        "requires_capability": [
+          "capability.computation"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019f361e1c52778d826812fbda5bdc44",
+      "name": "Legal Contract Review Analyst",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.use_case"
+        ],
+        "serves_domain": [
+          "domain.legal"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd72458877e99c1b678271647fbb",
+      "name": "Notification Sub-Workflow Agent",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.use_case"
+        ],
+        "serves_domain": [
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.reasoning.extraction",
+          "capability.reasoning.assessment"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd72437876fdb5f0334e9df86fc5",
+      "name": "Test Data Analyzer",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.use_case"
+        ],
+        "serves_domain": [
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd65360770d3bb012abdd1763355",
+      "name": "Publishing Sub-Workflow Agent",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.use_case"
+        ],
+        "serves_domain": [
+          "domain.content"
+        ],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.reasoning.extraction"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd4d501877e38b00ef86df312bbe",
+      "name": "foundation_reviewer",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd4c86fa768bb34e72dd8402560d",
+      "name": "foundation_final_response_generator",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd4bfd0772dda49732e8cb9c5a73",
+      "name": "foundation_topic_control_guardrail",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd4bdfd2751d9a20107c77ddf696",
+      "name": "foundation_jailbreak_moderator",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.foundation"
+        ],
+        "serves_domain": [],
+        "requires_capability": [],
+        "provides_capability": [
+          "capability.governance"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd48abfc74f5b60b71cfe21e3d23",
+      "name": "Rejection Email Drafter",
+      "confidence": "low",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [],
+        "requires_capability": [
+          "capability.retrieval"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.assessment",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019efd48aac1778ea0b9039f00ac9012",
+      "name": "Content Research Agent",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.content"
+        ],
+        "requires_capability": [
+          "capability.retrieval",
+          "capability.computation"
+        ],
+        "provides_capability": [
+          "capability.governance",
+          "capability.reasoning.summarisation"
+        ]
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019ef3593f62753a829e5fe11b03b1ae",
+      "name": "TestAgent",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": []
+      }
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "ag_019ef3586591758381d8f5462c7c8246",
+      "name": "TestAgent",
+      "confidence": "high",
+      "annotations": {
+        "has_tier": [
+          "agent_tier.domain"
+        ],
+        "serves_domain": [
+          "domain.internal"
+        ],
+        "requires_capability": [],
+        "provides_capability": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "0198e70f-57b0-77f6-a752-0a7f5ea2da35",
+      "name": "atlassian",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019ed053-3c0e-7785-805a-a1d2e44e77a9",
+      "name": "bigquery_",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "0198f11d-c3f2-74f2-bd09-a6b6a085e5bf",
+      "name": "box",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019f46f8-eb43-7275-a939-503d63596761",
+      "name": "company_documents",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019db032-0591-76a9-aef9-11b08901bc04",
+      "name": "datagouv",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019db031-ebdc-77c9-b04b-7da2887416a8",
+      "name": "deepwiki",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019e641f-1058-70d3-94f8-14cd79398892",
+      "name": "document_library",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019d8b52-6f1c-72db-97bf-7284f2bf5ead",
+      "name": "github_app",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019df75b-9673-72be-ba4f-033723c972ea",
+      "name": "gmail",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019df75b-b7f0-729d-a146-1f23187bbcd8",
+      "name": "google_calendar",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019e83ab-7915-7050-b3a6-d3d9e0c8e961",
+      "name": "google_drive",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019f4b9c-2a81-7061-9743-2b6413c1b11a",
+      "name": "google_drive_mcp",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "0198f11e-af91-7275-942e-0123c74e0b6c",
+      "name": "linear",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019dd389-9f91-70ea-bc4b-6c8c29277a91",
+      "name": "mermaid",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "0198f11d-493e-76a8-9c90-913b7462e7de",
+      "name": "notion",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019df75b-9e4d-743e-b6ff-03c37019b206",
+      "name": "outlook",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019dafec-8e28-729f-af19-bfa9ed8990b5",
+      "name": "outlook_calendar",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019db039-e708-70b3-8ee4-e4cafd06b2ac",
+      "name": "pubmed",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019e83a8-cdfc-7070-9571-e1eeab7944ea",
+      "name": "sharepoint",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019eab87-4538-72ab-bd11-77774df58563",
+      "name": "sharepoint_mcp",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019cfb41-5e8a-7350-b162-b2b80604fe5a",
+      "name": "slack",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "0198f11e-589a-7487-a5ad-0917bf5388e3",
+      "name": "stripe",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": [],
+        "egresses_to": [
+          "data_class.internal"
+        ]
+      }
+    },
+    {
+      "subject_type": "connector",
+      "subject_id": "019ce16f-543a-7159-a6a6-9cca11e99e46",
+      "name": "wandb",
+      "confidence": "high",
+      "annotations": {
+        "provides_capability": [
+          "capability.integration.read"
+        ],
+        "serves_domain": []
+      }
+    }
+  ]
+}

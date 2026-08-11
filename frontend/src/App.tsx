@@ -21,6 +21,7 @@ import LibraryManager from './features/libraries/LibraryManager';
 import RemoteServerDetail from './features/mcp/RemoteServerDetail';
 import ConnectorRegistry from './features/connectors/ConnectorRegistry';
 import ConnectorDetail from './features/connectors/ConnectorDetail';
+import ConceptBrowser from './features/ontology/ConceptBrowser';
 
 function NotFound() {
   return (
@@ -55,6 +56,7 @@ const router = createBrowserRouter([
       { path: 'workflows/:workflowName/edit',    element: <WorkflowBuilder /> },
       { path: 'workflows/:workflowName/execute', element: <WorkflowExecutionPage /> },
       { path: 'conversations',         element: <ConversationMgr /> },
+      { path: 'ontology',              element: <ConceptBrowser /> },
       { path: 'connectors',            element: <ConnectorRegistry /> },
       { path: 'connectors/:id',        element: <ConnectorDetail /> },
       { path: 'mcp',                   element: <McpRegistry /> },

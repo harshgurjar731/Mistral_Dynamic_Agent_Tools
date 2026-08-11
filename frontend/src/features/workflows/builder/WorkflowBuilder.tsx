@@ -45,7 +45,7 @@ import { JsonPanel, ScriptPanel, ValidationBar } from './BuilderPanels';
 import { CreateAgentModal, CreateToolModal } from './CreateModals';
 
 const EMPTY_CATALOG: BuilderCatalog = {
-  agents: [], tools: [], connectors: [], models: [], tiers: [],
+  agents: [], tools: [], connectors: [], domains: [], models: [], tiers: [],
 };
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -506,6 +506,7 @@ export default function WorkflowBuilder() {
           agents={catalog.agents}
           tools={catalog.tools}
           connectors={catalog.connectors}
+          domains={catalog.domains}
           isLoading={catalogLoading}
           onRefresh={() => void refetchCatalog()}
           onCreateAgent={() => setShowAgentModal(true)}
