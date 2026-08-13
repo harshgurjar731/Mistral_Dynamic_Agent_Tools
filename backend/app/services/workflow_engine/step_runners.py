@@ -3,6 +3,7 @@ Step Runners — execute individual workflow steps.
 Each step type has its own runner function.
 """
 
+import asyncio
 import json
 import time
 import logging
@@ -93,6 +94,18 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
         )
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id
+
+        # Classify the stand-in too. It is created by name from a workflow step,
+        # so the step's own name is the only signal available — thin, but it
+        # beats leaving the agent invisible to scoping entirely.
+        from app.ontology import autotag
+        autotag.annotate_agent(
+            real_id,
+            name=agent_id,
+            description=f"Auto-created workflow agent: {agent_id}",
+            goal=agent_id.replace("_", " "),
+        )
+
         logger.info("Auto-created agent '%s' → %s", agent_id, real_id)
         return real_id
     except Exception as e:
@@ -337,7 +350,10 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
         if agent_id:
             # ── Resolve agent name → real UUID if needed ──
-            resolved_id = _resolve_agent_id(client, agent_id)
+            # Offloaded: this does synchronous HTTP (agent lookup, and possibly
+            # an agent create). Called inline it would block the event loop, and
+            # with it every other request the API is serving.
+            resolved_id = await asyncio.to_thread(_resolve_agent_id, client, agent_id)
             logger.info("Step '%s' — calling agent %s (resolved: %s) with query (%.300s)", step.id, agent_id, resolved_id, query)
 
             # Build messages — supports multimodal (text + image) if image data in variables
@@ -354,7 +370,13 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             content = ""
 
             for round_num in range(MAX_TOOL_ROUNDS):
-                response = client.agents.complete(**base_kwargs, messages=messages)
+                # The Mistral client here is the synchronous one, and a single
+                # completion can take tens of seconds. Running it on the event
+                # loop froze the whole API for the duration of every step —
+                # which is why execution status appeared to stop updating mid-run.
+                response = await asyncio.to_thread(
+                    client.agents.complete, **base_kwargs, messages=messages
+                )
 
                 msg = _first_choice_message(response)
                 if msg is None:
@@ -424,7 +446,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                         step.id, tool_name, str(arguments)[:200],
                     )
 
-                    tool_result = _execute_tool_via_service(tool_name, arguments)
+                    tool_result = await asyncio.to_thread(
+                        _execute_tool_via_service, tool_name, arguments
+                    )
                     logger.info(
                         "Step '%s' — tool '%s' result: %.300s",
                         step.id, tool_name, str(tool_result)[:300],

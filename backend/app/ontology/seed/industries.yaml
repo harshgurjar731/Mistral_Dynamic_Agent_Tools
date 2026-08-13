@@ -1,0 +1,647 @@
+# Industry taxonomy — the three-level domain tree.
+#
+#   industry  →  domain  →  subdomain
+#   bfsi      →  lending →  mortgage
+#
+# Level is *derived from depth*, not stored: a concept with no parent is an
+# industry, its children are domains, theirs are subdomains. That keeps the
+# hierarchy in one place (`parent_id`) instead of duplicating it in a column
+# that can disagree with the tree.
+#
+# Concept ids already in use are re-declared here with a `parent` and nothing
+# else changed. Ids are what annotations point at, so renaming one would orphan
+# real review work — `domain.lending` stays `domain.lending` and simply gains
+# `domain.bfsi` above it.
+#
+# Synonyms are what `matcher.score_concepts` matches a goal against, so they are
+# written to be matched: real phrasings people use, not formal definitions. A
+# synonym starting with `!` replaces the default phrase set rather than adding
+# to it — use it when a label is an ordinary English word that would otherwise
+# match everything.
+
+concepts:
+
+  # ══ BFSI ═════════════════════════════════════════════════════════════════
+  - id: domain.bfsi
+    scheme: domain
+    parent: null
+    label: BFSI
+    definition: Banking, financial services and insurance.
+    synonyms: [bfsi, financial services, finserv]
+
+  - id: domain.banking
+    scheme: domain
+    parent: domain.bfsi
+    label: Banking
+    definition: Deposit-taking, accounts and day-to-day banking operations.
+    synonyms: [bank, banking, current account, savings account]
+
+  - id: domain.banking.retail
+    scheme: domain
+    parent: domain.banking
+    label: Retail banking
+    definition: Personal current accounts, savings and everyday banking.
+    synonyms: [retail banking, personal banking, consumer banking]
+
+  - id: domain.banking.corporate
+    scheme: domain
+    parent: domain.banking
+    label: Corporate banking
+    definition: Banking services for businesses and institutions.
+    synonyms: [corporate banking, business banking, commercial banking]
+
+  - id: domain.banking.kyc
+    scheme: domain
+    parent: domain.banking
+    label: KYC and onboarding
+    definition: Identity verification, customer due diligence and account opening.
+    synonyms: [kyc, know your customer, onboarding, due diligence, aml, anti money laundering]
+
+  - id: domain.banking.treasury
+    scheme: domain
+    parent: domain.banking
+    label: Treasury
+    definition: Liquidity, funding and balance-sheet management.
+    synonyms: [treasury, liquidity, cash management]
+
+  # ── Lending (existing id, re-parented) ──────────────────────────────────
+  - id: domain.lending
+    scheme: domain
+    parent: domain.bfsi
+    label: Lending
+    definition: Credit assessment, affordability and loan decisioning.
+    synonyms: [loan, credit, lending, underwriting]
+
+  - id: domain.lending.mortgage
+    scheme: domain
+    parent: domain.lending
+    label: Mortgage
+    definition: Residential and commercial property lending.
+    synonyms: [mortgage, home loan, property loan, remortgage, residential, ltv, affordability]
+
+  - id: domain.lending.personal_loan
+    scheme: domain
+    parent: domain.lending
+    label: Personal loan
+    definition: Unsecured consumer lending.
+    synonyms: [personal loan, unsecured loan, consumer loan]
+
+  - id: domain.lending.vehicle_finance
+    scheme: domain
+    parent: domain.lending
+    label: Vehicle finance
+    definition: Car, van and asset finance.
+    synonyms: [vehicle finance, car loan, auto loan, car finance, hire purchase]
+
+  - id: domain.lending.sme
+    scheme: domain
+    parent: domain.lending
+    label: SME lending
+    definition: Credit for small and medium businesses.
+    synonyms: [sme lending, business loan, working capital]
+
+  - id: domain.lending.cards
+    scheme: domain
+    parent: domain.lending
+    label: Credit cards
+    definition: Revolving card credit, limits and collections.
+    synonyms: [credit card, card lending, revolving credit]
+
+  # ── Insurance (existing id, re-parented) ────────────────────────────────
+  - id: domain.insurance
+    scheme: domain
+    parent: domain.bfsi
+    label: Insurance
+    definition: Underwriting, policy administration and claims.
+    synonyms: [insurance, policy, insurer, premium]
+
+  - id: domain.insurance.life
+    scheme: domain
+    parent: domain.insurance
+    label: Life insurance
+    definition: Life cover, annuities and protection products.
+    synonyms: [life insurance, life cover, annuity, protection]
+
+  - id: domain.insurance.general
+    scheme: domain
+    parent: domain.insurance
+    label: General insurance
+    definition: Property, motor and casualty cover.
+    synonyms: [general insurance, property insurance, motor insurance, casualty]
+
+  - id: domain.insurance.health
+    scheme: domain
+    parent: domain.insurance
+    label: Health insurance
+    definition: Medical cover, benefits and provider networks.
+    synonyms: [health insurance, medical cover, health plan]
+
+  - id: domain.insurance.claims
+    scheme: domain
+    parent: domain.insurance
+    label: Claims management
+    definition: First notice of loss, assessment, settlement and recovery.
+    synonyms: [claim, claims, settlement, loss adjusting, fnol]
+
+  - id: domain.insurance.underwriting
+    scheme: domain
+    parent: domain.insurance
+    label: Underwriting
+    definition: Risk selection, pricing and policy terms.
+    synonyms: [underwriting, risk selection, policy pricing]
+
+  - id: domain.insurance.reinsurance
+    scheme: domain
+    parent: domain.insurance
+    label: Reinsurance
+    definition: Risk transfer between insurers.
+    synonyms: [reinsurance, retrocession, treaty]
+
+  # ── Capital markets, payments, wealth ───────────────────────────────────
+  - id: domain.capital_markets
+    scheme: domain
+    parent: domain.bfsi
+    label: Capital markets
+    definition: Trading, settlement and market infrastructure.
+    synonyms: [capital markets, trading, securities, brokerage]
+
+  - id: domain.capital_markets.trading
+    scheme: domain
+    parent: domain.capital_markets
+    label: Trading
+    definition: Order execution, market making and trade lifecycle.
+    synonyms: [trading, execution, order book, market making]
+
+  - id: domain.capital_markets.post_trade
+    scheme: domain
+    parent: domain.capital_markets
+    label: Post-trade
+    definition: Clearing, settlement and custody.
+    synonyms: [post trade, settlement, clearing, custody, reconciliation]
+
+  - id: domain.capital_markets.research
+    scheme: domain
+    parent: domain.capital_markets
+    label: Investment research
+    definition: Equity and credit research and market analysis.
+    synonyms: [investment research, equity research, market analysis]
+
+  - id: domain.payments
+    scheme: domain
+    parent: domain.bfsi
+    label: Payments
+    definition: Moving money between parties.
+    synonyms: [payment, payments, transfer, remittance]
+
+  - id: domain.payments.cards
+    scheme: domain
+    parent: domain.payments
+    label: Card payments
+    definition: Authorisation, capture, chargebacks and scheme rules.
+    synonyms: [card payment, acquiring, chargeback, interchange]
+
+  - id: domain.payments.cross_border
+    scheme: domain
+    parent: domain.payments
+    label: Cross-border payments
+    definition: International transfers, FX and correspondent banking.
+    synonyms: [cross border, international payment, swift, foreign exchange, remittance]
+
+  - id: domain.payments.fraud
+    scheme: domain
+    parent: domain.payments
+    label: Payment fraud
+    definition: Detecting and preventing fraudulent transactions.
+    synonyms: [payment fraud, transaction fraud, chargeback fraud, scam detection]
+
+  - id: domain.wealth
+    scheme: domain
+    parent: domain.bfsi
+    label: Wealth management
+    definition: Advice, portfolios and long-term financial planning.
+    synonyms: [wealth management, investment advice, portfolio, financial planning]
+
+  - id: domain.wealth.advisory
+    scheme: domain
+    parent: domain.wealth
+    label: Advisory
+    definition: Suitability, recommendations and client advice.
+    synonyms: [advisory, suitability, financial advice]
+
+  - id: domain.wealth.portfolio
+    scheme: domain
+    parent: domain.wealth
+    label: Portfolio management
+    definition: Asset allocation, rebalancing and performance.
+    synonyms: [portfolio management, asset allocation, rebalancing]
+
+  - id: domain.wealth.retirement
+    scheme: domain
+    parent: domain.wealth
+    label: Retirement
+    definition: Pensions, drawdown and retirement planning.
+    synonyms: [retirement, pension, drawdown, superannuation]
+
+  # ══ Healthcare and life sciences ═════════════════════════════════════════
+  - id: domain.healthcare
+    scheme: domain
+    parent: null
+    label: Healthcare
+    definition: Clinical care, patient administration and life sciences.
+    synonyms: [healthcare, clinical, medical, patient, health]
+
+  - id: domain.healthcare.clinical
+    scheme: domain
+    parent: domain.healthcare
+    label: Clinical care
+    definition: Diagnosis, treatment and care pathways.
+    synonyms: [clinical care, diagnosis, treatment, triage, symptoms]
+
+  - id: domain.healthcare.patient_admin
+    scheme: domain
+    parent: domain.healthcare
+    label: Patient administration
+    definition: Scheduling, records and referrals.
+    synonyms: [patient admin, scheduling, medical records, referral, ehr]
+
+  - id: domain.healthcare.pharma
+    scheme: domain
+    parent: domain.healthcare
+    label: Pharmaceuticals
+    definition: Drug discovery, trials and safety monitoring.
+    synonyms: [pharma, pharmaceutical, drug discovery, clinical trial, pharmacovigilance]
+
+  - id: domain.healthcare.medical_devices
+    scheme: domain
+    parent: domain.healthcare
+    label: Medical devices
+    definition: Device design, approval and post-market surveillance.
+    synonyms: [medical device, diagnostics equipment]
+
+  - id: domain.healthcare.payer
+    scheme: domain
+    parent: domain.healthcare
+    label: Payer and billing
+    definition: Medical coding, billing and reimbursement.
+    synonyms: [medical billing, medical coding, reimbursement, payer]
+
+  # ══ Technology ═══════════════════════════════════════════════════════════
+  - id: domain.technology
+    scheme: domain
+    parent: null
+    label: Technology
+    definition: Software, infrastructure and data platforms.
+    synonyms: [technology, software, it, tech]
+
+  - id: domain.engineering
+    scheme: domain
+    parent: domain.technology
+    label: Software engineering
+    definition: Building, reviewing and operating software.
+    synonyms: [engineering, software development, code, programming]
+
+  - id: domain.technology.data
+    scheme: domain
+    parent: domain.technology
+    label: Data and analytics
+    definition: Pipelines, warehousing and business intelligence.
+    synonyms: [data engineering, analytics, business intelligence, etl, data pipeline]
+
+  - id: domain.technology.security
+    scheme: domain
+    parent: domain.technology
+    label: Cybersecurity
+    definition: Threat detection, vulnerabilities and incident response.
+    synonyms: [cybersecurity, infosec, threat detection, vulnerability, incident response]
+
+  - id: domain.technology.devops
+    scheme: domain
+    parent: domain.technology
+    label: DevOps and SRE
+    definition: Deployment, observability and reliability.
+    synonyms: [devops, sre, deployment, observability, reliability]
+
+  - id: domain.technology.support
+    scheme: domain
+    parent: domain.technology
+    label: IT support
+    definition: Service desk, incidents and asset management.
+    synonyms: [it support, service desk, helpdesk, ticket triage]
+
+  # ══ Retail and e-commerce ════════════════════════════════════════════════
+  - id: domain.retail
+    scheme: domain
+    parent: null
+    label: Retail and e-commerce
+    definition: Selling goods to consumers, online and in store.
+    synonyms: [retail, ecommerce, e-commerce, online store, merchandising]
+
+  - id: domain.retail.catalogue
+    scheme: domain
+    parent: domain.retail
+    label: Catalogue and merchandising
+    definition: Product data, pricing and assortment.
+    synonyms: [catalogue, product listing, merchandising, pricing, assortment]
+
+  - id: domain.retail.order_management
+    scheme: domain
+    parent: domain.retail
+    label: Order management
+    definition: Orders, fulfilment, returns and refunds.
+    synonyms: [order management, fulfilment, returns, refund, rma]
+
+  - id: domain.retail.supply_chain
+    scheme: domain
+    parent: domain.retail
+    label: Supply chain
+    definition: Inventory, replenishment and supplier management.
+    synonyms: [supply chain, inventory, stock, procurement, replenishment]
+
+  # ══ Manufacturing ════════════════════════════════════════════════════════
+  - id: domain.manufacturing
+    scheme: domain
+    parent: null
+    label: Manufacturing
+    definition: Production, quality and industrial operations.
+    synonyms: [manufacturing, production, factory, industrial]
+
+  - id: domain.manufacturing.quality
+    scheme: domain
+    parent: domain.manufacturing
+    label: Quality assurance
+    definition: Inspection, defects and quality control.
+    synonyms: [quality assurance, quality control, defect, inspection]
+
+  - id: domain.manufacturing.maintenance
+    scheme: domain
+    parent: domain.manufacturing
+    label: Maintenance
+    definition: Predictive and preventive equipment maintenance.
+    synonyms: [maintenance, predictive maintenance, equipment failure, downtime]
+
+  - id: domain.manufacturing.planning
+    scheme: domain
+    parent: domain.manufacturing
+    label: Production planning
+    definition: Scheduling, capacity and demand planning.
+    synonyms: [production planning, capacity planning, demand forecast]
+
+  # ══ Energy and utilities ═════════════════════════════════════════════════
+  - id: domain.energy
+    scheme: domain
+    parent: null
+    label: Energy and utilities
+    definition: Generation, distribution and metering of energy and water.
+    synonyms: [energy, utilities, power, electricity, gas, water]
+
+  - id: domain.energy.grid
+    scheme: domain
+    parent: domain.energy
+    label: Grid operations
+    definition: Network load, outages and distribution.
+    synonyms: [grid, outage, load balancing, distribution network]
+
+  - id: domain.energy.metering
+    scheme: domain
+    parent: domain.energy
+    label: Metering and billing
+    definition: Consumption readings, tariffs and customer billing.
+    synonyms: [metering, smart meter, tariff, utility billing]
+
+  - id: domain.energy.renewables
+    scheme: domain
+    parent: domain.energy
+    label: Renewables
+    definition: Solar, wind and storage assets.
+    synonyms: [renewable, solar, wind, battery storage, carbon]
+
+  # ══ Public sector ════════════════════════════════════════════════════════
+  - id: domain.public_sector
+    scheme: domain
+    parent: null
+    label: Public sector
+    definition: Government services, welfare and regulation.
+    synonyms: [public sector, government, council, citizen services]
+
+  - id: domain.public_sector.benefits
+    scheme: domain
+    parent: domain.public_sector
+    label: Benefits and welfare
+    definition: Eligibility, claims and entitlement.
+    synonyms: [benefits, welfare, entitlement, social security]
+
+  - id: domain.public_sector.tax
+    scheme: domain
+    parent: domain.public_sector
+    label: Taxation
+    definition: Assessment, filing and collection of tax.
+    synonyms: [tax, taxation, vat, tax return, hmrc, irs]
+
+  - id: domain.public_sector.regulatory
+    scheme: domain
+    parent: domain.public_sector
+    label: Regulatory and licensing
+    definition: Permits, licences and regulatory supervision.
+    synonyms: [regulatory, licensing, permit, supervision]
+
+  # ══ Telecom and media ════════════════════════════════════════════════════
+  - id: domain.telecom
+    scheme: domain
+    parent: null
+    label: Telecom and media
+    definition: Networks, subscriptions and content distribution.
+    synonyms: [telecom, telco, network operator, broadband, media]
+
+  - id: domain.telecom.network
+    scheme: domain
+    parent: domain.telecom
+    label: Network operations
+    definition: Coverage, faults and capacity.
+    synonyms: [network operations, coverage, fault, capacity planning]
+
+  - id: domain.telecom.subscriptions
+    scheme: domain
+    parent: domain.telecom
+    label: Subscriptions and billing
+    definition: Plans, usage, upgrades and churn.
+    synonyms: [subscription, billing plan, churn, upgrade, tariff plan]
+
+  # ── Content (existing id, re-parented) ──────────────────────────────────
+  - id: domain.content
+    scheme: domain
+    parent: domain.telecom
+    label: Content and publishing
+    definition: Editorial production, moderation and distribution.
+    synonyms: ["!editorial content", "!content publishing", "!content moderation", "!publishing"]
+
+  # ══ Transport and logistics ══════════════════════════════════════════════
+  - id: domain.logistics
+    scheme: domain
+    parent: null
+    label: Transport and logistics
+    definition: Moving goods and people.
+    synonyms: [logistics, transport, shipping, freight, delivery]
+
+  - id: domain.logistics.freight
+    scheme: domain
+    parent: domain.logistics
+    label: Freight
+    definition: Shipments, carriers and customs.
+    synonyms: [freight, shipment, carrier, customs, bill of lading]
+
+  - id: domain.logistics.last_mile
+    scheme: domain
+    parent: domain.logistics
+    label: Last mile
+    definition: Final delivery, routing and proof of delivery.
+    synonyms: [last mile, delivery route, courier, proof of delivery]
+
+  - id: domain.logistics.fleet
+    scheme: domain
+    parent: domain.logistics
+    label: Fleet management
+    definition: Vehicles, drivers and compliance.
+    synonyms: [fleet, driver, telematics, vehicle compliance]
+
+  # ══ Real estate ══════════════════════════════════════════════════════════
+  - id: domain.real_estate
+    scheme: domain
+    parent: null
+    label: Real estate
+    definition: Property transactions, management and valuation.
+    synonyms: [real estate, property, tenancy, landlord, letting]
+
+  - id: domain.real_estate.valuation
+    scheme: domain
+    parent: domain.real_estate
+    label: Valuation and survey
+    definition: Property valuation, survey and condition reports.
+    synonyms: [valuation, survey, appraisal, condition report]
+
+  - id: domain.real_estate.property_management
+    scheme: domain
+    parent: domain.real_estate
+    label: Property management
+    definition: Tenancies, maintenance and rent collection.
+    synonyms: [property management, tenancy, rent collection, maintenance request]
+
+  # ══ Hospitality and travel ═══════════════════════════════════════════════
+  - id: domain.travel
+    scheme: domain
+    parent: null
+    label: Hospitality and travel
+    definition: Bookings, stays and journeys.
+    synonyms: [travel, hospitality, hotel, booking, flight, itinerary]
+
+  - id: domain.travel.booking
+    scheme: domain
+    parent: domain.travel
+    label: Booking and reservations
+    definition: Availability, reservations and cancellations.
+    synonyms: [booking, reservation, availability, cancellation]
+
+  - id: domain.travel.guest_services
+    scheme: domain
+    parent: domain.travel
+    label: Guest services
+    definition: Guest requests, loyalty and experience.
+    synonyms: [guest services, concierge, loyalty programme]
+
+  # ══ Education ════════════════════════════════════════════════════════════
+  - id: domain.education
+    scheme: domain
+    parent: null
+    label: Education
+    definition: Teaching, assessment and student administration.
+    synonyms: [education, student, teaching, learning, curriculum]
+
+  - id: domain.education.assessment
+    scheme: domain
+    parent: domain.education
+    label: Assessment and grading
+    definition: Marking, feedback and academic integrity.
+    synonyms: [assessment, grading, marking, plagiarism, exam]
+
+  - id: domain.education.admissions
+    scheme: domain
+    parent: domain.education
+    label: Admissions
+    definition: Applications, offers and enrolment.
+    # "application" and "offer" are far too generic — every lending and
+    # insurance goal contains one. The ! prefix replaces the default phrase set
+    # so only genuinely academic phrasing matches.
+    synonyms: ["!admissions", "!student application", "!enrolment", "!university offer"]
+
+  # ══ Cross-functional ═════════════════════════════════════════════════════
+  # Functions every industry has. Kept as an industry-level node of its own so
+  # a customer-support agent is not forced to claim a sector it does not serve.
+  - id: domain.cross_functional
+    scheme: domain
+    parent: null
+    label: Cross-functional
+    definition: Business functions common to every industry.
+    synonyms: ["!cross functional", "!back office"]
+
+  - id: domain.customer_support
+    scheme: domain
+    parent: domain.cross_functional
+    label: Customer support
+    definition: Enquiries, complaints and service resolution.
+    synonyms: [customer support, customer service, complaint, helpdesk, ticket]
+
+  - id: domain.legal
+    scheme: domain
+    parent: domain.cross_functional
+    label: Legal
+    definition: Contracts, obligations and legal review.
+    synonyms: [legal, contract, clause, litigation, counsel]
+
+  - id: domain.legal.contracts
+    scheme: domain
+    parent: domain.legal
+    label: Contract review
+    definition: Drafting, review and obligation extraction.
+    synonyms: [contract review, clause extraction, lease agreement, nda]
+
+  - id: domain.compliance
+    scheme: domain
+    parent: domain.cross_functional
+    label: Risk and compliance
+    definition: Regulatory obligations, controls and audit.
+    synonyms: [compliance, regulatory, audit, governance, control, gdpr]
+
+  - id: domain.hr
+    scheme: domain
+    parent: domain.cross_functional
+    label: Human resources
+    definition: Hiring, onboarding and employee relations.
+    synonyms: [hr, human resources, recruitment, hiring, employee, payroll]
+
+  - id: domain.finance_ops
+    scheme: domain
+    parent: domain.cross_functional
+    label: Finance operations
+    definition: Invoicing, expenses, reconciliation and reporting.
+    synonyms: [finance operations, invoice, accounts payable, expense, reconciliation, ledger]
+
+  - id: domain.marketing
+    scheme: domain
+    parent: domain.cross_functional
+    label: Marketing and sales
+    definition: Campaigns, leads and customer acquisition.
+    synonyms: [marketing, campaign, lead generation, sales pipeline, crm]
+
+  - id: domain.procurement
+    scheme: domain
+    parent: domain.cross_functional
+    label: Procurement
+    definition: Sourcing, suppliers and purchasing.
+    synonyms: [procurement, sourcing, supplier, purchase order, tender]
+
+  # ── Internal (existing id, re-parented) ─────────────────────────────────
+  - id: domain.internal
+    scheme: domain
+    parent: domain.cross_functional
+    label: Internal operations
+    definition: This platform's own operational tooling.
+    synonyms: ["!internal tooling", "!platform operations"]

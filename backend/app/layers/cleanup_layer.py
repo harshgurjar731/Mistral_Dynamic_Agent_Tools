@@ -5,6 +5,7 @@ Runs as a post-processing step: it calls ``next(ctx)`` first (so downstream
 layers execute), then cleans up in a ``finally`` block.
 """
 
+import asyncio
 import logging
 
 from app.core.context import PipelineContext
@@ -29,7 +30,9 @@ class CleanupLayer(Layer):
         finally:
             if ctx.cleanup_agent and ctx.created_agent_id:
                 try:
-                    ctx.client.beta.agents.delete(agent_id=ctx.created_agent_id)
+                    await asyncio.to_thread(
+                        ctx.client.beta.agents.delete, agent_id=ctx.created_agent_id
+                    )
                     logger.info("Cleaned up dynamic agent: %s", ctx.created_agent_id)
                     # Update result to reflect that the agent was deleted
                     if ctx.result and "agent_id" in ctx.result:

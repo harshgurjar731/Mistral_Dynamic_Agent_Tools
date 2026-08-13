@@ -13,6 +13,7 @@ import WorkflowCreateChooser from './features/workflows/WorkflowCreateChooser';
 import WorkflowBuilder from './features/workflows/builder/WorkflowBuilder';
 import WorkflowVisualizer from './features/workflows/WorkflowVisualizer';
 import WorkflowExecutionPage from './features/workflows/WorkflowExecutionPage';
+import ExecutionsDashboard from './features/workflows/ExecutionsDashboard';
 import ConversationMgr from './features/conversations/ConversationManager';
 import McpRegistry from './features/mcp/McpRegistry';
 import McpServerDetail from './features/mcp/McpServerDetail';
@@ -52,6 +53,10 @@ const router = createBrowserRouter([
       { path: 'workflows/new/ai',      element: <WorkflowPlanner /> },
       { path: 'workflows/new/visual',  element: <WorkflowBuilder /> },
       { path: 'workflows/archived',    element: <ArchivedWorkflows /> },
+      // Fleet view of every run. Declared before /workflows/:workflowName so
+      // the literal segment is not read as a workflow name.
+      { path: 'workflows/executions',  element: <ExecutionsDashboard /> },
+      { path: 'executions',            element: <ExecutionsDashboard /> },
       { path: 'workflows/:workflowName', element: <WorkflowVisualizer /> },
       { path: 'workflows/:workflowName/edit',    element: <WorkflowBuilder /> },
       { path: 'workflows/:workflowName/execute', element: <WorkflowExecutionPage /> },

@@ -55,6 +55,12 @@ async def lifespan(app: FastAPI):
     init_mistral_client()
     logger.info("✅ Mistral client initialized")
 
+    # Tee workflow log output into per-execution buffers so the execution
+    # console can tail it. Installed here as well as lazily in the engine so a
+    # run started by any path is captured.
+    from app.services.workflow_engine import execution_logs
+    execution_logs.install()
+
     # Create ORM tables (remote_servers, ontology, etc.)
     from app.database import create_tables
     import app.remote_server_model  # noqa: F401 — register model with Base
@@ -70,6 +76,33 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Ontology seeded: %s", summary)
     except Exception as e:
         logger.warning("⚠️ Ontology seed skipped: %s", e)
+
+    # Classify any workflow that predates workflow annotation. Cheap (lexical,
+    # no model call) and idempotent — annotate_workflow skips anything a human
+    # has already confirmed, so this cannot undo review work.
+    try:
+        from app.ontology import autotag
+        from app.ontology.vocab import SubjectType
+        from app.ontology import store as ontology_store
+        from app.services.workflow_engine.engine import list_workflows
+
+        tagged = 0
+        for workflow in list_workflows():
+            if ontology_store.annotations_for(SubjectType.WORKFLOW.value, workflow.name):
+                continue
+            step_text = " ".join(
+                f"{s.id.replace('_', ' ')} {s.description or ''}" for s in workflow.steps
+            )
+            if autotag.annotate_workflow(
+                workflow.name,
+                description=workflow.description or "",
+                step_text=step_text,
+            ):
+                tagged += 1
+        if tagged:
+            logger.info("✅ Annotated %d previously unclassified workflow(s)", tagged)
+    except Exception as e:
+        logger.warning("⚠️ Workflow annotation backfill skipped: %s", e)
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools
@@ -171,12 +204,18 @@ os.makedirs(_uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
 # Workflow routes (Phase 3)
+#
+# Order is load-bearing: the execution routes own the literal path
+# ``/workflows/executions/…``, which the workflow routes would otherwise
+# swallow via ``/workflows/{workflow_name}``. FastAPI matches in registration
+# order, so executions must be included first.
 try:
-    from app.routes import workflows
+    from app.routes import executions, workflows
+    app.include_router(executions.router, prefix=settings.API_PREFIX)
     app.include_router(workflows.router, prefix=settings.API_PREFIX)
-    logger.info("Workflow routes loaded")
+    logger.info("Workflow + execution routes loaded")
 except ImportError:
-    pass
+    logger.exception("Workflow routes could not be loaded")
 
 
 @app.get("/health", tags=["Health"])

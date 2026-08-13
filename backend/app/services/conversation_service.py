@@ -4,7 +4,9 @@ Uses direct HTTP for list operations (SDK sentinel bug workaround)
 and SDK client for other operations.
 """
 
+import asyncio
 import logging
+
 import httpx
 from mistralai.client import Mistral
 from app.config import settings
@@ -57,7 +59,9 @@ async def list_conversations(client: Mistral) -> dict:
 async def get_conversation(client: Mistral, conversation_id: str) -> dict:
     """Get a single conversation by ID."""
     try:
-        conv = client.beta.conversations.get(conversation_id=conversation_id)
+        conv = await asyncio.to_thread(
+            client.beta.conversations.get, conversation_id=conversation_id
+        )
         return {
             "id": conv.id,
             "agent_id": getattr(conv, "agent_id", None),
@@ -71,7 +75,9 @@ async def get_conversation(client: Mistral, conversation_id: str) -> dict:
 async def get_conversation_history(client: Mistral, conversation_id: str) -> dict:
     """Get conversation history (all entries)."""
     try:
-        history = client.beta.conversations.get_history(conversation_id=conversation_id)
+        history = await asyncio.to_thread(
+            client.beta.conversations.get_history, conversation_id=conversation_id
+        )
         return history
     except Exception as e:
         raise MistralAPIError(f"Failed to get conversation history: {str(e)}")
@@ -80,7 +86,9 @@ async def get_conversation_history(client: Mistral, conversation_id: str) -> dic
 async def delete_conversation(client: Mistral, conversation_id: str) -> dict:
     """Delete a conversation."""
     try:
-        client.beta.conversations.delete(conversation_id=conversation_id)
+        await asyncio.to_thread(
+            client.beta.conversations.delete, conversation_id=conversation_id
+        )
         return {"deleted": True, "conversation_id": conversation_id}
     except Exception as e:
         raise MistralAPIError(f"Failed to delete conversation: {str(e)}")

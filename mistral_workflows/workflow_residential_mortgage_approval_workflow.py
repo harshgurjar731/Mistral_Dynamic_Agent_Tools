@@ -24,12 +24,36 @@ class DynamicInput(BaseModel):
     start_to_close_timeout=timedelta(seconds=300),
     retry_policy_max_attempts=3,
 )
+async def run_residential_mortgage_approval_workflow_fetch_application_data(variables: Dict[str, Any]) -> Any:
+    """Activity for step: fetch_application_data (StepType.TOOL)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "fetch_application_data", "type": "tool", "tier": null, "config": {"tool_name": "fetch_mortgage_application_data", "arguments": {"application_id": "{{application_id}}"}}, "next_steps": ["jailbreak_moderation"], "description": "Fetches residential mortgage application data including applicant financials, property details, and supporting documents.", "parallel_group": null}'))
+    result = await run_step(step_def, variables)
+    if result.status == "failed":
+        raise Exception(result.error or "Step fetch_application_data failed")
+    return result.output
+
+@workflows.activity(
+    start_to_close_timeout=timedelta(seconds=300),
+    retry_policy_max_attempts=3,
+)
 async def run_residential_mortgage_approval_workflow_jailbreak_moderation(variables: Dict[str, Any]) -> Any:
     """Activity for step: jailbreak_moderation (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "jailbreak_moderation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019e415a755877e6a8529cfdc9977ae3", "query_template": "CONTEXT BLOCK: The user has submitted the following mortgage application details: {{{{applicant_data}}}}.\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Ensure the input complies with safety and regulatory standards for financial services.\\n\\nTASK INSTRUCTION: Analyze the input for safety, compliance, and malicious intent. Classify the request and determine the appropriate action (block, sanitize, or allow).\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract: {\\n  \\"classification\\": \\"string (safe | suspicious | restricted | malicious)\\",\\n  \\"confidence_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"explanation\\": \\"string\\",\\n  \\"action\\": \\"string (block | sanitize | allow)\\",\\n  \\"moderation_response\\": \\"object\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["topic_control_guardrail"], "description": "Validates input safety and detects malicious or non-compliant requests before processing.", "parallel_group": null}'))
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "jailbreak_moderation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4bdfd2751d9a20107c77ddf696", "query_template": "The following data was produced by the previous step: {{step_fetch_application_data_output}}.\\n\\nTASK: Validate the safety of this mortgage application request. Detect any malicious, inappropriate, or unsafe content.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"is_safe\\": boolean,\\n  \\"risk_level\\": \\"string (low | medium | high)\\",\\n  \\"risk_reason\\": \\"string (null if is_safe is true)\\"\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["check_safety"], "description": "Validates input safety and detects malicious or inappropriate requests before processing.", "parallel_group": null}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
         raise Exception(result.error or "Step jailbreak_moderation failed")
+    return result.output
+
+@workflows.activity(
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=3,
+)
+async def run_residential_mortgage_approval_workflow_check_safety(variables: Dict[str, Any]) -> Any:
+    """Activity for step: check_safety (StepType.CONDITION)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "check_safety", "type": "condition", "tier": null, "config": {"expression": "{{step_jailbreak_moderation_output.is_safe}} == true", "true_step": "topic_control_guardrail", "false_step": "final_response_generation_reject", "fallback_step": "final_response_generation_reject"}, "next_steps": [], "description": "Checks if the input is safe for further processing.", "parallel_group": null}'))
+    result = await run_step(step_def, variables)
+    if result.status == "failed":
+        raise Exception(result.error or "Step check_safety failed")
     return result.output
 
 @workflows.activity(
@@ -38,58 +62,70 @@ async def run_residential_mortgage_approval_workflow_jailbreak_moderation(variab
 )
 async def run_residential_mortgage_approval_workflow_topic_control_guardrail(variables: Dict[str, Any]) -> Any:
     """Activity for step: topic_control_guardrail (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "topic_control_guardrail", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019e415ec0ec72c7816c3b75ca36a093", "query_template": "CONTEXT BLOCK: The following data was produced by the previous step: {{{{step_jailbreak_moderation_output}}}}.\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Classify the request into the appropriate subcategory (e.g., eligibility check, remortgage, buy-to-let).\\n\\nTASK INSTRUCTION: Determine if the request is relevant to mortgage processing and classify it accordingly. Provide routing recommendations if applicable.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"relevant_request\\": {\\n    \\"domain\\": \\"string (e.g., \'mortgage processing\')\\",\\n    \\"subcategory\\": \\"string (e.g., \'eligibility check\')\\",\\n    \\"confidence_score\\": \\"float (0.0\\u20131.0)\\",\\n    \\"routing_recommendation\\": \\"string\\",\\n    \\"is_safe\\": \\"boolean\\"\\n  },\\n  \\"irrelevant_request\\": {\\n    \\"reason\\": \\"string\\",\\n    \\"suggested_alternatives\\": \\"array of strings\\"\\n  }\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["mortgage_eligibility_assessment"], "description": "Classifies user requests into mortgage processing subcategories and ensures relevance.", "parallel_group": null}'))
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "topic_control_guardrail", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4bfd0772dda49732e8cb9c5a73", "query_template": "The following data was produced by the previous step: {{step_fetch_application_data_output}}.\\n\\nThis request relates to residential mortgages. Apply the relevant regulations and metrics for this product.\\n\\nTASK: Classify this request into the correct product type and ensure it is relevant to residential mortgages.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"product_type\\": \\"string (residential_mortgage | other)\\",\\n  \\"is_relevant\\": boolean,\\n  \\"confidence_score\\": \\"number (0.0-1.0)\\"\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["check_relevance"], "description": "Classifies the request into the correct product type and ensures relevance to residential mortgages.", "parallel_group": null}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
         raise Exception(result.error or "Step topic_control_guardrail failed")
     return result.output
 
 @workflows.activity(
-    start_to_close_timeout=timedelta(seconds=300),
+    start_to_close_timeout=timedelta(seconds=30),
     retry_policy_max_attempts=3,
 )
-async def run_residential_mortgage_approval_workflow_mortgage_eligibility_assessment(variables: Dict[str, Any]) -> Any:
-    """Activity for step: mortgage_eligibility_assessment (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "mortgage_eligibility_assessment", "type": "agent", "tier": "use_case", "config": {"agent_id": "ag_019e444af7cb7538b5815beb4038513e", "query_template": "CONTEXT BLOCK: The following data was produced by the previous steps:\\n- User input: {{{{applicant_data}}}}\\n- Moderation result: {{{{step_jailbreak_moderation_output}}}}\\n- Topic classification: {{{{step_topic_control_guardrail_output}}}}\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Apply European mortgage lending standards and affordability regulations.\\n\\nTASK INSTRUCTION: Analyze the borrower\'s financial profile (income, debt, credit history, property details) to determine preliminary mortgage eligibility. Calculate key metrics (DTI, LTV) and assign a confidence score.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"eligibility_status\\": \\"string (approved | declined | conditionally_approved)\\",\\n  \\"confidence_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"affordability_metrics\\": {\\n    \\"gross_annual_income\\": \\"float\\",\\n    \\"debt_to_income_ratio\\": \\"float\\",\\n    \\"loan_to_value_ratio\\": \\"float\\",\\n    \\"credit_score\\": \\"integer\\",\\n    \\"employment_status\\": \\"string\\",\\n    \\"existing_commitments\\": \\"float\\"\\n  },\\n  \\"justification\\": \\"string (detailed explanation of eligibility decision)\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["financial_risk_assessment"], "description": "Evaluates borrower affordability metrics to determine preliminary mortgage eligibility with a confidence score.", "parallel_group": null}'))
+async def run_residential_mortgage_approval_workflow_check_relevance(variables: Dict[str, Any]) -> Any:
+    """Activity for step: check_relevance (StepType.CONDITION)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "check_relevance", "type": "condition", "tier": null, "config": {"expression": "{{step_topic_control_guardrail_output.is_relevant}} == true && {{step_topic_control_guardrail_output.product_type}} == \'residential_mortgage\'", "true_step": "eligibility_assessment", "false_step": "final_response_generation_reject", "fallback_step": "final_response_generation_reject"}, "next_steps": [], "description": "Checks if the request is relevant to residential mortgages.", "parallel_group": null}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
-        raise Exception(result.error or "Step mortgage_eligibility_assessment failed")
+        raise Exception(result.error or "Step check_relevance failed")
     return result.output
 
 @workflows.activity(
     start_to_close_timeout=timedelta(seconds=300),
     retry_policy_max_attempts=3,
 )
-async def run_residential_mortgage_approval_workflow_financial_risk_assessment(variables: Dict[str, Any]) -> Any:
-    """Activity for step: financial_risk_assessment (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "financial_risk_assessment", "type": "agent", "tier": "domain", "config": {"agent_id": "ag_019e444af8ec753eb3492c17aff82687", "query_template": "CONTEXT BLOCK: The following data was produced by the previous steps:\\n- User input: {{{{applicant_data}}}}\\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Apply European mortgage lending standards and risk assessment guidelines.\\n\\nTASK INSTRUCTION: Evaluate the repayment risk, probability of arrears, and overall lending exposure for the mortgage application. Provide risk factors and mitigation strategies.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"risk_level\\": \\"string (low | medium | high)\\",\\n  \\"probability_of_arrears\\": \\"float (0.0\\u20131.0)\\",\\n  \\"lending_exposure\\": \\"float (monetary value)\\",\\n  \\"regulatory_alignment\\": \\"boolean\\",\\n  \\"risk_factors\\": \\"array of strings\\",\\n  \\"mitigation_strategies\\": \\"array of strings\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["mortgage_recommendation"], "description": "Evaluates repayment risk, probability of arrears, and lending exposure for mortgage applications.", "parallel_group": null}'))
+async def run_residential_mortgage_approval_workflow_eligibility_assessment(variables: Dict[str, Any]) -> Any:
+    """Activity for step: eligibility_assessment (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "eligibility_assessment", "type": "agent", "tier": "use_case", "config": {"agent_id": "ag_019ff4974331769293a7b779a97ae670", "query_template": "The following data was produced by the previous step: {{step_fetch_application_data_output}}.\\n\\nThis request relates to residential mortgages. Apply the relevant regulations and metrics for this product.\\n\\nTASK: Assess the mortgage eligibility of this application based on LTV, affordability, and regulatory rules.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"eligibility_status\\": \\"string (approved | conditionally_approved | rejected)\\",\\n  \\"ltv_ratio\\": \\"number\\",\\n  \\"affordability_score\\": \\"number (0-100)\\",\\n  \\"regulatory_compliance\\": boolean,\\n  \\"conditions\\": [\\"string\\"],\\n  \\"rejection_reasons\\": [\\"string\\"]\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["compile_report"], "description": "Assesses mortgage eligibility based on LTV, affordability, and regulatory rules specific to residential mortgages.", "parallel_group": "pg_core_analysis"}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
-        raise Exception(result.error or "Step financial_risk_assessment failed")
+        raise Exception(result.error or "Step eligibility_assessment failed")
     return result.output
 
 @workflows.activity(
     start_to_close_timeout=timedelta(seconds=300),
     retry_policy_max_attempts=3,
 )
-async def run_residential_mortgage_approval_workflow_mortgage_recommendation(variables: Dict[str, Any]) -> Any:
-    """Activity for step: mortgage_recommendation (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "mortgage_recommendation", "type": "agent", "tier": "use_case", "config": {"agent_id": "ag_019e444afa0373dcaeb293eaabbc0d1c", "query_template": "CONTEXT BLOCK: The following data was produced by the previous steps:\\n- User input: {{{{applicant_data}}}}\\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Apply regulatory constraints and borrower affordability metrics.\\n\\nTASK INSTRUCTION: Generate proposed mortgage terms (borrowing amount, repayment period, interest structure) based on eligibility and risk assessments. Ensure terms align with borrower affordability and regulatory standards.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"lending_outcome\\": \\"string (approved | declined | conditionally_approved)\\",\\n  \\"proposed_terms\\": {\\n    \\"borrowing_amount\\": \\"float\\",\\n    \\"repayment_period_years\\": \\"integer\\",\\n    \\"interest_structure\\": \\"string (fixed | variable | tracker)\\",\\n    \\"estimated_monthly_instalment\\": \\"float\\",\\n    \\"ltv_band\\": \\"string (e.g., \'75-80%\')\\",\\n    \\"conditions\\": \\"array of strings\\"\\n  },\\n  \\"justification\\": \\"string (detailed explanation of terms and conditions)\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["final_response_generation"], "description": "Generates proposed mortgage terms (borrowing amount, repayment period, interest structure) based on eligibility and risk assessments.", "parallel_group": null}'))
+async def run_residential_mortgage_approval_workflow_risk_assessment(variables: Dict[str, Any]) -> Any:
+    """Activity for step: risk_assessment (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "risk_assessment", "type": "agent", "tier": "domain", "config": {"agent_id": "ag_019f3627303e72a68f7d1ac2b2e7a74e", "query_template": "The following data was produced by the previous step: {{step_fetch_application_data_output}}.\\n\\nThis request relates to residential mortgages. Apply the relevant regulations and metrics for this product.\\n\\nTASK: Analyze the financial data to determine lending risk and produce a risk score and recommendation.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"risk_score\\": \\"number (0-100)\\",\\n  \\"risk_category\\": \\"string (low | medium | high)\\",\\n  \\"recommendation\\": \\"string (approve | conditionally_approve | reject)\\",\\n  \\"risk_factors\\": [\\"string\\"],\\n  \\"mitigants\\": [\\"string\\"]\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["compile_report"], "description": "Analyzes financial data to determine lending risk, producing a risk score and recommendation.", "parallel_group": "pg_core_analysis"}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
-        raise Exception(result.error or "Step mortgage_recommendation failed")
+        raise Exception(result.error or "Step risk_assessment failed")
     return result.output
 
 @workflows.activity(
     start_to_close_timeout=timedelta(seconds=300),
     retry_policy_max_attempts=3,
 )
-async def run_residential_mortgage_approval_workflow_final_response_generation(variables: Dict[str, Any]) -> Any:
-    """Activity for step: final_response_generation (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "final_response_generation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019e444afb167370ba294ef532bd42be", "query_template": "CONTEXT BLOCK: The following data was produced by the previous steps:\\n- User input: {{{{applicant_data}}}}\\n- Moderation result: {{{{step_jailbreak_moderation_output}}}}\\n- Topic classification: {{{{step_topic_control_guardrail_output}}}}\\n- Eligibility assessment: {{{{step_mortgage_eligibility_assessment_output}}}}\\n- Risk assessment: {{{{step_financial_risk_assessment_output}}}}\\n- Mortgage recommendation: {{{{step_mortgage_recommendation_output}}}}\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Synthesize all outputs into a clear, structured, and customer-friendly report.\\n\\nTASK INSTRUCTION: Consolidate all outputs into a markdown report with the following sections:\\n## Mortgage Decision Summary\\n## Eligibility Assessment\\n## Risk Evaluation\\n## Proposed Terms\\n## Next Steps\\n\\nEnsure the report is readable, complete, and compliant with financial communication standards.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a markdown report matching the output_contract:\\nmarkdown_report.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "markdown_report"}, "next_steps": ["reviewer"], "description": "Consolidates outputs from upstream agents into a structured, customer-friendly mortgage decision document.", "parallel_group": null}'))
+async def run_residential_mortgage_approval_workflow_recommendation_agent(variables: Dict[str, Any]) -> Any:
+    """Activity for step: recommendation_agent (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "recommendation_agent", "type": "agent", "tier": "use_case", "config": {"agent_id": "ag_019ff4974488741e8078aaa309409f98", "query_template": "The following data was produced by the previous step: {{step_fetch_application_data_output}}.\\n\\nThis request relates to residential mortgages. Apply the relevant regulations and metrics for this product.\\n\\nTASK: Generate a mortgage recommendation including fixed/variable rate options, repayment period, and LTV band.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"recommended_rate_type\\": \\"string (fixed | variable | hybrid)\\",\\n  \\"repayment_period_years\\": \\"number\\",\\n  \\"ltv_band\\": \\"string (e.g., 60-70%)\\",\\n  \\"apr\\": \\"number\\",\\n  \\"monthly_payment\\": \\"number\\",\\n  \\"product_features\\": [\\"string\\"]\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["compile_report"], "description": "Generates a mortgage recommendation including fixed/variable rate options, repayment period, and LTV band.", "parallel_group": "pg_core_analysis"}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
-        raise Exception(result.error or "Step final_response_generation failed")
+        raise Exception(result.error or "Step recommendation_agent failed")
+    return result.output
+
+@workflows.activity(
+    start_to_close_timeout=timedelta(seconds=300),
+    retry_policy_max_attempts=3,
+)
+async def run_residential_mortgage_approval_workflow_compile_report(variables: Dict[str, Any]) -> Any:
+    """Activity for step: compile_report (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "compile_report", "type": "agent", "tier": "use_case", "config": {"agent_id": "ag_019ff4ea32ef75b2a6b12988985bac08", "query_template": "The following data was produced by the previous steps:\\n- Eligibility Assessment: {{step_eligibility_assessment_output}}\\n- Risk Assessment: {{step_risk_assessment_output}}\\n- Recommendation: {{step_recommendation_agent_output}}\\n\\nTASK: Compile the outputs from the Mortgage Eligibility Assessor, Financial Risk Assessor, and Mortgage Recommendation Agent into a cohesive, structured mortgage approval report.\\n\\nOUTPUT FORMAT: Respond with a markdown report using the following structure:\\n## Executive Summary\\n- Brief overview of eligibility status, risk level, and recommendation.\\n\\n## Eligibility Assessment\\n- LTV ratio: [value]\\n- Affordability score: [value]\\n- Regulatory compliance: [yes/no]\\n- Conditions (if any): [list]\\n- Rejection reasons (if any): [list]\\n\\n## Financial Risk Assessment\\n- Risk score: [value]\\n- Risk category: [low/medium/high]\\n- Key risk factors: [list]\\n- Mitigants: [list]\\n\\n## Mortgage Recommendation\\n- Recommended rate type: [fixed/variable/hybrid]\\n- Repayment period: [years]\\n- LTV band: [range]\\n- APR: [value]\\n- Monthly payment: [value]\\n- Product features: [list]\\n\\n## Conditions and Next Steps\\n- List any conditions for approval or next steps for the applicant.\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "markdown_report"}, "next_steps": ["reviewer"], "description": "Compiles outputs from eligibility, risk, and recommendation agents into a structured mortgage approval report.", "parallel_group": null}'))
+    result = await run_step(step_def, variables)
+    if result.status == "failed":
+        raise Exception(result.error or "Step compile_report failed")
     return result.output
 
 @workflows.activity(
@@ -98,7 +134,7 @@ async def run_residential_mortgage_approval_workflow_final_response_generation(v
 )
 async def run_residential_mortgage_approval_workflow_reviewer(variables: Dict[str, Any]) -> Any:
     """Activity for step: reviewer (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "reviewer", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019e444afc40746d907cd3d688988184", "query_template": "CONTEXT BLOCK: The following data was produced by the previous step: {{{{step_final_response_generation_output}}}}.\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Review the final response for quality and compliance.\\n\\nTASK INSTRUCTION: Review the final mortgage decision document for readability, completeness, factual consistency, and compliance with financial communication standards. Provide scores and identify any issues.\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"readability_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"completeness_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"factual_consistency_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"compliance_score\\": \\"float (0.0\\u20131.0)\\",\\n  \\"issues\\": \\"array of objects\\",\\n  \\"approved\\": \\"boolean\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["output_moderation"], "description": "Reviews the final mortgage decision document for readability, completeness, factual consistency, and compliance.", "parallel_group": null}'))
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "reviewer", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4d501877e38b00ef86df312bbe", "query_template": "The following data was produced by the previous step: {{step_compile_report_output}}.\\n\\nTASK: Review the mortgage approval report for readability, completeness, factual consistency, and compliance with communication standards.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"readability_score\\": \\"number (0-100)\\",\\n  \\"completeness_score\\": \\"number (0-100)\\",\\n  \\"factual_consistency_score\\": \\"number (0-100)\\",\\n  \\"issues\\": [\\n    {\\n      \\"section\\": \\"string\\",\\n      \\"issue_description\\": \\"string\\",\\n      \\"severity\\": \\"string (low | medium | high)\\"\\n    }\\n  ],\\n  \\"suggested_improvements\\": [\\"string\\"]\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": ["final_response_generation"], "description": "Reviews the mortgage approval report for readability, completeness, factual consistency, and compliance with communication standards.", "parallel_group": null}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
         raise Exception(result.error or "Step reviewer failed")
@@ -108,9 +144,33 @@ async def run_residential_mortgage_approval_workflow_reviewer(variables: Dict[st
     start_to_close_timeout=timedelta(seconds=300),
     retry_policy_max_attempts=3,
 )
+async def run_residential_mortgage_approval_workflow_final_response_generation(variables: Dict[str, Any]) -> Any:
+    """Activity for step: final_response_generation (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "final_response_generation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4c86fa768bb34e72dd8402560d", "query_template": "The following data was produced by the previous steps:\\n- Mortgage Approval Report: {{step_compile_report_output}}\\n- Reviewer Feedback: {{step_reviewer_output}}\\n\\nTASK: Consolidate the reviewed mortgage approval report into a final, customer-facing document. Incorporate any suggested improvements from the reviewer.\\n\\nOUTPUT FORMAT: Respond with a markdown report using the following structure:\\n## Summary\\n## Key Findings / Results\\n## Details\\n## Recommendations (if applicable)\\n## Next Steps (if applicable)\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "markdown_report"}, "next_steps": ["output_moderation"], "description": "Consolidates the reviewed mortgage approval report into a final, customer-facing document.", "parallel_group": null}'))
+    result = await run_step(step_def, variables)
+    if result.status == "failed":
+        raise Exception(result.error or "Step final_response_generation failed")
+    return result.output
+
+@workflows.activity(
+    start_to_close_timeout=timedelta(seconds=300),
+    retry_policy_max_attempts=3,
+)
+async def run_residential_mortgage_approval_workflow_final_response_generation_reject(variables: Dict[str, Any]) -> Any:
+    """Activity for step: final_response_generation_reject (StepType.AGENT)"""
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "final_response_generation_reject", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4c86fa768bb34e72dd8402560d", "query_template": "The request was rejected due to safety or relevance concerns. Generate a polite and professional rejection message.\\n\\nTASK: Create a final response indicating the request cannot be processed.\\n\\nOUTPUT FORMAT: Respond with a markdown report using the following structure:\\n## Summary\\n## Reason for Rejection\\n\\nProvide a complete, thorough response. Do not return an empty response.", "expected_output_contract": "markdown_report"}, "next_steps": ["output_moderation"], "description": "Generates a rejection response for unsafe or irrelevant requests.", "parallel_group": null}'))
+    result = await run_step(step_def, variables)
+    if result.status == "failed":
+        raise Exception(result.error or "Step final_response_generation_reject failed")
+    return result.output
+
+@workflows.activity(
+    start_to_close_timeout=timedelta(seconds=300),
+    retry_policy_max_attempts=3,
+)
 async def run_residential_mortgage_approval_workflow_output_moderation(variables: Dict[str, Any]) -> Any:
     """Activity for step: output_moderation (StepType.AGENT)"""
-    step_def = WorkflowStep.model_validate(json.loads('{"id": "output_moderation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019e444afd5a741fa2a4bac91f19f4d6", "query_template": "CONTEXT BLOCK: The following data was produced by the previous steps:\\n- Final response: {{{{step_final_response_generation_output}}}}\\n- Reviewer output: {{{{step_reviewer_output}}}}\\n\\nPRODUCT/DOMAIN CONTEXT: This request relates to residential mortgage processing. Perform a final safety and compliance check before delivery.\\n\\nTASK INSTRUCTION: Validate the final mortgage decision document for safety, compliance, and regulatory alignment. Determine the appropriate action (allow, block, or sanitize).\\n\\nOUTPUT FORMAT INSTRUCTION: Respond with a raw JSON object matching the output_contract:\\n{\\n  \\"is_safe\\": \\"boolean\\",\\n  \\"moderation_notes\\": \\"string\\",\\n  \\"action\\": \\"string (allow | block | sanitize)\\"\\n}.\\n\\nCOMPLETENESS DIRECTIVE: Provide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": [], "description": "Performs a final safety and compliance check on the mortgage decision document before delivery to the user.", "parallel_group": null}'))
+    step_def = WorkflowStep.model_validate(json.loads('{"id": "output_moderation", "type": "agent", "tier": "foundation", "config": {"agent_id": "ag_019efd4da8af74d1abc1489ea4645ec3", "query_template": "The following data was produced by the previous step: {{step_final_response_generation_output}}.\\n\\nTASK: Perform a final safety and compliance check on the mortgage approval report before delivery.\\n\\nOUTPUT FORMAT: Respond with a raw JSON object matching the following schema:\\n{\\n  \\"is_safe\\": boolean,\\n  \\"compliance_status\\": \\"string (compliant | non_compliant)\\",\\n  \\"issues\\": [\\"string\\"]\\n}\\n\\nProvide a complete, thorough response. Do not return an empty response. If any information is uncertain, state your assumption and continue.", "expected_output_contract": "json_object"}, "next_steps": [], "description": "Performs a final safety and compliance check on the mortgage approval report before delivery.", "parallel_group": null}'))
     result = await run_step(step_def, variables)
     if result.status == "failed":
         raise Exception(result.error or "Step output_moderation failed")
@@ -119,11 +179,11 @@ async def run_residential_mortgage_approval_workflow_output_moderation(variables
 @workflows.workflow.define(
     name="residential_mortgage_approval_workflow",
     workflow_display_name="Residential Mortgage Approval Workflow",
-    workflow_description="Automates end-to-end residential mortgage approval and affordability assessment, processing applicant data, evaluating eligibility, generating lending decisions with justification, and ensuring regulatory compliance and safety.",
+    workflow_description="Automates the end-to-end assessment of a residential mortgage application, producing a structured approval report with eligibility, risk assessment, and recommendation.",
     execution_timeout=timedelta(hours=24),
 )
 class ResidentialMortgageApprovalWorkflow:
-    """Durable workflow: Automates end-to-end residential mortgage approval and affordability assessment, processing applicant data, evaluating eligibility, generating lending decisions with justification, and ensuring regulatory compliance and safety."""
+    """Durable workflow: Automates the end-to-end assessment of a residential mortgage application, producing a structured approval report with eligibility, risk assessment, and recommendation."""
 
     def __init__(self) -> None:
         self._progress: List[str] = []
@@ -154,7 +214,7 @@ class ResidentialMortgageApprovalWorkflow:
         # Use workflow.now() for determinism-safe timestamps
         started_at = workflow.now()
         variables = dict(input.variables)
-        current_step: Optional[str] = "jailbreak_moderation"
+        current_step: Optional[str] = "fetch_application_data"
         visited: set = set()
         outputs: Dict[str, Any] = {}
 
@@ -163,7 +223,18 @@ class ResidentialMortgageApprovalWorkflow:
                 break  # cycle guard
             visited.add(current_step)
 
-            if current_step == "jailbreak_moderation":
+            if current_step == "fetch_application_data":
+                self._progress.append("fetch_application_data")
+                output = await run_residential_mortgage_approval_workflow_fetch_application_data(variables)
+                outputs["fetch_application_data"] = output
+                self._last_result = output
+                variables["step_fetch_application_data_output"] = output
+                if isinstance(output, dict):
+                    variables.update(output)
+
+                current_step = "jailbreak_moderation"
+
+            elif current_step == "jailbreak_moderation":
                 self._progress.append("jailbreak_moderation")
                 output = await run_residential_mortgage_approval_workflow_jailbreak_moderation(variables)
                 outputs["jailbreak_moderation"] = output
@@ -172,7 +243,22 @@ class ResidentialMortgageApprovalWorkflow:
                 if isinstance(output, dict):
                     variables.update(output)
 
-                current_step = "topic_control_guardrail"
+                current_step = "check_safety"
+
+            elif current_step == "check_safety":
+                self._progress.append("check_safety")
+                output = await run_residential_mortgage_approval_workflow_check_safety(variables)
+                outputs["check_safety"] = output
+                self._last_result = output
+                variables["step_check_safety_output"] = output
+                if isinstance(output, dict):
+                    variables.update(output)
+
+                # Condition step: output contains {next_step: ...}
+                if isinstance(output, dict) and "next_step" in output:
+                    current_step = output["next_step"]
+                else:
+                    current_step = None
 
             elif current_step == "topic_control_guardrail":
                 self._progress.append("topic_control_guardrail")
@@ -183,36 +269,61 @@ class ResidentialMortgageApprovalWorkflow:
                 if isinstance(output, dict):
                     variables.update(output)
 
-                current_step = "mortgage_eligibility_assessment"
+                current_step = "check_relevance"
 
-            elif current_step == "mortgage_eligibility_assessment":
-                self._progress.append("mortgage_eligibility_assessment")
-                output = await run_residential_mortgage_approval_workflow_mortgage_eligibility_assessment(variables)
-                outputs["mortgage_eligibility_assessment"] = output
+            elif current_step == "check_relevance":
+                self._progress.append("check_relevance")
+                output = await run_residential_mortgage_approval_workflow_check_relevance(variables)
+                outputs["check_relevance"] = output
                 self._last_result = output
-                variables["step_mortgage_eligibility_assessment_output"] = output
+                variables["step_check_relevance_output"] = output
                 if isinstance(output, dict):
                     variables.update(output)
 
-                current_step = "financial_risk_assessment"
+                # Condition step: output contains {next_step: ...}
+                if isinstance(output, dict) and "next_step" in output:
+                    current_step = output["next_step"]
+                else:
+                    current_step = None
 
-            elif current_step == "financial_risk_assessment":
-                self._progress.append("financial_risk_assessment")
-                output = await run_residential_mortgage_approval_workflow_financial_risk_assessment(variables)
-                outputs["financial_risk_assessment"] = output
+            elif current_step == "eligibility_assessment" or current_step == "risk_assessment" or current_step == "recommendation_agent":
+                # ── Parallel group: pg_core_analysis ──
+                self._progress.append("__parallel_pg_core_analysis:start")
+                # Fan-out: execute 3 steps concurrently
+                _parallel_results = await asyncio.gather(
+                    run_residential_mortgage_approval_workflow_eligibility_assessment(dict(variables)),
+                    run_residential_mortgage_approval_workflow_risk_assessment(dict(variables)),
+                    run_residential_mortgage_approval_workflow_recommendation_agent(dict(variables)),
+                )
+                # Fan-in: merge all parallel outputs
+                _parallel_names = ["eligibility_assessment", "risk_assessment", "recommendation_agent"]
+                for _pname, _presult in zip(_parallel_names, _parallel_results):
+                    outputs[_pname] = _presult
+                    variables[f"step_{_pname}_output"] = _presult
+                    if isinstance(_presult, dict):
+                        variables.update(_presult)
+                    self._progress.append(_pname)
+                self._last_result = _parallel_results[-1]
+
+                current_step = "compile_report"
+
+            elif current_step == "compile_report":
+                self._progress.append("compile_report")
+                output = await run_residential_mortgage_approval_workflow_compile_report(variables)
+                outputs["compile_report"] = output
                 self._last_result = output
-                variables["step_financial_risk_assessment_output"] = output
+                variables["step_compile_report_output"] = output
                 if isinstance(output, dict):
                     variables.update(output)
 
-                current_step = "mortgage_recommendation"
+                current_step = "reviewer"
 
-            elif current_step == "mortgage_recommendation":
-                self._progress.append("mortgage_recommendation")
-                output = await run_residential_mortgage_approval_workflow_mortgage_recommendation(variables)
-                outputs["mortgage_recommendation"] = output
+            elif current_step == "reviewer":
+                self._progress.append("reviewer")
+                output = await run_residential_mortgage_approval_workflow_reviewer(variables)
+                outputs["reviewer"] = output
                 self._last_result = output
-                variables["step_mortgage_recommendation_output"] = output
+                variables["step_reviewer_output"] = output
                 if isinstance(output, dict):
                     variables.update(output)
 
@@ -227,14 +338,14 @@ class ResidentialMortgageApprovalWorkflow:
                 if isinstance(output, dict):
                     variables.update(output)
 
-                current_step = "reviewer"
+                current_step = "output_moderation"
 
-            elif current_step == "reviewer":
-                self._progress.append("reviewer")
-                output = await run_residential_mortgage_approval_workflow_reviewer(variables)
-                outputs["reviewer"] = output
+            elif current_step == "final_response_generation_reject":
+                self._progress.append("final_response_generation_reject")
+                output = await run_residential_mortgage_approval_workflow_final_response_generation_reject(variables)
+                outputs["final_response_generation_reject"] = output
                 self._last_result = output
-                variables["step_reviewer_output"] = output
+                variables["step_final_response_generation_reject_output"] = output
                 if isinstance(output, dict):
                     variables.update(output)
 

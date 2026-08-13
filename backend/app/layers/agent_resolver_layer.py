@@ -5,8 +5,10 @@ Extracted from orchestrator_service.py:406-438 (analysis) +
 377-403 (creation).
 """
 
+import asyncio
 import json
 import logging
+from functools import partial
 
 from app.core.context import PipelineContext
 from app.core.layer import Layer, NextFn
@@ -101,6 +103,7 @@ class AgentResolverLayer(Layer):
             AVAILABLE_TOOL_KEYS,
         )
         from app.services import connector_service
+        from app.ontology import autotag as ontology_autotag
         from app.ontology import matcher as ontology_matcher
 
         # ── Step 1: Analyse query ───────────────────────────────────────
@@ -113,23 +116,28 @@ class AgentResolverLayer(Layer):
         connector_descriptions, connector_ids = await connector_service.describe_for_prompt(scope)
 
         try:
-            result = ctx.client.chat.complete(
-                model=settings.MISTRAL_ORCHESTRATOR_MODEL,
-                messages=[
-                    {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": ORCHESTRATOR_USER_PROMPT.format(
-                            tool_descriptions=get_tool_descriptions(),
-                            tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
-                            connector_descriptions=connector_descriptions,
-                            connector_ids=json.dumps(connector_ids),
-                            user_query=ctx.query,
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+            # Offloaded: the shared Mistral client is synchronous, so calling
+            # it inline would block the event loop for the whole completion.
+            result = await asyncio.to_thread(
+                partial(
+                    ctx.client.chat.complete,
+                    model=settings.MISTRAL_ORCHESTRATOR_MODEL,
+                    messages=[
+                        {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": ORCHESTRATOR_USER_PROMPT.format(
+                                tool_descriptions=get_tool_descriptions(),
+                                tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
+                                connector_descriptions=connector_descriptions,
+                                connector_ids=json.dumps(connector_ids),
+                                user_query=ctx.query,
+                            ),
+                        },
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
             )
 
             raw = result.choices[0].message.content
@@ -204,8 +212,25 @@ class AgentResolverLayer(Layer):
         if comp_args:
             create_kwargs["completion_args"] = comp_args
 
-        agent = ctx.client.beta.agents.create(**create_kwargs)
+        agent = await asyncio.to_thread(
+            partial(ctx.client.beta.agents.create, **create_kwargs)
+        )
         ctx.created_agent_id = agent.id
         logger.info("Dynamic agent created: %s (%s)", agent.id, agent_config["agent_name"])
+
+        # Classify it now. A dynamic agent is often deleted again by the cleanup
+        # layer, but not always — when it survives it is indistinguishable from
+        # any other agent to the planner, so it needs the same annotations.
+        await asyncio.to_thread(
+            partial(
+                ontology_autotag.annotate_agent,
+                agent.id,
+                name=agent_config["agent_name"],
+                description=agent_config.get("description", ""),
+                instructions=instructions_text,
+                tier=agent_config.get("tier"),
+                goal=ctx.query,
+            )
+        )
 
         return await next(ctx)

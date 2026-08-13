@@ -4,7 +4,10 @@ Uses direct HTTP for list operations (SDK sentinel bug workaround)
 and SDK client for create/update/delete.
 """
 
+import asyncio
 import logging
+from functools import partial
+
 import httpx
 from mistralai.client import Mistral
 from mistralai.client.models.completionargs import CompletionArgs
@@ -177,6 +180,48 @@ def record_agent_annotations(agent_id: str, data: dict, source: str = "user") ->
         logger.warning("Could not record annotations for agent %s: %s", agent_id, e)
 
 
+# Strong references to in-flight classification tasks.
+#
+# asyncio only holds a weak reference to a running task, so a fire-and-forget
+# create_task can be garbage-collected mid-flight and silently never finish.
+_classification_tasks: set = set()
+
+
+def schedule_classification(
+    client,
+    *,
+    subject_type: str,
+    subject_id: str,
+    name: str,
+    description: str = "",
+    instructions: str = "",
+) -> None:
+    """Classify a resource in the background. Never blocks, never raises.
+
+    Deliberately not awaited: the resource already exists and is usable, and an
+    annotation arriving two seconds later costs nothing. Blocking the create on
+    an LLM round trip would make hand-made agents feel slower than generated
+    ones, for a benefit the user never sees at that moment.
+    """
+    try:
+        from app.ontology.classifier import classify_and_apply
+
+        task = asyncio.create_task(
+            classify_and_apply(
+                client, subject_type=subject_type, subject_id=subject_id,
+                name=name, description=description, instructions=instructions,
+            )
+        )
+        _classification_tasks.add(task)
+        task.add_done_callback(_classification_tasks.discard)
+    except RuntimeError:
+        # No running loop (a sync caller, or shutdown). Classification is an
+        # enhancement — skipping it is fine.
+        logger.debug("No event loop for classification of %s", subject_id)
+    except Exception as e:
+        logger.warning("Could not schedule classification for %s: %s", subject_id, e)
+
+
 def _resolve_tier(agent_id: str | None, name: str, instructions: str, explicit: str | None) -> str:
     """Apply the authority order above to land on a single tier value."""
     if explicit:
@@ -344,8 +389,24 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if tool_specs:
             create_kwargs["tools"] = tool_specs
 
-        agent = client.beta.agents.create(**create_kwargs)
+        agent = await asyncio.to_thread(partial(client.beta.agents.create, **create_kwargs))
         record_agent_annotations(agent.id, data, source="user")
+
+        # A hand-made agent has no planner goal to infer a domain from, and the
+        # lexical heuristics only fire on words that literally appear. When the
+        # form left the classification blank, ask a model to fill it in — in the
+        # background, because the agent already exists and the caller should not
+        # wait several seconds for an annotation.
+        if not data.get("domains"):
+            schedule_classification(
+                client,
+                subject_type=SubjectType.AGENT.value,
+                subject_id=agent.id,
+                name=data.get("name") or "",
+                description=data.get("description") or "",
+                instructions=data.get("instructions") or "",
+            )
+
         return {"id": agent.id, "name": getattr(agent, "name", None), "model": getattr(agent, "model", None)}
     except Exception as e:
         logger.error(f"Failed to create agent: {e}")
@@ -355,7 +416,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
 async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
     """Update an agent."""
     try:
-        agent = client.beta.agents.get(agent_id=agent_id)
+        agent = await asyncio.to_thread(client.beta.agents.get, agent_id=agent_id)
         update_kwargs = {"agent_id": agent_id}
         if "name" in data:
             update_kwargs["name"] = data["name"]
@@ -407,7 +468,7 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
                 connectors=connectors,
             )
 
-        agent = client.beta.agents.update(**update_kwargs)
+        agent = await asyncio.to_thread(partial(client.beta.agents.update, **update_kwargs))
         # Only the keys the caller actually sent are re-annotated; omitting
         # `tier` on a rename must not rewrite the agent's classification.
         annotatable = {k: data[k] for k in ("tier", "domains", "capabilities", "data_classes") if k in data}
@@ -423,7 +484,7 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
 async def delete_agent(client: Mistral, agent_id: str) -> dict:
     """Delete an agent."""
     try:
-        client.beta.agents.delete(agent_id=agent_id)
+        await asyncio.to_thread(client.beta.agents.delete, agent_id=agent_id)
         return {"deleted": True, "agent_id": agent_id}
     except Exception as e:
         err_str = str(e).lower()

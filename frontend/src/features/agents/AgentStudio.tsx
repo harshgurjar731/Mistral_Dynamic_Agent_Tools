@@ -88,8 +88,10 @@ export default function AgentStudio() {
   const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' });
 
   const { data, isLoading } = useQuery({
-    queryKey: [...QK.agents(), search],
-    queryFn: () => agentsApi.list(0, 50).then(r => r.data),
+    // Keyed on the request, not on `search` — the filter below is client-side,
+    // so keying on it refetched the identical page on every keystroke.
+    queryKey: QK.agentsPage(0, 200),
+    queryFn: () => agentsApi.list(0, 200).then(r => r.data),
   });
   const agents = (data?.items ?? []).filter(a => !search || a.name?.toLowerCase().includes(search.toLowerCase()));
 

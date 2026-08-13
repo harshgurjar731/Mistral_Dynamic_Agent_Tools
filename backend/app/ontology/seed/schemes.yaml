@@ -52,92 +52,10 @@ concepts:
     definition: Product-specific logic for a single product type.
 
   # ── Domain ──────────────────────────────────────────────────────────────
-  - id: domain.lending
-    scheme: domain
-    label: Lending
-    definition: Credit assessment, affordability and loan decisioning.
-    synonyms: [loan, credit, finance, underwriting]
-
-  - id: domain.lending.mortgage
-    scheme: domain
-    parent: domain.lending
-    label: Mortgage
-    definition: Residential and commercial property lending.
-    synonyms: [home loan, property loan, ltv, residential]
-
-  - id: domain.lending.vehicle_finance
-    scheme: domain
-    parent: domain.lending
-    label: Vehicle finance
-    definition: Car, van and asset finance including balloon payments.
-    synonyms: [car loan, auto loan, vehicle loan, apr]
-
-  - id: domain.lending.personal_loan
-    scheme: domain
-    parent: domain.lending
-    label: Personal loan
-    definition: Unsecured personal lending.
-
-  - id: domain.insurance
-    scheme: domain
-    label: Insurance
-    definition: Policy quoting, underwriting and claims.
-    synonyms: [policy, claim, premium]
-
-  - id: domain.healthcare
-    scheme: domain
-    label: Healthcare
-    definition: Clinical triage, symptom analysis and medical guidance.
-    synonyms: [medical, clinical, diagnosis, symptom, patient]
-
-  - id: domain.customer_support
-    scheme: domain
-    label: Customer support
-    definition: Ticket triage, intent classification and resolution drafting.
-    synonyms: [ticket, helpdesk, support, resolution, intent]
-
-  # "Content" and "research" appear in almost any agent's instructions, so the
-  # default label match is overridden (a leading "!" replaces the phrase set)
-  # with terms that only occur when the work really is editorial.
-  - id: domain.content
-    scheme: domain
-    label: Content
-    definition: Research, drafting, editing and publishing workflows.
-    synonyms:
-      - "!blog post"
-      - "!content marketing"
-      - "!editorial"
-      - "!copywriting"
-      - "!article draft"
-      - "!publishing workflow"
-
-  - id: domain.engineering
-    scheme: domain
-    label: Engineering
-    definition: Software delivery, code review and repository operations.
-    synonyms: [software, code, repository, developer]
-
-  # Added after the first backfill flagged "Legal Contract Review Analyst" as
-  # matching no domain. Growing the vocabulary from real gaps is the intended
-  # loop — do not add terms speculatively.
-  - id: domain.legal
-    scheme: domain
-    label: Legal
-    definition: Contract review, obligations and regulatory analysis.
-    synonyms: [contract, clause, legal, regulatory, compliance review]
-
-  - id: domain.internal
-    scheme: domain
-    label: Internal
-    definition: >-
-      Scaffolding, fixtures and test resources. Annotating these keeps them out
-      of the planner's candidate set rather than leaving them untagged.
-    synonyms:
-      - "!test agent"
-      - "!test data"
-      - "!scratch"
-      - "!sandbox"
-      - "!fixture"
+  # The domain scheme lives in `industries.yaml`, which owns the whole
+  # industry → domain → subdomain tree. Declaring a domain concept in two files
+  # meant whichever loaded last silently won on label and definition, so this
+  # scheme has exactly one owner.
 
   # ── Capability ──────────────────────────────────────────────────────────
   - id: capability.reasoning

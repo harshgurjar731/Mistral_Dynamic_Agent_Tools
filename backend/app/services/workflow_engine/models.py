@@ -128,12 +128,18 @@ class WorkflowDefinition(BaseModel):
 
 
 class StepResult(BaseModel):
-    """Result of executing a single step."""
+    """State of a single step.
+
+    Recorded when the step *starts* (``status="running"``) and overwritten when
+    it settles, so an in-flight run exposes which step it is on rather than only
+    the ones already finished.
+    """
     step_id: str
-    status: str
+    status: str                           # running | completed | failed
     output: Any = None
     error: Optional[str] = None
     duration_ms: Optional[float] = None
+    started_at_ms: Optional[float] = None  # epoch ms, for live elapsed readouts
     input_preview: Optional[str] = None   # truncated query sent to agent
     output_preview: Optional[str] = None  # truncated text result
 

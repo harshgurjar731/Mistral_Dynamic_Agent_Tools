@@ -25,23 +25,47 @@ logger = logging.getLogger(__name__)
 SEED_DIR = Path(__file__).parent / "seed"
 
 
+def _read_seed_files(path: Path | None) -> dict:
+    """Merge every seed file into one payload.
+
+    The vocabulary outgrew a single file once the industry taxonomy landed, so
+    the loader reads every ``*.yaml`` in the seed directory in name order. Later
+    files win on conflict, which is what lets ``industries.yaml`` re-parent a
+    domain that ``schemes.yaml`` introduced without either file having to know
+    about the other.
+    """
+    files = [path] if path else sorted(SEED_DIR.glob("*.yaml"))
+    merged: dict = {"schemes": [], "concepts": []}
+
+    for seed_file in files:
+        if not seed_file.exists():
+            logger.warning("Ontology seed file missing: %s", seed_file)
+            continue
+        try:
+            data = yaml.safe_load(seed_file.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            logger.error("Could not parse ontology seed %s: %s", seed_file.name, e)
+            continue
+        merged["schemes"].extend(data.get("schemes") or [])
+        merged["concepts"].extend(data.get("concepts") or [])
+        logger.debug(
+            "Read %s: %d schemes, %d concepts",
+            seed_file.name, len(data.get("schemes") or []), len(data.get("concepts") or []),
+        )
+
+    return merged
+
+
 def load_seed(path: Path | None = None) -> dict:
     """Upsert the YAML vocabulary. Returns a summary of what changed."""
-    seed_file = path or (SEED_DIR / "schemes.yaml")
     summary = {"schemes_added": 0, "concepts_added": 0, "concepts_updated": 0, "skipped": 0}
-
-    if not seed_file.exists():
-        logger.warning("Ontology seed file missing: %s", seed_file)
-        return summary
 
     if SessionLocal is None:
         logger.warning("No database — skipping ontology seed")
         return summary
 
-    try:
-        data = yaml.safe_load(seed_file.read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        logger.error("Could not parse ontology seed: %s", e)
+    data = _read_seed_files(path)
+    if not data["schemes"] and not data["concepts"]:
         return summary
 
     db = SessionLocal()
@@ -81,7 +105,12 @@ def load_seed(path: Path | None = None) -> dict:
             if existing:
                 existing.label = raw.get("label", existing.label)
                 existing.definition = raw.get("definition", existing.definition)
-                existing.parent_id = raw.get("parent")
+                # Absent means "no opinion", not "clear it". These are upserts
+                # spread across several files, and one file omitting `parent`
+                # must not undo the re-parenting another file declared —
+                # otherwise the result depends on which file loaded last.
+                if "parent" in raw:
+                    existing.parent_id = raw["parent"]
                 existing.synonyms = synonyms
                 summary["concepts_updated"] += 1
             else:

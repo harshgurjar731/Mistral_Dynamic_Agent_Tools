@@ -13,6 +13,12 @@ export const queryClient = new QueryClient({
 
 export const QK = {
   agents:        ()         => ['agents'] as const,
+  // A paged listing must key on its own page size, or two components asking
+  // for different page sizes silently share one cache entry — the smaller
+  // request wins and the larger one renders a truncated list. Still prefixed
+  // with 'agents' so `invalidateQueries({ queryKey: QK.agents() })` reaches it.
+  agentsPage:    (page: number, pageSize: number) =>
+    ['agents', 'page', page, pageSize] as const,
   agent:         (id: string) => ['agents', id] as const,
   conversations: ()         => ['conversations'] as const,
   conversation:  (id: string) => ['conversations', id] as const,

@@ -73,22 +73,77 @@ def list_schemes() -> list[dict]:
         ]
 
 
+#: What each depth of the domain tree is called, for display.
+#:
+#: Level is derived from the tree rather than stored, so it cannot disagree
+#: with `parent_id`. Only `domain` reads as industry/domain/subdomain; other
+#: schemes are shallow and just report their depth.
+DOMAIN_LEVEL_NAMES = ("industry", "domain", "subdomain")
+
+
+def level_name(scheme_id: str, level: int) -> str:
+    if scheme_id != Scheme.DOMAIN.value:
+        return "concept"
+    return DOMAIN_LEVEL_NAMES[level] if level < len(DOMAIN_LEVEL_NAMES) else "subdomain"
+
+
 def list_concepts(scheme_id: str | None = None) -> list[dict]:
+    """Concepts, each carrying its depth in the hierarchy.
+
+    ``level`` is computed here from the loaded rows rather than walked per
+    concept — the callers that need it (the browser, the graph) always want the
+    whole set, so one pass beats N recursive queries.
+    """
     with _session() as db:
         if db is None:
             return []
         q = db.query(Concept)
         if scheme_id:
             q = q.filter(Concept.scheme_id == scheme_id)
-        return [_concept_dict(c) for c in q.order_by(Concept.id).all()]
+        concepts = [_concept_dict(c) for c in q.order_by(Concept.id).all()]
+
+    by_id = {c["id"]: c for c in concepts}
+    for concept in concepts:
+        level, cursor, guard = 0, concept["parent_id"], 0
+        # The guard is belt-and-braces: create/update reject cycles, but a
+        # hand-edited database should degrade rather than hang a request.
+        while cursor and cursor in by_id and guard < 16:
+            level += 1
+            cursor = by_id[cursor]["parent_id"]
+            guard += 1
+        concept["level"] = level
+        concept["level_name"] = level_name(concept["scheme_id"], level)
+
+    return concepts
 
 
 def get_concept(concept_id: str) -> dict | None:
+    """One concept, carrying the same ``level`` fields as ``list_concepts``.
+
+    Depth is walked here rather than computed in bulk — a single read is one
+    short parent chain, and callers would otherwise get a shape that silently
+    differs from the list endpoint.
+    """
     with _session() as db:
         if db is None:
             return None
-        c = db.query(Concept).filter(Concept.id == concept_id).first()
-        return _concept_dict(c) if c else None
+        concept = db.query(Concept).filter(Concept.id == concept_id).first()
+        if not concept:
+            return None
+        payload = _concept_dict(concept)
+
+        level, cursor, guard = 0, concept.parent_id, 0
+        while cursor and guard < 16:
+            parent = db.query(Concept.parent_id).filter(Concept.id == cursor).first()
+            if not parent:
+                break
+            level += 1
+            cursor = parent[0]
+            guard += 1
+
+    payload["level"] = level
+    payload["level_name"] = level_name(payload["scheme_id"], level)
+    return payload
 
 
 def descendants(concept_id: str, include_self: bool = True) -> set[str]:
@@ -412,11 +467,373 @@ def counts() -> dict[str, int]:
         }
 
 
+# ── Vocabulary CRUD ────────────────────────────────────────────────────────
+#
+# The seed file is the *shipped* vocabulary; these are for terms a user adds at
+# runtime. Both write the same tables, so a concept created here behaves
+# identically to a seeded one everywhere else — matching, scoping, validation.
+#
+# Deletes are the only genuinely dangerous operation in this module. A concept
+# id is what annotations point at, so removing one can orphan review work that
+# nothing will report as missing; every delete path below therefore reports what
+# it would break before it does anything.
+
+
+class VocabularyError(Exception):
+    """A vocabulary edit was rejected. The message is meant for a user."""
+
+
+def create_scheme(scheme_id: str, label: str, description: str | None = None) -> dict:
+    """Add a concept scheme."""
+    scheme_id = (scheme_id or "").strip()
+    if not scheme_id:
+        raise VocabularyError("A scheme id is required.")
+
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        if db.query(ConceptScheme).filter(ConceptScheme.id == scheme_id).first():
+            raise VocabularyError(f"Scheme '{scheme_id}' already exists.")
+        db.add(ConceptScheme(id=scheme_id, label=label or scheme_id, description=description))
+        db.commit()
+    logger.info("Created concept scheme '%s'", scheme_id)
+    return {"id": scheme_id, "label": label or scheme_id, "description": description}
+
+
+def update_scheme(scheme_id: str, label: str | None = None, description: str | None = None) -> dict:
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        scheme = db.query(ConceptScheme).filter(ConceptScheme.id == scheme_id).first()
+        if not scheme:
+            raise VocabularyError(f"Scheme '{scheme_id}' not found.")
+        if label is not None:
+            scheme.label = label
+        if description is not None:
+            scheme.description = description
+        db.commit()
+        return {"id": scheme.id, "label": scheme.label, "description": scheme.description}
+
+
+def delete_scheme(scheme_id: str, cascade: bool = False) -> dict:
+    """Remove a scheme. Refuses to strand its concepts unless ``cascade``."""
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        scheme = db.query(ConceptScheme).filter(ConceptScheme.id == scheme_id).first()
+        if not scheme:
+            raise VocabularyError(f"Scheme '{scheme_id}' not found.")
+
+        concept_ids = [c.id for c in db.query(Concept).filter(Concept.scheme_id == scheme_id).all()]
+        if concept_ids and not cascade:
+            raise VocabularyError(
+                f"Scheme '{scheme_id}' still has {len(concept_ids)} concepts. "
+                "Delete them first, or pass cascade=true."
+            )
+
+        removed_annotations = 0
+        if concept_ids:
+            removed_annotations = (
+                db.query(Annotation)
+                .filter(Annotation.concept_id.in_(concept_ids))
+                .delete(synchronize_session=False)
+            )
+            db.query(Concept).filter(Concept.scheme_id == scheme_id).delete(
+                synchronize_session=False
+            )
+        db.delete(scheme)
+        db.commit()
+
+    logger.info(
+        "Deleted scheme '%s' (%d concepts, %d annotations)",
+        scheme_id, len(concept_ids), removed_annotations,
+    )
+    return {
+        "deleted": scheme_id,
+        "concepts_removed": len(concept_ids),
+        "annotations_removed": removed_annotations,
+    }
+
+
+def create_concept(
+    concept_id: str,
+    scheme_id: str,
+    label: str,
+    parent_id: str | None = None,
+    definition: str | None = None,
+    synonyms: Iterable[str] | None = None,
+) -> dict:
+    """Add a concept to a scheme."""
+    concept_id = (concept_id or "").strip()
+    if not concept_id:
+        raise VocabularyError("A concept id is required.")
+
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        if db.query(Concept).filter(Concept.id == concept_id).first():
+            raise VocabularyError(f"Concept '{concept_id}' already exists.")
+        if not db.query(ConceptScheme).filter(ConceptScheme.id == scheme_id).first():
+            raise VocabularyError(f"Scheme '{scheme_id}' does not exist.")
+
+        if parent_id:
+            parent = db.query(Concept).filter(Concept.id == parent_id).first()
+            if not parent:
+                raise VocabularyError(f"Parent concept '{parent_id}' does not exist.")
+            # Hierarchy queries are a recursive walk within one scheme; a
+            # cross-scheme parent would produce a tree no traversal can follow.
+            if parent.scheme_id != scheme_id:
+                raise VocabularyError(
+                    f"Parent '{parent_id}' is in scheme '{parent.scheme_id}', "
+                    f"not '{scheme_id}'."
+                )
+
+        db.add(Concept(
+            id=concept_id,
+            scheme_id=scheme_id,
+            parent_id=parent_id or None,
+            label=label or concept_id,
+            definition=definition,
+            synonyms=json.dumps(list(synonyms or [])),
+        ))
+        db.commit()
+
+    logger.info("Created concept '%s' in scheme '%s'", concept_id, scheme_id)
+    return get_concept(concept_id) or {}
+
+
+def update_concept(
+    concept_id: str,
+    label: str | None = None,
+    parent_id: str | None = None,
+    definition: str | None = None,
+    synonyms: Iterable[str] | None = None,
+    clear_parent: bool = False,
+) -> dict:
+    """Edit a concept. ``clear_parent`` promotes it to a root."""
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        concept = db.query(Concept).filter(Concept.id == concept_id).first()
+        if not concept:
+            raise VocabularyError(f"Concept '{concept_id}' not found.")
+
+        if label is not None:
+            concept.label = label
+        if definition is not None:
+            concept.definition = definition
+        if synonyms is not None:
+            concept.synonyms = json.dumps(list(synonyms))
+
+        if clear_parent:
+            concept.parent_id = None
+        elif parent_id is not None:
+            if parent_id == concept_id:
+                raise VocabularyError("A concept cannot be its own parent.")
+            parent = db.query(Concept).filter(Concept.id == parent_id).first()
+            if not parent:
+                raise VocabularyError(f"Parent concept '{parent_id}' does not exist.")
+            if parent.scheme_id != concept.scheme_id:
+                raise VocabularyError(
+                    f"Parent '{parent_id}' is in a different scheme."
+                )
+            # Re-parenting under one's own descendant would build a cycle, and
+            # the recursive descendant walk would then never terminate.
+            if parent_id in descendants(concept_id):
+                raise VocabularyError(
+                    f"'{parent_id}' is below '{concept_id}' — that would make a cycle."
+                )
+            concept.parent_id = parent_id
+
+        db.commit()
+
+    return get_concept(concept_id) or {}
+
+
+def concept_usage(concept_id: str) -> dict:
+    """What a delete would take with it: children and annotations."""
+    with _session() as db:
+        if db is None:
+            return {"children": [], "annotations": 0, "subjects": []}
+        children = [c.id for c in db.query(Concept).filter(Concept.parent_id == concept_id).all()]
+        rows = (
+            db.query(Annotation.subject_type, Annotation.subject_id)
+            .filter(Annotation.concept_id == concept_id)
+            .all()
+        )
+    return {
+        "children": children,
+        "annotations": len(rows),
+        "subjects": [{"subject_type": t, "subject_id": s} for t, s in rows[:50]],
+    }
+
+
+def delete_concept(concept_id: str, cascade: bool = False) -> dict:
+    """Remove a concept.
+
+    Refuses while it has children or annotations unless ``cascade``, because
+    both failures are silent: an orphaned annotation matches nothing and a
+    stranded child drops out of every hierarchy walk.
+    """
+    usage = concept_usage(concept_id)
+    if (usage["children"] or usage["annotations"]) and not cascade:
+        raise VocabularyError(
+            f"'{concept_id}' has {len(usage['children'])} child concepts and "
+            f"{usage['annotations']} annotations. Pass cascade=true to remove them too."
+        )
+
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        concept = db.query(Concept).filter(Concept.id == concept_id).first()
+        if not concept:
+            raise VocabularyError(f"Concept '{concept_id}' not found.")
+
+        doomed = descendants(concept_id) if cascade else {concept_id}
+        removed_annotations = (
+            db.query(Annotation)
+            .filter(Annotation.concept_id.in_(list(doomed)))
+            .delete(synchronize_session=False)
+        )
+        db.query(Concept).filter(Concept.id.in_(list(doomed))).delete(synchronize_session=False)
+        db.commit()
+
+    logger.info(
+        "Deleted concept '%s' (%d concepts, %d annotations)",
+        concept_id, len(doomed), removed_annotations,
+    )
+    return {
+        "deleted": concept_id,
+        "concepts_removed": len(doomed),
+        "annotations_removed": removed_annotations,
+    }
+
+
+# ── Annotation CRUD ────────────────────────────────────────────────────────
+
+
+def add_annotation(
+    subject_type: str, subject_id: str, predicate: str, concept_id: str, source: str = "user"
+) -> dict:
+    """Add one triple, leaving the subject's other annotations alone.
+
+    ``set_annotations`` replaces a whole predicate; this is the additive form
+    the editor needs when a user ticks one more concept.
+    """
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        if not db.query(Concept).filter(Concept.id == concept_id).first():
+            raise VocabularyError(f"Concept '{concept_id}' does not exist.")
+
+        existing = db.query(Annotation).filter(
+            Annotation.subject_type == subject_type,
+            Annotation.subject_id == subject_id,
+            Annotation.predicate == predicate,
+            Annotation.concept_id == concept_id,
+        ).first()
+        if existing:
+            # Re-asserting a guess by hand is how it gets confirmed, so the
+            # source is upgraded rather than the write being a no-op.
+            existing.source = source
+        else:
+            db.add(Annotation(
+                subject_type=subject_type, subject_id=subject_id,
+                predicate=predicate, concept_id=concept_id, source=source,
+            ))
+        db.commit()
+
+    return {"subject_type": subject_type, "subject_id": subject_id,
+            "predicate": predicate, "concept_id": concept_id, "source": source}
+
+
+def remove_annotation(
+    subject_type: str, subject_id: str, predicate: str, concept_id: str
+) -> dict:
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        removed = db.query(Annotation).filter(
+            Annotation.subject_type == subject_type,
+            Annotation.subject_id == subject_id,
+            Annotation.predicate == predicate,
+            Annotation.concept_id == concept_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+    return {"removed": removed}
+
+
+def delete_subject_annotations(subject_type: str, subject_id: str) -> dict:
+    """Forget everything about one subject — used when it is deleted upstream."""
+    with _session() as db:
+        if db is None:
+            return {"removed": 0}
+        removed = db.query(Annotation).filter(
+            Annotation.subject_type == subject_type,
+            Annotation.subject_id == subject_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+    return {"removed": removed}
+
+
+def search_annotations(
+    subject_type: str | None = None,
+    predicate: str | None = None,
+    concept_id: str | None = None,
+    source: str | None = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Browse the annotation table. Powers the admin list and the graph."""
+    with _session() as db:
+        if db is None:
+            return []
+        query = db.query(Annotation)
+        if subject_type:
+            query = query.filter(Annotation.subject_type == subject_type)
+        if predicate:
+            query = query.filter(Annotation.predicate == predicate)
+        if concept_id:
+            query = query.filter(Annotation.concept_id == concept_id)
+        if source:
+            query = query.filter(Annotation.source == source)
+        rows = query.order_by(Annotation.subject_type, Annotation.subject_id).limit(limit).all()
+
+    return [
+        {
+            "id": r.id,
+            "subject_type": r.subject_type,
+            "subject_id": r.subject_id,
+            "predicate": r.predicate,
+            "concept_id": r.concept_id,
+            "source": r.source,
+        }
+        for r in rows
+    ]
+
+
+def all_annotations() -> list[dict]:
+    """Every triple, unpaginated. Only for building the graph."""
+    return search_annotations(limit=100_000)
+
+
 __all__ = [
     "Predicate",
     "Scheme",
     "SubjectType",
+    "VocabularyError",
+    "add_annotation",
+    "all_annotations",
     "annotate",
+    "concept_usage",
+    "create_concept",
+    "create_scheme",
+    "delete_concept",
+    "delete_scheme",
+    "delete_subject_annotations",
+    "remove_annotation",
+    "search_annotations",
+    "update_concept",
+    "update_scheme",
     "annotations_for",
     "annotations_for_many",
     "counts",

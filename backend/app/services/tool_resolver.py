@@ -3,8 +3,10 @@ Tool Resolver — HTTP calls to Docker Tool Service.
 Handles tool discovery, synthesis triggers, and schema fetching.
 """
 
+import asyncio
 import httpx
 import logging
+from functools import partial
 from hashlib import sha256
 import json
 from app.config import settings
@@ -186,20 +188,26 @@ class ToolResolver:
             existing_tools_list = await self.list_tools()
             existing_tools = [t.get("name") for t in existing_tools_list]
 
-            result = client.chat.complete(
-                model=settings.MISTRAL_CODING_MODEL,
-                messages=[
-                    {"role": "system", "content": EXPLICIT_SYNTHESIS_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": EXPLICIT_SYNTHESIS_USER_PROMPT.format(
-                            existing_tools=json.dumps(existing_tools),
-                            tool_request=task
-                        )
-                    },
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+            # Offloaded: the shared Mistral client is synchronous, so
+            # calling it inline would block the event loop for the whole
+            # completion — and tool synthesis is a slow, code-generating one.
+            result = await asyncio.to_thread(
+                partial(
+                    client.chat.complete,
+                    model=settings.MISTRAL_CODING_MODEL,
+                    messages=[
+                        {"role": "system", "content": EXPLICIT_SYNTHESIS_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": EXPLICIT_SYNTHESIS_USER_PROMPT.format(
+                                existing_tools=json.dumps(existing_tools),
+                                tool_request=task
+                            )
+                        },
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
             )
 
             raw = result.choices[0].message.content

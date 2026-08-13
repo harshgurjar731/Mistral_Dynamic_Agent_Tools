@@ -14,6 +14,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from functools import partial
 from typing import AsyncGenerator
 
 import httpx
@@ -26,6 +28,79 @@ logger = logging.getLogger(__name__)
 # Concurrency limits to avoid overwhelming external services.
 _SYNTHESIS_CONCURRENCY = 3
 _AGENT_CREATION_CONCURRENCY = 5
+
+# How much of an agent's instructions the planner sees.
+#
+# The analysis prompt only has to answer "does an agent for this already
+# exist" — it never executes the instructions, so the operating detail is
+# dead weight. Sending them in full put ~16k tokens of agent definitions into
+# a single request (one agent alone carries 7.6k characters), which is what
+# pushed the call past the client's read timeout and hung the planner.
+_INSTRUCTION_BUDGET = 400
+
+# Planning calls are long by nature — a large model producing a whole DAG as
+# JSON. Given an explicit budget rather than inheriting the client default, so
+# the limit is visible where it matters and can be raised without touching
+# every other Mistral call in the process.
+_PLANNER_TIMEOUT_MS = 180_000
+
+
+def _summarise_instructions(text: str) -> str:
+    """Trim an agent's instructions to what the planner needs to recognise it.
+
+    Cuts on a sentence boundary when there is one near the budget, so the
+    summary reads as a complete thought rather than a severed clause.
+    """
+    text = (text or "").strip()
+    if len(text) <= _INSTRUCTION_BUDGET:
+        return text
+
+    window = text[:_INSTRUCTION_BUDGET]
+    cut = max(window.rfind(". "), window.rfind("\n"))
+    if cut > _INSTRUCTION_BUDGET // 2:
+        return window[: cut + 1].strip()
+    return window.rstrip() + "…"
+
+
+class PlannerTimeout(Exception):
+    """A planning call exceeded its budget. Carries a message worth showing."""
+
+
+async def _complete(client, *, model: str, system: str, user: str, phase: str):
+    """One planning completion, off the event loop and with a real timeout.
+
+    The Mistral client here is synchronous. Called inline from this coroutine it
+    blocked the whole API for the duration of the request — during a two-minute
+    planning call the backend served nothing at all, which made a slow plan look
+    like a dead server.
+    """
+    started = time.monotonic()
+    logger.info("Planner %s: requesting (%d chars in)", phase, len(user))
+
+    try:
+        result = await asyncio.to_thread(
+            client.chat.complete,
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            timeout_ms=_PLANNER_TIMEOUT_MS,
+        )
+    except Exception as e:
+        elapsed = time.monotonic() - started
+        text = str(e).lower()
+        if "timed out" in text or "timeout" in text:
+            raise PlannerTimeout(
+                f"The {phase} step timed out after {elapsed:.0f}s. The goal may be too "
+                f"broad — try narrowing it, or reduce how many agents are in scope."
+            ) from e
+        raise
+
+    logger.info("Planner %s: completed in %.1fs", phase, time.monotonic() - started)
+    return result
 
 
 def _safe_parse(raw: str, fallback):
@@ -64,6 +139,7 @@ class WorkflowPlanningLayer(Layer):
         from app.services.workflow_engine.engine import save_workflow
         from app.services.workflow_engine.models import WorkflowDefinition
         from app.services import agent_service, connector_service
+        from app.ontology import autotag as ontology_autotag
         from app.ontology import matcher as ontology_matcher
         from app.ontology.vocab import AgentTier, Predicate, SubjectType
 
@@ -110,7 +186,8 @@ class WorkflowPlanningLayer(Layer):
                     "id": a["id"],
                     "name": a["name"],
                     "tier": a.get("tier", "foundation"),
-                    "instructions": a.get("instructions", ""),
+                    "description": a.get("description") or "",
+                    "instructions": _summarise_instructions(a.get("instructions", "")),
                     "connectors": [
                         ref["connector_id"]
                         for ref in (a.get("connectors") or [])
@@ -154,25 +231,26 @@ class WorkflowPlanningLayer(Layer):
             domain_agents = [a for a in scoped_agents if a.get("tier") == AgentTier.DOMAIN.value]
             usecase_agents = [a for a in scoped_agents if a.get("tier") == AgentTier.USE_CASE.value]
 
-            analysis_result = client.chat.complete(
+            analysis_prompt = WORKFLOW_ANALYSIS_USER_PROMPT.format(
+                existing_foundation_agents=json.dumps(foundation_agents, indent=2),
+                existing_domain_agents=json.dumps(domain_agents, indent=2),
+                existing_usecase_agents=json.dumps(usecase_agents, indent=2),
+                existing_tools=json.dumps(existing_tool_names, indent=2),
+                existing_connectors=connector_descriptions,
+                existing_workflows=json.dumps(existing_workflows, indent=2),
+                goal=goal,
+            )
+            logger.info(
+                "Planner analysis prompt: %d chars (~%d tokens)",
+                len(analysis_prompt), len(analysis_prompt) // 4,
+            )
+
+            analysis_result = await _complete(
+                client,
                 model=settings.MISTRAL_ORCHESTRATOR_MODEL,
-                messages=[
-                    {"role": "system", "content": WORKFLOW_ANALYSIS_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": WORKFLOW_ANALYSIS_USER_PROMPT.format(
-                            existing_foundation_agents=json.dumps(foundation_agents, indent=2),
-                            existing_domain_agents=json.dumps(domain_agents, indent=2),
-                            existing_usecase_agents=json.dumps(usecase_agents, indent=2),
-                            existing_tools=json.dumps(existing_tool_names, indent=2),
-                            existing_connectors=connector_descriptions,
-                            existing_workflows=json.dumps(existing_workflows, indent=2),
-                            goal=goal,
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+                system=WORKFLOW_ANALYSIS_SYSTEM_PROMPT,
+                user=analysis_prompt,
+                phase="analysis",
             )
             raw = analysis_result.choices[0].message.content
             requirements = _safe_parse(raw, {"tools_needed": [], "agents_needed": [], "workflow_description": goal})
@@ -316,7 +394,27 @@ class WorkflowPlanningLayer(Layer):
                         if comp_args:
                             create_kwargs["completion_args"] = comp_args
 
-                        agent_obj = client.beta.agents.create(**create_kwargs)
+                        agent_obj = await asyncio.to_thread(
+                            partial(client.beta.agents.create, **create_kwargs)
+                        )
+
+                        # The tier already went into Mistral's metadata above,
+                        # but metadata is invisible to scoping and validation —
+                        # only the concept store drives those. Without this the
+                        # planner's own agents were unclassified the moment they
+                        # were made, and stayed that way until someone ran the
+                        # backfill script.
+                        await asyncio.to_thread(
+                            partial(
+                                ontology_autotag.annotate_agent,
+                                agent_obj.id,
+                                name=agent_name,
+                                description=agent_spec.get("description", ""),
+                                instructions=instructions,
+                                tier=agent_spec.get("tier"),
+                                goal=goal,
+                            )
+                        )
 
                         return {
                             "agent_id": agent_obj.id,
@@ -347,22 +445,17 @@ class WorkflowPlanningLayer(Layer):
             # ── Phase 4: Build DAG ────────────────────────────────────────
             ctx.emit("status", "Building workflow DAG…")
 
-            dag_result = client.chat.complete(
+            dag_result = await _complete(
+                client,
                 model=settings.MISTRAL_ORCHESTRATOR_MODEL,
-                messages=[
-                    {"role": "system", "content": WORKFLOW_DAG_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": WORKFLOW_DAG_USER_PROMPT.format(
-                            agents_json=json.dumps(created_agents, indent=2),
-                            existing_connectors=connector_descriptions,
-                            goal=goal,
-                            requirements_json=json.dumps(requirements, indent=2),
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+                system=WORKFLOW_DAG_SYSTEM_PROMPT,
+                user=WORKFLOW_DAG_USER_PROMPT.format(
+                    agents_json=json.dumps(created_agents, indent=2),
+                    existing_connectors=connector_descriptions,
+                    goal=goal,
+                    requirements_json=json.dumps(requirements, indent=2),
+                ),
+                phase="DAG build",
             )
             raw_dag = dag_result.choices[0].message.content
             dag_dict = _safe_parse(raw_dag, None)
@@ -547,8 +640,15 @@ class WorkflowPlanningLayer(Layer):
                 "mistral_workflow_id": mistral_workflow_id,
             }))
 
-        except Exception as e:
-            logger.error("Workflow planning failed: %s", e)
+        except PlannerTimeout as e:
+            # Already phrased for a human and tells them what to do next.
+            logger.error("Workflow planning timed out: %s", e)
             ctx.emit("error", str(e))
+
+        except Exception as e:
+            logger.error("Workflow planning failed: %s", e, exc_info=True)
+            # A bare exception string is often unrecognisable out of context
+            # ("The read operation timed out"), so name the stage it came from.
+            ctx.emit("error", f"{type(e).__name__} during workflow planning: {e}")
 
         return await next_fn(ctx)

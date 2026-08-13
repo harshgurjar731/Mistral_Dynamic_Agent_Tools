@@ -12,19 +12,25 @@ export const workflowsApi = {
   unarchive:    (name: string) => api.put(`/api/workflows/${name}/unarchive`),
 
   // ── Execution ────────────────────────────────────────────────────────────
+  // Starting a run lives here because it hangs off the workflow. Everything
+  // that happens *to* a run afterwards — status, traces, control — is in
+  // `api/executions.ts`, which mirrors the Mistral executions API.
   execute:        (name: string, body?: object) => api.post(`/api/workflows/${name}/execute`, body),
   getExecution:   (id: string) => api.get(`/api/workflows/executions/${id}`),
   listExecutions: (name: string) => api.get(`/api/workflows/${name}/executions`),
+  metrics:        (name: string) => api.get(`/api/workflows/${name}/metrics`),
 
   // ── Registration / Export ────────────────────────────────────────────────
   register:        (name: string) => api.post(`/api/workflows/${name}/register`, {}),
   exportToMistral: (name: string) => api.post(`/api/workflows/${name}/export`, {}),
 
   // ── Signals (send user messages to running execution) ────────────────────
+  // The API takes `name` / `input`; the older `signal_name` / `payload` spelling
+  // was accepted at the HTTP layer but never reached the workflow handler.
   sendSignal: (executionId: string, signalName: string, payload?: object) =>
-    api.post(`/api/workflows/executions/${executionId}/signal`, {
-      signal_name: signalName,
-      payload: payload ?? {},
+    api.post(`/api/workflows/executions/${executionId}/signals`, {
+      name: signalName,
+      input: payload ?? {},
     }),
 
   // ── Image upload ─────────────────────────────────────────────────────────

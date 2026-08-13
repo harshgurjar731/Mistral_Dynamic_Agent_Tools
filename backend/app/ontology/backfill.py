@@ -55,8 +55,44 @@ def _text_of(agent: dict) -> str:
 
 def _propose_domains(text: str) -> list[str]:
     """Domains a resource plausibly serves, best match first."""
-    scored = matcher.score_concepts(text, Scheme.DOMAIN.value)
-    return [cid for cid, score in scored[:2] if score >= 1.0]
+    return _rank_domains(matcher.score_concepts(text, Scheme.DOMAIN.value))[:2]
+
+
+def _rank_domains(scored: list[tuple[str, float]]) -> list[str]:
+    """Order candidate domains, breaking score ties by specificity.
+
+    Ties are the common case, not the exception: most matches score exactly 1.0
+    because they hit a single-word synonym. Sorting those alphabetically —
+    which is what falling back to the id did — picked ``domain.compliance``
+    over ``domain.lending.mortgage`` for a mortgage workflow.
+
+    A deeper concept is a more specific claim, and a more specific claim that
+    matched is better evidence than a generic one that also matched.
+    """
+    if not scored:
+        return []
+
+    levels = {c["id"]: c.get("level", 0) for c in store.list_concepts(Scheme.DOMAIN.value)}
+    ranked = sorted(
+        ((cid, score) for cid, score in scored if score >= 1.0),
+        key=lambda pair: (-pair[1], -levels.get(pair[0], 0), pair[0]),
+    )
+    return [cid for cid, _ in ranked]
+
+
+def propose_domains_for(name: str, body: str = "") -> list[str]:
+    """Domains for a named resource, trusting its name over its body text.
+
+    A name is written to say what the thing is; its instructions are written to
+    tell a model how to behave, and are full of incidental vocabulary — an
+    "application" in a mortgage workflow matched education admissions. So the
+    name is scored on its own first, and the body is only consulted when the
+    name says nothing.
+    """
+    from_name = _rank_domains(matcher.score_concepts(name, Scheme.DOMAIN.value))
+    if from_name:
+        return from_name[:2]
+    return _rank_domains(matcher.score_concepts(body, Scheme.DOMAIN.value))[:2]
 
 
 #: Capabilities an agent can only obtain from something attached to it.

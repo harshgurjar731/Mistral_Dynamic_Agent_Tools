@@ -20,6 +20,7 @@ from app.services.workflow_engine.models import (
     WorkflowDefinition, WorkflowRun, WorkflowStatus, StepResult, StepType,
 )
 from app.services.workflow_engine.step_runners import run_step
+from app.services.workflow_engine import execution_logs
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,51 @@ except Exception as e:
 # ── In-memory execution store (fast, ephemeral) ───────────────────────────
 _execution_store: dict[str, WorkflowRun] = {}
 
+# Stop requests for in-flight local runs, keyed by execution id.
+# The value is the terminal status to settle on, which is what distinguishes a
+# graceful cancel from a hard terminate: both stop the DAG walk at the next step
+# boundary, but they are reported differently and a cancelled run keeps whatever
+# partial output it had produced.
+_stop_requests: dict[str, WorkflowStatus] = {}
+
+
+def request_stop(execution_id: str, terminate: bool = False) -> bool:
+    """Ask an in-flight local run to stop at the next step boundary.
+
+    Returns False when there is nothing to stop. Steps are not interrupted
+    mid-flight — an agent call already in progress runs to completion — because
+    the step runners own external calls whose cancellation semantics we do not
+    control.
+    """
+    run = _execution_store.get(execution_id)
+    if not run or run.status not in (WorkflowStatus.PENDING, WorkflowStatus.RUNNING):
+        return False
+    _stop_requests[execution_id] = (
+        WorkflowStatus.TERMINATED if terminate else WorkflowStatus.CANCELLED
+    )
+    logger.info(
+        "Stop requested for local execution %s (%s)",
+        execution_id, "terminate" if terminate else "cancel",
+    )
+    return True
+
+
+def _consume_stop_request(execution_id: str) -> Optional[WorkflowStatus]:
+    return _stop_requests.pop(execution_id, None)
+
+
+def _running_result(step_id: str) -> StepResult:
+    """A placeholder row published the moment a step starts.
+
+    Overwritten in place by the real result when the step settles, so the list
+    stays one row per step while still showing what is in flight.
+    """
+    return StepResult(
+        step_id=step_id,
+        status="running",
+        started_at_ms=datetime.now(timezone.utc).timestamp() * 1000,
+    )
+
 
 # ── CRUD helpers ──────────────────────────────────────────────────────────
 
@@ -69,7 +115,41 @@ def save_workflow(definition: WorkflowDefinition) -> str:
             db.add(record)
         db.commit()
     logger.info("Workflow '%s' saved to SQLite (%d steps)", definition.name, len(definition.steps))
+
+    _annotate_workflow(definition)
     return definition.name
+
+
+def _annotate_workflow(definition: WorkflowDefinition) -> None:
+    """Classify the workflow against the ontology. Best effort.
+
+    Done on save rather than publish so a draft is findable in the graph while
+    it is still being built — and re-run on every save, because the steps are
+    what the classification reads and those are exactly what editing changes.
+    """
+    try:
+        from app.ontology import autotag
+
+        # Step ids and their agent/tool references say what a workflow actually
+        # does; its name is frequently generic ("demo1") and its description
+        # optional.
+        step_text = " ".join(
+            " ".join(filter(None, [
+                step.id.replace("_", " "),
+                step.description or "",
+                str(step.config.get("agent_id", "")),
+                str(step.config.get("tool_name", "")),
+                str(step.config.get("query_template", ""))[:200],
+            ]))
+            for step in definition.steps
+        )
+        autotag.annotate_workflow(
+            definition.name,
+            description=definition.description or "",
+            step_text=step_text,
+        )
+    except Exception as e:
+        logger.debug("Workflow annotation skipped for '%s': %s", definition.name, e)
 
 
 def get_workflow(name: str) -> Optional[WorkflowDefinition]:
@@ -156,6 +236,15 @@ async def execute_workflow(
         variables={**workflow.variables, **input_vars},
     )
     _execution_store[exec_id] = run
+    # Clear any stop request left over from a previous run under this id, so a
+    # replay is never killed by a stale flag.
+    _stop_requests.pop(exec_id, None)
+
+    # Everything logged from here on — including from the step runners and the
+    # worker threads they offload to — is attributed to this execution and
+    # tailed by the UI. The token is reset in the finally block below.
+    execution_logs.install()
+    exec_token = execution_logs.CURRENT_EXECUTION.set(exec_id)
 
     logger.info("Starting workflow '%s' (execution_id=%s)", workflow_name, exec_id)
 
@@ -173,6 +262,28 @@ async def execute_workflow(
 
     try:
         while current_step_id and len(visited) < max_steps:
+            # Honour a cancel/terminate between steps. Checked here rather than
+            # inside run_step so a stop can never leave a half-applied step.
+            stop_status = _consume_stop_request(exec_id)
+            if stop_status:
+                run.status = stop_status
+                run.end_time = datetime.now(timezone.utc)
+                run.result = {
+                    "stopped_at": current_step_id,
+                    "reason": (
+                        "Terminated by user"
+                        if stop_status is WorkflowStatus.TERMINATED
+                        else "Cancelled by user"
+                    ),
+                    "completed_steps": [r.step_id for r in run.step_results],
+                }
+                _execution_store[exec_id] = run
+                logger.info(
+                    "Workflow '%s' %s at step '%s' (execution_id=%s)",
+                    workflow_name, stop_status.value.lower(), current_step_id, exec_id,
+                )
+                return run
+
             if current_step_id in visited:
                 logger.warning("Cycle detected at step '%s', breaking", current_step_id)
                 break
@@ -200,9 +311,20 @@ async def execute_workflow(
                     [s.id for s in group_steps],
                 )
 
+                # Publish a running marker for every branch up front so the UI
+                # shows the whole group as in-flight, not a gap until the first
+                # branch returns.
+                slots: dict[str, int] = {}
+                for s in group_steps:
+                    slots[s.id] = len(run.step_results)
+                    run.step_results.append(_running_result(s.id))
+
                 # Each parallel branch gets a snapshot copy of variables
                 # to prevent race conditions between concurrent steps
                 async def _run_parallel_step(s, vars_snapshot):
+                    # Each gather task gets its own context copy, so tagging the
+                    # step here keeps concurrent branches' logs distinguishable.
+                    execution_logs.CURRENT_STEP.set(s.id)
                     return s, await run_step(s, vars_snapshot)
 
                 tasks = [
@@ -225,7 +347,10 @@ async def execute_workflow(
                         break
 
                     s, result = item
-                    run.step_results.append(result)
+                    # Overwrite the running marker published before the gather,
+                    # so the step keeps one row for its whole lifecycle.
+                    result.started_at_ms = run.step_results[slots[s.id]].started_at_ms
+                    run.step_results[slots[s.id]] = result
                     visited.add(s.id)
 
                     if result.status == "failed":
@@ -269,8 +394,17 @@ async def execute_workflow(
                 visited.add(current_step_id)
                 logger.info("Executing step '%s' (type=%s)", step.id, step.type)
 
-                result = await run_step(step, run.variables)
-                run.step_results.append(result)
+                slot = len(run.step_results)
+                run.step_results.append(_running_result(step.id))
+
+                step_token = execution_logs.CURRENT_STEP.set(step.id)
+                try:
+                    result = await run_step(step, run.variables)
+                finally:
+                    execution_logs.CURRENT_STEP.reset(step_token)
+
+                result.started_at_ms = run.step_results[slot].started_at_ms
+                run.step_results[slot] = result
 
                 if result.status == "failed":
                     run.status = WorkflowStatus.FAILED
@@ -311,5 +445,10 @@ async def execute_workflow(
         run.end_time = datetime.now(timezone.utc)
         _execution_store[exec_id] = run
         logger.error("Workflow '%s' failed: %s", workflow_name, e)
+
+    finally:
+        # Stop attributing this task's logging to the run. Without the reset a
+        # long-lived task could keep writing into a finished execution's buffer.
+        execution_logs.CURRENT_EXECUTION.reset(exec_token)
 
     return run

@@ -11,6 +11,7 @@ concurrently via ``asyncio.gather`` instead of a sequential loop.
 import asyncio
 import json
 import logging
+from functools import partial
 from typing import Optional, AsyncGenerator
 
 from app.core.context import PipelineContext, ImageData
@@ -181,9 +182,12 @@ async def _process_tool_calls_parallel(client, conv_result, conversation_id: str
         tool_results = list(tool_results)
 
         logger.info("Submitting %d tool results", len(tool_results))
-        current_result = client.beta.conversations.append(
-            conversation_id=conversation_id,
-            inputs=tool_results,
+        current_result = await asyncio.to_thread(
+            partial(
+                client.beta.conversations.append,
+                conversation_id=conversation_id,
+                inputs=tool_results,
+            )
         )
 
     return current_result
@@ -219,9 +223,12 @@ class ExecutionLayer(Layer):
 
         if ctx.conversation_id:
             # Follow-up
-            result = client.beta.conversations.append(
-                conversation_id=ctx.conversation_id,
-                inputs=inputs,
+            result = await asyncio.to_thread(
+                partial(
+                    client.beta.conversations.append,
+                    conversation_id=ctx.conversation_id,
+                    inputs=inputs,
+                )
             )
             result = await _process_tool_calls_parallel(client, result, ctx.conversation_id)
             ctx.response_text = _extract_response(result)
@@ -241,8 +248,8 @@ class ExecutionLayer(Layer):
             return
 
         # New conversation
-        conv_result = client.beta.conversations.start(
-            agent_id=agent_id, inputs=inputs,
+        conv_result = await asyncio.to_thread(
+            partial(client.beta.conversations.start, agent_id=agent_id, inputs=inputs)
         )
 
         conversation_id = (

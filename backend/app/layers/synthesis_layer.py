@@ -4,8 +4,10 @@ SynthesisLayer — Checks if a new tool needs to be synthesized.
 Extracted from orchestrator_service.py:113-163.
 """
 
+import asyncio
 import json
 import logging
+from functools import partial
 
 from app.core.context import PipelineContext
 from app.core.layer import Layer, NextFn
@@ -37,20 +39,25 @@ class SynthesisLayer(Layer):
         ctx.emit("status", "Checking if new tools are needed…")
 
         try:
-            result = ctx.client.chat.complete(
-                model=settings.MISTRAL_CODING_MODEL,
-                messages=[
-                    {"role": "system", "content": SYNTHESIS_CHECK_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": SYNTHESIS_CHECK_USER_PROMPT.format(
-                            tool_descriptions=get_tool_descriptions(),
-                            user_query=ctx.query,
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
+            # Offloaded: the shared Mistral client is synchronous, so calling
+            # it inline would block the event loop for the whole completion.
+            result = await asyncio.to_thread(
+                partial(
+                    ctx.client.chat.complete,
+                    model=settings.MISTRAL_CODING_MODEL,
+                    messages=[
+                        {"role": "system", "content": SYNTHESIS_CHECK_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": SYNTHESIS_CHECK_USER_PROMPT.format(
+                                tool_descriptions=get_tool_descriptions(),
+                                user_query=ctx.query,
+                            ),
+                        },
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
             )
 
             raw = result.choices[0].message.content

@@ -10,11 +10,8 @@ Execution routing strategy:
 import asyncio
 import logging
 import os
-import json
 import time
 from collections import Counter
-from typing import AsyncGenerator
-
 import httpx
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -30,8 +27,7 @@ from app.services.workflow_engine.models import (
     CatalogConnector, CatalogDomain,
 )
 from app.services.workflow_engine.engine import (
-    save_workflow, get_workflow, list_workflows, delete_workflow,
-    execute_workflow, get_execution, list_executions_for_workflow,
+    save_workflow, get_workflow, list_workflows, execute_workflow,
 )
 from app.services.workflow_engine.validation import validate_workflow, format_errors
 from app.services import workflow_planner
@@ -42,75 +38,6 @@ logger = logging.getLogger(__name__)
 # ── Worker deployment name — must match what mistral_worker.py uses ───────────
 # This is the task_queue your worker polls. Execution must target the same name.
 WORKER_DEPLOYMENT = os.environ.get("DEPLOYMENT_NAME", "default")
-
-# ── SSE helper ────────────────────────────────────────────────────────────────
-def _sse(data, event: str = "message") -> str:
-    payload = json.dumps(data, default=str) if not isinstance(data, str) else data
-    payload = payload.replace("\n", "\ndata: ")
-    return f"event: {event}\ndata: {payload}\n\n"
-
-
-def _safe_serialize(obj):
-    """
-    Recursively convert a value into a plain JSON-serializable Python type.
-
-    Handles:
-      - Pydantic BaseModel objects → dict via model_dump() / dict()
-      - datetime objects → ISO string
-      - strings that look like JSON or Python dicts → parsed to dict
-      - lists/dicts → recursively cleaned
-      - Everything else → str()
-    """
-    if obj is None:
-        return None
-
-    # Pydantic models (Mistral SDK returns these)
-    if hasattr(obj, "model_dump"):
-        try:
-            return _safe_serialize(obj.model_dump())
-        except Exception:
-            pass
-    if hasattr(obj, "dict") and callable(obj.dict) and not isinstance(obj, dict):
-        try:
-            return _safe_serialize(obj.dict())
-        except Exception:
-            pass
-
-    # datetime → ISO string
-    if hasattr(obj, "isoformat"):
-        return obj.isoformat()
-
-    # dict → recurse
-    if isinstance(obj, dict):
-        return {str(k): _safe_serialize(v) for k, v in obj.items()}
-
-    # list/tuple → recurse
-    if isinstance(obj, (list, tuple)):
-        return [_safe_serialize(item) for item in obj]
-
-    # Primitives pass through
-    if isinstance(obj, (str, int, float, bool)):
-        # Try parsing strings that look like JSON or Python dict literals
-        if isinstance(obj, str) and obj.strip().startswith("{"):
-            try:
-                return _safe_serialize(json.loads(obj))
-            except (json.JSONDecodeError, ValueError):
-                # Try Python literal eval as last resort (for repr-style dicts)
-                import ast
-                try:
-                    parsed = ast.literal_eval(obj)
-                    if isinstance(parsed, (dict, list)):
-                        return _safe_serialize(parsed)
-                except (ValueError, SyntaxError):
-                    pass
-        return obj
-
-    # Fallback: stringify
-    try:
-        return str(obj)
-    except Exception:
-        return repr(obj)
-
 
 router = APIRouter(tags=["Workflows"])
 
@@ -220,6 +147,24 @@ async def create_workflow(request: CreateWorkflowRequest):
     definition.is_deployed = False
 
     name = save_workflow(definition)
+
+    # save_workflow already applies the lexical heuristics. This adds the
+    # LLM pass, which is what a hand-built workflow needs: its steps were named
+    # by a person and may describe the work without ever using a vocabulary term.
+    from app.services.agent_service import schedule_classification
+    from app.ontology.vocab import SubjectType
+
+    schedule_classification(
+        get_mistral_client(),
+        subject_type=SubjectType.WORKFLOW.value,
+        subject_id=name,
+        name=name.replace("_", " "),
+        description=definition.description or "",
+        instructions=" ".join(
+            f"{s.id}: {s.description or ''}" for s in definition.steps
+        )[:2000],
+    )
+
     return {
         "workflow_name": name,
         "message": "Workflow created",
@@ -900,309 +845,31 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Get execution status ──────────────────────────────────────────────────────
-
-@router.get("/workflows/executions/{execution_id}", response_model=WorkflowExecutionResponse)
-async def get_execution_status(execution_id: str):
-    """
-    Get execution status.
-    Tries Mistral server first, falls back to local store.
-    """
-    try:
-        client = get_mistral_client()
-        execution = await asyncio.to_thread(
-            lambda: client.workflows.executions.get_workflow_execution(execution_id=execution_id)
-        )
-        from app.services.workflow_engine.models import WorkflowStatus
-        status_raw = str(execution.status).upper() if hasattr(execution, "status") else "RUNNING"
-        try:
-            status = WorkflowStatus(status_raw)
-        except ValueError:
-            status = WorkflowStatus.RUNNING
-
-        run = get_execution(execution_id)
-
-        # Try all known SDK attribute names for the result
-        raw_result = None
-        for attr_name in ("result", "output", "return_value", "data"):
-            val = getattr(execution, attr_name, None)
-            if val is not None and val != "" and val != {}:
-                raw_result = val
-                break
-
-        # Make result JSON-serializable (SDK returns Pydantic models)
-        raw_result = _safe_serialize(raw_result)
-
-        # Unwrap nested {'result': X} envelopes (may be multiple layers)
-        for _ in range(3):
-            if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
-                raw_result = raw_result["result"]
-            else:
-                break
-
-        return WorkflowExecutionResponse(
-            execution_id=getattr(execution, "execution_id", execution_id),
-            workflow_name=getattr(execution, "workflow_identifier", None) or getattr(execution, "workflow_name", None) or (run.workflow_name if run else ""),
-            status=status,
-            start_time=getattr(execution, "start_time", None),
-            end_time=getattr(execution, "end_time", None),
-            result=raw_result,
-            root_execution_id=getattr(execution, "root_execution_id", execution_id),
-        )
-    except Exception as e:
-        logger.debug("Execution not found on Mistral server (%s), falling back to local.", e)
-
-    run = get_execution(execution_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
-
-    return WorkflowExecutionResponse(
-        execution_id=run.execution_id,
-        workflow_name=run.workflow_name,
-        status=run.status,
-        start_time=run.start_time,
-        end_time=run.end_time,
-        result=run.result,
-        root_execution_id=run.execution_id,
-    )
-
-
-# ── Execution SSE stream ──────────────────────────────────────────────────────
-
-@router.get("/workflows/executions/{execution_id}/stream")
-async def stream_execution_status(execution_id: str):
-    """
-    SSE stream that polls execution status and pushes events until terminal state.
-    Tries Mistral server, falls back to local store.
-    Terminal states: COMPLETED, FAILED, CANCELLED, TERMINATED, TIMED_OUT
-    """
-    TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TERMINATED", "TIMED_OUT", "CONTINUED_AS_NEW"}
-
-    def _normalise_status(raw) -> str:
-        """
-        Normalise a Mistral SDK status value to a plain uppercase string.
-        Handles plain strings ("running"), SDK enums (WorkflowExecutionStatus.running),
-        and enum .value attributes so TERMINAL set lookups always work.
-        """
-        if raw is None:
-            return "RUNNING"
-        if hasattr(raw, "value"):
-            raw = raw.value
-        s = str(raw).upper()
-        # Strip enum class prefix e.g. "WORKFLOWEXECUTIONSTATUS.RUNNING" → "RUNNING"
-        if "." in s:
-            s = s.rsplit(".", 1)[-1]
-        return s
-
-    async def _generate() -> AsyncGenerator[str, None]:
-        for _ in range(360):  # max 6 min of polling
-            await asyncio.sleep(1)
-            try:
-                # ── Try Mistral server FIRST (most executions run server-side) ──
-                # Local store only has DAG-engine executions, never server ones.
-                try:
-                    client = get_mistral_client()
-                    execution = await asyncio.to_thread(
-                        lambda: client.workflows.executions.get_workflow_execution(
-                            execution_id=execution_id
-                        )
-                    )
-                    status_str = _normalise_status(getattr(execution, "status", None))
-
-                    # ── Extract result ──
-                    # The SDK exposes the return value under different attr names
-                    # depending on version. Try all known names.
-                    raw_result = None
-                    for attr_name in ("result", "output", "return_value", "data"):
-                        val = getattr(execution, attr_name, None)
-                        if val is not None and val != "" and val != {}:
-                            raw_result = val
-                            break
-
-                    # ── Make result JSON-serializable ──
-                    # SDK may return Pydantic models, datetime objects, or other
-                    # non-serializable types that silently break json.dumps().
-                    raw_result = _safe_serialize(raw_result)
-
-                    # Unwrap nested {'result': X} envelopes (may be multiple layers)
-                    for _ in range(3):
-                        if isinstance(raw_result, dict) and list(raw_result.keys()) == ["result"]:
-                            raw_result = raw_result["result"]
-                        else:
-                            break
-
-                    # Log all execution attributes for debugging
-                    if status_str in TERMINAL:
-                        logger.info(
-                            "Terminal execution attrs: %s",
-                            {a: repr(getattr(execution, a, None))[:200]
-                             for a in dir(execution) if not a.startswith("_")},
-                        )
-
-                    # If result is still empty but terminal, try the query API
-                    # to fetch the workflow's in-memory last_result
-                    if status_str in TERMINAL and (raw_result is None or raw_result == "" or raw_result == {}):
-                        try:
-                            query_result = await asyncio.to_thread(
-                                lambda: client.workflows.executions.query_workflow_execution(
-                                    execution_id=execution_id,
-                                    query_type="get_last_result",
-                                )
-                            )
-                            qr = getattr(query_result, "result", None) or getattr(query_result, "data", None)
-                            if qr and qr != {} and qr != "":
-                                raw_result = _safe_serialize(qr)
-                                logger.info("Got result from query API: %.200s", str(qr)[:200])
-                        except Exception as q_err:
-                            logger.debug("Query API fallback failed (expected for some workflows): %s", q_err)
-
-                    # Final fallback message for truly empty results
-                    if status_str in TERMINAL and (raw_result is None or raw_result == "" or raw_result == {}):
-                        raw_result = f"Workflow completed with status {status_str} (no output data returned from activities)."
-
-                    logger.debug(
-                        "SSE poll — status=%s  result_type=%s  result_preview=%.200s",
-                        status_str, type(raw_result).__name__,
-                        str(raw_result)[:200] if raw_result else "None",
-                    )
-
-                    # ── Try to get step progress via workflow query API ──
-                    step_progress = []
-                    try:
-                        progress_result = await asyncio.to_thread(
-                            lambda: client.workflows.executions.query_workflow_execution(
-                                execution_id=execution_id,
-                                query_type="get_progress",
-                            )
-                        )
-                        pr = getattr(progress_result, "result", None) or getattr(progress_result, "data", None)
-                        if isinstance(pr, list):
-                            step_progress = [{"step_id": s, "status": "completed"} for s in pr]
-                    except Exception:
-                        pass  # Query not supported by all workflows
-
-                    data = {
-                        "execution_id": execution_id,
-                        "workflow_name": getattr(execution, "workflow_identifier", "") or getattr(execution, "workflow_name", ""),
-                        "status": status_str,
-                        "source": "mistral",
-                        "result": raw_result if status_str in TERMINAL else None,
-                        "step_results": step_progress,
-                        "start_time": str(getattr(execution, "start_time", "") or ""),
-                        "end_time":   str(getattr(execution, "end_time",   "") or ""),
-                    }
-                    yield _sse(data, "execution_update")
-                    if status_str in TERMINAL:
-                        yield _sse({"execution_id": execution_id, "status": status_str}, "done")
-                        return
-                    continue
-                except Exception as mistral_err:
-                    logger.debug("Mistral poll error: %s", mistral_err)
-
-                # ── Fallback: local store for DAG-engine executions ───────────
-                run = get_execution(execution_id)
-                if run:
-                    is_terminal = run.status.value.upper() in TERMINAL
-                    slim_steps = [
-                        {
-                            "step_id": sr.step_id,
-                            "status": sr.status,
-                            "duration_ms": sr.duration_ms,
-                            "error": sr.error,
-                            "input_preview": sr.input_preview,
-                            "output_preview": sr.output_preview,
-                        }
-                        for sr in run.step_results
-                    ]
-                    payload = {
-                        "execution_id": run.execution_id,
-                        "workflow_name": run.workflow_name,
-                        "status": run.status.value,
-                        "start_time": run.start_time.isoformat() if run.start_time else None,
-                        "end_time": run.end_time.isoformat() if run.end_time else None,
-                        "result": run.result if is_terminal else None,
-                        "step_results": slim_steps,
-                        "source": "local",
-                    }
-                    yield _sse(payload, "execution_update")
-                    if is_terminal:
-                        yield _sse({"execution_id": execution_id, "status": run.status.value}, "done")
-                        return
-
-            except Exception as e:
-                yield _sse({"error": str(e)}, "error")
-
-        yield _sse({"execution_id": execution_id, "status": "TIMED_OUT"}, "done")
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ── Signal to running execution ───────────────────────────────────────────────
-
-class SignalRequest(BaseModel):
-    signal_name: str = "user_message"
-    payload: dict = {}
-
-
-@router.post("/workflows/executions/{execution_id}/signal")
-async def send_signal_to_execution(execution_id: str, request: SignalRequest):
-    """
-    Send a signal to a running workflow execution on the Mistral server.
-    """
-    resp = _mistral_post(
-        f"/v1/workflows/executions/{execution_id}/signals",
-        {
-            "signal_name": request.signal_name,
-            "payload": request.payload,
-        },
-    )
-    if resp and resp.status_code in (200, 201, 204):
-        return {"sent": True, "execution_id": execution_id, "signal": request.signal_name}
-
-    logger.warning(
-        "Signal to Mistral execution %s failed (status=%s)",
-        execution_id, resp.status_code if resp else "none",
-    )
-    return {"sent": False, "execution_id": execution_id, "note": "Signal not delivered — worker may not be connected."}
-
-
-# ── List executions for workflow ──────────────────────────────────────────────
+# ── Executions for one workflow ───────────────────────────────────────────────
+#
+# Everything else about executions — detail, history, traces, streaming and the
+# control operations — lives in ``routes/executions.py``, which mirrors the
+# Mistral Workflow Executions API. Only the per-workflow listing stays here
+# because it hangs off the workflow resource.
 
 @router.get("/workflows/{workflow_name}/executions")
-async def get_workflow_executions(workflow_name: str):
-    """Get all executions for a workflow (merged: Mistral server + local)."""
-    results = []
+async def get_workflow_executions(
+    workflow_name: str,
+    status: str | None = None,
+    search: str | None = None,
+    page_size: int = 50,
+    next_page_token: str | None = None,
+):
+    """List this workflow's executions (Mistral runs merged with local runs)."""
+    from app.services.workflow_engine import executions as exec_service
 
-    resp = _mistral_get("/v1/workflows/executions")
-    if resp and resp.status_code == 200:
-        for ex in resp.json().get("executions", []):
-            if ex.get("workflow_name") == workflow_name:
-                results.append({
-                    "execution_id": ex.get("execution_id", ex.get("id")),
-                    "status": ex.get("status"),
-                    "start_time": ex.get("start_time"),
-                    "end_time": ex.get("end_time"),
-                    "duration_ms": ex.get("total_duration_ms"),
-                    "source": "mistral",
-                })
-
-    local_ids = {r["execution_id"] for r in results}
-    for run in list_executions_for_workflow(workflow_name):
-        if run.execution_id not in local_ids:
-            results.append({
-                "execution_id": run.execution_id,
-                "status": run.status.value,
-                "start_time": run.start_time.isoformat() if run.start_time else None,
-                "end_time": run.end_time.isoformat() if run.end_time else None,
-                "duration_ms": None,
-                "source": "local",
-            })
-
-    return {"executions": results}
+    return await exec_service.list_runs(
+        workflow_identifier=workflow_name,
+        status=status,
+        search=search,
+        page_size=page_size,
+        next_page_token=next_page_token,
+    )
 
 
 # ── Register (manual trigger) ─────────────────────────────────────────────────

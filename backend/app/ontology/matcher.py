@@ -70,6 +70,7 @@ def score_concepts(goal: str, scheme_id: str) -> list[tuple[str, float]]:
     scored: list[tuple[str, float]] = []
     for concept in store.list_concepts(scheme_id):
         best = 0.0
+        hits = 0
         for phrase in _phrases(concept):
             phrase_tokens = _tokens(phrase)
             if not phrase_tokens:
@@ -83,11 +84,18 @@ def score_concepts(goal: str, scheme_id: str) -> list[tuple[str, float]]:
             if not phrase_tokens.issubset(goal_tokens):
                 continue
 
+            hits += 1
             # Longer exact phrases are stronger evidence than a bare keyword.
             best = max(best, 1.0 + 0.3 * (len(phrase_tokens) - 1))
 
         if best > 0:
-            scored.append((concept["id"], best))
+            # Several distinct terms pointing at the same concept is stronger
+            # evidence than one. Without this, ties were everywhere — almost
+            # every match scores exactly 1.0 — and the sort fell through to the
+            # concept id, so "assess a residential mortgage application" scoped
+            # to *education admissions* purely because "admissions" sorts
+            # before "mortgage" and both matched one word.
+            scored.append((concept["id"], best + 0.1 * (hits - 1)))
 
     scored.sort(key=lambda pair: (-pair[1], pair[0]))
     return scored

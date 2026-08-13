@@ -12,12 +12,16 @@ Mistral agent that:
 All methods in this service are async and safe to call inside FastAPI request handlers.
 """
 
+import asyncio
 import json
 import logging
+from functools import partial
 from typing import Any
 
 from mistralai.client import Mistral
 from app.config import settings
+from app.ontology import autotag
+from app.ontology.vocab import AgentTier
 from app.prompts import CONVERSATIONAL_GATEWAY_SYSTEM_PROMPT, CONVERSATIONAL_GATEWAY_USER_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -88,7 +92,9 @@ async def create_conversational_agent(
 
     # Check if agent already exists with this name
     try:
-        existing_resp = client.beta.agents.list(page=0, page_size=200)
+        existing_resp = await asyncio.to_thread(
+            client.beta.agents.list, page=0, page_size=200
+        )
         existing_items = getattr(existing_resp, "data", None) or getattr(existing_resp, "items", []) or []
         for agent in existing_items:
             a_name = getattr(agent, "name", "") or (agent.get("name", "") if isinstance(agent, dict) else "")
@@ -137,8 +143,25 @@ async def create_conversational_agent(
         except Exception:
             pass  # Some SDK versions may not support this kwarg directly
 
-        agent_obj = client.beta.agents.create(**create_kwargs)
+        agent_obj = await asyncio.to_thread(
+            partial(client.beta.agents.create, **create_kwargs)
+        )
         agent_id = agent_obj.id
+
+        # A gateway fronts one workflow, so the workflow's name is the best
+        # domain signal available — better than the generic gateway
+        # instructions, which describe plumbing rather than a business area.
+        await asyncio.to_thread(
+            partial(
+                autotag.annotate_agent,
+                agent_id,
+                name=agent_name,
+                description=create_kwargs.get("description", ""),
+                instructions=create_kwargs.get("instructions", ""),
+                tier=AgentTier.USE_CASE.value,
+                goal=workflow_name.replace("_", " "),
+            )
+        )
 
         logger.info("Created le Chat gateway agent '%s' (%s) for workflow '%s'", agent_name, agent_id, workflow_name)
 
@@ -170,9 +193,12 @@ async def publish_as_le_chat(
     """
     if existing_agent_id:
         try:
-            client.beta.agents.update(
-                agent_id=existing_agent_id,
-                deployment_chat=True,
+            await asyncio.to_thread(
+                partial(
+                    client.beta.agents.update,
+                    agent_id=existing_agent_id,
+                    deployment_chat=True,
+                )
             )
             logger.info("Patched agent '%s' with deployment_chat=True", existing_agent_id)
             return {

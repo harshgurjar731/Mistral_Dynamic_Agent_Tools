@@ -3,11 +3,14 @@ Service layer for Chat Completion operations.
 Uses async 3-tier tool execution (native → Docker → MCP).
 """
 
+import asyncio
 import json
 import logging
+from functools import partial
 from typing import AsyncGenerator
 from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
+from app.services.sdk_offload import iter_sync_stream
 from app.services.tool_registry import execute_tool
 from app.config import map_model_name
 
@@ -56,10 +59,11 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
             kwargs["parallel_tool_calls"] = data["parallel_tool_calls"]
 
         for _ in range(5):
-            if "agent_id" in kwargs:
-                result = client.agents.complete(**kwargs)
-            else:
-                result = client.chat.complete(**kwargs)
+            # Offloaded: the shared client is synchronous, so calling it inline
+            # here would block the event loop for the whole completion — every
+            # other request in the process stalls behind it.
+            complete = client.agents.complete if "agent_id" in kwargs else client.chat.complete
+            result = await asyncio.to_thread(partial(complete, **kwargs))
 
             choice = result.choices[0]
             tool_calls = getattr(choice.message, "tool_calls", None)
@@ -167,12 +171,12 @@ async def stream_chat_completion(client: Mistral, data: dict) -> AsyncGenerator[
         if data.get("tools"):
             kwargs["tools"] = data["tools"]
 
-        if "agent_id" in kwargs:
-            stream = client.agents.stream(**kwargs)
-        else:
-            stream = client.chat.stream(**kwargs)
+        # Both opening the stream and pulling each chunk block. Iterating the
+        # SDK stream directly stalled the event loop once per token, which is
+        # what made concurrent streams serialise behind each other.
+        open_stream = client.agents.stream if "agent_id" in kwargs else client.chat.stream
 
-        for event in stream:
+        async for event in iter_sync_stream(partial(open_stream, **kwargs)):
             chunk_data = event.data
             content = ""
             

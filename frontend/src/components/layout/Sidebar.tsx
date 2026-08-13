@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BotMessageSquare, Wrench, GitBranch, MessageSquare,
-  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Library, Plug, Network
+  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Library, Plug, Network, Radio
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState, useMemo } from 'react';
@@ -25,6 +25,7 @@ const NAV: NavItem[] = [
   { to: '/agents',        icon: Cpu,              label: 'Agents', expandable: true, type: 'agent' },
   { to: '/tools',         icon: Wrench,           label: 'Tools' },
   { to: '/workflows',     icon: GitBranch,        label: 'Workflows' },
+  { to: '/executions',    icon: Radio,            label: 'Executions' },
   { to: '/conversations', icon: MessageSquare,    label: 'Conversations' },
   { to: '/connectors',    icon: Plug,             label: 'Connectors' },
   { to: '/ontology',      icon: Network,          label: 'Ontology' },
@@ -47,8 +48,8 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
   const { sessions, activeSessionId, switchSession, createSession, deleteSession, renameSession } = useSessionStore();
   
   const { data = { items: [] } } = useQuery({
-    queryKey: QK.agents(),
-    queryFn: () => agentsApi.list().then(r => r.data),
+    queryKey: QK.agentsPage(0, 20),
+    queryFn: () => agentsApi.list(0, 20).then(r => r.data),
   });
   const agents = Array.from(new Map((data.items || []).map((a: any) => [a.id, a])).values()) as any[];
 
