@@ -1,0 +1,350 @@
+# Industry knowledge — the sectors outside BFSI and healthcare.
+#
+# Split from `knowledge.yaml` purely for size. The loader globs every *.yaml in
+# this directory, so the split has no semantic meaning.
+#
+# Entries are filed at the **industry or domain level**, deliberately. Retrieval
+# inherits downward, and measurement showed 7 BFSI entries covering all 31 of
+# its concepts — filing at the leaf would have needed dozens for the same reach.
+#
+# `as_of` is required on anything containing a figure or a rule that changes.
+# Without it a model reads a stale number as current fact.
+
+entries:
+
+  # ══ Retail and e-commerce ════════════════════════════════════════════════
+  - concept: domain.retail
+    kind: metric
+    title: Retail and e-commerce metrics
+    as_of: "2026-01"
+    tags: [aov, conversion, cac, ltv, margin, returns, metrics]
+    body: |
+      - **Conversion rate** — orders divided by sessions. Segment it; a blended
+        figure hides that mobile typically converts well below desktop.
+      - **AOV (average order value)** — revenue divided by orders.
+      - **CAC and LTV** — acquisition cost against lifetime value. The ratio
+        matters more than either alone; below roughly 3:1 is usually unhealthy.
+      - **Return rate** — varies enormously by category, so only compare like
+        with like. Apparel runs far higher than electronics.
+      - **Contribution margin** — after cost of goods, fulfilment, payment fees
+        and returns. Revenue growth on negative contribution margin is a
+        treadmill, not a business.
+
+  - concept: domain.retail
+    kind: risk
+    title: Common e-commerce failure modes
+    tags: [oversell, stockout, chargeback, pricing error, card testing]
+    body: |
+      - **Overselling** — allocating stock without reserving it lets two orders
+        claim the same unit.
+      - **Authorisation mistaken for capture** — an order can look paid with no
+        money actually taken.
+      - **Pricing errors** — a misplaced decimal or a mis-scoped promotion is
+        exploited within minutes. Enforce sanity bounds before publishing.
+      - **Refund window ambiguity** — the clock usually starts at delivery, not
+        at order date.
+      - **Card testing** — bursts of small authorisations across many cards,
+        typically a precursor to larger fraud elsewhere.
+
+  # ══ Manufacturing ════════════════════════════════════════════════════════
+  - concept: domain.manufacturing
+    kind: metric
+    title: Manufacturing performance metrics
+    tags: [oee, yield, scrap, takt, mtbf, mttr, downtime]
+    body: |
+      - **OEE (overall equipment effectiveness)** = availability x performance
+        x quality. Always report the three factors separately; a single low one
+        drags the product down and the composite hides which.
+      - **First-pass yield** — units passing without rework.
+      - **Scrap rate** — material lost to defects.
+      - **Takt time** — available production time divided by customer demand;
+        the pace the line must hold to meet it.
+      - **MTBF and MTTR** — mean time between failures and mean time to repair.
+        Reliability and maintainability are different problems with different
+        remedies; improving one does not improve the other.
+
+  - concept: domain.manufacturing.quality
+    kind: process
+    title: Quality investigation and corrective action
+    tags: [capa, root cause, ncr, 8d, defect, escape point]
+    body: |
+      1. **Contain** — quarantine affected stock and stop the bleed first.
+      2. **Describe** — what, where, when, how many, and how it was detected.
+      3. **Root cause** — distinguish the *cause* (why it was made wrong) from
+         the *escape point* (why inspection did not catch it). Both need fixing.
+      4. **Corrective action** fixes the cause; **preventive action** stops it
+         recurring elsewhere.
+      5. **Verify** — evidence the action worked, not merely that it was taken.
+      A corrective action naming only the operator has almost always stopped one
+      step short of the real cause.
+
+  # ══ Energy and utilities ═════════════════════════════════════════════════
+  - concept: domain.energy
+    kind: definition
+    title: Energy and utilities fundamentals
+    tags: [grid, load, tariff, meter, outage, generation, peak]
+    body: |
+      - **Generation, transmission, distribution and supply** are separate
+        roles, usually separate companies. A customer-facing supplier typically
+        owns none of the wires, which shapes who is accountable for what.
+      - **Load balancing** — supply must match demand instantaneously; storage
+        and demand response exist to absorb the mismatch.
+      - **Peak versus base load** — capacity planning and pricing are driven by
+        peaks, never by averages.
+      - **Metering** — smart meters read at interval granularity, which is what
+        makes time-of-use tariffs possible at all.
+      - **Outage classes** — planned versus unplanned. Unplanned drives the
+        regulatory reliability measures.
+
+  - concept: domain.energy.metering
+    kind: process
+    title: Meter-to-cash
+    tags: [billing, meter read, estimate, tariff, catch-up bill, dispute]
+    body: |
+      Read → validate → estimate where missing → rate against tariff → bill →
+      collect → settle with the network operator.
+      Most billing disputes originate at *validate* or *estimate*: an
+      implausible read passed through, or a long run of estimates followed by
+      one true read producing a large catch-up bill. Before treating a spike as
+      real consumption, check for a meter exchange or a tariff change inside the
+      billing period.
+
+  # ══ Public sector ════════════════════════════════════════════════════════
+  - concept: domain.public_sector
+    kind: regulation
+    title: Public-sector decision obligations
+    tags: [fairness, appeal, transparency, accessibility, due process]
+    body: |
+      Decisions affecting citizens carry duties private-sector ones may not:
+      - **Reasons must be given**, in plain language, at the time of decision.
+      - **A right of appeal or review** must exist and be signposted.
+      - **Consistency** — like cases treated alike. Unexplained variation
+        between similar cases is itself a finding.
+      - **Accessibility** — services must be usable by people with disabilities
+        and by those without digital access.
+      - **Transparency** — records may be disclosable under freedom-of-
+        information regimes, including the basis for an automated decision.
+      Automated triage is generally acceptable. Fully automated refusal with no
+      human review generally is not.
+
+  - concept: domain.public_sector.benefits
+    kind: process
+    title: Benefits eligibility assessment
+    tags: [eligibility, entitlement, means test, evidence, overpayment]
+    body: |
+      1. **Identity and residency** — is the claimant who and where they say.
+      2. **Categorical eligibility** — age, household, employment or health
+         status gates.
+      3. **Means test** — income and capital against thresholds, including any
+         disregards.
+      4. **Entitlement** — the award amount and its start date.
+      5. **Evidence** — what was checked, against what source, and when.
+      6. **Change of circumstances** — the duty to report, and recalculation.
+      Overpayment recovery usually depends on whether the error was official or
+      claimant-caused, so record which at the time rather than reconstructing it
+      later.
+
+  # ══ Transport and logistics ══════════════════════════════════════════════
+  - concept: domain.logistics
+    kind: definition
+    title: Logistics fundamentals
+    tags: [freight, incoterms, bill of lading, customs, otif, demurrage]
+    body: |
+      - **Incoterms** define where cost and risk transfer between buyer and
+        seller (EXW, FOB, CIF, DDP among others). Getting this wrong
+        misassigns liability for a loss in transit.
+      - **Bill of lading** — simultaneously a receipt, a contract of carriage
+        and often a document of title. Amending one is not administrative.
+      - **OTIF (on time in full)** — the headline service measure. A partial
+        delivery counts as a miss, which is why it is harder than it looks.
+      - **Lead time versus transit time** — lead time includes order processing
+        and dispatch, which is usually where the variance actually lives.
+      - **Demurrage and detention** — charges for holding equipment beyond free
+        time. They accrue quietly and quickly.
+
+  - concept: domain.logistics.last_mile
+    kind: risk
+    title: Last-mile failure modes
+    tags: [failed delivery, proof of delivery, address, route, exception]
+    body: |
+      - **Failed first attempt** is the dominant cost driver; a retry can cost
+        more than the margin on the original order.
+      - **Address quality** — unvalidated addresses and missing unit numbers.
+      - **Proof-of-delivery gaps** — no signature or photo turns any dispute
+        into an automatic loss.
+      - **Route brittleness** — plans assuming no traffic, no access
+        restrictions and no driver breaks.
+      - **Exception handling** — the difference between a good and a bad
+        operation is what happens on the unhappy path, not the happy one.
+
+  # ══ Telecom and media ════════════════════════════════════════════════════
+  - concept: domain.telecom
+    kind: metric
+    title: Telecom commercial metrics
+    tags: [arpu, churn, coverage, capacity, contention, sla]
+    body: |
+      - **ARPU** — average revenue per user, usually monthly.
+      - **Churn** — subscriber loss. Separate voluntary from involuntary
+        (payment failure); the remedies are entirely unrelated.
+      - **Coverage versus capacity** — coverage is whether there is signal,
+        capacity is whether it is usable at peak. Complaints usually mean the
+        second while sounding like the first.
+      - **Contention ratio** — shared bandwidth per subscriber on an access
+        network.
+      - **SLA credits** — contractual compensation for missed availability.
+        Detecting a breach early is markedly cheaper than being told about it.
+
+  - concept: domain.telecom.subscriptions
+    kind: process
+    title: Subscription lifecycle
+    tags: [provisioning, proration, dunning, cancellation, termination fee]
+    body: |
+      Order → credit check → provision → activate → bill → renew, with
+      upgrades, downgrades and cancellation as mid-cycle events.
+      The details that generate disputes: **proration** on a mid-cycle change,
+      **notice periods** on cancellation, **early termination fees** against the
+      remaining term, and **dunning** — the retry-and-notify sequence before
+      suspension for non-payment.
+
+  # ══ Real estate ══════════════════════════════════════════════════════════
+  - concept: domain.real_estate
+    kind: definition
+    title: Property fundamentals
+    tags: [tenure, freehold, leasehold, valuation, yield, survey]
+    body: |
+      - **Tenure** — freehold versus leasehold. A short remaining lease
+        materially affects both value and mortgageability.
+      - **Valuation approaches** — comparable sales, income (yield-based) and
+        cost. Which applies depends on the property type.
+      - **Yield** — annual rent divided by value; the headline investment
+        measure. Gross and net differ by costs, which is where arguments start.
+      - **Survey levels** — valuation, homebuyer report, full structural. Only
+        the last reliably surfaces defects such as subsidence or damp.
+      - **Energy performance** is increasingly a letting and lending
+        constraint, not merely a disclosure.
+
+  - concept: domain.real_estate.property_management
+    kind: process
+    title: Tenancy management
+    tags: [tenancy, deposit, arrears, repair, notice, inventory]
+    body: |
+      Referencing → agreement → deposit protection → inventory → periodic
+      inspection → renewal or notice → check-out and deposit return.
+      Deposits commonly must be protected in a statutory scheme within a fixed
+      window; failing that can bar a landlord from serving notice at all.
+      Repair duties split between structural (landlord) and tenant-caused
+      damage, and that distinction is the source of most deposit disputes — the
+      inventory is what settles them.
+
+  # ══ Education ════════════════════════════════════════════════════════════
+  - concept: domain.education
+    kind: best_practice
+    title: Assessment and academic integrity
+    tags: [assessment, rubric, feedback, plagiarism, moderation, adjustments]
+    body: |
+      - **Criterion-referenced marking** — grade against a published rubric,
+        not against the cohort, unless norm-referencing is stated policy.
+      - **Feedback must be actionable** — say what to do differently, not only
+        what was wrong.
+      - **Moderation** — second marking or sampling, to keep markers consistent.
+      - **Academic integrity** — a similarity score is evidence to investigate,
+        never a finding on its own. Citation practice and context decide it.
+      - **Reasonable adjustments** must accommodate disability without lowering
+        the standard actually being assessed.
+
+  # ══ Hospitality and travel ═══════════════════════════════════════════════
+  - concept: domain.travel
+    kind: definition
+    title: Travel and hospitality fundamentals
+    tags: [occupancy, revpar, overbooking, cancellation, ancillaries]
+    body: |
+      - **Occupancy, ADR and RevPAR** — RevPAR (revenue per available room) is
+        occupancy multiplied by average daily rate, and is the measure that
+        resists being gamed by discounting.
+      - **Overbooking is deliberate**, priced against expected no-shows. The
+        walk policy is what makes it acceptable or not.
+      - **Rate classes** — flexible versus non-refundable change both the price
+        and the obligation, and customers routinely conflate them.
+      - **Ancillaries** — seats, bags, upgrades. Often where the margin is.
+      - **Disruption duties** — in several jurisdictions carriers owe care and
+        compensation on delay or cancellation regardless of fault.
+
+  # ══ Cross-functional ═════════════════════════════════════════════════════
+  - concept: domain.hr
+    kind: process
+    title: Hiring and employee-record handling
+    tags: [recruitment, screening, bias, right to work, records, retention]
+    body: |
+      - **Structured screening** — the same criteria and questions for every
+        candidate in a role. Unstructured interviews are both weaker predictors
+        and much harder to defend.
+      - **Never infer protected characteristics** from name, photograph,
+        address or career gaps, and do not use proxies for them.
+      - **Right-to-work and background checks** belong at offer stage, with
+        documented evidence.
+      - **Employee records are personal data** under most regimes, carrying
+        retention limits and subject-access rights.
+      - **Record the reason for a rejection at the point of decision.** An
+        after-the-fact rationalisation is worth very little in a dispute.
+
+  - concept: domain.finance_ops
+    kind: process
+    title: Invoice and reconciliation controls
+    tags: [accounts payable, three way match, reconciliation, ledger, fraud]
+    body: |
+      - **Three-way match** — invoice against purchase order against goods
+        receipt. Anything unmatched is an exception, not a payment.
+      - **Segregation of duties** — whoever approves a supplier must not also
+        approve its payments.
+      - **Bank-detail change requests are the highest-risk event** in accounts
+        payable. Verify out of band, never by replying to the request itself.
+      - **Reconciliation** — ledger against bank statement, with a documented
+        explanation for every unmatched item.
+      - **Accruals versus cash** — an unpaid obligation is still a cost in the
+        period it was incurred.
+
+  - concept: domain.marketing
+    kind: metric
+    title: Marketing performance metrics
+    tags: [ctr, cpa, roas, attribution, funnel, incrementality]
+    body: |
+      - **CTR, CPA and ROAS** — click-through rate, cost per acquisition,
+        return on ad spend.
+      - **The attribution model changes the answer.** Last-click flatters
+        bottom-funnel channels, first-click flatters top-funnel. Always state
+        the model when quoting a channel's performance.
+      - **MQL to SQL conversion** — the marketing-to-sales handover, and
+        usually where the two teams' definitions quietly disagree.
+      - **Incrementality** — would the conversion have happened anyway? Only a
+        holdout test answers that. Correlation in a dashboard does not.
+
+  - concept: domain.procurement
+    kind: process
+    title: Sourcing and supplier management
+    tags: [rfp, tender, supplier, due diligence, total cost, exit]
+    body: |
+      Requirement → market analysis → RFI/RFP → evaluation → negotiation →
+      award → onboarding → performance management.
+      - **Evaluation criteria and weightings are fixed before responses open**,
+        or the process is not defensible.
+      - **Total cost of ownership**, not unit price — implementation, exit and
+        switching costs included.
+      - **Supplier due diligence** — financial stability, sanctions screening,
+        security posture and concentration risk.
+      - **Exit planning belongs in the award**, not in the eventual dispute.
+
+  # ══ Technology ═══════════════════════════════════════════════════════════
+  - concept: domain.technology
+    kind: best_practice
+    title: Engineering delivery practices
+    tags: [review, testing, ci, rollback, observability, incident, post-mortem]
+    body: |
+      - **Small, reversible changes** — the strongest single predictor of a low
+        change-failure rate.
+      - **Automated tests gate the merge**, not the release.
+      - **Observability before scale** — logs, metrics and traces sufficient to
+        answer "what happened" without shipping new code to find out.
+      - **Rollback is a first-class path**, designed and rehearsed, not
+        improvised during an incident.
+      - **Blameless post-incident review** — the goal is the systemic cause.
+        Naming an individual reliably ends the investigation early.

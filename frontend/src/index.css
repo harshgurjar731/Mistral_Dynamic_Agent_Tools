@@ -251,3 +251,49 @@
 }
 
 
+
+/* ── Ontology graph ────────────────────────────────────────────────────────
+   Animation here is doing a job, not decorating. Nodes arriving on expand need
+   to be distinguishable from nodes that were already there, or a click that
+   adds nine agents just looks like the layout jumped. */
+
+@keyframes ontology-node-in {
+  from { opacity: 0; transform: scale(0.72); }
+  60%  { opacity: 1; transform: scale(1.06); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.ontology-node-enter {
+  animation: ontology-node-in 340ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
+}
+
+/* The selected node breathes, so it stays findable after the viewport moves. */
+@keyframes ontology-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color); }
+  50%      { box-shadow: 0 0 0 9px transparent; }
+}
+
+.ontology-node-pulse {
+  animation: ontology-node-pulse 2.1s ease-out infinite;
+}
+
+/* Direction of flow along an edge — which end feeds which. React Flow's own
+   `animated` prop only applies to its default edge path; this covers ours. */
+@keyframes ontology-edge-flow {
+  to { stroke-dashoffset: -24; }
+}
+
+.react-flow__edge.ontology-flow .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+  animation: ontology-edge-flow 900ms linear infinite;
+}
+
+/* Respect the OS setting — this is motion for its own sake to someone who has
+   asked for less of it. */
+@media (prefers-reduced-motion: reduce) {
+  .ontology-node-enter,
+  .ontology-node-pulse,
+  .react-flow__edge.ontology-flow .react-flow__edge-path {
+    animation: none !important;
+  }
+}

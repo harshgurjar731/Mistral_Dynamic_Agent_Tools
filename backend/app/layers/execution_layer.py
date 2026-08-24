@@ -219,6 +219,10 @@ class ExecutionLayer(Layer):
     # ── JSON mode ───────────────────────────────────────────────────────
 
     async def _handle_json(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
+        # Scope any industry-knowledge lookup to this agent's own domain.
+        from app.services import tool_registry
+        tool_registry.CURRENT_AGENT.set(agent_id or ctx.agent_id)
+
         inputs = _build_user_inputs(ctx.query, ctx.image)
 
         if ctx.conversation_id:

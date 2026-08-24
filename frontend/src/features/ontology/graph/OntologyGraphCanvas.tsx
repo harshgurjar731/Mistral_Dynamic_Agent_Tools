@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -7,6 +7,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  Panel,
   ReactFlowProvider,
   applyNodeChanges,
   useReactFlow,
@@ -16,12 +17,12 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
-  Boxes, Cpu, Database, GitBranch, Layers, Loader2, Minus, Network,
-  Plug, Plus, ShieldCheck, Wrench,
+  Boxes, Cpu, Database, Expand, GitBranch, Layers, Loader2, Minus, Network,
+  Plug, Plus, ShieldCheck, Shrink, Sparkles, Wrench,
 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import type { GraphNode, OntologyGraph } from '../../../api/ontology';
-import { KIND_STYLES, kindStyle, layoutGraph } from './graphLayout';
+import { KIND_STYLES, LAYOUTS, kindStyle, layoutGraph, type LayoutKind } from './graphLayout';
 
 /**
  * The interactive knowledge-graph surface.
@@ -43,6 +44,7 @@ const KIND_ICONS: Record<string, typeof Layers> = {
   workflow: GitBranch,
   tool: Wrench,
   connector: Plug,
+  root: Sparkles,
 };
 
 /**
@@ -98,7 +100,10 @@ const OntologyNode = memo(({ data }: NodeProps) => {
               ? `0 0 0 4px ${style.color}33, 0 8px 24px rgba(0,0,0,0.5)`
               : '0 2px 10px rgba(0,0,0,0.35)',
           }}
-          className="flex h-full w-full items-center justify-center rounded-full border backdrop-blur-sm"
+          className={cn(
+            'flex h-full w-full items-center justify-center rounded-full border backdrop-blur-sm',
+            selected && 'ontology-node-pulse',
+          )}
         >
           <Icon size={iconSize} style={{ color: style.color }} />
         </div>
@@ -170,6 +175,12 @@ interface CanvasProps {
   /** Ids that have children. Omit to hide the expand affordance entirely. */
   expandable?: Set<string>;
   expandedIds?: Set<string>;
+  /** Label for the synthetic tree root. Omit to leave the graph a forest. */
+  rootLabel?: string;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  layout?: LayoutKind;
+  onLayoutChange?: (layout: LayoutKind) => void;
 }
 
 function Canvas({
@@ -180,20 +191,91 @@ function Canvas({
   emptyHint,
   expandable,
   expandedIds,
+  rootLabel,
+  isFullscreen,
+  onToggleFullscreen,
+  layout = 'tree',
+  onLayoutChange,
 }: CanvasProps) {
   const { fitView } = useReactFlow();
 
   const laidOut = useMemo(
     () =>
       graph
-        ? layoutGraph(graph, { selectedId, dimUnrelated: true, expandable, expandedIds })
+        ? layoutGraph(graph, {
+            selectedId, dimUnrelated: true, expandable, expandedIds, rootLabel, layout,
+          })
         : { nodes: [], edges: [] },
-    [graph, selectedId, expandable, expandedIds],
+    [graph, selectedId, expandable, expandedIds, rootLabel, layout],
   );
 
-  // Local node state so dragging works; re-seeded whenever the layout changes.
+  useEffect(() => {
+    if (!isFullscreen || !onToggleFullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onToggleFullscreen(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isFullscreen, onToggleFullscreen]);
+
+  /**
+   * Node state, animated toward the target layout.
+   *
+   * Switching layout without this teleports every node, and you lose the one
+   * thing that makes the relationship between two layouts legible: seeing the
+   * same node travel from where it was to where it now belongs. Nodes already
+   * on screen glide; new ones appear at their destination and use the CSS
+   * entrance animation instead.
+   */
   const [nodes, setNodes] = useState<Node[]>(laidOut.nodes);
-  useEffect(() => setNodes(laidOut.nodes), [laidOut.nodes]);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+
+    const previous = new Map(nodes.map((n) => [n.id, n.position]));
+    const moving = laidOut.nodes.filter((n) => {
+      const from = previous.get(n.id);
+      return from && (Math.abs(from.x - n.position.x) > 1 || Math.abs(from.y - n.position.y) > 1);
+    });
+
+    // Nothing to tween, or too many nodes for 60fps of React state updates.
+    if (!moving.length || laidOut.nodes.length > 320) {
+      setNodes(laidOut.nodes);
+      return;
+    }
+
+    const startedAt = performance.now();
+    const DURATION = 620;
+    // easeInOutCubic — slow ends, quick middle, which reads as deliberate.
+    const ease = (t: number) =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startedAt) / DURATION);
+      const k = ease(t);
+      setNodes(
+        laidOut.nodes.map((node) => {
+          const from = previous.get(node.id);
+          if (!from) return node;
+          return {
+            ...node,
+            position: {
+              x: from.x + (node.position.x - from.x) * k,
+              y: from.y + (node.position.y - from.y) * k,
+            },
+          };
+        }),
+      );
+      if (t < 1) frameRef.current = requestAnimationFrame(step);
+    };
+
+    frameRef.current = requestAnimationFrame(step);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+    // `nodes` is read for the starting positions but must not retrigger this,
+    // or every animation frame would restart the animation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laidOut.nodes]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((current) => applyNodeChanges(changes, current)),
@@ -217,6 +299,15 @@ function Canvas({
     );
     return () => clearTimeout(timer);
   }, [nodeCount, fitView]);
+
+  // Going fullscreen changes the viewport, so the old framing is wrong.
+  useEffect(() => {
+    const timer = setTimeout(
+      () => fitView({ padding: 0.12, duration: 300, minZoom: 0.32, maxZoom: 1.1 }),
+      220,
+    );
+    return () => clearTimeout(timer);
+  }, [isFullscreen, layout, fitView]);
 
   if (isLoading) {
     return (
@@ -255,6 +346,41 @@ function Canvas({
       className="bg-[var(--color-bg-base)]"
     >
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#1E293B" />
+
+      {onLayoutChange && (
+        <Panel position="top-left" className="!m-2">
+          <div className="flex gap-0.5 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-0.5 backdrop-blur">
+            {LAYOUTS.map((l) => (
+              <button
+                key={l.key}
+                onClick={() => onLayoutChange(l.key)}
+                title={l.hint}
+                className={cn(
+                  'rounded-md px-2 py-1 text-[10px] font-medium transition-colors',
+                  layout === l.key
+                    ? 'bg-indigo-500/25 text-indigo-100'
+                    : 'text-[var(--color-text-muted)] hover:text-white',
+                )}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {onToggleFullscreen && (
+        <Panel position="top-right" className="!m-2">
+          <button
+            onClick={onToggleFullscreen}
+            title={isFullscreen ? 'Exit full screen (Esc)' : 'Expand to full screen'}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-2 py-1.5 text-[10px] font-semibold text-[var(--color-text-secondary)] backdrop-blur transition-colors hover:border-indigo-400/40 hover:text-white"
+          >
+            {isFullscreen ? <Shrink size={11} /> : <Expand size={11} />}
+            {isFullscreen ? 'Exit' : 'Full screen'}
+          </button>
+        </Panel>
+      )}
       <Controls
         showInteractive={false}
         className="!border-[var(--color-border-subtle)] !bg-[var(--color-bg-surface)] [&>button]:!border-[var(--color-border-subtle)] [&>button]:!bg-[var(--color-bg-surface)] [&>button]:!fill-white [&>button:hover]:!bg-[var(--color-bg-hover)]"

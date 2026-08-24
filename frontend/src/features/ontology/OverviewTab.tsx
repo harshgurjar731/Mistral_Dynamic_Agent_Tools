@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Info, Loader2, Maximize2, Minimize2, RotateCcw, Search, X,
@@ -10,7 +11,7 @@ import {
 } from '../../api/ontology';
 import { cn } from '../../lib/utils';
 import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
-import { kindStyle } from './graph/graphLayout';
+import { kindStyle, type LayoutKind } from './graph/graphLayout';
 
 /**
  * Overview — the platform as one picture.
@@ -62,6 +63,8 @@ export default function OverviewTab() {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [showUnlinked, setShowUnlinked] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [layout, setLayout] = useState<LayoutKind>('tree');
 
   const { data: graph, isLoading, isFetching } = useQuery({
     queryKey: ['ontology', 'graph', mode, appliedSearch],
@@ -184,14 +187,32 @@ export default function OverviewTab() {
 
   const expandAll = () => setExpanded(new Set(hasChildren));
 
+  // The app shell scrolls behind the overlay otherwise, and a stray wheel
+  // event over a non-canvas area moves the page under it.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [fullscreen]);
+
   const modeHint = MODES.find((m) => m.key === mode)!.hint;
 
-  return (
-    <div className="flex h-[calc(100vh-260px)] min-h-[520px] flex-col gap-3">
+  const body = (
+    <div
+      className={cn(
+        'flex flex-col gap-3',
+        // Fullscreen is a fixed overlay rather than the browser Fullscreen API:
+        // it keeps React state and the inspector intact, and Esc still exits.
+        fullscreen
+          ? 'fixed inset-0 z-[100] bg-[var(--color-bg-base)] p-4'
+          : 'h-[calc(100vh-260px)] min-h-[520px]',
+      )}
+    >
       {/* ── Controls ───────────────────────────────────────────────────── */}
       <div className="shrink-0 space-y-2.5 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-0.5 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-0.5">
+          <div className="flex shrink-0 gap-0.5 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-0.5">
             {MODES.map((m) => (
               <button
                 key={m.key}
@@ -209,7 +230,7 @@ export default function OverviewTab() {
           </div>
 
           <form
-            className="relative flex-1 max-w-xs"
+            className="relative min-w-[140px] flex-1 max-w-xs"
             onSubmit={(e) => { e.preventDefault(); setAppliedSearch(search.trim()); }}
           >
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
@@ -263,7 +284,7 @@ export default function OverviewTab() {
             </div>
           )}
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {visible && (
               <span className="font-mono text-[10px] tabular-nums text-[var(--color-text-muted)]">
                 {visible.totals.nodes} of {graph?.nodes.length ?? 0} shown
@@ -292,7 +313,11 @@ export default function OverviewTab() {
           {mode !== 'full' && !appliedSearch && ' Click a circle to expand or collapse it.'}
         </p>
 
-        {visible && <GraphLegend counts={visible.counts} />}
+        {visible && (
+          <div className="max-h-16 overflow-y-auto custom-scrollbar">
+            <GraphLegend counts={visible.counts} />
+          </div>
+        )}
       </div>
 
       {/* ── Canvas + inspector ─────────────────────────────────────────── */}
@@ -305,6 +330,11 @@ export default function OverviewTab() {
             onSelect={onSelect}
             expandable={mode !== 'full' && !appliedSearch ? hasChildren : undefined}
             expandedIds={expanded}
+            rootLabel="Platform"
+            isFullscreen={fullscreen}
+            onToggleFullscreen={() => setFullscreen((v) => !v)}
+            layout={layout}
+            onLayoutChange={setLayout}
             emptyHint={
               appliedSearch
                 ? 'Nothing matched that search.'
@@ -321,6 +351,16 @@ export default function OverviewTab() {
       </div>
     </div>
   );
+
+  // Portalled to <body> when fullscreen.
+  //
+  // The app shell renders the sidebar at z-50 and wraps the routed content in
+  // `relative z-10`. That z-index creates a stacking context, so *no* z-index
+  // on a descendant can lift it above the sidebar — the overlay was covering
+  // the window but the sidebar was painting over its left edge, hiding the
+  // mode buttons and the layout switcher. A portal leaves that context
+  // entirely; React state is unaffected because the component tree is unchanged.
+  return fullscreen ? createPortal(body, document.body) : body;
 }
 
 function NodeInspector({ node, onClose }: { node: GraphNode; onClose: () => void }) {

@@ -122,6 +122,20 @@ export interface ClassificationResult {
   reasoning: string;
 }
 
+export interface KnowledgeEntry {
+  id: number;
+  concept_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  tags: string[];
+  /** When the content was last known good. Required on figures. */
+  as_of?: string | null;
+  source: string;
+  /** Only present on search results. */
+  score?: number;
+}
+
 export interface ConceptUsage {
   concept_id: string;
   children: string[];
@@ -282,6 +296,47 @@ export const ontologyApi = {
       written?: Record<string, string[]>;
       detail?: string;
     }>('/api/ontology/classify', body),
+
+  // ── Industry knowledge ──────────────────────────────────────────────────
+  knowledge: (params: { concept_id?: string; kind?: string; limit?: number } = {}) =>
+    api.get<{ entries: KnowledgeEntry[]; count: number; kinds: string[] }>(
+      '/api/ontology/knowledge', { params },
+    ),
+
+  /** Rehearses exactly what the agent tool would retrieve. */
+  searchKnowledge: (params: {
+    query: string; domains?: string; kind?: string; limit?: number;
+  }) =>
+    api.get<{
+      query: string;
+      domains: string[];
+      results: KnowledgeEntry[];
+      count: number;
+      rendered: string;
+    }>('/api/ontology/knowledge/search', { params }),
+
+  createKnowledge: (body: {
+    concept_id: string; title: string; body: string; kind?: string; tags?: string[];
+  }) => api.post<KnowledgeEntry>('/api/ontology/knowledge', body),
+
+  deleteKnowledge: (id: number) => api.delete(`/api/ontology/knowledge/${id}`),
+
+  /** What one specific agent would retrieve — its own scoping, shown. */
+  knowledgeForAgent: (agentId: string, query = '') =>
+    api.get<{
+      agent_id: string; domains: string[]; scoped: boolean;
+      results: KnowledgeEntry[]; count: number;
+    }>(`/api/ontology/knowledge/agent/${encodeURIComponent(agentId)}`, { params: { query } }),
+
+  /**
+   * Reconcile every agent against knowledge coverage: attach where a lookup
+   * would return something, detach where it would not. Idempotent both ways.
+   */
+  attachKnowledgeTool: () =>
+    api.post<{
+      checked: number; attached: number; detached: number;
+      unchanged: number; failed: number;
+    }>('/api/ontology/knowledge/attach-tool'),
 
   /** What a goal would be narrowed to. Useful for explaining planner behaviour. */
   scope: (goal: string) =>

@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, Check, Loader2, Network, Search, Sparkles, Tag, Layers, Wand2,
+  AlertCircle, BookOpen, Check, Loader2, Network, Search, Sparkles, Tag, Layers, Wand2,
 } from 'lucide-react';
 import {
   ontologyApi,
@@ -26,11 +26,12 @@ import {
 import { agentsApi } from '../../api/agents';
 import OverviewTab from './OverviewTab';
 import VocabularyTab from './VocabularyTab';
+import KnowledgeTab from './KnowledgeTab';
 import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 
-type Tab = 'overview' | 'vocabulary' | 'annotations' | 'scope';
+type Tab = 'overview' | 'vocabulary' | 'knowledge' | 'annotations' | 'scope';
 
 const AGENT_PREDICATES: Predicate[] = [
   'has_tier',
@@ -51,6 +52,7 @@ export default function ConceptBrowser() {
   const tabs: { key: Tab; label: string; icon: typeof Layers }[] = [
     { key: 'overview', label: 'Overview', icon: Network },
     { key: 'vocabulary', label: 'Vocabulary', icon: Layers },
+    { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
     { key: 'annotations', label: 'Annotations', icon: Tag },
     { key: 'scope', label: 'Scope preview', icon: Sparkles },
   ];
@@ -109,6 +111,7 @@ export default function ConceptBrowser() {
 
       {tab === 'overview' && <OverviewTab />}
       {tab === 'vocabulary' && <VocabularyTab />}
+      {tab === 'knowledge' && <KnowledgeTab />}
       {tab === 'annotations' && <AnnotationsTab />}
       {tab === 'scope' && <ScopeTab />}
     </div>
@@ -548,6 +551,7 @@ function ScopeTab() {
               isLoading={graphLoading}
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
+              rootLabel="Scope"
               emptyHint="This goal matched a domain, but nothing is annotated under it yet."
             />
           </div>

@@ -22,7 +22,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_mistral_client
-from app.ontology import classifier, graph as ontology_graph, matcher, store
+from app.ontology import (
+    classifier, graph as ontology_graph, knowledge, knowledge_tool, matcher, store,
+)
 from app.ontology.store import VocabularyError
 from app.ontology.vocab import Predicate, Scheme, SubjectType, tier_labels
 
@@ -91,6 +93,14 @@ class AnnotationTriple(BaseModel):
     predicate: str
     concept_id: str
     source: str = "user"
+
+
+class KnowledgeRequest(BaseModel):
+    concept_id: str
+    title: str
+    body: str
+    kind: str = "definition"
+    tags: list[str] = Field(default_factory=list)
 
 
 class ClassifyRequest(BaseModel):
@@ -395,3 +405,85 @@ async def classify_resource(request: ClassifyRequest):
         )
 
     return {"classified": True, "result": result, "written": written}
+
+
+# ── Industry knowledge ─────────────────────────────────────────────────────
+
+@router.get("/ontology/knowledge")
+async def list_knowledge(
+    concept_id: Optional[str] = Query(None),
+    kind: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """Browse the knowledge base, optionally filtered to one concept or kind."""
+    entries = knowledge.list_entries(concept_id, kind, limit)
+    return {"entries": entries, "count": len(entries), "kinds": list(knowledge.KINDS)}
+
+
+@router.get("/ontology/knowledge/search")
+async def search_knowledge(
+    query: str = Query("", description="Natural-language question"),
+    domains: Optional[str] = Query(None, description="Comma-separated concept ids"),
+    kind: Optional[str] = Query(None),
+    limit: int = Query(5, ge=1, le=25),
+):
+    """Preview exactly what the agent tool would retrieve for a query.
+
+    Same code path as the tool itself, so this is a faithful rehearsal rather
+    than an approximation of it.
+    """
+    domain_list = [d.strip() for d in (domains or "").split(",") if d.strip()]
+    results = knowledge.search(query, domains=domain_list or None, kind=kind, limit=limit)
+    return {
+        "query": query,
+        "domains": domain_list,
+        "results": results,
+        "count": len(results),
+        "rendered": knowledge.render_for_prompt(results),
+    }
+
+
+@router.post("/ontology/knowledge", status_code=201)
+async def create_knowledge(request: KnowledgeRequest):
+    try:
+        return knowledge.upsert_entry(
+            concept_id=request.concept_id,
+            title=request.title,
+            body=request.body,
+            kind=request.kind,
+            tags=request.tags,
+            source="user",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.delete("/ontology/knowledge/{entry_id}")
+async def delete_knowledge(entry_id: int):
+    if not knowledge.delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail=f"Knowledge entry {entry_id} not found")
+    return {"deleted": entry_id}
+
+
+@router.get("/ontology/knowledge/agent/{agent_id}")
+async def knowledge_for_agent(agent_id: str, query: str = Query("", min_length=0)):
+    """What this specific agent would retrieve — the tool's own scoping, shown.
+
+    Useful for answering "why did this agent not know that": either it has no
+    domain annotation, or the domain it has holds nothing on the subject.
+    """
+    domains = knowledge.domains_for_agent(agent_id)
+    results = knowledge.search(query, domains=domains or None, limit=8)
+    return {
+        "agent_id": agent_id,
+        "domains": domains,
+        "scoped": bool(domains),
+        "results": results,
+        "count": len(results),
+    }
+
+
+@router.post("/ontology/knowledge/attach-tool")
+async def attach_knowledge_tool():
+    """Give every existing agent the industry knowledge tool. Idempotent."""
+    return await knowledge_tool.backfill_all_agents(get_mistral_client())

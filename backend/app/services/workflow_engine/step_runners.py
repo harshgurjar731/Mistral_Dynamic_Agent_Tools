@@ -13,10 +13,30 @@ import base64
 from typing import Any
 from app.services.workflow_engine.models import WorkflowStep, StepResult, StepType
 
+# NOTE: every other import in this module is deliberately deferred into the
+# function that needs it.
+#
+# The compiled workflow modules do `from ...step_runners import run_step` at
+# module level, and Temporal executes that import inside its determinism
+# sandbox. Anything reached from here that touches the filesystem, the clock or
+# the environment at import time fails the whole worker — `app.config` builds a
+# pydantic-settings object that calls `Path.expanduser()` on the dotenv path,
+# which is exactly the restriction that trips.
+#
+# The function bodies run in *activities*, which execute outside the sandbox, so
+# a local import there is both safe and free after the first call.
+
 logger = logging.getLogger(__name__)
 
 # ── Agent name → ID cache (lives for the process lifetime) ────────────────
 _agent_name_to_id_cache: dict[str, str] = {}
+
+
+def _knowledge_tool_spec() -> dict:
+    """The industry-knowledge tool spec, imported lazily (see the note above)."""
+    from app.services.tool_registry import ALL_TOOLS, INDUSTRY_KNOWLEDGE_TOOL
+
+    return ALL_TOOLS[INDUSTRY_KNOWLEDGE_TOOL]
 
 
 def _is_agent_uuid(agent_id: str) -> bool:
@@ -91,6 +111,7 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
                 "Always provide a complete response — never return empty."
             ),
             description=f"Auto-created workflow agent: {agent_id}",
+            tools=[_knowledge_tool_spec()],
         )
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id
@@ -336,6 +357,10 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
       2. Fallback → orchestrate() which creates a dynamic agent (slow).
     """
     start = time.time()
+    # Set inside the agent branch below; reset in the finally so a leaked scope
+    # can never make the *next* step search the wrong industry.
+    agent_token = None
+
     try:
         from app.dependencies import get_mistral_client
 
@@ -368,6 +393,13 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             MAX_TOOL_ROUNDS = 10
             result_text = ""
             content = ""
+
+            # Tells the industry-knowledge tool whose domain to search. Scoped
+            # to the tool loop and reset immediately after, so a later step can
+            # never inherit this agent's industry.
+            from app.services import tool_registry
+
+            agent_token = tool_registry.CURRENT_AGENT.set(resolved_id)
 
             for round_num in range(MAX_TOOL_ROUNDS):
                 # The Mistral client here is the synchronous one, and a single
@@ -446,9 +478,13 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                         step.id, tool_name, str(arguments)[:200],
                     )
 
-                    tool_result = await asyncio.to_thread(
-                        _execute_tool_via_service, tool_name, arguments
-                    )
+                    # Route through the 3-tier router (native -> Docker -> MCP)
+                    # rather than straight at the Docker service. Sending every
+                    # call to Docker meant a backend-native tool — the industry
+                    # knowledge graph among them — was unreachable from a
+                    # workflow agent step, while working fine in chat.
+                    from app.services.tool_registry import execute_tool
+                    tool_result = await execute_tool(tool_name, arguments)
                     logger.info(
                         "Step '%s' — tool '%s' result: %.300s",
                         step.id, tool_name, str(tool_result)[:300],
@@ -577,6 +613,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             duration_ms=duration,
             input_preview=step.config.get("query_template") or step.config.get("instructions", "")
         )
+
+    finally:
+        if agent_token is not None:
+            from app.services import tool_registry
+
+            tool_registry.CURRENT_AGENT.reset(agent_token)
 
 
 

@@ -366,7 +366,11 @@ class WorkflowPlanningLayer(Layer):
                             for cid in (agent_spec.get("connectors") or [])
                             if cid in connector_ids
                         ]
-                        tool_definitions = get_tools(tool_keys, connectors=agent_connectors)
+                        from app.ontology.knowledge_tool import with_knowledge_tool
+
+                        tool_definitions = get_tools(
+                            with_knowledge_tool(tool_keys), connectors=agent_connectors
+                        )
 
                         instructions = agent_spec.get(
                             "agent_instructions",

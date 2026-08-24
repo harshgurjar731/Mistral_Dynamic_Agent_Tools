@@ -85,7 +85,7 @@ export default function AgentStudio() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' });
+  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true });
 
   const { data, isLoading } = useQuery({
     // Keyed on the request, not on `search` — the filter below is client-side,
@@ -97,7 +97,7 @@ export default function AgentStudio() {
 
   const createMut = useMutation({
     mutationFn: () => agentsApi.create(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation' }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true }); },
   });
 
   const deleteMut = useMutation({
@@ -174,6 +174,24 @@ export default function AgentStudio() {
                 <div className="mb-6">
                   <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Description</label>
                   <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Brief description of the agent's purpose" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
+                </div>
+                <div className="mb-6">
+                  <label className="flex items-start gap-2.5 cursor-pointer rounded-md border border-[var(--color-border-subtle)] bg-[rgba(99,102,241,0.05)] px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={form.industry_knowledge}
+                      onChange={e => setForm({ ...form, industry_knowledge: e.target.checked })}
+                      className="mt-0.5 h-3.5 w-3.5 accent-indigo-500"
+                    />
+                    <span className="text-xs leading-relaxed">
+                      <span className="font-medium text-white">Industry knowledge</span>
+                      <span className="block text-[var(--color-text-muted)] mt-0.5">
+                        Lets this agent look up regulations, processes and metrics for the
+                        industry it serves, and ground its answers in them. Scoped automatically
+                        from the agent's domain — leave on unless it has no industry.
+                      </span>
+                    </span>
+                  </label>
                 </div>
                 <div className="mb-2">
                   <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">System Instructions</label>

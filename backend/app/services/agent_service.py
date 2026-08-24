@@ -381,6 +381,14 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if not tool_keys and doc_lib_ids:
             tool_keys = ["document_library"]
 
+        # Every agent gets the industry knowledge tool unless the caller opted
+        # out. Default-on is the point: an agent that has to be *remembered*
+        # into the knowledge graph mostly will not be.
+        from app.ontology.knowledge_tool import with_knowledge_tool
+
+        if data.get("industry_knowledge", True):
+            tool_keys = with_knowledge_tool(tool_keys)
+
         tool_specs = get_tools(
             tool_keys,
             document_library_ids=doc_lib_ids,

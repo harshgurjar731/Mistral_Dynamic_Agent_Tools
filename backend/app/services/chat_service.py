@@ -32,11 +32,15 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
 
         kwargs = {"messages": messages}
 
+        # An agent already pins its own model, and `agents.complete()` rejects
+        # the argument outright — so the two are mutually exclusive rather than
+        # merely redundant. The request model defaults `model`, which made every
+        # agent-targeted chat fail with "unexpected keyword argument 'model'".
         if data.get("agent_id"):
             kwargs["agent_id"] = data["agent_id"]
-        if data.get("model"):
+        elif data.get("model"):
             kwargs["model"] = map_model_name(data["model"])
-        elif not data.get("agent_id"):
+        else:
             kwargs["model"] = "mistral-large-latest"
 
         if data.get("temperature") is not None:
@@ -57,6 +61,11 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
             kwargs["safe_prompt"] = data["safe_prompt"]
         if data.get("parallel_tool_calls") is not None:
             kwargs["parallel_tool_calls"] = data["parallel_tool_calls"]
+
+        # A direct chat against an agent should get that agent's domain
+        # knowledge too, not just the workflow and orchestrator paths.
+        from app.services import tool_registry
+        tool_registry.CURRENT_AGENT.set(kwargs.get("agent_id"))
 
         for _ in range(5):
             # Offloaded: the shared client is synchronous, so calling it inline

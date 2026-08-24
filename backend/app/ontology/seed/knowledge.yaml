@@ -1,0 +1,275 @@
+# Industry knowledge, filed against the domain tree.
+#
+# Each entry hangs off a concept id from `industries.yaml`. Retrieval walks the
+# hierarchy both ways, so file a fact at the *most general* level it is true at
+# — a rule that applies to all lending goes on `domain.lending`, not copied onto
+# mortgage, personal loan and vehicle finance.
+#
+# `kind` drives filtering and tells the reader what sort of claim it is:
+#   definition | regulation | process | metric | risk | best_practice | glossary
+#
+# `tags` are extra search terms, matched the same way concept synonyms are.
+# Write them as the words someone would actually type.
+#
+# Bodies are deliberately compact. This is retrieved into a live prompt, so a
+# thousand-word essay costs latency on every agent turn that touches it.
+
+entries:
+
+  # ══ BFSI ═════════════════════════════════════════════════════════════════
+  - concept: domain.bfsi
+    kind: regulation
+    title: Core financial-services regulatory themes
+    tags: [regulation, compliance, kyc, aml, gdpr, basel, conduct]
+    body: |
+      Financial services operate under overlapping regimes. The ones that shape
+      most workflows:
+      - **KYC / AML** — verify identity before onboarding, screen against
+        sanctions and PEP lists, monitor for unusual transaction patterns, file
+        suspicious activity reports.
+      - **Data protection (GDPR / equivalents)** — lawful basis for processing,
+        data minimisation, the right to explanation for automated decisions.
+      - **Conduct and fair treatment** — decisions affecting customers must be
+        explainable, consistently applied, and testable for bias.
+      - **Capital and prudential rules (Basel III/IV)** — risk-weighted capital
+        held against exposures; drives how risk grades are assigned.
+      Any automated decision that materially affects a customer generally needs
+      a recorded rationale and a route to human review.
+
+  - concept: domain.bfsi
+    kind: risk
+    title: Common failure modes in financial decisioning
+    tags: [risk, bias, model risk, audit, explainability]
+    body: |
+      - **Unexplainable decisions** — a decline with no stated reason is a
+        regulatory problem, not just a UX one.
+      - **Proxy discrimination** — postcode, employer or device can encode
+        protected characteristics even when those are excluded.
+      - **Stale data** — affordability judged on income evidence months old.
+      - **Silent model drift** — approval rates moving without a policy change
+        is a signal, not noise.
+      - **Missing audit trail** — if the inputs to a decision are not retained,
+        the decision cannot be defended later.
+
+  # ── Lending ─────────────────────────────────────────────────────────────
+  - concept: domain.lending
+    kind: process
+    title: Credit decisioning pipeline
+    tags: [underwriting, credit, decisioning, application, approval]
+    body: |
+      A conventional credit decision runs in this order:
+      1. **Application intake** — capture applicant, product and amount.
+      2. **Identity and fraud** — KYC, document verification, fraud signals.
+      3. **Credit assessment** — bureau data, credit history, existing debt.
+      4. **Affordability** — verified income against committed outgoings and
+         stressed repayment.
+      5. **Policy rules** — hard cutoffs (minimum income, maximum LTV, adverse
+         credit within N years).
+      6. **Decision** — approve, decline, or refer to a human underwriter.
+      7. **Offer and disclosure** — terms, APR, cooling-off rights.
+      A referral is a legitimate third outcome; forcing a binary decision on a
+      marginal case is a common design mistake.
+
+  - concept: domain.lending
+    kind: metric
+    title: Key lending metrics
+    tags: [ltv, dti, dscr, apr, arrears, metrics, ratios]
+    body: |
+      - **LTV (loan to value)** — loan ÷ asset value. Higher LTV means less
+        equity cushion; pricing and approval usually step at 60/75/85/90%.
+      - **DTI (debt to income)** — total debt payments ÷ gross income. Common
+        ceilings sit around 36–43%.
+      - **DSCR (debt service coverage)** — income ÷ debt service, used for
+        commercial and buy-to-let. Below 1.0 means the asset cannot service
+        its own debt.
+      - **APR** — total cost of credit including fees, annualised. What must be
+        disclosed, as distinct from the headline interest rate.
+      - **Arrears / default rate** — the outcome measure any decisioning model
+        is ultimately judged on.
+
+  - concept: domain.lending.mortgage
+    kind: definition
+    title: Residential mortgage fundamentals
+    tags: [mortgage, home loan, ltv, affordability, valuation, stress test]
+    body: |
+      A mortgage is a secured loan against residential property. Distinctive
+      features versus unsecured lending:
+      - **Security and valuation** — the property is collateral, so an
+        independent valuation or survey gates the decision.
+      - **Stress testing** — affordability is tested at a rate above the pay
+        rate (commonly +1–3%) to model rate rises.
+      - **Term and amortisation** — typically 25–35 years; repayment versus
+        interest-only materially changes risk.
+      - **Deposit and LTV** — the deposit sets the LTV band, which drives both
+        approval and pricing.
+      - **Property risk** — construction type, tenure (freehold/leasehold),
+        remaining lease term, and known defects such as subsidence.
+
+  - concept: domain.lending.vehicle_finance
+    kind: definition
+    title: Vehicle finance structures
+    tags: [vehicle finance, car loan, hp, pcp, balloon, depreciation]
+    body: |
+      - **Hire purchase (HP)** — fixed instalments; ownership transfers at the
+        end. The lender owns the asset until then.
+      - **PCP** — lower instalments plus a deferred balloon (guaranteed future
+        value); the customer can return, retain or refinance the vehicle.
+      - **Personal loan** — unsecured, customer owns the vehicle outright.
+      Risk is driven by **depreciation**: the asset falls in value faster than a
+      property, so negative equity appears early in the term. Mileage and
+      condition covenants exist to protect the residual value.
+
+  # ── Insurance ───────────────────────────────────────────────────────────
+  - concept: domain.insurance
+    kind: process
+    title: Claims lifecycle
+    tags: [claims, fnol, settlement, reserve, subrogation, loss adjusting]
+    body: |
+      1. **FNOL (first notice of loss)** — the claim is registered.
+      2. **Coverage verification** — was the policy in force, is the peril
+         covered, do exclusions apply, is the excess met.
+      3. **Triage and reserving** — set an initial estimate of ultimate cost.
+      4. **Investigation** — loss adjuster, evidence, fraud indicators.
+      5. **Quantum** — assess the amount of loss.
+      6. **Settlement** — pay, repair, replace, or decline with reasons.
+      7. **Recovery** — subrogation against a liable third party.
+      Coverage and quantum are separate questions. Conflating them is a common
+      source of wrong outcomes: a covered claim can still be worth little, and
+      a large loss can be entirely uncovered.
+
+  - concept: domain.insurance.claims
+    kind: risk
+    title: Claims fraud indicators
+    tags: [fraud, claims, red flags, staged, inflated]
+    body: |
+      Signals that justify referral rather than an automated decision:
+      - Loss shortly after inception or immediately before lapse.
+      - Documentation that is internally inconsistent, or metadata that
+        contradicts the stated date of loss.
+      - Prior claims of similar type and value across related policies.
+      - Pressure for rapid cash settlement, resistance to inspection.
+      - Round-number or just-below-threshold values.
+      No single indicator proves fraud. They justify escalation and evidence
+      gathering, never an automated decline.
+
+  - concept: domain.insurance.underwriting
+    kind: definition
+    title: Underwriting fundamentals
+    tags: [underwriting, risk selection, premium, exclusion, excess]
+    body: |
+      Underwriting prices risk and sets terms. The levers:
+      - **Risk selection** — accept, decline, or accept with conditions.
+      - **Premium** — expected loss + expenses + capital cost + margin.
+      - **Excess / deductible** — customer retention, aligns incentives and
+        removes uneconomic small claims.
+      - **Exclusions and endorsements** — narrow or extend cover explicitly.
+      - **Limits and sub-limits** — cap total and per-peril exposure.
+      Anti-selection is the core hazard: those most likely to claim are the
+      keenest to buy, so pricing that ignores it accumulates bad risk.
+
+  # ══ Healthcare ═══════════════════════════════════════════════════════════
+  - concept: domain.healthcare
+    kind: regulation
+    title: Healthcare data and safety constraints
+    tags: [hipaa, phi, consent, patient safety, clinical governance]
+    body: |
+      - **Patient data is special-category** — HIPAA, GDPR Article 9 and
+        equivalents demand explicit lawful basis, minimum necessary access, and
+        auditable disclosure.
+      - **Clinical decisions need a clinician** — automated output is decision
+        *support*. Anything phrased as diagnosis or treatment must be labelled
+        as requiring clinical review.
+      - **Traceability** — clinical reasoning must be reconstructable, with the
+        evidence used and its date.
+      - **Safety reporting** — adverse events and near misses have mandatory
+        reporting routes.
+      Never present a model's clinical output as a diagnosis.
+
+  - concept: domain.healthcare.clinical
+    kind: process
+    title: Clinical triage reasoning
+    tags: [triage, red flags, differential, symptoms, escalation]
+    body: |
+      1. **Red flags first** — screen for emergencies before anything else
+         (chest pain with radiation, sudden neurological deficit, sepsis
+         signs, airway compromise). These bypass the rest of the pathway.
+      2. **History** — onset, duration, severity, aggravating factors,
+         relevant history and current medication.
+      3. **Differential** — plausible causes, ordered by likelihood *and* by
+         seriousness if missed.
+      4. **Investigations** — what would actually change management.
+      5. **Disposition** — emergency, urgent, routine, or self-care.
+      Rank by consequence, not only probability: a rare condition that kills
+      outranks a common one that resolves.
+
+  # ══ Cross-functional ═════════════════════════════════════════════════════
+  - concept: domain.legal.contracts
+    kind: process
+    title: Contract review checklist
+    tags: [contract, clause, review, liability, indemnity, termination]
+    body: |
+      Clauses that carry the most risk and should be surfaced first:
+      - **Liability** — caps, exclusions, whether they survive termination.
+      - **Indemnities** — who bears third-party claims, and the trigger.
+      - **Termination** — notice periods, cause versus convenience, exit costs.
+      - **IP ownership** — assignment versus licence; who owns derived work.
+      - **Data processing** — controller/processor roles, transfers, breach
+        notification windows.
+      - **Payment terms** — timing, interest on late payment, set-off.
+      - **Governing law and jurisdiction** — where a dispute is actually heard.
+      Flag anything unlimited, automatically renewing, or unilaterally variable.
+
+  - concept: domain.compliance
+    kind: best_practice
+    title: Auditability of automated decisions
+    tags: [audit, compliance, explainability, evidence, retention]
+    body: |
+      An automated decision should record, at the time it is made:
+      - the inputs used and their source and timestamp;
+      - the policy or model version applied;
+      - the outcome and the specific reason for it;
+      - who or what could override it, and whether that happened.
+      "The model said so" is not a defensible rationale. The test is whether
+      someone can reconstruct the decision months later from the record alone.
+
+  - concept: domain.customer_support
+    kind: best_practice
+    title: Support resolution principles
+    tags: [support, complaint, escalation, tone, resolution]
+    body: |
+      - **Acknowledge, then act** — restate the problem before proposing a fix.
+      - **Resolve at first contact** where authority allows it; escalate early
+        where it does not, rather than after several failed attempts.
+      - **Be specific about time** — "within two working days" beats "soon".
+      - **Own the outcome** — never route the customer to chase another team.
+      - **Complaints have a regulatory clock** in many sectors; recognising a
+        complaint as such is itself a decision that must be recorded.
+
+  # ══ Technology ═══════════════════════════════════════════════════════════
+  - concept: domain.technology.security
+    kind: risk
+    title: Common application security risks
+    tags: [security, owasp, injection, access control, secrets]
+    body: |
+      - **Broken access control** — authorisation checked in the UI but not at
+        the API.
+      - **Injection** — untrusted input concatenated into SQL, shell or prompts.
+      - **Sensitive data exposure** — secrets in logs, tokens in URLs,
+        verbose errors returned to clients.
+      - **Vulnerable dependencies** — transitive packages nobody chose.
+      - **Insufficient logging** — an incident that cannot be reconstructed.
+      Validate on the server, deny by default, and log the security-relevant
+      decision rather than only the failure.
+
+  - concept: domain.retail.order_management
+    kind: process
+    title: Order and returns lifecycle
+    tags: [order, fulfilment, returns, refund, rma, chargeback]
+    body: |
+      Placed → payment authorised → allocated to stock → picked → shipped →
+      delivered. Returns run: request → RMA issued → goods received →
+      inspection → refund or replacement.
+      Points that commonly go wrong: authorisation is not capture, so an order
+      can be "paid" with no money taken; allocation without reservation
+      oversells stock; and a refund window usually starts at delivery, not at
+      order date.

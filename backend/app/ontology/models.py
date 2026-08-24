@@ -59,6 +59,47 @@ class Concept(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class KnowledgeEntry(Base):
+    """A fact about an industry, hung off a concept in the domain tree.
+
+    This is what turns the taxonomy from a filing system into a knowledge base.
+    The vocabulary says *that* an agent serves mortgage lending; these rows say
+    what mortgage lending actually involves — the regulations, the metrics, the
+    failure modes — so an agent can answer with domain substance rather than
+    generic prose.
+
+    ``concept_id`` is deliberately the only link. Retrieval walks the same
+    hierarchy everything else does, so knowledge filed against ``domain.lending``
+    is found by an agent scoped to ``domain.lending.mortgage`` without anyone
+    having to duplicate it.
+    """
+
+    __tablename__ = "industry_knowledge"
+
+    id = Column(Integer, primary_key=True)
+    concept_id = Column(String, nullable=False, index=True)
+    # definition | regulation | process | metric | risk | best_practice | glossary
+    kind = Column(String, nullable=False, default="definition", index=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    # JSON array of extra search terms — the same trick concept synonyms use.
+    tags = Column(Text, nullable=True)
+    # When the content was last known good. Required on anything with a figure
+    # or a rule that moves — without it a model reads a stale number as current
+    # fact, which is the failure this whole attribution effort exists to stop.
+    as_of = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="seed")  # seed | user | llm
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # The same title under the same concept twice is a duplicate import,
+        # which is what makes the seed loader safe to run on every boot.
+        UniqueConstraint("concept_id", "title", name="uq_knowledge_entry"),
+        Index("ix_knowledge_concept_kind", "concept_id", "kind"),
+    )
+
+
 class Annotation(Base):
     """A typed link from a resource to a concept.
 

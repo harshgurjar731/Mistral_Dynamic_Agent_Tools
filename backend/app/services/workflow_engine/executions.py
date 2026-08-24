@@ -581,6 +581,11 @@ async def list_runs(
 
         response = await client.workflows.runs.list_runs_async(**kwargs)
         payload = safe_serialize(response) or {}
+        # The SDK wraps paginated responses in a `{result, next}` envelope — the
+        # execution list is one level down. Unwrapping it is what makes the
+        # difference between a populated dashboard and an empty one.
+        if isinstance(payload.get("result"), dict):
+            payload = payload["result"]
         raw_items = (
             payload.get("runs")
             or payload.get("executions")

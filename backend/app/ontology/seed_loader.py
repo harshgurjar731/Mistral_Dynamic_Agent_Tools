@@ -35,7 +35,7 @@ def _read_seed_files(path: Path | None) -> dict:
     about the other.
     """
     files = [path] if path else sorted(SEED_DIR.glob("*.yaml"))
-    merged: dict = {"schemes": [], "concepts": []}
+    merged: dict = {"schemes": [], "concepts": [], "entries": []}
 
     for seed_file in files:
         if not seed_file.exists():
@@ -48,6 +48,7 @@ def _read_seed_files(path: Path | None) -> dict:
             continue
         merged["schemes"].extend(data.get("schemes") or [])
         merged["concepts"].extend(data.get("concepts") or [])
+        merged["entries"].extend(data.get("entries") or [])
         logger.debug(
             "Read %s: %d schemes, %d concepts",
             seed_file.name, len(data.get("schemes") or []), len(data.get("concepts") or []),
@@ -58,14 +59,15 @@ def _read_seed_files(path: Path | None) -> dict:
 
 def load_seed(path: Path | None = None) -> dict:
     """Upsert the YAML vocabulary. Returns a summary of what changed."""
-    summary = {"schemes_added": 0, "concepts_added": 0, "concepts_updated": 0, "skipped": 0}
+    summary = {"schemes_added": 0, "concepts_added": 0, "concepts_updated": 0,
+               "knowledge_upserted": 0, "skipped": 0}
 
     if SessionLocal is None:
         logger.warning("No database — skipping ontology seed")
         return summary
 
     data = _read_seed_files(path)
-    if not data["schemes"] and not data["concepts"]:
+    if not any(data.values()):
         return summary
 
     db = SessionLocal()
@@ -127,6 +129,11 @@ def load_seed(path: Path | None = None) -> dict:
                 summary["concepts_added"] += 1
 
         db.commit()
+
+        # Knowledge entries are upserted after the concept commit so an entry
+        # can reference a concept this same pass introduced.
+        summary["knowledge_upserted"] = _load_knowledge(data.get("entries") or [])
+
         logger.info(
             "Ontology seed: +%d schemes, +%d concepts, ~%d updated, %d skipped",
             summary["schemes_added"], summary["concepts_added"],
@@ -139,3 +146,46 @@ def load_seed(path: Path | None = None) -> dict:
         db.close()
 
     return summary
+
+
+def _load_knowledge(entries: list[dict]) -> int:
+    """Upsert industry knowledge. Entries against unknown concepts are skipped.
+
+    Seeded rows are marked ``source="seed"``, which is what lets a later pass
+    tell shipped knowledge from anything a user has written — and lets the
+    loader refresh the former without touching the latter.
+    """
+    if not entries:
+        return 0
+
+    from app.ontology import knowledge, store
+
+    known = {c["id"] for c in store.list_concepts()}
+    written = 0
+
+    for raw in entries:
+        concept_id = raw.get("concept")
+        title = (raw.get("title") or "").strip()
+        body = (raw.get("body") or "").strip()
+        if not concept_id or not title or not body:
+            continue
+        if concept_id not in known:
+            logger.warning(
+                "Knowledge entry %r skipped — unknown concept %r", title, concept_id
+            )
+            continue
+        try:
+            knowledge.upsert_entry(
+                concept_id=concept_id,
+                title=title,
+                body=body,
+                kind=raw.get("kind", "definition"),
+                tags=raw.get("tags") or [],
+                as_of=raw.get("as_of"),
+                source="seed",
+            )
+            written += 1
+        except Exception as e:
+            logger.warning("Could not seed knowledge %r: %s", title, e)
+
+    return written

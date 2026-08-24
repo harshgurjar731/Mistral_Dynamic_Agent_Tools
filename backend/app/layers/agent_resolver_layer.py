@@ -187,7 +187,13 @@ class AgentResolverLayer(Layer):
                 len(chosen_connectors), [c["connector_id"] for c in chosen_connectors],
             )
 
-        tool_definitions = get_tools(agent_config["tools"], connectors=chosen_connectors)
+        # The dynamic agent answers a real user question, so it needs the same
+        # domain grounding a hand-built agent gets.
+        from app.ontology.knowledge_tool import with_knowledge_tool
+
+        tool_definitions = get_tools(
+            with_knowledge_tool(agent_config["tools"]), connectors=chosen_connectors
+        )
         instructions_text = str(agent_config.get("agent_instructions", "") or "")
         logger.info("Creating agent with instructions (%d chars): %.300s", len(instructions_text), instructions_text)
 

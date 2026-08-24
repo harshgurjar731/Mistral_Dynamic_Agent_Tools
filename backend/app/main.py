@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
     import app.ontology.models       # noqa: F401 — register ontology tables with Base
     create_tables()
 
+    # Additive column migrations for tables that predate a field.
+    from app.ontology import knowledge as ontology_knowledge
+    ontology_knowledge.ensure_schema()
+
     # Upsert the shipped vocabulary. Idempotent, so it is safe on every boot —
     # this project has no migration tool, and the loader is what keeps the
     # YAML and the database in step.
@@ -103,6 +107,57 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Annotated %d previously unclassified workflow(s)", tagged)
     except Exception as e:
         logger.warning("⚠️ Workflow annotation backfill skipped: %s", e)
+
+    # Classify any agent still without a domain. Without one the knowledge tool
+    # cannot scope itself and falls back to searching every industry, which is
+    # the difference between "mortgage knowledge" and "some knowledge".
+    #
+    # Scheduled in the background: this is an LLM call per agent, and holding up
+    # boot for it would be the wrong trade for an enhancement that lands
+    # seconds later and then persists.
+    try:
+        from app.dependencies import get_mistral_client
+        from app.ontology import store as ontology_store
+        from app.ontology.vocab import Predicate, SubjectType
+        from app.services import agent_service
+
+        client = get_mistral_client()
+        listing = await agent_service.list_agents(client, page=0, page_size=200)
+        items = listing.get("items", [])
+        ids = [a["id"] for a in items if a.get("id")]
+        annotated = ontology_store.annotations_for_many(SubjectType.AGENT.value, ids)
+
+        unscoped = [
+            a for a in items
+            if a.get("id")
+            and not annotated.get(a["id"], {}).get(Predicate.SERVES_DOMAIN.value)
+        ]
+        for agent in unscoped:
+            agent_service.schedule_classification(
+                client,
+                subject_type=SubjectType.AGENT.value,
+                subject_id=agent["id"],
+                name=agent.get("name") or "",
+                description=agent.get("description") or "",
+                instructions=(agent.get("instructions") or "")[:2000],
+            )
+        if unscoped:
+            logger.info("🔎 Classifying %d agent(s) with no domain", len(unscoped))
+    except Exception as e:
+        logger.warning("⚠️ Agent domain classification skipped: %s", e)
+
+    # Give every existing agent the industry knowledge tool. Idempotent — an
+    # agent that already carries it costs no API call — so this is safe on
+    # every boot and is what keeps agents made before the feature existed from
+    # being permanently worse than ones made after.
+    try:
+        from app.ontology import knowledge_tool
+        from app.dependencies import get_mistral_client
+
+        summary = await knowledge_tool.backfill_all_agents(get_mistral_client())
+        logger.info("✅ Industry knowledge tool: %s", summary)
+    except Exception as e:
+        logger.warning("⚠️ Knowledge tool backfill skipped: %s", e)
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools

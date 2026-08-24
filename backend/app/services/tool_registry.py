@@ -4,13 +4,27 @@ Native tools execute locally. Dynamic and MCP tools proxy to Docker Tool Service
 """
 
 import json
-import math
 import logging
+from contextvars import ContextVar
 from typing import List
-import httpx
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+#: Canonical name of the industry knowledge tool.
+#:
+#: Referenced from agent creation, the builder catalogue and the backfill, so it
+#: is defined once — a typo in any of those would silently attach nothing.
+INDUSTRY_KNOWLEDGE_TOOL = "query_industry_knowledge"
+
+#: Which agent is currently executing, for automatic knowledge scoping.
+#:
+#: The tool-call payload carries no agent identity, and asking the model to pass
+#: its own domain would make correctness depend on the prompt. The runtimes set
+#: this before invoking an agent instead, so the tool can look up that agent's
+#: `serves_domain` annotations itself.
+CURRENT_AGENT: ContextVar[str | None] = ContextVar("current_agent", default=None)
 
 # ── Native Tool Definitions ────────────────────────────────────────────────
 
@@ -42,6 +56,58 @@ FUNCTION_TOOLS = {
             "name": "get_database_schema",
             "description": "Get the schema and list of tables in the database to understand its structure.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    # The industry knowledge graph. Executed in this process — there is no
+    # Docker round trip and no network hop, because the corpus and the domain
+    # hierarchy it is retrieved through both live in the local database.
+    INDUSTRY_KNOWLEDGE_TOOL: {
+        "type": "function",
+        "function": {
+            "name": INDUSTRY_KNOWLEDGE_TOOL,
+            "description": (
+                "Look up authoritative industry knowledge — regulations, processes, "
+                "metrics, risks and definitions — for the business domain this agent "
+                "serves. Call this BEFORE answering any question that depends on "
+                "domain expertise, and ground the answer in what it returns. "
+                "Results are automatically scoped to the calling agent's industry, "
+                "so you normally only need to pass the question. "
+                "IMPORTANT: what this returns is your only sourced material. Any "
+                "specific figure, rate, threshold or named regulation you state "
+                "that did not come from it must be marked '(unverified)'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "What you need to know, in natural language. "
+                            "e.g. 'affordability stress test rules' or 'claims fraud indicators'."
+                        ),
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "Optional concept id to search instead of the agent's own "
+                            "domain, e.g. 'domain.lending.mortgage'. Leave empty to use "
+                            "the agent's annotated industry."
+                        ),
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Optional filter: definition, regulation, process, metric, "
+                            "risk, best_practice or glossary."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum entries to return. Defaults to 5.",
+                    },
+                },
+                "required": ["query"],
+            },
         },
     },
 }
@@ -98,10 +164,58 @@ def _execute_get_database_schema(arguments: dict) -> str:
 
 
 
+def _execute_industry_knowledge(arguments: dict) -> str:
+    """Retrieve industry knowledge, scoped to the calling agent by default.
+
+    Scoping order:
+      1. an explicit ``domain`` argument, when the model asks for one;
+      2. the domains the executing agent is annotated with;
+      3. unscoped, which searches the whole corpus.
+
+    (2) is what makes this useful without prompt engineering — a mortgage agent
+    gets mortgage knowledge because of what it *is*, not because its
+    instructions remembered to say so.
+    """
+    from app.ontology import knowledge
+
+    query = str(arguments.get("query") or "").strip()
+    explicit = str(arguments.get("domain") or "").strip()
+    kind = str(arguments.get("kind") or "").strip() or None
+
+    try:
+        limit = max(1, min(10, int(arguments.get("limit") or 5)))
+    except (TypeError, ValueError):
+        limit = 5
+
+    agent_id = CURRENT_AGENT.get()
+    if explicit:
+        domains = [explicit]
+        scope_note = f"domain '{explicit}' (requested)"
+    else:
+        domains = knowledge.domains_for_agent(agent_id) if agent_id else []
+        scope_note = (
+            f"this agent's domains: {', '.join(domains)}" if domains
+            else "all industries (this agent has no domain annotation)"
+        )
+
+    try:
+        results = knowledge.search(query, domains=domains or None, kind=kind, limit=limit)
+    except Exception as e:
+        logger.warning("Industry knowledge lookup failed: %s", e)
+        return f"Industry knowledge is unavailable right now ({e}). Answer from general knowledge."
+
+    logger.info(
+        "Industry knowledge: query=%.60r scope=%s -> %d entries",
+        query, scope_note, len(results),
+    )
+    return f"Scope: {scope_note}\n\n{knowledge.render_for_prompt(results)}"
+
+
 # Native tool executor map
 NATIVE_EXECUTORS = {
     "execute_sql_query": _execute_sql_query,
     "get_database_schema": _execute_get_database_schema,
+    INDUSTRY_KNOWLEDGE_TOOL: _execute_industry_knowledge,
 }
 
 
