@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge } from 'lucide-react';
+import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge , Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { agentsApi, type Agent } from '../../api/agents';
 import { QK } from '../../lib/queryClient';
@@ -69,12 +69,23 @@ function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: 
             ? `Created ${new Date(agent.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
             : '\u00A0'}
         </p>
+        {agent.protected ? (
+          // Platform-owned. The backend refuses the delete anyway; showing a
+          // control that always fails is worse than showing why it is missing.
+          <span
+            title="Platform-owned — every knowledge-graph retrieval passes through this agent. Edit its instructions to change how it behaves."
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border-subtle)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
+          >
+            <Lock size={9} /> System
+          </span>
+        ) : (
         <button 
           onClick={(e) => { e.stopPropagation(); onDelete(agent.id); }} 
           className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-white hover:bg-[var(--color-accent-danger)] transition-colors opacity-0 group-hover:opacity-100 z-10"
         >
           <Trash2 size={14} />
         </button>
+        )}
       </div>
     </motion.div>
   );

@@ -39,6 +39,13 @@ def _knowledge_tool_spec() -> dict:
     return ALL_TOOLS[INDUSTRY_KNOWLEDGE_TOOL]
 
 
+def _graph_tool_spec() -> dict:
+    """The knowledge-graph tool spec, imported lazily for the same reason."""
+    from app.services.tool_registry import ALL_TOOLS, KNOWLEDGE_GRAPH_TOOL
+
+    return ALL_TOOLS[KNOWLEDGE_GRAPH_TOOL]
+
+
 def _is_agent_uuid(agent_id: str) -> bool:
     """Check if the agent_id looks like a real Mistral agent UUID (not a human name)."""
     if not agent_id:
@@ -111,7 +118,11 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
                 "Always provide a complete response — never return empty."
             ),
             description=f"Auto-created workflow agent: {agent_id}",
-            tools=[_knowledge_tool_spec()],
+            # The graph tool goes on the stand-in too. It has no library of
+            # its own yet, so it searches every graphed library — which is the
+            # right default for an agent invented mid-workflow, and the boot
+            # reconcile removes it if that never becomes useful.
+            tools=[_knowledge_tool_spec(), _graph_tool_spec()],
         )
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id
@@ -168,6 +179,12 @@ def _first_choice_message(response: Any) -> Any:
     null message when the model produced nothing (content filter, an aborted
     generation, a length stop with no content). Reading ``.message.content``
     directly is what produced ``'NoneType' object has no attribute 'content'``.
+
+    There is a third shape. An agent carrying a **server-executed** built-in
+    tool — ``document_library`` above all — returns ``messages`` (plural): the
+    transcript of what the server ran on its side, with ``message`` left null.
+    Every RAG agent has that tool by definition, so this is the ordinary case
+    for them rather than an edge one. The last entry is the assistant's reply.
     """
     choices = getattr(response, "choices", None)
     if not choices and isinstance(response, dict):
@@ -177,9 +194,16 @@ def _first_choice_message(response: Any) -> Any:
 
     choice = choices[0]
     if isinstance(choice, dict):
-        return choice.get("message") or choice.get("delta")
-    # `delta` is the streaming-shaped equivalent; accept either.
-    return getattr(choice, "message", None) or getattr(choice, "delta", None)
+        found = choice.get("message") or choice.get("delta")
+        transcript = choice.get("messages")
+    else:
+        # `delta` is the streaming-shaped equivalent; accept either.
+        found = getattr(choice, "message", None) or getattr(choice, "delta", None)
+        transcript = getattr(choice, "messages", None)
+
+    if found is not None:
+        return found
+    return transcript[-1] if transcript else None
 
 
 def _finish_reason(response: Any) -> str:

@@ -8,3 +8,18 @@ sqlalchemy
 watchfiles
 # mistralai-workflows[mistralai] — install separately if Temporal worker support is needed
 # pip install mistralai-workflows  (without extras, or resolve conflict manually)
+#
+# Tested against mistralai 2.8.0, which satisfies mistralai-workflows' own
+# <3.0.0,>=2.4.2 constraint (`pip check` is clean).
+#
+# Optional: mistralai-search-toolkit provides the reference LLMQueryRewriter /
+# LLMQueryExtension used by app/rag/optimizer.py. It is NOT required — the
+# optimiser ships a native backend implementing the same rewrite/extend
+# protocol and switches automatically if the toolkit is importable. Installing
+# it pulls numpy, pillow, sentencepiece, tiktoken and mistral-common (several
+# hundred MB), so it is left to the operator:
+#     pip install mistralai-search-toolkit
+
+# Graph RAG — knowledge-graph store. Started by docker-compose.yml at the repo
+# root; see NEO4J_* in app/config.py.
+neo4j

@@ -168,16 +168,20 @@ class WorkflowPlanningLayer(Layer):
             scope = ontology_matcher.scope_for_goal(goal)
 
             # ── PARALLEL: fetch tools, agents, workflows and connectors ──
+            from app.rag import inventory as library_inventory
+
             (
                 existing_tools,
                 agents_resp,
                 existing_workflows,
                 (connector_descriptions, connector_ids),
+                (library_descriptions, library_ids),
             ) = await asyncio.gather(
                 tool_resolver.list_tools(),
                 agent_service.list_agents(client, page=0, page_size=100),
                 _fetch_workflows(),
                 connector_service.describe_for_prompt(scope),
+                library_inventory.describe_for_prompt(),
             )
 
             existing_tool_names = [t.get("name", "") for t in existing_tools]
@@ -237,6 +241,7 @@ class WorkflowPlanningLayer(Layer):
                 existing_usecase_agents=json.dumps(usecase_agents, indent=2),
                 existing_tools=json.dumps(existing_tool_names, indent=2),
                 existing_connectors=connector_descriptions,
+                existing_libraries=library_descriptions,
                 existing_workflows=json.dumps(existing_workflows, indent=2),
                 goal=goal,
             )
@@ -367,9 +372,18 @@ class WorkflowPlanningLayer(Layer):
                             if cid in connector_ids
                         ]
                         from app.ontology.knowledge_tool import with_knowledge_tool
+                        from app.rag.rag_tools import with_rag_tools
 
+                        agent_libraries = [
+                            lid for lid in (agent_spec.get("document_library_ids") or [])
+                            if lid in library_ids
+                        ]
                         tool_definitions = get_tools(
-                            with_knowledge_tool(tool_keys), connectors=agent_connectors
+                            with_rag_tools(
+                                with_knowledge_tool(tool_keys), agent_libraries
+                            ),
+                            document_library_ids=agent_libraries or None,
+                            connectors=agent_connectors,
                         )
 
                         instructions = agent_spec.get(

@@ -113,7 +113,19 @@ class AgentResolverLayer(Layer):
         # request needs one or two integrations at most; offering all 23 makes
         # the choice harder, not easier.
         scope = ontology_matcher.scope_for_goal(ctx.query)
-        connector_descriptions, connector_ids = await connector_service.describe_for_prompt(scope)
+
+        # Connectors and libraries are both "what can this agent reach" and are
+        # fetched together — neither depends on the other, and each is a network
+        # round trip the query would otherwise wait through in turn.
+        from app.rag import inventory as library_inventory
+
+        (
+            (connector_descriptions, connector_ids),
+            (library_descriptions, library_ids),
+        ) = await asyncio.gather(
+            connector_service.describe_for_prompt(scope),
+            library_inventory.describe_for_prompt(),
+        )
 
         try:
             # Offloaded: the shared Mistral client is synchronous, so calling
@@ -131,6 +143,8 @@ class AgentResolverLayer(Layer):
                                 tool_keys=json.dumps(AVAILABLE_TOOL_KEYS),
                                 connector_descriptions=connector_descriptions,
                                 connector_ids=json.dumps(connector_ids),
+                                library_descriptions=library_descriptions,
+                                library_ids=json.dumps(library_ids),
                                 user_query=ctx.query,
                             ),
                         },
@@ -181,6 +195,20 @@ class AgentResolverLayer(Layer):
             for cid in (agent_config.get("connectors") or [])
             if cid in connector_ids
         ]
+
+        # Same treatment for libraries: an id the model invented would fail
+        # agent creation outright, and silently dropping it leaves an agent
+        # that simply has no documents rather than no agent at all.
+        chosen_libraries = [
+            lid for lid in (agent_config.get("document_library_ids") or [])
+            if lid in library_ids
+        ]
+        if chosen_libraries:
+            logger.info("Attaching %d document library/libraries to dynamic agent: %s",
+                        len(chosen_libraries), chosen_libraries)
+            agent_config["document_library_ids"] = chosen_libraries
+        else:
+            agent_config["document_library_ids"] = []
         if chosen_connectors:
             logger.info(
                 "Attaching %d connector(s) to dynamic agent: %s",
@@ -190,9 +218,18 @@ class AgentResolverLayer(Layer):
         # The dynamic agent answers a real user question, so it needs the same
         # domain grounding a hand-built agent gets.
         from app.ontology.knowledge_tool import with_knowledge_tool
+        from app.rag.rag_tools import with_rag_tools
 
+        # A dynamic agent the planner gave a document library to is a RAG agent
+        # and needs both halves, exactly like a hand-built one.
+        dynamic_tools = with_rag_tools(
+            with_knowledge_tool(agent_config["tools"]),
+            agent_config.get("document_library_ids"),
+        )
         tool_definitions = get_tools(
-            with_knowledge_tool(agent_config["tools"]), connectors=chosen_connectors
+            dynamic_tools,
+            document_library_ids=agent_config.get("document_library_ids"),
+            connectors=chosen_connectors,
         )
         instructions_text = str(agent_config.get("agent_instructions", "") or "")
         logger.info("Creating agent with instructions (%d chars): %.300s", len(instructions_text), instructions_text)

@@ -81,13 +81,45 @@ async def create_library(name: str, description: str = "") -> dict:
         raise
 
 
+def _purge_local_graph(library_id: str) -> dict:
+    """Remove everything graph RAG derived from a library that no longer exists.
+
+    Deleting a library upstream leaves two things behind here: the knowledge
+    graph built from its documents, and the local rows tracking them. Neither
+    has any meaning once the documents are gone — worse, the entities stay
+    reachable to an unscoped graph lookup, so an agent could cite a document
+    nobody can open.
+
+    Best-effort: the library is already deleted by the time this runs, and
+    failing to tidy up must not turn a successful delete into an error.
+    """
+    summary: dict = {}
+    try:
+        from app.rag import graph_store, store as rag_store
+
+        summary["graph"] = graph_store.delete_library_graph(library_id)
+        removed = 0
+        for document in rag_store.list_documents(library_id):
+            rag_store.delete_document(document["id"])
+            removed += 1
+        summary["documents_forgotten"] = removed
+    except Exception as e:
+        logger.warning("Could not purge graph data for library %s: %s", library_id, e)
+        summary["error"] = str(e)[:200]
+    return summary
+
+
 async def delete_library(library_id: str) -> dict:
-    """Delete a library."""
+    """Delete a library, and everything graph RAG derived from it."""
     try:
         with _http_client() as client:
             resp = client.delete(f"/v1/libraries/{library_id}")
             resp.raise_for_status()
-            return {"deleted": True, "library_id": library_id}
+            return {
+                "deleted": True,
+                "library_id": library_id,
+                "rag": _purge_local_graph(library_id),
+            }
     except httpx.HTTPStatusError as e:
         logger.error("Failed to delete library: %s", e.response.text)
         raise

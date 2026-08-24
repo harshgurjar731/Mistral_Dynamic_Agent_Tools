@@ -254,6 +254,13 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
         ]
         annotated_tiers = annotation_store.tiers_for_agents(agent_ids)
 
+        # One lookup for the whole page. The UI hides the delete control on a
+        # protected agent, so this has to be on the list payload rather than
+        # discovered by the user hitting a 403.
+        from app.rag import store as rag_store
+
+        protected_ids = rag_store.system_agent_ids()
+
         agents = []
         for agent in agent_list:
             if isinstance(agent, dict):
@@ -270,6 +277,8 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": agent.get("tools", []),
                     "connectors": _connector_refs(agent.get("tools")),
                     "created_at": str(agent.get("created_at", "")),
+                    "protected": (agent.get("id") in protected_ids)
+                                 or str(meta.get("protected", "")).lower() == "true",
                     "tier": coerce_tier(
                         explicit_tier
                         or annotated_tiers.get(agent.get("id") or "")
@@ -293,6 +302,9 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "tools": getattr(agent, "tools", []),
                     "connectors": _connector_refs(getattr(agent, "tools", None)),
                     "created_at": str(getattr(agent, "created_at", "")),
+                    "protected": (getattr(agent, "id", None) in protected_ids)
+                                 or (isinstance(meta, dict)
+                                     and str(meta.get("protected", "")).lower() == "true"),
                     "tier": coerce_tier(
                         explicit_tier
                         or annotated_tiers.get(getattr(agent, "id", "") or "")
@@ -389,6 +401,13 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if data.get("industry_knowledge", True):
             tool_keys = with_knowledge_tool(tool_keys)
 
+        # An agent with a document library gets the graph tool alongside it.
+        # The pair is what makes it a RAG agent: the library searches the text,
+        # the graph traverses what was extracted from that same text.
+        from app.rag.rag_tools import with_rag_tools
+
+        tool_keys = with_rag_tools(tool_keys, doc_lib_ids)
+
         tool_specs = get_tools(
             tool_keys,
             document_library_ids=doc_lib_ids,
@@ -470,11 +489,23 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             )
             connectors = data["connectors"] if "connectors" in data else current["connectors"]
 
+            # Attaching a library through an edit makes the agent a RAG agent
+            # just as much as creating it with one does, so the pair is
+            # completed here too.
+            from app.rag.rag_tools import with_rag_tools
+
             update_kwargs["tools"] = get_tools(
-                tool_keys,
+                with_rag_tools(tool_keys, doc_lib_ids),
                 document_library_ids=doc_lib_ids,
                 connectors=connectors,
             )
+
+            # The graph tool resolves its scope from the agent's libraries and
+            # caches the answer. An edit that changes them has to invalidate it,
+            # or the agent searches its old libraries for the next five minutes.
+            from app.rag import scope as rag_scope
+
+            rag_scope.invalidate(agent_id)
 
         agent = await asyncio.to_thread(partial(client.beta.agents.update, **update_kwargs))
         # Only the keys the caller actually sent are re-annotated; omitting
@@ -490,7 +521,24 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
 
 
 async def delete_agent(client: Mistral, agent_id: str) -> dict:
-    """Delete an agent."""
+    """Delete an agent, unless the platform owns it.
+
+    The guard lives here rather than in the route because five call sites reach
+    this function and only one of them is the DELETE endpoint. A protected agent
+    is one the platform created and depends on — currently the query optimiser,
+    which every RAG query passes through; deleting it would not fail loudly, it
+    would quietly degrade every retrieval in the system.
+    """
+    from app.rag import optimizer
+
+    if optimizer.is_protected(agent_id):
+        raise MistralAPIError(
+            "This agent is part of the platform and cannot be deleted. "
+            "The query optimiser preprocesses every knowledge-graph retrieval; "
+            "edit its instructions if you need to change how it behaves.",
+            status_code=403,
+        )
+
     try:
         await asyncio.to_thread(client.beta.agents.delete, agent_id=agent_id)
         return {"deleted": True, "agent_id": agent_id}

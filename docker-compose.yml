@@ -1,0 +1,44 @@
+# Neo4j — the knowledge-graph store behind document RAG.
+#
+# Deliberately separate from tool-service/docker-compose.yml. That stack is the
+# sandboxed tool runner and is disposable; this is stateful infrastructure the
+# backend talks to directly over Bolt from the host, so it gets its own
+# lifecycle and its own named volumes.
+#
+#   docker compose up -d neo4j
+#   browser: http://localhost:7474   bolt: bolt://localhost:7687
+#
+# Credentials come from NEO4J_AUTH (user/password). Change them here and in
+# backend/.env together — the backend reads NEO4J_USER / NEO4J_PASSWORD.
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: mistral-kg
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt — what the backend driver uses
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/mistral-graph-rag}
+      # Entity matching is a full-text index hit followed by a 2-hop traversal
+      # on every RAG query. Both want to stay in the page cache; the defaults
+      # for a community image are small enough that they would not.
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_db_transaction_timeout: 60s
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      # The backend degrades gracefully when the graph is unreachable, but
+      # `docker compose up --wait` should still block until it is actually up.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  neo4j-data:
+  neo4j-logs:

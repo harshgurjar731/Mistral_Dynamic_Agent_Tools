@@ -12,6 +12,22 @@ from mistralai.client import Mistral
 from app.exceptions import MistralAPIError
 from app.services.sdk_offload import iter_sync_stream
 from app.services.tool_registry import execute_tool
+
+
+def _choice_message(choice):
+    """The assistant message on a choice, whatever shape it arrived in.
+
+    An agent carrying a server-executed built-in tool — `document_library`
+    above all — returns `messages` (plural), the transcript of what the server
+    ran, with `message` left null. Every RAG agent has that tool, so reading
+    `choice.message.role` directly crashed the whole chat path for them with
+    "'NoneType' object has no attribute 'role'".
+    """
+    message = getattr(choice, "message", None)
+    if message is not None:
+        return message
+    transcript = getattr(choice, "messages", None) or []
+    return transcript[-1] if transcript else None
 from app.config import map_model_name
 
 
@@ -75,7 +91,8 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
             result = await asyncio.to_thread(partial(complete, **kwargs))
 
             choice = result.choices[0]
-            tool_calls = getattr(choice.message, "tool_calls", None)
+            message = _choice_message(choice)
+            tool_calls = getattr(message, "tool_calls", None)
 
             if not tool_calls:
                 break
@@ -83,8 +100,8 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
             logger.info(f"Chat completion requested {len(tool_calls)} tool call(s)")
 
             assistant_msg = {"role": "assistant"}
-            if getattr(choice.message, "content", None):
-                assistant_msg["content"] = choice.message.content
+            if getattr(message, "content", None):
+                assistant_msg["content"] = message.content
             assistant_msg["tool_calls"] = [
                 tc.model_dump() if hasattr(tc, "model_dump") else tc for tc in tool_calls
             ]
@@ -118,11 +135,12 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
         # Serialize response
         choices = []
         for choice in result.choices:
+            message = _choice_message(choice)
             msg_data = {
-                "role": choice.message.role,
-                "content": getattr(choice.message, "content", None),
+                "role": getattr(message, "role", "assistant"),
+                "content": getattr(message, "content", None),
             }
-            tool_calls = getattr(choice.message, "tool_calls", None)
+            tool_calls = getattr(message, "tool_calls", None)
             if tool_calls:
                 msg_data["tool_calls"] = [
                     tc.model_dump() if hasattr(tc, "model_dump") else tc for tc in tool_calls

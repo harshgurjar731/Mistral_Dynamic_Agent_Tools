@@ -14,6 +14,14 @@ export interface Agent {
    */
   connectors?: ConnectorRef[];
   tier?: string;
+  /**
+   * Platform-owned: the backend refuses to delete it (403).
+   *
+   * Currently just the query optimiser, which every graph retrieval passes
+   * through. Surfaced on the listing so the UI can hide the control rather
+   * than let someone discover the rule by hitting an error.
+   */
+  protected?: boolean;
   created_at?: string;
   temperature?: number | null;
   top_p?: number | null;

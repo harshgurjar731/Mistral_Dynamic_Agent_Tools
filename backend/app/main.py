@@ -20,7 +20,7 @@ from app.exceptions import (
     conversation_not_found_handler, tool_service_error_handler,
     workflow_error_handler, generic_error_handler,
 )
-from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers, connectors, ontology
+from app.routes import agents, conversations, chat, orchestrator, tools, uploads, libraries, remote_servers, connectors, ontology, rag
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,11 +65,35 @@ async def lifespan(app: FastAPI):
     from app.database import create_tables
     import app.remote_server_model  # noqa: F401 — register model with Base
     import app.ontology.models       # noqa: F401 — register ontology tables with Base
+    import app.rag.models            # noqa: F401 — register graph-RAG tables with Base
     create_tables()
 
     # Additive column migrations for tables that predate a field.
     from app.ontology import knowledge as ontology_knowledge
     ontology_knowledge.ensure_schema()
+
+    from app.rag import schema as rag_schema
+    rag_schema.ensure_schema()
+
+    # Knowledge-graph constraints and the entity full-text index that retrieval
+    # runs on. Skipped without complaint when Neo4j is not up — the graph is
+    # optional infrastructure, and RAG degrades to document search without it.
+    try:
+        from app.rag import graph_store, timeline as rag_timeline
+
+        if graph_store.ensure_constraints():
+            stats = graph_store.stats().get("totals", {})
+            logger.info("✅ Knowledge graph ready: %s", stats or "empty")
+        else:
+            logger.info(
+                "ℹ️ Knowledge graph not available (%s) — graph RAG is disabled "
+                "until 'docker compose up -d neo4j' is running",
+                graph_store.status().get("reason"),
+            )
+        # Timelines are diagnostic; keep the last few hundred runs, not all of them.
+        rag_timeline.prune()
+    except Exception as e:
+        logger.warning("⚠️ Knowledge graph setup skipped: %s", e)
 
     # Upsert the shipped vocabulary. Idempotent, so it is safe on every boot —
     # this project has no migration tool, and the loader is what keeps the
@@ -146,6 +170,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Agent domain classification skipped: %s", e)
 
+    # The query optimiser every RAG retrieval passes through. Created once and
+    # registered locally, which is both what stops a second one appearing on the
+    # next boot and what makes it non-deletable.
+    try:
+        from app.dependencies import get_mistral_client
+        from app.rag import optimizer as rag_optimizer
+
+        optimizer_id = await rag_optimizer.ensure_system_agent(get_mistral_client())
+        if optimizer_id:
+            logger.info(
+                "✅ Query optimiser ready: %s (backend: %s)",
+                optimizer_id, rag_optimizer.backend_name(),
+            )
+    except Exception as e:
+        logger.warning("⚠️ Query optimiser setup skipped: %s", e)
+
     # Give every existing agent the industry knowledge tool. Idempotent — an
     # agent that already carries it costs no API call — so this is safe on
     # every boot and is what keeps agents made before the feature existed from
@@ -158,6 +198,19 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Industry knowledge tool: %s", summary)
     except Exception as e:
         logger.warning("⚠️ Knowledge tool backfill skipped: %s", e)
+
+    # Reconcile the knowledge-graph tool the same way: attach it to agents whose
+    # libraries hold a graph, remove it from those whose libraries do not. Runs
+    # after the knowledge backfill so both tool arrays settle in one pass, and
+    # does nothing at all when Neo4j is down rather than stripping every agent.
+    try:
+        from app.dependencies import get_mistral_client
+        from app.rag import rag_tools
+
+        summary = await rag_tools.backfill_rag_tool(get_mistral_client())
+        logger.info("✅ Knowledge graph tool: %s", summary)
+    except Exception as e:
+        logger.warning("⚠️ Graph tool reconcile skipped: %s", e)
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools
@@ -209,6 +262,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Error stopping worker: %s", e)
 
+    try:
+        from app.rag import graph_store
+        graph_store.close()
+    except Exception:
+        pass
+
     logger.info("🛑 Shutting down …")
 
 
@@ -251,6 +310,7 @@ app.include_router(libraries.router, prefix=settings.API_PREFIX)
 app.include_router(remote_servers.router, prefix=settings.API_PREFIX)
 app.include_router(connectors.router, prefix=settings.API_PREFIX)
 app.include_router(ontology.router, prefix=settings.API_PREFIX)
+app.include_router(rag.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

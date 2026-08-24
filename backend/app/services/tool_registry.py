@@ -3,6 +3,7 @@ Tool Registry — 3-tier routing: native → dynamic (Docker) → MCP (Docker).
 Native tools execute locally. Dynamic and MCP tools proxy to Docker Tool Service.
 """
 
+import inspect
 import json
 import logging
 from contextvars import ContextVar
@@ -17,6 +18,15 @@ logger = logging.getLogger(__name__)
 #: Referenced from agent creation, the builder catalogue and the backfill, so it
 #: is defined once — a typo in any of those would silently attach nothing.
 INDUSTRY_KNOWLEDGE_TOOL = "query_industry_knowledge"
+
+#: Canonical name of the document knowledge-graph tool.
+#:
+#: The graph half of RAG. Its partner is the built-in ``document_library`` tool:
+#: that one searches the text of the same documents, this one searches the
+#: entities and relations extracted from them. An agent doing RAG carries both,
+#: because they fail in different places — similarity search cannot answer "what
+#: is this connected to", and a graph cannot quote a paragraph it never stored.
+KNOWLEDGE_GRAPH_TOOL = "query_knowledge_graph"
 
 #: Which agent is currently executing, for automatic knowledge scoping.
 #:
@@ -104,6 +114,63 @@ FUNCTION_TOOLS = {
                     "limit": {
                         "type": "integer",
                         "description": "Maximum entries to return. Defaults to 5.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    # The document knowledge graph. Also executed in this process: the graph is
+    # a local Bolt hop and the ranking is arithmetic, so a Docker round trip
+    # would be pure latency.
+    KNOWLEDGE_GRAPH_TOOL: {
+        "type": "function",
+        "function": {
+            "name": KNOWLEDGE_GRAPH_TOOL,
+            "description": (
+                "Search the knowledge graph built from this agent's uploaded "
+                "documents. Matches the entities your question names, then "
+                "returns how they connect and the sentences they were extracted "
+                "from. Use it for questions about relationships, dependencies, "
+                "ownership, obligations or who-connects-to-what — the questions "
+                "document search answers badly because the answer is spread "
+                "across the document rather than stated in one passage. "
+                "Use document_library instead when you need the wording of a "
+                "specific passage. Using both is normal and often best. "
+                "Results are scoped automatically to this agent's libraries. "
+                "IMPORTANT: anything you state that did not come from this "
+                "tool or the document library must be marked '(unverified)'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "What you need to know, in natural language. Name the "
+                            "entities you care about — matching starts from them. "
+                            "e.g. 'which suppliers is Contoso bound to under the "
+                            "master agreement'."
+                        ),
+                    },
+                    "library_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional. Search one specific library instead of all "
+                            "of this agent's libraries."
+                        ),
+                    },
+                    "hops": {
+                        "type": "integer",
+                        "description": (
+                            "How far to walk out from the matched entities: 1 for "
+                            "direct connections, 2 (the default) to include what "
+                            "those connect to. Maximum 3."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum relations to return. Defaults to 12.",
                     },
                 },
                 "required": ["query"],
@@ -211,11 +278,89 @@ def _execute_industry_knowledge(arguments: dict) -> str:
     return f"Scope: {scope_note}\n\n{knowledge.render_for_prompt(results)}"
 
 
-# Native tool executor map
+async def _execute_knowledge_graph(arguments: dict) -> str:
+    """Retrieve from the document knowledge graph, scoped to the calling agent.
+
+    Async, unlike the other native executors, because the path it drives is
+    genuinely asynchronous: the optimiser is a model call and the traversal is a
+    network hop, and running either inline would block the event loop for the
+    whole tool call.
+
+    Every query goes through the optimiser first — that is the contract, not an
+    optimisation. Retrieval starts by matching an entity, and an unrewritten
+    question frequently matches nothing that its rewrite matches immediately.
+    """
+    from app.dependencies import get_mistral_client
+    from app.rag import retrieval, scope, timeline
+
+    query = str(arguments.get("query") or "").strip()
+    if not query:
+        return "No query was supplied. Ask the knowledge graph a question."
+
+    explicit = str(arguments.get("library_id") or "").strip()
+    try:
+        hops = max(1, min(3, int(arguments.get("hops") or 2)))
+    except (TypeError, ValueError):
+        hops = 2
+    try:
+        limit = max(1, min(30, int(arguments.get("limit") or 12)))
+    except (TypeError, ValueError):
+        limit = 12
+
+    agent_id = CURRENT_AGENT.get()
+    client = get_mistral_client()
+
+    if explicit:
+        libraries = [explicit]
+        scope_note = f"library '{explicit}' (requested)"
+    else:
+        libraries = scope.resolve(client, agent_id)
+        scope_note = (
+            f"this agent's libraries: {', '.join(libraries)}" if libraries
+            else "all libraries (this agent has no document library attached)"
+        )
+
+    timeline.ensure("query", f"agent:{agent_id or 'unknown'}")
+
+    try:
+        with timeline.stage(
+            "knowledge_graph_tool",
+            meta={"query": query[:200], "libraries": libraries or "all", "hops": hops},
+        ) as st:
+            result = await retrieval.retrieve(
+                client, query, library_ids=libraries, hops=hops, limit=limit
+            )
+            st.set(
+                entities=len(result.get("entities") or []),
+                relations=len(result.get("relations") or []),
+                passages=len(result.get("passages") or []),
+            )
+            if result.get("reason"):
+                st.note(result["reason"])
+    except Exception as e:
+        logger.warning("Knowledge graph lookup failed: %s", e)
+        return (
+            f"The knowledge graph is unavailable right now ({e}). Use the "
+            "document library tool instead, and mark anything you state from "
+            'your own knowledge with "(unverified)".'
+        )
+
+    logger.info(
+        "Knowledge graph: query=%.60r scope=%s -> %d entities, %d relations",
+        query, scope_note,
+        len(result.get("entities") or []), len(result.get("relations") or []),
+    )
+    return retrieval.render_for_prompt(result, scope_note=scope_note)
+
+
+# Native tool executor map. Values may be sync or async — `execute_tool` awaits
+# whatever they return, so a native tool that needs the network does not have to
+# block the event loop to stay in this table.
 NATIVE_EXECUTORS = {
     "execute_sql_query": _execute_sql_query,
     "get_database_schema": _execute_get_database_schema,
     INDUSTRY_KNOWLEDGE_TOOL: _execute_industry_knowledge,
+    KNOWLEDGE_GRAPH_TOOL: _execute_knowledge_graph,
 }
 
 
@@ -318,10 +463,14 @@ async def execute_tool(tool_name: str, arguments: dict) -> str:
     2. Dynamic tool → proxy to Docker Tool Service
     3. MCP tool → proxy via Docker Tool Service to MCP server
     """
-    # Tier 1: Native tools
+    # Tier 1: Native tools. Executors may be sync or async — the graph tool
+    # drives model calls and a Bolt hop, which must not block the event loop.
     if tool_name in NATIVE_EXECUTORS:
         logger.info("Executing native tool: %s", tool_name)
-        return NATIVE_EXECUTORS[tool_name](arguments)
+        result = NATIVE_EXECUTORS[tool_name](arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     # Tier 2: Dynamic tools (Docker Tool Service)
     if tool_name in _dynamic_tool_schemas or tool_name not in ALL_TOOLS:

@@ -40,6 +40,30 @@ class Settings(BaseSettings):
     MISTRAL_WORKFLOWS_DIR: str = "../mistral_workflows"
 
 
+    # ── Knowledge graph (Neo4j) ────────────────────────────────────────
+    # The graph store for document RAG. Started by docker-compose.yml at the
+    # repository root; the backend runs on the host and speaks Bolt to it.
+    # Every call is guarded — an unreachable graph degrades RAG to the
+    # document_library tool alone, it never fails a request.
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "mistral-graph-rag"
+    NEO4J_DATABASE: str = "neo4j"
+
+    # ── Graph RAG ingestion ────────────────────────────────────────────
+    # Entity/relation extraction is one LLM call per chunk, so these knobs are
+    # the cost control. RAG_MAX_CHUNKS_PER_DOC is a hard ceiling: a 400-page
+    # PDF would otherwise quietly spend a hundred calls on one upload.
+    RAG_EXTRACTION_MODEL: str = "mistral-large-latest"
+    RAG_CHUNK_CHARS: int = 6000
+    RAG_CHUNK_OVERLAP: int = 400
+    RAG_MAX_CHUNKS_PER_DOC: int = 40
+    RAG_EXTRACTION_CONCURRENCY: int = 4
+    # Mistral extracts library text asynchronously. Poll rather than block, and
+    # give up rather than leave a document "extracting" forever.
+    RAG_TEXT_POLL_SECONDS: int = 5
+    RAG_TEXT_POLL_ATTEMPTS: int = 60
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse comma-separated CORS origins into a list."""

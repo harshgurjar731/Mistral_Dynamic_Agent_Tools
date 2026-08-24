@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, BookOpen, Check, Loader2, Network, Search, Sparkles, Tag, Layers, Wand2,
+  AlertCircle, BookOpen, Check, FolderGit2, Loader2, Network, Search, Sparkles, Tag, Layers, Wand2,
 } from 'lucide-react';
 import {
   ontologyApi,
@@ -27,11 +27,12 @@ import { agentsApi } from '../../api/agents';
 import OverviewTab from './OverviewTab';
 import VocabularyTab from './VocabularyTab';
 import KnowledgeTab from './KnowledgeTab';
+import RagTab from './RagTab';
 import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 
-type Tab = 'overview' | 'vocabulary' | 'knowledge' | 'annotations' | 'scope';
+type Tab = 'overview' | 'vocabulary' | 'knowledge' | 'rag' | 'annotations' | 'scope';
 
 const AGENT_PREDICATES: Predicate[] = [
   'has_tier',
@@ -53,13 +54,19 @@ export default function ConceptBrowser() {
     { key: 'overview', label: 'Overview', icon: Network },
     { key: 'vocabulary', label: 'Vocabulary', icon: Layers },
     { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
+    { key: 'rag', label: 'Graph RAG', icon: FolderGit2 },
     { key: 'annotations', label: 'Annotations', icon: Tag },
     { key: 'scope', label: 'Scope preview', icon: Sparkles },
   ];
 
   return (
-    // The overview graph needs the width; the other tabs read better narrow.
-    <div className={cn('p-8 mx-auto', tab === 'overview' ? 'max-w-[1600px]' : 'max-w-5xl')}>
+    // Graph canvases need the width; the text-heavy tabs read better narrow.
+    <div
+      className={cn(
+        'p-8 mx-auto',
+        tab === 'overview' || tab === 'rag' ? 'max-w-[1600px]' : 'max-w-5xl',
+      )}
+    >
       <div className="flex items-end justify-between mb-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
@@ -112,6 +119,7 @@ export default function ConceptBrowser() {
       {tab === 'overview' && <OverviewTab />}
       {tab === 'vocabulary' && <VocabularyTab />}
       {tab === 'knowledge' && <KnowledgeTab />}
+      {tab === 'rag' && <RagTab />}
       {tab === 'annotations' && <AnnotationsTab />}
       {tab === 'scope' && <ScopeTab />}
     </div>
