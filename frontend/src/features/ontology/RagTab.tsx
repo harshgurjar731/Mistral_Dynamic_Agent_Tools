@@ -1,9 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, ArrowLeft, Check, ChevronRight, Combine, Database, FileText,
-  GitBranch, Layers, Loader2, Network, RefreshCw, Search, Sparkles, Trash2,
-  Upload, X,
+  GitBranch, Layers, Loader2, Network, RefreshCw, Shapes, Sparkles,
+  Tag, Trash2, Upload, Wand2, X,
 } from 'lucide-react';
 import {
   ragApi,
@@ -13,7 +13,8 @@ import {
   type RagDocument,
 } from '../../api/rag';
 import { cn } from '../../lib/utils';
-import KnowledgeGraphCanvas, { GraphLegend, entityStyle } from './graph/KnowledgeGraphCanvas';
+import UnifiedGraphCanvas, { nodeStyle as entityStyle } from './graph/UnifiedGraphCanvas';
+import OntologyDesigner from './OntologyDesigner';
 import RagTimeline, { TraceView } from './RagTimeline';
 
 /**
@@ -63,7 +64,7 @@ const ENTITY_TYPES = [
   'Regulation', 'System', 'Location', 'Event', 'Concept',
 ];
 
-type View = 'libraries' | 'graph' | 'search' | 'timeline';
+type View = 'libraries' | 'graph' | 'timeline';
 
 export default function RagTab() {
   const [view, setView] = useState<View>('libraries');
@@ -80,7 +81,6 @@ export default function RagTab() {
   const views: { key: View; label: string; icon: typeof Layers }[] = [
     { key: 'libraries', label: 'Libraries', icon: Database },
     { key: 'graph', label: 'Graph', icon: Network },
-    { key: 'search', label: 'Test retrieval', icon: Search },
     { key: 'timeline', label: 'Timeline', icon: GitBranch },
   ];
 
@@ -95,9 +95,9 @@ export default function RagTab() {
           </code>{' '}
           and a knowledge graph through{' '}
           <code className="rounded bg-black/30 px-1 font-mono text-[11px] text-indigo-300">
-            query_knowledge_graph
+            search_domain_knowledge
           </code>
-          . Ask the library what a passage says; ask the graph how things connect.
+          . Ask the library what a passage says; ask the other what we know.
         </p>
         {data && (
           <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
@@ -148,7 +148,6 @@ export default function RagTab() {
         ))}
 
       {view === 'graph' && <GraphView libraries={data?.libraries ?? []} />}
-      {view === 'search' && <SearchView libraries={data?.libraries ?? []} />}
       {view === 'timeline' && <RagTimeline />}
     </div>
   );
@@ -218,6 +217,18 @@ function LibraryGrid({
               <span className="flex items-center gap-1">
                 <Network size={11} /> {library.relations}
               </span>
+              {library.ontology_version ? (
+                <span
+                  title={`Content schema v${library.ontology_version}: ${library.content_types.join(', ')}`}
+                  className="rounded border border-emerald-400/25 bg-emerald-500/10 px-1 text-[9px] text-emerald-300"
+                >
+                  schema v{library.ontology_version}
+                </span>
+              ) : (
+                <span className="rounded border border-[var(--color-border-subtle)] px-1 text-[9px] text-[var(--color-text-muted)]">
+                  generic
+                </span>
+              )}
               {library.has_rules && (
                 <span className="rounded border border-indigo-400/25 bg-indigo-500/10 px-1 text-[9px] text-indigo-300">
                   rules
@@ -232,6 +243,12 @@ function LibraryGrid({
                 style={{ width: `${progress}%` }}
               />
             </div>
+            {library.content_types?.length > 0 && (
+              <p className="mt-1.5 truncate text-[10px] text-[var(--color-text-muted)]">
+                {library.content_types.slice(0, 5).join(' · ')}
+              </p>
+            )}
+
             <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
               {library.graphed_documents} of {total} in the graph
               {library.pending_documents ? ` · ${library.pending_documents} pending` : ''}
@@ -255,6 +272,8 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
   const [pending, setPending] = useState<File | null>(null);
   // A document being re-extracted, so new rules can be supplied first.
   const [reextracting, setReextracting] = useState<RagDocument | null>(null);
+  const [designing, setDesigning] = useState(false);
+  const [assigningDomain, setAssigningDomain] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['rag', 'documents', library.id],
@@ -287,6 +306,16 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
 
   const documents = data?.documents ?? [];
 
+  if (designing) {
+    return (
+      <OntologyDesigner
+        libraryId={library.id}
+        libraryName={library.name}
+        onBack={() => { setDesigning(false); refresh(); }}
+      />
+    );
+  }
+
   if (reviewing) {
     return (
       <DraftReview
@@ -307,10 +336,24 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
         </button>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setAssigningDomain(true)}
+            title="Which business domain this library serves — what lets a planner pick it"
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
+          >
+            <Tag size={12} /> Domain
+          </button>
+          <button
+            onClick={() => setDesigning(true)}
+            title="The entity types and predicates everything extracted from this library must use"
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
+          >
+            <Shapes size={12} /> Content schema
+          </button>
+          <button
             onClick={() => setShowRules(true)}
             className="rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
           >
-            Extraction rules
+            Rules
           </button>
           <input
             ref={fileInput}
@@ -337,9 +380,21 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
       <div>
         <h3 className="text-sm font-medium text-white">{library.name}</h3>
         <p className="text-[11px] text-[var(--color-text-muted)]">
-          {library.entities} entities · {library.relations} relations · uploads are indexed by
-          Mistral first, so extraction starts a moment after the upload finishes.
+          {library.entities} entities · {library.relations} relations ·{' '}
+          {library.ontology_version
+            ? `content schema v${library.ontology_version}`
+            : 'no content schema — extraction uses the generic vocabulary'}
+          {library.serves_domain?.length
+            ? ` · serves ${library.serves_domain.join(', ')}`
+            : ' · no domain assigned'}
         </p>
+        {!library.ontology_version && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-200/90">
+            <Wand2 size={12} className="mt-px shrink-0" />
+            Designing a content schema first gives this library types and
+            predicates that fit its documents, instead of ten generic buckets.
+          </p>
+        )}
       </div>
 
       {upload.isError && (
@@ -375,6 +430,14 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
       )}
 
       {showRules && <RulesEditor libraryId={library.id} onClose={() => { setShowRules(false); refresh(); }} />}
+
+      {assigningDomain && (
+        <DomainEditor
+          libraryId={library.id}
+          libraryName={library.name}
+          onClose={() => { setAssigningDomain(false); refresh(); }}
+        />
+      )}
 
       {pending && (
         <ExtractionDialog
@@ -426,8 +489,10 @@ function DocumentRow({
   // Fetched only when opened — a library of fifty documents should not make
   // fifty graph queries to render a list.
   const { data: docGraph } = useQuery({
-    queryKey: ['rag', 'graph', 'document', document.id],
-    queryFn: () => ragApi.graph({ document_id: document.id, limit: 200 }).then((r) => r.data),
+    queryKey: ['rag', 'graph', 'unified', 'document', document.id],
+    queryFn: () =>
+      ragApi.unifiedGraph({ document_id: document.id, entity_limit: 200 })
+        .then((r) => r.data),
     enabled: openGraph,
   });
 
@@ -511,10 +576,12 @@ function DocumentRow({
       {openGraph && (
         <div className="space-y-2 border-t border-[var(--color-border-subtle)] p-2">
           {docGraph ? (
-            <>
-              <KnowledgeGraphCanvas snapshot={docGraph} height={340} />
-              <GraphLegend types={Array.from(new Set(docGraph.nodes.map((n) => n.type))).sort()} />
-            </>
+            <UnifiedGraphCanvas
+              graph={docGraph}
+              height={380}
+              clusterBy="type"
+              title={document.filename}
+            />
           ) : (
             <p className="flex items-center gap-2 px-2 py-3 text-xs text-[var(--color-text-muted)]">
               <Loader2 size={12} className="animate-spin" /> Loading this document's graph…
@@ -1061,15 +1128,15 @@ function GraphView({ libraries }: { libraries: LibraryCard[] }) {
   const [libraryId, setLibraryId] = useState<string>('');
 
   const { data, isFetching } = useQuery({
-    queryKey: ['rag', 'graph', libraryId || 'all'],
+    queryKey: ['rag', 'graph', 'unified', libraryId || 'all'],
     queryFn: () =>
-      ragApi.graph({ library_id: libraryId || undefined, limit: 400 }).then((r) => r.data),
+      ragApi.unifiedGraph({
+        library_id: libraryId || undefined,
+        entity_limit: libraryId ? 600 : 300,
+      }).then((r) => r.data),
   });
 
-  const types = useMemo(
-    () => Array.from(new Set((data?.nodes ?? []).map((n) => n.type))).sort(),
-    [data],
-  );
+  const graphed = libraries.filter((library) => library.entities > 0);
 
   return (
     <div className="space-y-3">
@@ -1083,220 +1150,167 @@ function GraphView({ libraries }: { libraries: LibraryCard[] }) {
               : 'border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-white',
           )}
         >
-          All libraries
+          Everything
         </button>
-        {libraries
-          .filter((library) => library.entities > 0)
-          .map((library) => (
-            <button
-              key={library.id}
-              onClick={() => setLibraryId(library.id)}
-              className={cn(
-                'rounded-lg border px-3 py-1.5 text-xs transition-colors',
-                libraryId === library.id
-                  ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
-                  : 'border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-white',
-              )}
-            >
-              {library.name}
-              <span className="ml-1.5 font-mono text-[10px] tabular-nums opacity-70">
-                {library.entities}
-              </span>
-            </button>
-          ))}
+        {graphed.map((library) => (
+          <button
+            key={library.id}
+            onClick={() => setLibraryId(library.id)}
+            className={cn(
+              'rounded-lg border px-3 py-1.5 text-xs transition-colors',
+              libraryId === library.id
+                ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
+                : 'border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-white',
+            )}
+          >
+            {library.name}
+            <span className="ml-1.5 font-mono text-[10px] tabular-nums opacity-70">
+              {library.entities}
+            </span>
+          </button>
+        ))}
         {isFetching && <Loader2 size={12} className="animate-spin text-[var(--color-text-muted)]" />}
       </div>
 
-      {data?.truncated && (
-        <p className="text-[11px] text-amber-300/80">
-          Showing the {data.nodes.length} best-connected entities — the full graph is larger.
-        </p>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        {libraryId
+          ? 'This library: the domains it serves, its documents, and the entities extracted from them.'
+          : 'Everything: the domain taxonomy, every library beneath it, their documents and entities.'}
+        {' '}Entities are grouped by type — click any node to isolate what it
+        connects to, and use the control at the top right for full screen.
+      </p>
+
+      {data && (
+        <UnifiedGraphCanvas
+          graph={data}
+          height={620}
+          clusterBy={libraryId ? 'type' : 'kind'}
+          title={
+            libraryId
+              ? graphed.find((l) => l.id === libraryId)?.name
+              : 'Platform knowledge graph'
+          }
+        />
       )}
 
-      {data && <KnowledgeGraphCanvas snapshot={data} height={560} />}
-      {types.length > 0 && <GraphLegend types={types} />}
+      {data?.counts && (
+        <div className="flex flex-wrap gap-3 text-[11px] text-[var(--color-text-muted)]">
+          {Object.entries(data.counts).map(([kind, count]) => (
+            <span key={kind} className="font-mono tabular-nums">
+              {count} {kind}
+              {count === 1 ? '' : 's'}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Retrieval tester ───────────────────────────────────────────────────────
+/** Assigning the domain a library serves — the link to the platform taxonomy. */
+function DomainEditor({
+  libraryId,
+  libraryName,
+  onClose,
+}: {
+  libraryId: string;
+  libraryName: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<string[] | null>(null);
 
-/**
- * The agent's own retrieval path, run by hand.
- *
- * Shows every stage, including the prompt block the model would actually
- * receive — when an answer is wrong, what the model was handed is nearly always
- * the explanation, and this is the only place to see it.
- */
-function SearchView({ libraries }: { libraries: LibraryCard[] }) {
-  const [query, setQuery] = useState('');
-  const [libraryId, setLibraryId] = useState('');
-  const [showRendered, setShowRendered] = useState(false);
-
-  const search = useMutation({
-    mutationFn: () =>
-      ragApi.search({
-        query,
-        library_ids: libraryId ? [libraryId] : undefined,
-        hops: 2,
-        limit: 12,
-      }),
+  const { data } = useQuery({
+    queryKey: ['rag', 'domains', libraryId],
+    queryFn: () => ragApi.domains(libraryId).then((r) => r.data),
   });
 
-  const result = search.data?.data;
+  const current = selected ?? data?.domains ?? [];
+
+  const classify = useMutation({
+    mutationFn: () => ragApi.classifyDomain(libraryId),
+    onSuccess: (res) => setSelected(res.data.domains),
+  });
+
+  const save = useMutation({
+    mutationFn: () => ragApi.setDomains(libraryId, current),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rag'] });
+      onClose();
+    },
+  });
+
+  const toggle = (id: string) =>
+    setSelected(
+      current.includes(id) ? current.filter((d) => d !== id) : [...current, id],
+    );
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <div className="relative min-w-[260px] flex-1">
-          <Search
-            size={13}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && query.trim() && search.mutate()}
-            placeholder="Ask the graph — e.g. which suppliers is Contoso bound to?"
-            className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-black/30 py-2 pl-8 pr-3 text-xs text-white placeholder:text-[var(--color-text-muted)] focus:border-indigo-400/50 focus:outline-none"
-          />
-        </div>
-        <select
-          value={libraryId}
-          onChange={(e) => setLibraryId(e.target.value)}
-          className="rounded-lg border border-[var(--color-border-subtle)] bg-black/30 px-2 py-2 text-xs text-white focus:outline-none"
-        >
-          <option value="">All libraries</option>
-          {libraries.map((library) => (
-            <option key={library.id} value={library.id}>
-              {library.name}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => search.mutate()}
-          disabled={!query.trim() || search.isPending}
-          className="btn-primary flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs disabled:opacity-50"
-        >
-          {search.isPending ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-          Search
-        </button>
-      </div>
-
-      {result && (
-        <div className="space-y-4">
-          <div className="rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-3">
-            <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-              Query optimiser · {result.plan.backend}
-              {result.plan.cached ? ' · cached' : ''}
-            </p>
-            <p className="mt-1 text-xs text-white">{result.plan.rewritten}</p>
-            {result.plan.entity_hints?.length > 0 && (
-              <p className="mt-1.5 flex flex-wrap gap-1.5">
-                {result.plan.entity_hints.map((hint) => (
-                  <span
-                    key={hint}
-                    className="rounded border border-indigo-400/25 bg-indigo-500/10 px-1.5 py-px text-[10px] text-indigo-200"
-                  >
-                    {hint}
-                  </span>
-                ))}
-              </p>
-            )}
-            {result.plan.sub_queries?.length > 0 && (
-              <ul className="mt-1.5 space-y-0.5">
-                {result.plan.sub_queries.map((sub) => (
-                  <li key={sub} className="text-[11px] text-[var(--color-text-muted)]">
-                    ↳ {sub}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {result.reason && (
-            <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              {result.reason}
-            </p>
-          )}
-
-          {result.entities.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                Matched entities
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {result.entities.map((entity) => {
-                  const style = entityStyle(entity.type);
-                  return (
-                    <span
-                      key={`${entity.normalized}-${entity.type}`}
-                      style={{ color: style.color, borderColor: `${style.color}44`, background: style.bg }}
-                      className="rounded border px-2 py-0.5 text-[11px]"
-                    >
-                      {entity.name}
-                      <span className="ml-1.5 font-mono text-[9px] opacity-70">
-                        {entity.score?.toFixed(2)}
-                      </span>
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {result.relations.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                Relations
-              </p>
-              <div className="space-y-1.5">
-                {result.relations.map((relation, index) => (
-                  <div
-                    key={index}
-                    className="rounded-lg border border-[var(--color-border-subtle)] bg-black/20 px-3 py-2"
-                  >
-                    <p className="text-xs text-white">
-                      {relation.source_name}{' '}
-                      <span className="font-mono text-[10px] text-indigo-300">
-                        —{relation.predicate}→
-                      </span>{' '}
-                      {relation.target_name}
-                      {relation.hops > 1 && (
-                        <span className="ml-1.5 text-[10px] text-[var(--color-text-muted)]">
-                          {relation.hops} hops
-                        </span>
-                      )}
-                    </p>
-                    {relation.evidence && (
-                      <p className="mt-0.5 text-[10px] italic text-[var(--color-text-muted)]">
-                        “{relation.evidence}”
-                      </p>
-                    )}
-                    <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-                      {relation.sources?.join(', ')}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated,#0b1120)] p-5">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <button
-              onClick={() => setShowRendered((v) => !v)}
-              className="text-[11px] text-[var(--color-text-muted)] hover:text-white"
-            >
-              {showRendered ? 'Hide' : 'Show'} exactly what the agent would receive
-            </button>
-            {showRendered && (
-              <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-black/40 p-3 font-mono text-[10px] leading-relaxed text-[var(--color-text-secondary)]">
-                {result.rendered}
-              </pre>
-            )}
+            <h3 className="text-sm font-medium text-white">Domain — {libraryName}</h3>
+            <p className="mt-1 max-w-lg text-xs text-[var(--color-text-muted)]">
+              What this library is about. A planner uses it to pick this library
+              for a matching goal, and the validator uses it to catch an agent
+              reading documents from the wrong domain.
+            </p>
           </div>
+          <button onClick={onClose} className="rounded p-1 text-[var(--color-text-muted)] hover:text-white">
+            <X size={14} />
+          </button>
         </div>
-      )}
+
+        <button
+          onClick={() => classify.mutate()}
+          disabled={classify.isPending}
+          className="mt-3 flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white disabled:opacity-50"
+        >
+          {classify.isPending ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+          Work it out from the documents
+        </button>
+
+        <div className="mt-3 max-h-64 space-y-0.5 overflow-y-auto">
+          {(data?.available ?? []).map((concept) => (
+            <button
+              key={concept.id}
+              onClick={() => toggle(concept.id)}
+              style={{ paddingLeft: `${8 + (concept.level ?? 0) * 14}px` }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded py-1 pr-2 text-left text-xs transition-colors',
+                current.includes(concept.id)
+                  ? 'bg-indigo-500/15 text-white'
+                  : 'text-[var(--color-text-secondary)] hover:bg-white/5',
+              )}
+            >
+              {current.includes(concept.id) ? (
+                <Check size={11} className="shrink-0 text-indigo-300" />
+              ) : (
+                <span className="w-[11px] shrink-0" />
+              )}
+              <span className="truncate">{concept.label}</span>
+              <span className="ml-auto shrink-0 font-mono text-[9px] text-[var(--color-text-muted)]">
+                {concept.id}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-white">
+            Cancel
+          </button>
+          <button
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="btn-primary flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs disabled:opacity-50"
+          >
+            {save.isPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+            Save
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

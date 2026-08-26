@@ -35,7 +35,7 @@ from typing import Optional
 
 from app.config import settings
 from app.rag import entities as entity_tools
-from app.rag import graph_store, prompts, store, timeline
+from app.rag import graph_store, library_ontology, prompts, store, timeline
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,7 @@ async def extract_chunks(
     chunks: list[str],
     rules: str,
     model: str,
+    ontology: Optional[dict] = None,
 ) -> list[tuple[int, dict]]:
     """Run entity extraction over every chunk, bounded in parallel.
 
@@ -208,7 +209,7 @@ async def extract_chunks(
     losing a page of a fifty-page contract is recoverable by re-extracting,
     losing the whole run is forty-nine wasted calls.
     """
-    system_prompt = prompts.build_system_prompt(rules)
+    system_prompt = prompts.build_system_prompt(rules, ontology)
     semaphore = asyncio.Semaphore(max(1, settings.RAG_EXTRACTION_CONCURRENCY))
     results: list[tuple[int, dict]] = []
 
@@ -276,6 +277,12 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
     )
     model = settings.RAG_EXTRACTION_MODEL
 
+    # The library's approved schema governs this extraction. A library with
+    # none falls back to the generic vocabulary, which is what every library
+    # did before ontologies existed.
+    ontology = library_ontology.get_approved(document["library_id"])
+    schema = entity_tools.Schema.for_library(document["library_id"])
+
     trace_id = timeline.start("ingest", f"document:{document_id}")
     store.update_document(
         document_id, status="indexing", trace_id=trace_id,
@@ -284,8 +291,17 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
 
     with timeline.stage(
         "ingest",
-        meta={"filename": document["filename"], "model": model,
-              "rules": bool((effective_rules or "").strip())},
+        meta={
+            "filename": document["filename"],
+            "model": model,
+            "rules": bool((effective_rules or "").strip()),
+            "ontology": (
+                f"v{ontology['version']} "
+                f"({len(ontology['entity_types'])} types, "
+                f"{len(ontology['predicates'])} predicates)"
+                if ontology else "generic vocabulary"
+            ),
+        },
     ) as root:
         text, reason, failure_status = await fetch_text(
             client, document["library_id"], document["mistral_doc_id"]
@@ -317,6 +333,7 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
                 chunks=chunks,
                 rules=effective_rules,
                 model=model,
+                ontology=ontology,
             )
             st.set(
                 raw_entities=sum(len(p.get("entities") or []) for _, p in results),
@@ -324,12 +341,24 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
             )
 
         with timeline.stage("merge") as st:
-            merged = entity_tools.merge(results)
+            merged = entity_tools.merge(results, schema=schema)
             st.set(
                 entities=len(merged["entities"]),
                 relations=len(merged["relations"]),
                 dropped_relations=merged.get("dropped_relations", 0),
+                unmapped_types=merged.get("unmapped_entities", []),
+                unmapped_predicates=merged.get("unmapped_predicates", []),
             )
+            if merged.get("unmapped_entities") or merged.get("unmapped_predicates"):
+                # Not an error. It is the signal that the library schema is
+                # missing something these documents actually contain.
+                st.note(
+                    "outside the library ontology: "
+                    + ", ".join(
+                        merged.get("unmapped_entities", [])
+                        + merged.get("unmapped_predicates", [])
+                    )[:300]
+                )
             if merged.get("dropped_relations"):
                 st.note(
                     f"{merged['dropped_relations']} relation(s) dropped — "
@@ -343,7 +372,12 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
             rules=effective_rules,
             status="pending",
         )
-        store.update_document(document_id, status="proposed", error=None)
+        store.update_document(
+            document_id,
+            status="proposed",
+            error=None,
+            ontology_version=(ontology or {}).get("version"),
+        )
         root.set(entities=draft["entity_count"], relations=draft["relation_count"])
 
     return {
@@ -351,6 +385,9 @@ async def ingest(client, document_id: int, rules: Optional[str] = None) -> dict:
         "trace_id": trace_id,
         "entities": draft["entity_count"],
         "relations": draft["relation_count"],
+        "ontology_version": (ontology or {}).get("version"),
+        "unmapped_entities": merged.get("unmapped_entities", []),
+        "unmapped_predicates": merged.get("unmapped_predicates", []),
     }
 
 
@@ -413,13 +450,26 @@ async def commit(document_id: int, library_name: str = "") -> dict:
 
     with timeline.stage("commit", meta={"filename": document["filename"]}) as root:
         with timeline.stage("sanitize") as st:
-            payload = entity_tools.sanitize_draft(draft)
+            schema = entity_tools.Schema.for_library(document["library_id"])
+            payload = entity_tools.sanitize_draft(draft, schema)
             entity_rows, relation_rows = entity_tools.to_graph_rows(payload)
+
+            # Anything the schema does not define is left out of the graph
+            # rather than written under a type nothing else uses. Reported,
+            # never silent.
+            skipped_entities = len(payload.get("entities", [])) - len(entity_rows)
+            skipped_relations = len(payload.get("relations", [])) - len(relation_rows)
             st.set(
                 entities=len(entity_rows),
                 relations=len(relation_rows),
                 dropped_relations=payload.get("dropped_relations", 0),
+                skipped_unmapped=skipped_entities + skipped_relations,
             )
+            if skipped_entities or skipped_relations:
+                st.note(
+                    f"{skipped_entities} entity/entities and {skipped_relations} "
+                    "relation(s) skipped — not in the library ontology"
+                )
 
         with timeline.stage("graph_write") as st:
             written = await asyncio.to_thread(
@@ -436,12 +486,20 @@ async def commit(document_id: int, library_name: str = "") -> dict:
             st.set(**{k: v for k, v in written.items() if isinstance(v, int)})
 
         store.set_draft_status(document_id, "committed")
-        store.update_document(document_id, status="graphed", error=None)
+        store.update_document(
+            document_id,
+            status="graphed",
+            error=None,
+            ontology_version=(
+                library_ontology.get_approved(document["library_id"]) or {}
+            ).get("version"),
+        )
         root.set(**{k: v for k, v in written.items() if isinstance(v, int)})
 
     return {
         "status": "graphed",
         "document_id": document_id,
         "trace_id": trace_id,
+        "skipped_unmapped": skipped_entities + skipped_relations,
         **written,
     }

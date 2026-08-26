@@ -31,6 +31,14 @@ _EXPECTED: dict[str, dict[str, str]] = {
         "chunk_count": "INTEGER DEFAULT 0",
         "rules": "TEXT",
         "trace_id": "VARCHAR",
+        "ontology_version": "INTEGER",
+    },
+    "rag_library_ontology": {
+        "summary": "TEXT",
+        "prompt": "TEXT",
+        "source_document_ids": "TEXT",
+        "model": "VARCHAR",
+        "approved_at": "DATETIME",
     },
     "rag_extraction_drafts": {
         "entity_count": "INTEGER DEFAULT 0",

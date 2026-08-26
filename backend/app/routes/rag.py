@@ -25,7 +25,10 @@ from pydantic import BaseModel
 
 from app.dependencies import get_mistral_client
 from app.rag import entities as entity_tools
-from app.rag import graph_store, ingest, optimizer, prompts, retrieval, store, timeline
+from app.rag import (
+    graph_store, ingest, library_domain, library_ontology, ontology_agent,
+    optimizer, prompts, retrieval, store, timeline, unified_graph,
+)
 from app.services import library_service
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,17 @@ class RulesRequest(BaseModel):
 
 class ExtractRequest(BaseModel):
     rules: Optional[str] = None
+
+
+class OntologyRequest(BaseModel):
+    entity_types: list[dict[str, Any]] = []
+    predicates: list[dict[str, Any]] = []
+    prompt: str = ""
+    summary: str = ""
+
+
+class DomainRequest(BaseModel):
+    domains: list[str] = []
 
 
 class DraftRequest(BaseModel):
@@ -75,7 +89,12 @@ async def overview():
         raise HTTPException(status_code=502, detail=f"Could not list libraries: {e}")
 
     documents = store.counts_by_library()
-    graph = graph_store.stats([lib.get("id") for lib in libraries])
+    library_ids = [lib.get("id") for lib in libraries]
+    library_domains = library_domain.domains_for_many(library_ids)
+    ontologies = {
+        lid: library_ontology.get_approved(lid) for lid in library_ids if lid
+    }
+    graph = graph_store.stats(library_ids)
     graph_by_library = graph.get("libraries", {})
 
     cards = []
@@ -92,6 +111,11 @@ async def overview():
             "entities": stats["entities"],
             "relations": stats["relations"],
             "has_rules": bool(store.get_rules(library_id)),
+            "serves_domain": library_domains.get(library_id, []),
+            "ontology_version": (ontologies.get(library_id) or {}).get("version"),
+            "content_types": [
+                t["name"] for t in (ontologies.get(library_id) or {}).get("entity_types", [])
+            ],
         })
 
     return {
@@ -263,6 +287,135 @@ async def set_rules(library_id: str, request: RulesRequest):
     return store.set_rules(library_id, request.rules)
 
 
+# ── Library domain ─────────────────────────────────────────────────────────
+
+
+@router.get("/rag/libraries/{library_id}/domains")
+async def get_library_domains(library_id: str):
+    """Which domains this library serves, and the vocabulary to choose from.
+
+    The annotation is what lets a planner pick this library for a goal, and what
+    lets industry knowledge, document search and the graph all narrow to the
+    same subject.
+    """
+    from app.ontology import store as ontology_store
+    from app.ontology.vocab import Scheme
+
+    return {
+        "library_id": library_id,
+        "domains": library_domain.domains_for(library_id),
+        "available": ontology_store.list_concepts(Scheme.DOMAIN.value),
+    }
+
+
+@router.put("/rag/libraries/{library_id}/domains")
+async def set_library_domains(library_id: str, request: DomainRequest):
+    """Assign the domains this library serves, by hand."""
+    domains = library_domain.set_domains(library_id, request.domains, source="user")
+    # Keep the Neo4j mirror in step, so the unified graph reflects the change
+    # immediately rather than at the next boot.
+    unified_graph.link_library(library_id, domains)
+    return {"library_id": library_id, "domains": domains}
+
+
+@router.post("/rag/libraries/{library_id}/domains/classify")
+async def classify_library_domain(library_id: str, client=Depends(get_mistral_client)):
+    """Have a model work out the domain from the library and its ontology."""
+    domains = await library_domain.classify(
+        client, library_id, name=await _library_name(library_id)
+    )
+    unified_graph.link_library(library_id, domains)
+    return {"library_id": library_id, "domains": domains}
+
+
+# ── Library ontology ───────────────────────────────────────────────────────
+
+
+@router.get("/rag/libraries/{library_id}/ontology")
+async def get_ontology(library_id: str):
+    """The schema governing this library, the pending draft, and what is stale.
+
+    Returns both versions because the review screen needs to show them side by
+    side: what extraction runs under now, and what it would run under if the
+    draft were approved.
+    """
+    approved = library_ontology.get_approved(library_id)
+    return {
+        "library_id": library_id,
+        "approved": approved,
+        "draft": library_ontology.get_draft(library_id),
+        "history": library_ontology.history(library_id),
+        "stale_documents": library_ontology.stale_documents(library_id),
+        "architect": ontology_agent.status(),
+        # What extraction would use with no ontology at all, so the UI can show
+        # the fallback honestly rather than implying a schema is required.
+        "fallback_types": list(prompts.ENTITY_TYPES),
+        "effective_prompt": prompts.build_system_prompt(None, approved),
+    }
+
+
+@router.post("/rag/libraries/{library_id}/ontology/propose")
+async def propose_ontology(library_id: str, client=Depends(get_mistral_client)):
+    """Have the architect read the library and propose a schema, as a draft.
+
+    Nothing is applied. The proposal is reviewed and approved separately —
+    correcting a schema costs one edit, correcting what a bad schema extracted
+    costs a re-run per document.
+    """
+    try:
+        return await ontology_agent.propose(
+            client, library_id, await _library_name(library_id)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.exception("Ontology proposal failed for %s", library_id)
+        raise HTTPException(status_code=500, detail=f"Proposal failed: {e}")
+
+
+@router.put("/rag/libraries/{library_id}/ontology")
+async def save_ontology(library_id: str, request: OntologyRequest):
+    """Save a hand-written or hand-edited draft schema."""
+    try:
+        return library_ontology.save_draft(
+            library_id=library_id,
+            entity_types=request.entity_types,
+            predicates=request.predicates,
+            prompt=request.prompt,
+            summary=request.summary,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/rag/libraries/{library_id}/ontology/approve")
+async def approve_ontology(library_id: str):
+    """Promote the draft. Documents extracted under an older version go stale.
+
+    Stale documents are reported, not re-extracted: that costs a model call per
+    chunk, and whether an older schema is *wrong* or merely *older* is a
+    judgement for whoever approved the new one.
+    """
+    try:
+        approved = library_ontology.approve(library_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {
+        "ontology": approved,
+        "stale_documents": library_ontology.stale_documents(library_id),
+    }
+
+
+@router.delete("/rag/libraries/{library_id}/ontology/draft")
+async def discard_ontology_draft(library_id: str):
+    """Throw away the pending draft, leaving the approved schema untouched."""
+    return {"discarded": library_ontology.discard_draft(library_id)}
+
+
 # ── Drafts ─────────────────────────────────────────────────────────────────
 
 
@@ -273,9 +426,19 @@ async def get_draft(document_id: int):
     if not document:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     draft = store.get_draft(document_id)
-    if not draft:
-        return {"document": document, "draft": None}
-    return {"document": document, "draft": draft}
+    ontology = library_ontology.get_approved(document["library_id"])
+    return {
+        "document": document,
+        "draft": draft,
+        # The review screen needs the vocabulary to offer as choices, and the
+        # version, so a reviewer can see the draft is older than the schema.
+        "ontology": ontology,
+        "entity_types": (
+            [t["name"] for t in ontology["entity_types"]] if ontology
+            else list(prompts.ENTITY_TYPES)
+        ),
+        "predicates": [p["name"] for p in (ontology or {}).get("predicates", [])],
+    }
 
 
 @router.put("/rag/documents/{document_id}/draft")
@@ -291,8 +454,9 @@ async def update_draft(document_id: int, request: DraftRequest):
     if not document:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
 
+    schema = entity_tools.Schema.for_library(document["library_id"])
     payload = entity_tools.sanitize_draft(
-        {"entities": request.entities, "relations": request.relations}
+        {"entities": request.entities, "relations": request.relations}, schema
     )
     draft = store.save_draft(
         document_id=document_id,
@@ -300,7 +464,15 @@ async def update_draft(document_id: int, request: DraftRequest):
         rules=document.get("rules"),
         status="edited",
     )
-    return {"draft": draft, "dropped_relations": payload.get("dropped_relations", 0)}
+    return {
+        "draft": draft,
+        "dropped_relations": payload.get("dropped_relations", 0),
+        # Anything still outside the library ontology. Commit will skip these,
+        # so the reviewer needs to see them now rather than discover the gap in
+        # the committed graph.
+        "unmapped_entities": payload.get("unmapped_entities", []),
+        "unmapped_predicates": payload.get("unmapped_predicates", []),
+    }
 
 
 @router.post("/rag/documents/{document_id}/commit")
@@ -323,6 +495,47 @@ async def commit_draft(document_id: int):
 
 
 # ── Graph ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/rag/graph/unified")
+async def unified_graph_view(
+    library_id: Optional[str] = Query(None),
+    document_id: Optional[int] = Query(None),
+    entity_limit: int = Query(300, ge=10, le=1500),
+    include_documents: bool = Query(True),
+):
+    """Concepts, libraries, documents and entities as one interconnected graph.
+
+    The view that shows what the restructure was for: a domain concept, the
+    libraries that serve it, the documents inside them, and the entities those
+    documents produced — all in one picture, rather than a taxonomy tree and a
+    separate entity graph that never meet.
+    """
+    mistral_doc_id = None
+    if document_id:
+        document = store.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        mistral_doc_id = document["mistral_doc_id"]
+        library_id = library_id or document["library_id"]
+
+    return unified_graph.snapshot(
+        library_id=library_id,
+        document_id=mistral_doc_id,
+        entity_limit=entity_limit,
+        include_documents=include_documents,
+    )
+
+
+@router.post("/rag/graph/sync-taxonomy")
+async def sync_taxonomy():
+    """Rebuild the taxonomy mirror in Neo4j from SQLite.
+
+    Runs on boot; exposed so an ontology edit can be reflected without a
+    restart. A full rebuild, because a diff eventually leaves a deleted concept
+    behind.
+    """
+    return unified_graph.sync_taxonomy()
 
 
 @router.get("/rag/graph")
@@ -359,6 +572,7 @@ async def graph(
 class SearchRequest(BaseModel):
     query: str
     library_ids: list[str] = []
+    domains: list[str] = []
     hops: int = 2
     limit: int = 12
     optimize: bool = True
@@ -366,26 +580,45 @@ class SearchRequest(BaseModel):
 
 @router.post("/rag/search")
 async def search(request: SearchRequest, client=Depends(get_mistral_client)):
-    """Run a graph retrieval and return every stage of it.
+    """Run the agent's own retrieval and return every stage of it.
 
-    The same path the agent tool takes, with the intermediate results exposed:
-    what the optimiser did to the query, which entities matched, what the
-    traversal found, and the prompt block the model would actually receive.
-    That last one matters — when an answer is wrong, the question is almost
-    always what the model was handed, and this is the only place to see it.
+    Both sources, exactly as ``search_domain_knowledge`` runs them: what the
+    optimiser did to the query, which entities matched, what the traversal
+    found, which industry notes came back, and the prompt block the model would
+    actually receive.
     """
-    result = await retrieval.retrieve(
+    from app.rag import domain_search
+
+    result = await domain_search.search(
         client,
         request.query,
         library_ids=request.library_ids or None,
+        domains=request.domains or None,
         hops=request.hops,
         limit=request.limit,
         optimize=request.optimize,
     )
     return {
         **result,
-        "rendered": retrieval.render_for_prompt(result),
+        # Exactly the block the agent's tool would hand the model — the whole
+        # point of the bench. When an answer is wrong, what the model was given
+        # is nearly always the explanation.
+        "rendered": domain_search.render(result),
     }
+
+
+@router.post("/rag/agents/sync")
+async def sync_agent_tools(client=Depends(get_mistral_client)):
+    """Reconcile the grounded-knowledge tool across every agent.
+
+    Attaches it where the agent has documents or a domain worth searching,
+    removes it where it would return nothing, and strips the two tools it
+    replaced off agents created before the consolidation. Runs on boot; exposed
+    so a newly graphed library takes effect without a restart.
+    """
+    from app.rag import rag_tools
+
+    return await rag_tools.backfill_rag_tool(client)
 
 
 @router.get("/rag/optimizer")

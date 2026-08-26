@@ -393,20 +393,12 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if not tool_keys and doc_lib_ids:
             tool_keys = ["document_library"]
 
-        # Every agent gets the industry knowledge tool unless the caller opted
-        # out. Default-on is the point: an agent that has to be *remembered*
-        # into the knowledge graph mostly will not be.
-        from app.ontology.knowledge_tool import with_knowledge_tool
-
-        if data.get("industry_knowledge", True):
-            tool_keys = with_knowledge_tool(tool_keys)
-
-        # An agent with a document library gets the graph tool alongside it.
-        # The pair is what makes it a RAG agent: the library searches the text,
-        # the graph traverses what was extracted from that same text.
+        # One grounded-knowledge tool, attached when the agent has documents or
+        # a domain to search. Its partner is document_library: that one searches
+        # the text, this one searches what we know about it.
         from app.rag.rag_tools import with_rag_tools
 
-        tool_keys = with_rag_tools(tool_keys, doc_lib_ids)
+        tool_keys = with_rag_tools(tool_keys, doc_lib_ids, data.get("domains"))
 
         tool_specs = get_tools(
             tool_keys,
@@ -495,7 +487,7 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             from app.rag.rag_tools import with_rag_tools
 
             update_kwargs["tools"] = get_tools(
-                with_rag_tools(tool_keys, doc_lib_ids),
+                with_rag_tools(tool_keys, doc_lib_ids, data.get("domains")),
                 document_library_ids=doc_lib_ids,
                 connectors=connectors,
             )

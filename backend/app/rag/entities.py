@@ -51,9 +51,73 @@ def normalize_name(name: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
-def coerce_type(value: Any) -> str:
-    """Map whatever the model said onto the closed type vocabulary."""
-    candidate = str(value or "").strip().lower()
+class Schema:
+    """A library's approved vocabulary, in the form coercion needs.
+
+    Built from the stored ontology once per extraction rather than looked up per
+    row: a forty-chunk document produces hundreds of entities, and re-reading
+    the schema for each would dominate the merge.
+
+    ``None`` anywhere a Schema is accepted means "no approved ontology" and
+    restores the generic behaviour — libraries are not required to design a
+    schema before they can extract anything.
+    """
+
+    __slots__ = ("types", "predicates", "_type_lookup", "_predicate_lookup")
+
+    def __init__(self, types: Iterable[str] = (), predicates: Iterable[str] = ()):
+        self.types = [t for t in types if t]
+        self.predicates = [p for p in predicates if p]
+        self._type_lookup = {t.lower(): t for t in self.types}
+        self._predicate_lookup = {p.lower(): p for p in self.predicates}
+
+    @classmethod
+    def for_library(cls, library_id: str) -> Optional["Schema"]:
+        """The approved schema for a library, or None if it has none."""
+        try:
+            from app.rag import library_ontology
+
+            ontology = library_ontology.get_approved(library_id)
+        except Exception:
+            return None
+        if not ontology or not ontology.get("entity_types"):
+            return None
+        return cls(
+            [t["name"] for t in ontology["entity_types"]],
+            [p["name"] for p in ontology.get("predicates") or []],
+        )
+
+    def match_type(self, value: str) -> Optional[str]:
+        return self._type_lookup.get(value.lower())
+
+    def match_predicate(self, value: str) -> Optional[str]:
+        return self._predicate_lookup.get(value.lower())
+
+
+def coerce_type(value: Any, schema: Optional[Schema] = None) -> str:
+    """Map whatever the model said onto the closed type vocabulary.
+
+    With a schema, an unrecognised type is returned **unchanged** so the caller
+    can flag it. Quietly folding it into a schema type would be the worst
+    outcome: the reviewer would never learn the schema is missing something,
+    and the entity would sit in the graph under a type that misdescribes it.
+    """
+    candidate = str(value or "").strip()
+    if schema is not None:
+        matched = schema.match_type(candidate)
+        if matched:
+            return matched
+        # A near-miss the generic aliases can resolve — "company" when the
+        # schema has "Organization" — is still worth catching.
+        generic = _generic_type(candidate)
+        return schema.match_type(generic) or (candidate or "Concept")
+
+    return _generic_type(candidate)
+
+
+def _generic_type(value: str) -> str:
+    """Map onto the built-in vocabulary. The pre-ontology behaviour."""
+    candidate = value.strip().lower()
     if candidate in _TYPE_LOOKUP:
         return _TYPE_LOOKUP[candidate]
     # Common near-misses. Cheaper than another model call and it fires often
@@ -75,10 +139,20 @@ def coerce_type(value: Any) -> str:
     return aliases.get(candidate, "Concept")
 
 
-def coerce_predicate(value: Any) -> str:
-    """A lower_snake_case verb phrase, or a safe default."""
-    text = _PREDICATE_CLEAN.sub("_", str(value or "").strip().lower()).strip("_")
-    return text[:60] or "related_to"
+def coerce_predicate(value: Any, schema: Optional[Schema] = None) -> str:
+    """A lower_snake_case verb phrase, mapped onto the schema where there is one.
+
+    Like ``coerce_type``, an unrecognised predicate is returned unchanged rather
+    than rewritten, so the caller can report it. This is the field the closed
+    vocabulary exists for: uncontrolled predicates produced "pays" and
+    "pays_invoice_to" for the same fact on two runs of one document.
+    """
+    text = _PREDICATE_CLEAN.sub("_", str(value or "").strip().lower()).strip("_")[:60]
+    if not text:
+        return "related_to"
+    if schema is not None and schema.predicates:
+        return schema.match_predicate(text) or text
+    return text
 
 
 def _clean_text(value: Any, limit: int) -> str:
@@ -94,8 +168,21 @@ def _confidence(value: Any, default: float = 0.7) -> float:
     return round(min(1.0, max(0.0, number)), 2)
 
 
-def normalize_entity(raw: dict, *, chunk_index: int = 0, source: str = "llm") -> Optional[dict]:
-    """One extracted entity in canonical form, or None if unusable."""
+def normalize_entity(
+    raw: dict,
+    *,
+    chunk_index: int = 0,
+    source: str = "llm",
+    schema: Optional[Schema] = None,
+) -> Optional[dict]:
+    """One extracted entity in canonical form, or None if unusable.
+
+    When a schema is in force, an entity whose type is not in it is kept and
+    marked ``unmapped``. It reaches the reviewer, who either retypes it or
+    decides the schema needs it — which is the signal that a new ontology
+    version is warranted. Commit skips anything still unmapped, and reports
+    how many.
+    """
     name = _clean_text(raw.get("name"), MAX_NAME)
     normalized = normalize_name(name)
     if not normalized:
@@ -108,10 +195,14 @@ def normalize_entity(raw: dict, *, chunk_index: int = 0, source: str = "llm") ->
             aliases.append(cleaned)
 
     evidence = _clean_text(raw.get("evidence"), MAX_EVIDENCE)
+    entity_type = coerce_type(raw.get("type"), schema)
+    unmapped = bool(schema is not None and schema.match_type(entity_type) is None)
+
     return {
         "name": name,
         "normalized": normalized,
-        "type": coerce_type(raw.get("type")),
+        "type": entity_type,
+        "unmapped": unmapped,
         "description": _clean_text(raw.get("description"), MAX_DESCRIPTION),
         "aliases": aliases[:8],
         "confidence": _confidence(raw.get("confidence")),
@@ -122,7 +213,9 @@ def normalize_entity(raw: dict, *, chunk_index: int = 0, source: str = "llm") ->
     }
 
 
-def normalize_relation(raw: dict, *, source: str = "llm") -> Optional[dict]:
+def normalize_relation(
+    raw: dict, *, source: str = "llm", schema: Optional[Schema] = None
+) -> Optional[dict]:
     """One extracted relation in canonical form, or None if unusable."""
     source_name = _clean_text(raw.get("source"), MAX_NAME)
     target_name = _clean_text(raw.get("target"), MAX_NAME)
@@ -135,14 +228,22 @@ def normalize_relation(raw: dict, *, source: str = "llm") -> Optional[dict]:
         # description rather than a fact about a connection.
         return None
 
+    predicate = coerce_predicate(raw.get("predicate"), schema)
+    unmapped = bool(
+        schema is not None
+        and schema.predicates
+        and schema.match_predicate(predicate) is None
+    )
+
     return {
         "source": source_name,
         "source_normalized": source_normalized,
-        "source_type": coerce_type(raw.get("source_type")),
-        "predicate": coerce_predicate(raw.get("predicate")),
+        "source_type": coerce_type(raw.get("source_type"), schema),
+        "predicate": predicate,
+        "unmapped": unmapped,
         "target": target_name,
         "target_normalized": target_normalized,
-        "target_type": coerce_type(raw.get("target_type")),
+        "target_type": coerce_type(raw.get("target_type"), schema),
         "evidence": _clean_text(raw.get("evidence"), MAX_EVIDENCE),
         "confidence": _confidence(raw.get("confidence")),
         "source_kind": source,
@@ -153,6 +254,7 @@ def merge(
     chunk_results: Iterable[tuple[int, dict]],
     *,
     source: str = "llm",
+    schema: Optional[Schema] = None,
 ) -> dict:
     """Fold per-chunk extractions into one draft.
 
@@ -170,7 +272,9 @@ def merge(
         for raw in payload.get("entities") or []:
             if not isinstance(raw, dict):
                 continue
-            entity = normalize_entity(raw, chunk_index=chunk_index, source=source)
+            entity = normalize_entity(
+                raw, chunk_index=chunk_index, source=source, schema=schema
+            )
             if not entity:
                 continue
             key = (entity["normalized"], entity["type"])
@@ -195,7 +299,7 @@ def merge(
         for raw in payload.get("relations") or []:
             if not isinstance(raw, dict):
                 continue
-            relation = normalize_relation(raw, source=source)
+            relation = normalize_relation(raw, source=source, schema=schema)
             if not relation:
                 continue
             key = (
@@ -247,11 +351,35 @@ def resolve(payload: dict) -> dict:
         relation["target"] = target["name"]
         kept.append(relation)
 
-    return {"entities": entities, "relations": kept, "dropped_relations": dropped}
+    return {
+        "entities": entities,
+        "relations": kept,
+        "dropped_relations": dropped,
+        # What the schema did not recognise. Surfaced rather than silently
+        # absorbed: this is the only signal that a library ontology is
+        # missing something the documents actually contain.
+        "unmapped_entities": sorted({e["type"] for e in entities if e.get("unmapped")}),
+        "unmapped_predicates": sorted(
+            {r["predicate"] for r in kept if r.get("unmapped")}
+        ),
+    }
 
 
 def to_graph_rows(payload: dict) -> tuple[list[dict], list[dict]]:
-    """Shape a resolved draft into the rows ``graph_store.commit_document`` unwinds."""
+    """Shape a resolved draft into the rows ``graph_store.commit_document`` unwinds.
+
+    Entities and relations still marked ``unmapped`` are excluded. Writing them
+    would put types and predicates in the graph that the library schema does
+    not define — which is how a graph fragments, and the reason the schema is
+    closed in the first place. The caller reports the count; the reviewer
+    fixes them by retyping, or by extending the ontology.
+    """
+    skipped = {
+        entity["normalized"]
+        for entity in payload.get("entities") or []
+        if entity.get("unmapped")
+    }
+
     entity_rows = [
         {
             "name": entity["name"],
@@ -274,6 +402,7 @@ def to_graph_rows(payload: dict) -> tuple[list[dict], list[dict]]:
             ],
         }
         for entity in payload.get("entities") or []
+        if not entity.get("unmapped")
     ]
 
     relation_rows = [
@@ -288,11 +417,14 @@ def to_graph_rows(payload: dict) -> tuple[list[dict], list[dict]]:
             "source": relation.get("source_kind", "llm"),
         }
         for relation in payload.get("relations") or []
+        if not relation.get("unmapped")
+        and relation["source_normalized"] not in skipped
+        and relation["target_normalized"] not in skipped
     ]
     return entity_rows, relation_rows
 
 
-def sanitize_draft(payload: Any) -> dict:
+def sanitize_draft(payload: Any, schema: Optional[Schema] = None) -> dict:
     """Re-normalise a draft that came back from the review UI.
 
     The UI sends whatever the user typed. Everything is re-derived here rather
@@ -301,13 +433,18 @@ def sanitize_draft(payload: Any) -> dict:
     well-formed as a freshly extracted one.
     """
     if not isinstance(payload, dict):
-        return {"entities": [], "relations": [], "dropped_relations": 0}
+        return {
+            "entities": [], "relations": [], "dropped_relations": 0,
+            "unmapped_entities": [], "unmapped_predicates": [],
+        }
 
     entities = []
     for raw in payload.get("entities") or []:
         if not isinstance(raw, dict):
             continue
-        entity = normalize_entity(raw, source=raw.get("source") or "user")
+        entity = normalize_entity(
+            raw, source=raw.get("source") or "user", schema=schema
+        )
         if not entity:
             continue
         # Mentions are evidence, not user input: preserve what extraction found
@@ -326,7 +463,9 @@ def sanitize_draft(payload: Any) -> dict:
     for raw in payload.get("relations") or []:
         if not isinstance(raw, dict):
             continue
-        relation = normalize_relation(raw, source=raw.get("source_kind") or "user")
+        relation = normalize_relation(
+            raw, source=raw.get("source_kind") or "user", schema=schema
+        )
         if relation:
             relations.append(relation)
 

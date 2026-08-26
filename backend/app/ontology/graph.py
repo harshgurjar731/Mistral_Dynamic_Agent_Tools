@@ -46,7 +46,7 @@ _EDGE_LABELS = {
 NODE_KINDS = (
     "industry", "domain", "subdomain",
     "capability", "data_class", "agent_tier",
-    "agent", "tool", "connector", "workflow",
+    "agent", "tool", "connector", "workflow", "library",
 )
 
 
@@ -90,11 +90,12 @@ async def _fetch_inventory(client) -> dict[str, list[dict]]:
             for w in await asyncio.to_thread(list_workflows)
         ]
 
-    agents, tools, connectors, workflows = await asyncio.gather(
+    agents, tools, connectors, workflows, libraries = await asyncio.gather(
         agent_service.list_agents(client, page=0, page_size=200),
         tool_resolver.list_tools(),
         connector_service.list_connectors(),
         _workflows(),
+        _libraries(),
         return_exceptions=True,
     )
 
@@ -113,7 +114,29 @@ async def _fetch_inventory(client) -> dict[str, list[dict]]:
         "tools": _ok(tools, "tools"),
         "connectors": _ok(connectors, "connectors", lambda r: r.get("items", [])),
         "workflows": _ok(workflows, "workflows"),
+        "libraries": _ok(libraries, "libraries"),
     }
+
+
+async def _libraries() -> list[dict]:
+    """Document libraries, for the resource graph.
+
+    Libraries became annotatable resources when ``SubjectType.LIBRARY`` was
+    finally written to, so they belong here beside agents and workflows: this
+    graph answers "what serves which domain", and a library is one of the
+    things that does.
+
+    What is *inside* a library — its documents and the entities extracted from
+    them — is the other graph, in Neo4j. This one stays a resource view built
+    from SQLite, so it keeps working when the graph database is stopped.
+    """
+    from app.services import library_service
+
+    try:
+        return await library_service.list_libraries()
+    except Exception as e:
+        logger.warning("Graph: could not load libraries: %s", e)
+        return []
 
 
 def _subject_nodes(inventory: dict[str, list[dict]]) -> dict[str, dict]:
@@ -146,6 +169,16 @@ def _subject_nodes(inventory: dict[str, list[dict]]) -> dict[str, dict]:
                 connector.get("name") or connector["id"],
                 subject_id=connector["id"], subject_type=SubjectType.CONNECTOR.value,
                 description=(connector.get("description") or "")[:200],
+            )
+
+    for library in inventory.get("libraries") or []:
+        if library.get("id"):
+            nodes[f"library:{library['id']}"] = _node(
+                f"library:{library['id']}", "library",
+                library.get("name") or library["id"],
+                subject_id=library["id"], subject_type=SubjectType.LIBRARY.value,
+                documents=library.get("document_count"),
+                description=(library.get("description") or "")[:200],
             )
 
     for workflow in inventory["workflows"]:

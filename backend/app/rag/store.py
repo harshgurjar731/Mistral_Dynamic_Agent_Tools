@@ -48,6 +48,7 @@ def _document_dict(row: RagDocument) -> dict:
         "chunk_count": row.chunk_count or 0,
         "rules": row.rules or "",
         "trace_id": row.trace_id,
+        "ontology_version": row.ontology_version,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -152,7 +153,7 @@ def update_document(document_id: int, **fields: Any) -> Optional[dict]:
     """Patch a document row. Unknown keys are ignored rather than raising."""
     allowed = {
         "status", "error", "char_count", "chunk_count",
-        "rules", "trace_id", "filename", "mime_type",
+        "rules", "trace_id", "filename", "mime_type", "ontology_version",
     }
     with _session() as db:
         if db is None:

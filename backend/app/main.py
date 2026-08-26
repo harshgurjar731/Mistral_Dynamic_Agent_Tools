@@ -186,31 +186,55 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Query optimiser setup skipped: %s", e)
 
-    # Give every existing agent the industry knowledge tool. Idempotent — an
-    # agent that already carries it costs no API call — so this is safe on
-    # every boot and is what keeps agents made before the feature existed from
-    # being permanently worse than ones made after.
+    # The architect that designs each library's content schema. Same
+    # adopt-don't-duplicate contract as the optimiser, so a reset database
+    # reuses the existing agent instead of filling the workspace with copies.
     try:
-        from app.ontology import knowledge_tool
         from app.dependencies import get_mistral_client
+        from app.rag import ontology_agent
 
-        summary = await knowledge_tool.backfill_all_agents(get_mistral_client())
-        logger.info("✅ Industry knowledge tool: %s", summary)
+        architect_id = await ontology_agent.ensure_agent(get_mistral_client())
+        if architect_id:
+            logger.info("✅ Ontology architect ready: %s", architect_id)
     except Exception as e:
-        logger.warning("⚠️ Knowledge tool backfill skipped: %s", e)
+        logger.warning("⚠️ Ontology architect setup skipped: %s", e)
 
-    # Reconcile the knowledge-graph tool the same way: attach it to agents whose
-    # libraries hold a graph, remove it from those whose libraries do not. Runs
-    # after the knowledge backfill so both tool arrays settle in one pass, and
+    # Annotate libraries against the domain taxonomy. Libraries predate this
+    # entirely, so without a backfill the planner's domain scoping would apply
+    # to an empty set and quietly change nothing.
+    try:
+        from app.dependencies import get_mistral_client
+        from app.rag import library_domain
+
+        summary = await library_domain.backfill(get_mistral_client())
+        logger.info("✅ Library domains: %s", summary)
+    except Exception as e:
+        logger.warning("⚠️ Library domain backfill skipped: %s", e)
+
+    # Mirror the taxonomy into Neo4j so concepts, libraries, documents and
+    # entities form one graph. Derived state, rebuilt from SQLite, so it can
+    # never drift into a second disagreeing copy.
+    try:
+        from app.rag import unified_graph
+
+        summary = unified_graph.sync_taxonomy()
+        logger.info("✅ Taxonomy mirror: %s", summary)
+    except Exception as e:
+        logger.warning("⚠️ Taxonomy mirror skipped: %s", e)
+
+    # One reconcile for the one grounded-knowledge tool: attach it to agents
+    # that have documents or a domain worth searching, remove it from those
+    # that do not, and strip the two tools it replaced off anything created
+    # before the consolidation. Idempotent, so it is safe on every boot, and it
     # does nothing at all when Neo4j is down rather than stripping every agent.
     try:
         from app.dependencies import get_mistral_client
         from app.rag import rag_tools
 
         summary = await rag_tools.backfill_rag_tool(get_mistral_client())
-        logger.info("✅ Knowledge graph tool: %s", summary)
+        logger.info("✅ Domain search tool: %s", summary)
     except Exception as e:
-        logger.warning("⚠️ Graph tool reconcile skipped: %s", e)
+        logger.warning("⚠️ Domain search reconcile skipped: %s", e)
 
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools

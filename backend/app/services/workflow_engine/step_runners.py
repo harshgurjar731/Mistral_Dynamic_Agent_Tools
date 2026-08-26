@@ -32,18 +32,11 @@ logger = logging.getLogger(__name__)
 _agent_name_to_id_cache: dict[str, str] = {}
 
 
-def _knowledge_tool_spec() -> dict:
-    """The industry-knowledge tool spec, imported lazily (see the note above)."""
-    from app.services.tool_registry import ALL_TOOLS, INDUSTRY_KNOWLEDGE_TOOL
+def _domain_search_spec() -> dict:
+    """The grounded-knowledge tool spec, imported lazily (see the note above)."""
+    from app.services.tool_registry import ALL_TOOLS, DOMAIN_SEARCH_TOOL
 
-    return ALL_TOOLS[INDUSTRY_KNOWLEDGE_TOOL]
-
-
-def _graph_tool_spec() -> dict:
-    """The knowledge-graph tool spec, imported lazily for the same reason."""
-    from app.services.tool_registry import ALL_TOOLS, KNOWLEDGE_GRAPH_TOOL
-
-    return ALL_TOOLS[KNOWLEDGE_GRAPH_TOOL]
+    return ALL_TOOLS[DOMAIN_SEARCH_TOOL]
 
 
 def _is_agent_uuid(agent_id: str) -> bool:
@@ -118,11 +111,11 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
                 "Always provide a complete response — never return empty."
             ),
             description=f"Auto-created workflow agent: {agent_id}",
-            # The graph tool goes on the stand-in too. It has no library of
-            # its own yet, so it searches every graphed library — which is the
-            # right default for an agent invented mid-workflow, and the boot
-            # reconcile removes it if that never becomes useful.
-            tools=[_knowledge_tool_spec(), _graph_tool_spec()],
+            # The stand-in gets it too. With no library of its own it searches
+            # everything graphed, which is the right default for an agent
+            # invented mid-workflow; the boot reconcile removes it if that
+            # never becomes useful.
+            tools=[_domain_search_spec()],
         )
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id

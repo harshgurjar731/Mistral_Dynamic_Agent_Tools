@@ -181,7 +181,7 @@ class WorkflowPlanningLayer(Layer):
                 agent_service.list_agents(client, page=0, page_size=100),
                 _fetch_workflows(),
                 connector_service.describe_for_prompt(scope),
-                library_inventory.describe_for_prompt(),
+                library_inventory.describe_for_prompt(scope),
             )
 
             existing_tool_names = [t.get("name", "") for t in existing_tools]
@@ -371,7 +371,6 @@ class WorkflowPlanningLayer(Layer):
                             for cid in (agent_spec.get("connectors") or [])
                             if cid in connector_ids
                         ]
-                        from app.ontology.knowledge_tool import with_knowledge_tool
                         from app.rag.rag_tools import with_rag_tools
 
                         agent_libraries = [
@@ -380,7 +379,7 @@ class WorkflowPlanningLayer(Layer):
                         ]
                         tool_definitions = get_tools(
                             with_rag_tools(
-                                with_knowledge_tool(tool_keys), agent_libraries
+                                tool_keys, agent_libraries, agent_spec.get("domains")
                             ),
                             document_library_ids=agent_libraries or None,
                             connectors=agent_connectors,

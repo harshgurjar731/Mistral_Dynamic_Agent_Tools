@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import get_mistral_client
 from app.ontology import (
-    classifier, graph as ontology_graph, knowledge, knowledge_tool, matcher, store,
+    classifier, graph as ontology_graph, knowledge, matcher, store,
 )
 from app.ontology.store import VocabularyError
 from app.ontology.vocab import Predicate, Scheme, SubjectType, tier_labels
@@ -328,53 +328,6 @@ async def get_graph(
     )
 
 
-@router.get("/ontology/scope")
-async def preview_scope(goal: str = Query(..., min_length=3)):
-    """What a goal would be narrowed to. Useful for debugging retrieval."""
-    scope = matcher.scope_for_goal(goal)
-    concepts = sorted(scope["concepts"])
-
-    # The matched subtree, with enough shape for the client to draw it rather
-    # than re-query each concept.
-    detail = [store.get_concept(cid) for cid in concepts]
-    return {
-        "goal": goal,
-        "scoped": scope["scoped"],
-        "domains": scope["domains"],
-        "label": matcher.describe_scope(scope),
-        "concepts": concepts,
-        "concept_detail": [c for c in detail if c],
-        "scores": matcher.score_concepts(goal, Scheme.DOMAIN.value)[:8],
-    }
-
-
-@router.get("/ontology/scope/graph")
-async def preview_scope_graph(goal: str = Query(..., min_length=3)):
-    """The scope preview as a graph — matched subtree plus what it admits."""
-    scope = matcher.scope_for_goal(goal)
-    if not scope["scoped"]:
-        # Unscoped means the planner sees everything; drawing "everything" here
-        # would misrepresent a *failure to match* as a rich result.
-        return {
-            "goal": goal, "scoped": False,
-            "label": matcher.describe_scope(scope),
-            "nodes": [], "edges": [], "counts": {}, "totals": {"nodes": 0, "edges": 0},
-        }
-
-    result = await ontology_graph.build_graph(
-        get_mistral_client(), root_concept=",".join(scope["domains"]),
-    )
-    result.update({
-        "goal": goal,
-        "scoped": True,
-        "label": matcher.describe_scope(scope),
-        "matched_domains": scope["domains"],
-    })
-    return result
-
-
-# ── Classification ─────────────────────────────────────────────────────────
-
 @router.post("/ontology/classify")
 async def classify_resource(request: ClassifyRequest):
     """Classify a resource against the vocabulary with an LLM.
@@ -481,9 +434,3 @@ async def knowledge_for_agent(agent_id: str, query: str = Query("", min_length=0
         "results": results,
         "count": len(results),
     }
-
-
-@router.post("/ontology/knowledge/attach-tool")
-async def attach_knowledge_tool():
-    """Give every existing agent the industry knowledge tool. Idempotent."""
-    return await knowledge_tool.backfill_all_agents(get_mistral_client())

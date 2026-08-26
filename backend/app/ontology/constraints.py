@@ -79,11 +79,96 @@ def check(
         issues += _check_capabilities(definition, agents_by_id, connectors_by_id)
         issues += _check_egress(definition, agents_by_id, connectors_by_id)
         issues += _check_guardrails(definition, agents_by_id)
+        issues += _check_library_domains(definition, agents_by_id)
     except Exception as e:
         # A broken rule must not block saving a workflow.
         logger.warning("Ontology constraint check failed: %s", e)
 
     return issues
+
+
+# ── Document library coverage ──────────────────────────────────────────────
+
+
+def _check_library_domains(
+    definition: WorkflowDefinition,
+    agents_by_id: dict[str, dict],
+) -> list[ValidationIssue]:
+    """An agent's documents should be from the domain it serves.
+
+    Two failures this catches, both of which produce a confidently wrong answer
+    rather than an error:
+
+    * An agent annotated to a domain, given a library annotated to a different
+      one. It will search those documents and cite them, and nothing downstream
+      knows the subject was wrong.
+    * A domain agent with no library at all, in a workflow whose other steps do
+      have one — usually a step that was meant to read the uploaded material and
+      silently answers from the model's own knowledge instead.
+
+    Both are warnings, not errors. A library legitimately spanning two domains
+    is normal, and an unannotated library is only unclassified rather than
+    wrong — so this advises and never blocks a save.
+    """
+    from app.rag import library_domain
+
+    issues: list[ValidationIssue] = []
+
+    library_steps = 0
+    for step in definition.steps:
+        if step.type != StepType.AGENT:
+            continue
+        agent_id = (step.config or {}).get("agent_id")
+        agent = agents_by_id.get(agent_id or "")
+        if not agent:
+            continue
+
+        library_ids = _library_ids_of(agent)
+        if library_ids:
+            library_steps += 1
+
+        agent_domains = set(
+            store.annotations_for(SubjectType.AGENT.value, agent_id)
+            .get(Predicate.SERVES_DOMAIN.value, [])
+        )
+        if not agent_domains or not library_ids:
+            continue
+
+        # Everything the agent's domain reaches, in either direction: a
+        # mortgage agent may legitimately read a general lending library, and a
+        # lending agent may read a mortgage one.
+        reachable: set[str] = set()
+        for concept_id in agent_domains:
+            reachable |= store.descendants(concept_id)
+            reachable |= store.ancestors(concept_id, include_self=True)
+
+        for library_id in library_ids:
+            library_domains = set(library_domain.domains_for(library_id))
+            if not library_domains:
+                continue  # unclassified, not wrong
+            if library_domains & reachable:
+                continue
+            issues.append(_issue(
+                "warning",
+                "library_domain_mismatch",
+                f"Agent '{agent.get('name') or agent_id}' serves "
+                f"{_labels(agent_domains)} but reads a document library scoped to "
+                f"{_labels(library_domains)}. It will cite those documents as if "
+                f"they were about its own domain.",
+                step_id=step.id,
+            ))
+
+    return issues
+
+
+def _library_ids_of(agent: dict) -> list[str]:
+    """The libraries an agent searches, from its resolved tools array."""
+    try:
+        from app.rag.scope import library_ids_from_tools
+
+        return library_ids_from_tools(agent.get("tools") or [])
+    except Exception:
+        return []
 
 
 # ── Capability coverage ────────────────────────────────────────────────────

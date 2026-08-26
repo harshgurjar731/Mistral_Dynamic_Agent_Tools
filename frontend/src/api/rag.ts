@@ -93,6 +93,9 @@ export interface LibraryCard {
   entities: number;
   relations: number;
   has_rules: boolean;
+  serves_domain: string[];
+  ontology_version: number | null;
+  content_types: string[];
 }
 
 export interface GraphStatus {
@@ -201,18 +204,117 @@ export interface RetrievedRelation {
   sources: string[];
 }
 
+/** One curated industry-knowledge entry. */
+export interface KnowledgeEntry {
+  id: number;
+  concept_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  as_of: string | null;
+  score?: number;
+}
+
+/**
+ * What `search_domain_knowledge` returns: both sources, kept separate.
+ *
+ * They are deliberately not merged into one ranking — a Lucene score over
+ * entity names and token overlap over prose are not comparable numbers.
+ */
 export interface SearchResult {
-  plan: QueryPlan;
-  entities: MatchedEntity[];
-  relations: RetrievedRelation[];
-  passages: {
-    name: string; type: string; description: string;
-    doc_id: string; filename: string; quote: string; chunk_index: number;
-  }[];
-  available: boolean;
-  reason: string;
+  query: string;
+  graph: {
+    plan?: QueryPlan;
+    entities?: MatchedEntity[];
+    relations?: RetrievedRelation[];
+    passages?: {
+      name: string; type: string; description: string;
+      doc_id: string; filename: string; quote: string; chunk_index: number;
+    }[];
+    available: boolean;
+    reason?: string;
+  };
+  knowledge: { available: boolean; entries: KnowledgeEntry[]; reason?: string };
+  libraries: string[];
+  domains: string[];
+  found: boolean;
   /** Exactly what the agent's tool would hand the model. */
   rendered: string;
+}
+
+/** One entity type in a library's ontology. */
+export interface OntologyType {
+  name: string;
+  description: string;
+  examples: string[];
+}
+
+/** One predicate. `source_types`/`target_types` are advisory, shown to the extractor. */
+export interface OntologyPredicate {
+  name: string;
+  description: string;
+  source_types: string[];
+  target_types: string[];
+}
+
+export interface LibraryOntology {
+  id: number;
+  library_id: string;
+  version: number;
+  status: 'draft' | 'approved' | 'superseded';
+  summary: string;
+  entity_types: OntologyType[];
+  predicates: OntologyPredicate[];
+  prompt: string;
+  source_document_ids: string[];
+  model: string | null;
+  created_at: string | null;
+  approved_at: string | null;
+}
+
+export interface StaleDocument {
+  id: number;
+  filename: string;
+  ontology_version: number | null;
+  current_version: number;
+}
+
+/** A node in the unified graph. `kind` is the level it belongs to. */
+export interface UnifiedNode {
+  id: string;
+  kind: 'concept' | 'library' | 'document' | 'entity';
+  label: string;
+  type: string;
+  degree: number;
+  description?: string;
+  library_id?: string | null;
+  concept_id?: string;
+  level?: number;
+}
+
+export interface UnifiedEdge {
+  source: string;
+  target: string;
+  predicate: string;
+  evidence?: string;
+  confidence?: number | null;
+}
+
+export interface UnifiedGraph {
+  available: boolean;
+  nodes: UnifiedNode[];
+  edges: UnifiedEdge[];
+  truncated: boolean;
+  counts: Record<string, number>;
+  library_id?: string | null;
+  reason?: string;
+}
+
+export interface Concept {
+  id: string;
+  label: string;
+  definition?: string;
+  level?: number;
 }
 
 export const ragApi = {
@@ -302,6 +404,7 @@ export const ragApi = {
   search: (body: {
     query: string;
     library_ids?: string[];
+    domains?: string[];
     hops?: number;
     limit?: number;
     optimize?: boolean;
@@ -319,6 +422,80 @@ export const ragApi = {
 
   previewOptimizer: (query: string) =>
     api.post<QueryPlan>('/api/rag/optimizer/preview', { query }),
+
+  // ── Library ontology ────────────────────────────────────────────────────
+  ontology: (libraryId: string) =>
+    api.get<{
+      library_id: string;
+      approved: LibraryOntology | null;
+      draft: LibraryOntology | null;
+      history: LibraryOntology[];
+      stale_documents: StaleDocument[];
+      architect: { agent_id: string | null; name: string; protected: boolean };
+      fallback_types: string[];
+      effective_prompt: string;
+    }>(`/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology`),
+
+  /** Have the architect read a sample of the library and propose a schema. */
+  proposeOntology: (libraryId: string) =>
+    api.post<LibraryOntology & { trace_id: string }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/propose`,
+    ),
+
+  saveOntology: (libraryId: string, body: {
+    entity_types: OntologyType[];
+    predicates: OntologyPredicate[];
+    prompt?: string;
+    summary?: string;
+  }) =>
+    api.put<LibraryOntology>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology`, body,
+    ),
+
+  approveOntology: (libraryId: string) =>
+    api.post<{ ontology: LibraryOntology; stale_documents: StaleDocument[] }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/approve`,
+    ),
+
+  discardOntologyDraft: (libraryId: string) =>
+    api.delete(`/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/draft`),
+
+  // ── Library domain ──────────────────────────────────────────────────────
+  domains: (libraryId: string) =>
+    api.get<{ library_id: string; domains: string[]; available: Concept[] }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains`,
+    ),
+
+  setDomains: (libraryId: string, domains: string[]) =>
+    api.put<{ library_id: string; domains: string[] }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains`, { domains },
+    ),
+
+  classifyDomain: (libraryId: string) =>
+    api.post<{ library_id: string; domains: string[] }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains/classify`,
+    ),
+
+  // ── The unified graph ───────────────────────────────────────────────────
+  unifiedGraph: (params: {
+    library_id?: string;
+    /** Narrows to one document — and to the concepts its library serves. */
+    document_id?: number;
+    entity_limit?: number;
+    include_documents?: boolean;
+  } = {}) => api.get<UnifiedGraph>('/api/rag/graph/unified', { params }),
+
+  syncTaxonomy: () =>
+    api.post<{ synced: boolean; concepts?: number; library_links?: number; reason?: string }>(
+      '/api/rag/graph/sync-taxonomy',
+    ),
+
+  /** Reconcile the grounded-knowledge tool across every agent. */
+  syncAgents: () =>
+    api.post<{
+      checked: number; attached: number; detached: number;
+      unchanged: number; failed: number; skipped?: string;
+    }>('/api/rag/agents/sync'),
 
   // ── Timeline ────────────────────────────────────────────────────────────
   traces: (params: { subject?: string; scope?: string; limit?: number } = {}) =>

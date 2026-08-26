@@ -82,6 +82,12 @@ class RagDocument(Base):
     # this document without searching the event table by subject.
     trace_id = Column(String, nullable=True)
 
+    # Which version of the library's ontology this document was extracted
+    # under. Approving a new version does not silently invalidate what is
+    # already in the graph — it makes this number stale, which is what the UI
+    # reports and what a re-extract clears.
+    ontology_version = Column(Integer, nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -129,6 +135,66 @@ class ExtractionDraft(Base):
 
     __table_args__ = (
         UniqueConstraint("document_id", name="uq_rag_draft_document"),
+    )
+
+
+class LibraryOntology(Base):
+    """The content schema for one library: what may be extracted from it.
+
+    A library is one industry, domain or use case — all contracts, all incident
+    reports — so the *kinds* of thing worth extracting are a property of the
+    library, not of each document. Storing the schema here rather than deriving
+    it per document is what keeps a graph connected: two documents typing the
+    same company differently produce two nodes, because entity identity in Neo4j
+    is ``(library_id, normalized, type)``.
+
+    Versioned and append-only. Approving a new version supersedes the old one
+    but never rewrites it: documents already in the graph were extracted under
+    the version stamped on them, and knowing which is the only way to tell a
+    stale document from a current one.
+
+    ``prompt`` is the generated, use-case-specific part of the extraction
+    instruction — what to look for in *this* library. It is spliced into the
+    fixed contract rather than replacing it; the evidence requirement and the
+    JSON output shape are not negotiable and are not stored here.
+    """
+
+    __tablename__ = "rag_library_ontology"
+
+    id = Column(Integer, primary_key=True)
+    library_id = Column(String, nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+
+    # draft      — proposed or hand-edited, not yet governing extraction
+    # approved   — the one version new extractions run under
+    # superseded — kept for the documents still stamped with it
+    status = Column(String, nullable=False, default="draft", index=True)
+
+    # What the architect understood the library to be about. Shown to the
+    # reviewer as the justification for the schema it proposed.
+    summary = Column(Text, nullable=True)
+
+    # JSON [{name, description, examples[]}]
+    entity_types = Column(Text, nullable=False, default="[]")
+    # JSON [{name, description, source_types[], target_types[]}]
+    #
+    # The half that matters most. Predicates are uncontrolled today, and the
+    # same fact extracted twice came back as "pays" and "pays_invoice_to" —
+    # two edges in Neo4j, so a traversal filtering on one misses the other.
+    predicates = Column(Text, nullable=False, default="[]")
+
+    prompt = Column(Text, nullable=True)
+    # JSON list of the documents sampled to propose this schema.
+    source_document_ids = Column(Text, nullable=True)
+    model = Column(String, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    approved_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("library_id", "version", name="uq_library_ontology_version"),
+        Index("ix_library_ontology_status", "library_id", "status"),
     )
 
 

@@ -1,25 +1,28 @@
 """
-Attaching the graph tool to agents.
+Attaching the grounded-knowledge tool to agents.
 
-The rule is one sentence: **the graph tool rides with the document library.**
-An agent that searches a library should also be able to traverse the graph
-built from that library, and an agent with no library has nothing to traverse.
-That keeps "is this a RAG agent" a property of what the agent already carries
-rather than a flag someone has to remember to set.
+The rule is one sentence: **an agent gets it when it has something to search.**
+Documents in a library, or a domain with curated industry knowledge behind it —
+either is enough. An agent with neither gains only a wasted round trip, so it
+does not get the tool at all.
 
 Five places in this codebase create an agent, so the merge lives here and every
-creation path calls it — the same reason ``knowledge_tool`` exists. Attaching is
-additive and idempotent: an agent's ``tools`` array mixes plain strings, built-in
-type dicts and function specs, and a naive append produces duplicates the
-Mistral API rejects.
+creation path calls it. Attaching is additive and idempotent: an agent's
+``tools`` array mixes plain strings, built-in type dicts, function specs and SDK
+objects, and a naive append produces duplicates the Mistral API rejects.
 
-The reconcile at boot goes both ways, like the knowledge tool's. Attaching
-everywhere was the obvious first move and the wrong one: an agent whose
-libraries hold no graph pays a tool-call round trip to be told nothing matched,
-then answers from the library anyway. So the tool is attached where a lookup
-would return something and removed where it would not, which makes the whole
-thing self-healing — graph a library and its agents pick the tool up on the next
-restart, delete that graph and they give it back.
+Every path also **strips the two tools this one replaced**. An agent still
+carrying ``query_industry_knowledge`` would call a name the registry no longer
+executes, and the failure would look like the tool being broken rather than
+retired.
+
+The reconcile at boot goes both ways. Attaching everywhere was the obvious first
+move and the wrong one: an agent whose sources hold nothing pays a tool-call
+round trip to be told nothing matched, then answers from its own knowledge
+anyway. So the tool is attached where a lookup would return something and
+removed where it would not, which makes the whole thing self-healing — graph a
+library and its agents pick the tool up on the next restart, delete that graph
+and they give it back.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ import asyncio
 import logging
 from typing import Any, Iterable, Optional
 
-from app.services.tool_registry import KNOWLEDGE_GRAPH_TOOL
+from app.services.tool_registry import DOMAIN_SEARCH_TOOL, LEGACY_RETRIEVAL_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +51,14 @@ def _key_matches(key: Any, name: str) -> bool:
     return cleaned == name or cleaned.startswith(f"{name}:")
 
 
-def tool_key_present(tool_keys: Iterable[Any], name: str = KNOWLEDGE_GRAPH_TOOL) -> bool:
+def tool_key_present(tool_keys: Iterable[Any], name: str = DOMAIN_SEARCH_TOOL) -> bool:
     return any(_key_matches(key, name) for key in tool_keys or [])
 
 
 def with_rag_tools(
     tool_keys: Optional[Iterable[Any]],
     library_ids: Optional[Iterable[str]] = None,
+    domains: Optional[Iterable[str]] = None,
 ) -> list[Any]:
     """Return ``tool_keys`` with the RAG pair completed.
 
@@ -62,21 +66,32 @@ def with_rag_tools(
     the graph tool alone would search a graph the agent has no documents in,
     which is worse than not having it.
     """
-    keys = list(tool_keys or [])
+    keys = [
+        key for key in (tool_keys or [])
+        # Agents made before the consolidation carry the retired names. Drop
+        # them here so a rename does not leave an agent holding a tool the
+        # registry can no longer execute.
+        if not any(tool_key_present([key], legacy) for legacy in LEGACY_RETRIEVAL_TOOLS)
+    ]
     ids = [lid for lid in (library_ids or []) if lid]
 
     has_library = tool_key_present(keys, _DOCUMENT_LIBRARY) or bool(ids)
-    if not has_library:
+    has_domain = bool(domains)
+
+    # The tool covers documents and curated industry knowledge, so either is
+    # reason enough to carry it. An agent with neither gains only a wasted
+    # round trip.
+    if not has_library and not has_domain:
         return keys
 
     if ids and not tool_key_present(keys, _DOCUMENT_LIBRARY):
         keys.append(_DOCUMENT_LIBRARY)
-    if not tool_key_present(keys, KNOWLEDGE_GRAPH_TOOL):
-        keys.append(KNOWLEDGE_GRAPH_TOOL)
+    if not tool_key_present(keys, DOMAIN_SEARCH_TOOL):
+        keys.append(DOMAIN_SEARCH_TOOL)
     return keys
 
 
-def spec_present(tools: Iterable[Any], name: str = KNOWLEDGE_GRAPH_TOOL) -> bool:
+def spec_present(tools: Iterable[Any], name: str = DOMAIN_SEARCH_TOOL) -> bool:
     """Whether a resolved ``tools`` array already carries this tool.
 
     Entries arrive in three shapes — plain strings, ``{"type": ...}`` for
@@ -107,16 +122,19 @@ def library_ids_of(tools: Iterable[Any]) -> list[str]:
     return library_ids_from_tools(tools)
 
 
-def agent_has_coverage(tools: Iterable[Any]) -> bool:
-    """Whether the graph tool would return anything for this agent.
+def agent_has_coverage(tools: Iterable[Any], agent_id: str = "") -> bool:
+    """Whether the tool would return anything for this agent.
 
-    Two conditions, both necessary: the agent must search at least one library,
-    and at least one of those libraries must actually hold a graph.
+    A union across both sources it searches: a graphed library, or a domain with
+    industry knowledge behind it. Either is enough — an agent with documents but
+    no curated knowledge for its domain is the common case, and so is the
+    reverse.
     """
-    from app.rag import graph_store
+    from app.ontology import knowledge
+    from app.rag import domain_search
 
-    ids = library_ids_of(tools)
-    return bool(ids) and graph_store.has_coverage(ids)
+    domains = knowledge.domains_for_agent(agent_id) if agent_id else []
+    return domain_search.has_coverage(library_ids_of(tools), domains)
 
 
 async def attach_to_agent(client, agent_id: str, existing_tools: list) -> bool:
@@ -128,16 +146,19 @@ async def attach_to_agent(client, agent_id: str, existing_tools: list) -> bool:
     if spec_present(existing_tools):
         return False
 
-    spec = ALL_TOOLS.get(KNOWLEDGE_GRAPH_TOOL)
+    spec = ALL_TOOLS.get(DOMAIN_SEARCH_TOOL)
     if not spec:
         return False
 
+    # Strip the retired tools on the way past. An agent that kept
+    # query_industry_knowledge would call a name the registry no longer
+    # executes, and the failure would look like the tool being broken.
+    kept = [
+        tool for tool in (existing_tools or [])
+        if not any(spec_present([tool], legacy) for legacy in LEGACY_RETRIEVAL_TOOLS)
+    ]
     await asyncio.to_thread(
-        partial(
-            client.beta.agents.update,
-            agent_id=agent_id,
-            tools=[*(existing_tools or []), spec],
-        )
+        partial(client.beta.agents.update, agent_id=agent_id, tools=[*kept, spec])
     )
     _invalidate(agent_id)
     return True
@@ -150,7 +171,11 @@ async def detach_from_agent(client, agent_id: str, existing_tools: list) -> bool
     if not spec_present(existing_tools):
         return False
 
-    remaining = [tool for tool in (existing_tools or []) if not spec_present([tool])]
+    remaining = [
+        tool for tool in (existing_tools or [])
+        if not spec_present([tool])
+        and not any(spec_present([tool], legacy) for legacy in LEGACY_RETRIEVAL_TOOLS)
+    ]
     await asyncio.to_thread(
         partial(client.beta.agents.update, agent_id=agent_id, tools=remaining)
     )
@@ -176,9 +201,9 @@ async def backfill_rag_tool(client, page_size: int = 200) -> dict:
     summary = {"checked": 0, "attached": 0, "detached": 0, "unchanged": 0, "failed": 0}
 
     if not graph_store.available():
-        # Without a graph, coverage is false for everyone and the reconcile
-        # would strip the tool off every agent — then put it back on the next
-        # boot. Doing nothing is the correct response to "the graph is down".
+        # Without a graph, half the coverage test cannot run and the reconcile
+        # would strip the tool off every document-backed agent — then put it
+        # back on the next boot. Doing nothing is the correct response.
         summary["skipped"] = "knowledge graph unavailable"
         return summary
 
@@ -196,7 +221,7 @@ async def backfill_rag_tool(client, page_size: int = 200) -> dict:
         tools = item.get("tools") or []
 
         try:
-            if agent_has_coverage(tools):
+            if agent_has_coverage(tools, agent_id):
                 if await attach_to_agent(client, agent_id, tools):
                     summary["attached"] += 1
                 else:
@@ -211,5 +236,5 @@ async def backfill_rag_tool(client, page_size: int = 200) -> dict:
             logger.debug("Could not sync graph tool on %s: %s", agent_id, e)
 
     if summary["attached"] or summary["detached"] or summary["failed"]:
-        logger.info("Knowledge graph tool sync: %s", summary)
+        logger.info("Domain search tool sync: %s", summary)
     return summary

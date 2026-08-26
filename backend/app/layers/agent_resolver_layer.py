@@ -124,7 +124,9 @@ class AgentResolverLayer(Layer):
             (library_descriptions, library_ids),
         ) = await asyncio.gather(
             connector_service.describe_for_prompt(scope),
-            library_inventory.describe_for_prompt(),
+            # Scoped to the query's domain, so a mortgage question is offered
+            # the mortgage library rather than all eleven.
+            library_inventory.describe_for_prompt(scope),
         )
 
         try:
@@ -217,14 +219,14 @@ class AgentResolverLayer(Layer):
 
         # The dynamic agent answers a real user question, so it needs the same
         # domain grounding a hand-built agent gets.
-        from app.ontology.knowledge_tool import with_knowledge_tool
         from app.rag.rag_tools import with_rag_tools
 
-        # A dynamic agent the planner gave a document library to is a RAG agent
-        # and needs both halves, exactly like a hand-built one.
+        # A dynamic agent answers a real user question, so it needs the same
+        # grounding a hand-built one gets.
         dynamic_tools = with_rag_tools(
-            with_knowledge_tool(agent_config["tools"]),
+            agent_config["tools"],
             agent_config.get("document_library_ids"),
+            agent_config.get("domains"),
         )
         tool_definitions = get_tools(
             dynamic_tools,

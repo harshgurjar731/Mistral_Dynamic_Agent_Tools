@@ -34,6 +34,10 @@ export const KIND_STYLES: Record<string, KindStyle> = {
   workflow:   { label: 'Workflow',   color: '#EC4899', bg: 'rgba(236,72,153,0.12)',  rank: 7 },
   tool:       { label: 'Tool',       color: '#FB923C', bg: 'rgba(251,146,60,0.12)',  rank: 8 },
   connector:  { label: 'Connector',  color: '#A3E635', bg: 'rgba(163,230,53,0.12)',  rank: 9 },
+  // Libraries sit with the other resources: this graph answers "what serves
+  // which domain", and a library is one of the things that does. What is
+  // *inside* one is the content graph, in Neo4j.
+  library:    { label: 'Library',    color: '#22D3EE', bg: 'rgba(34,211,238,0.12)',  rank: 10 },
   // The synthetic tree root. Deliberately white so it reads as the origin
   // rather than as one more category.
   root:       { label: 'Platform',   color: '#F8FAFC', bg: 'rgba(248,250,252,0.10)', rank: -1 },

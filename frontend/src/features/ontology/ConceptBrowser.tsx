@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, BookOpen, Check, FolderGit2, Loader2, Network, Search, Sparkles, Tag, Layers, Wand2,
+  AlertCircle, Check, FolderGit2, Layers, Loader2, Network, Search, Sparkles, Wand2,
 } from 'lucide-react';
 import {
   ontologyApi,
@@ -28,11 +28,11 @@ import OverviewTab from './OverviewTab';
 import VocabularyTab from './VocabularyTab';
 import KnowledgeTab from './KnowledgeTab';
 import RagTab from './RagTab';
-import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
+import RetrievalTab from './RetrievalTab';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 
-type Tab = 'overview' | 'vocabulary' | 'knowledge' | 'rag' | 'annotations' | 'scope';
+type Tab = 'overview' | 'taxonomy' | 'libraries' | 'retrieval';
 
 const AGENT_PREDICATES: Predicate[] = [
   'has_tier',
@@ -50,13 +50,14 @@ export default function ConceptBrowser() {
     queryFn: () => ontologyApi.overview().then((r) => r.data),
   });
 
+  // Four tabs, one question each: what exists, what the words mean, what the
+  // documents say, and what an agent actually retrieves. The six it replaced
+  // split those questions across pages that had to be read together.
   const tabs: { key: Tab; label: string; icon: typeof Layers }[] = [
     { key: 'overview', label: 'Overview', icon: Network },
-    { key: 'vocabulary', label: 'Vocabulary', icon: Layers },
-    { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
-    { key: 'rag', label: 'Graph RAG', icon: FolderGit2 },
-    { key: 'annotations', label: 'Annotations', icon: Tag },
-    { key: 'scope', label: 'Scope preview', icon: Sparkles },
+    { key: 'taxonomy', label: 'Taxonomy', icon: Layers },
+    { key: 'libraries', label: 'Libraries', icon: FolderGit2 },
+    { key: 'retrieval', label: 'Retrieval', icon: Search },
   ];
 
   return (
@@ -64,7 +65,7 @@ export default function ConceptBrowser() {
     <div
       className={cn(
         'p-8 mx-auto',
-        tab === 'overview' || tab === 'rag' ? 'max-w-[1600px]' : 'max-w-5xl',
+        tab === 'overview' || tab === 'libraries' ? 'max-w-[1600px]' : 'max-w-5xl',
       )}
     >
       <div className="flex items-end justify-between mb-8">
@@ -117,11 +118,9 @@ export default function ConceptBrowser() {
       </div>
 
       {tab === 'overview' && <OverviewTab />}
-      {tab === 'vocabulary' && <VocabularyTab />}
-      {tab === 'knowledge' && <KnowledgeTab />}
-      {tab === 'rag' && <RagTab />}
-      {tab === 'annotations' && <AnnotationsTab />}
-      {tab === 'scope' && <ScopeTab />}
+      {tab === 'taxonomy' && <TaxonomyTab />}
+      {tab === 'libraries' && <RagTab />}
+      {tab === 'retrieval' && <RetrievalTab />}
     </div>
   );
 }
@@ -139,6 +138,49 @@ function Stat({ n, k }: { n: number; k: string }) {
 
 /** How many agents to pull for the picker. One page, deliberately generous. */
 const AGENT_PAGE_SIZE = 200;
+
+/**
+ * The vocabulary and what is filed against it, together.
+ *
+ * These were two tabs, and reading either one alone answered half a question:
+ * the terms without their usage, or the usage without the tree it hangs off.
+ * A sub-tab keeps them one page while leaving each list at full width, which
+ * both need.
+ */
+function TaxonomyTab() {
+  const [view, setView] = useState<'vocabulary' | 'annotations' | 'knowledge'>('vocabulary');
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-0.5">
+        {([
+          { key: 'vocabulary' as const, label: 'Concepts', hint: 'The terms themselves' },
+          { key: 'annotations' as const, label: 'What uses them', hint: 'Agents, workflows and libraries filed against each concept' },
+          { key: 'knowledge' as const, label: 'Knowledge', hint: 'What each domain involves — retrieved at runtime alongside the document graph' },
+        ]).map((option) => (
+          <button
+            key={option.key}
+            onClick={() => setView(option.key)}
+            title={option.hint}
+            className={cn(
+              'rounded px-3 py-1.5 text-xs transition-colors',
+              view === option.key
+                ? 'bg-indigo-500/15 text-white'
+                : 'text-[var(--color-text-muted)] hover:text-white',
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'vocabulary' && <VocabularyTab />}
+      {view === 'annotations' && <AnnotationsTab />}
+      {view === 'knowledge' && <KnowledgeTab />}
+    </div>
+  );
+}
+
 
 function AnnotationsTab() {
   const [query, setQuery] = useState('');
@@ -457,122 +499,6 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
 }
 
 /* ── Scope preview ────────────────────────────────────────────────────────── */
-
-function ScopeTab() {
-  const [goal, setGoal] = useState('Assess a residential mortgage application');
-  const [selected, setSelected] = useState<any>(null);
-
-  const { data, isFetching, refetch } = useQuery({
-    queryKey: ['ontology', 'scope', goal],
-    queryFn: () => ontologyApi.scope(goal).then((r) => r.data),
-    enabled: goal.trim().length > 2,
-  });
-
-  // The same scope, as the subgraph the planner would actually see. The score
-  // list says *which* concepts matched; this says what that admits — which is
-  // the question you are really asking when a workflow picked odd agents.
-  const { data: graph, isFetching: graphLoading } = useQuery({
-    queryKey: ['ontology', 'scope', 'graph', goal],
-    queryFn: () => ontologyApi.scopeGraph(goal).then((r) => r.data),
-    enabled: goal.trim().length > 2,
-  });
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <p className="text-sm text-[var(--color-text-muted)] mb-3 max-w-2xl">
-          What the planner would narrow to for a given goal. If a workflow proposes the wrong
-          agents, this is the first place to look — an unexpected scope usually means an
-          annotation is wrong, not that the model chose badly.
-        </p>
-        <div className="flex gap-2">
-          <input
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && refetch()}
-            placeholder="Describe a workflow goal…"
-            className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] text-sm text-white focus:outline-none focus:border-[rgba(99,102,241,0.5)]"
-          />
-          <button
-            onClick={() => refetch()}
-            className="px-4 py-2 rounded-lg bg-white text-[var(--color-bg-base)] text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            {isFetching ? <Loader2 size={14} className="animate-spin" /> : 'Preview'}
-          </button>
-        </div>
-      </div>
-
-      {data && (
-        <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-5 space-y-4">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-              Resolved scope
-            </span>
-            <p className={cn('text-sm mt-1', data.scoped ? 'text-emerald-400' : 'text-amber-400')}>
-              {data.label}
-            </p>
-            {!data.scoped && (
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                No domain matched, so the planner sees the full inventory. Add a synonym to the
-                right domain if this goal should have narrowed.
-              </p>
-            )}
-          </div>
-
-          {data.scores.length > 0 && (
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                Match scores
-              </span>
-              <div className="mt-2 space-y-1">
-                {data.scores.map(([id, score]) => (
-                  <div key={id} className="flex items-center justify-between text-xs">
-                    <code className="font-mono text-[var(--color-text-secondary)]">{id}</code>
-                    <span className="tabular-nums text-[var(--color-text-muted)]">
-                      {score.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* The scope as a picture: the matched subtree and everything it admits. */}
-      {data?.scoped && (
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border-subtle)]">
-          <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-4 py-2">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
-              <Network size={12} className="text-indigo-400" />
-              What this scope admits
-            </span>
-            {graph && (
-              <span className="font-mono text-[10px] tabular-nums text-[var(--color-text-muted)]">
-                {graph.totals.nodes} nodes · {graph.totals.edges} edges
-              </span>
-            )}
-          </div>
-          <div className="h-[440px]">
-            <OntologyGraphCanvas
-              graph={graph}
-              isLoading={graphLoading}
-              selectedId={selected?.id ?? null}
-              onSelect={setSelected}
-              rootLabel="Scope"
-              emptyHint="This goal matched a domain, but nothing is annotated under it yet."
-            />
-          </div>
-          {graph && (
-            <div className="border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-4 py-2">
-              <GraphLegend counts={graph.counts} />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Loading({ label }: { label: string }) {
   return (

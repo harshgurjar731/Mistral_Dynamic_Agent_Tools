@@ -11,6 +11,8 @@ import {
 } from '../../api/ontology';
 import { cn } from '../../lib/utils';
 import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
+import UnifiedGraphCanvas from './graph/UnifiedGraphCanvas';
+import { ragApi } from '../../api/rag';
 import { kindStyle, type LayoutKind } from './graph/graphLayout';
 
 /**
@@ -27,9 +29,14 @@ import { kindStyle, type LayoutKind } from './graph/graphLayout';
  * to the full graph when you actually want the wiring.
  */
 
-type Mode = 'taxonomy' | 'resources' | 'full';
+type Mode = 'taxonomy' | 'resources' | 'full' | 'content';
 
 const MODES: { key: Mode; label: string; hint: string }[] = [
+  {
+    key: 'content',
+    label: 'Content',
+    hint: 'What is inside the libraries: documents and the entities extracted from them, grouped by type.',
+  },
   {
     key: 'taxonomy',
     label: 'Taxonomy',
@@ -52,8 +59,13 @@ const MODES: { key: Mode; label: string; hint: string }[] = [
 /** Kinds each mode asks the API for. */
 const MODE_KINDS: Record<Mode, string[] | undefined> = {
   taxonomy: ['industry', 'domain', 'subdomain'],
-  resources: ['industry', 'domain', 'subdomain', 'agent', 'workflow', 'tool', 'connector'],
+  resources: [
+    'industry', 'domain', 'subdomain',
+    'agent', 'workflow', 'tool', 'connector', 'library',
+  ],
   full: undefined,
+  // Served by Neo4j, not this query — see the content graph below.
+  content: undefined,
 };
 
 export default function OverviewTab() {
@@ -65,6 +77,16 @@ export default function OverviewTab() {
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [layout, setLayout] = useState<LayoutKind>('tree');
+
+  // The content graph answers a different question from a different store:
+  // what is *inside* the libraries, from Neo4j. Fetched only when that mode is
+  // open, and its absence never blocks the resource view — which is why the
+  // two are separate queries rather than one.
+  const { data: contentGraph } = useQuery({
+    queryKey: ['rag', 'graph', 'unified', 'overview'],
+    queryFn: () => ragApi.unifiedGraph({ entity_limit: 400 }).then((r) => r.data),
+    enabled: mode === 'content',
+  });
 
   const { data: graph, isLoading, isFetching } = useQuery({
     queryKey: ['ontology', 'graph', mode, appliedSearch],
@@ -323,6 +345,20 @@ export default function OverviewTab() {
       {/* ── Canvas + inspector ─────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-[var(--color-border-subtle)]">
+          {mode === 'content' ? (
+            contentGraph ? (
+              <UnifiedGraphCanvas
+                graph={contentGraph}
+                height={fullscreen ? window.innerHeight - 40 : 620}
+                clusterBy="kind"
+                title="Content across every library"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-muted)]">
+                Loading the content graph…
+              </div>
+            )
+          ) : (
           <OntologyGraphCanvas
             graph={visible}
             isLoading={isLoading}
@@ -338,9 +374,10 @@ export default function OverviewTab() {
             emptyHint={
               appliedSearch
                 ? 'Nothing matched that search.'
-                : 'The vocabulary is empty — add concepts in the Vocabulary tab.'
+                : 'The vocabulary is empty — add concepts in the Taxonomy tab.'
             }
           />
+          )}
         </div>
 
         {selected && (

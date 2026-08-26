@@ -95,9 +95,15 @@ def _purge_local_graph(library_id: str) -> dict:
     """
     summary: dict = {}
     try:
-        from app.rag import graph_store, store as rag_store
+        from app.rag import (
+            graph_store, library_domain, library_ontology, store as rag_store,
+        )
 
         summary["graph"] = graph_store.delete_library_graph(library_id)
+        library_domain.clear_domains(library_id)
+        summary["ontology_versions_removed"] = library_ontology.delete_for_library(
+            library_id
+        )
         removed = 0
         for document in rag_store.list_documents(library_id):
             rag_store.delete_document(document["id"])
