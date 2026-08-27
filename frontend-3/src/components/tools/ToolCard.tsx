@@ -34,11 +34,12 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-function schemaEntries(schema: Tool["schema_json"]): Record<string, unknown> | null {
+function schemaEntries(tool: Tool): Record<string, unknown> | null {
+  const schema = tool.schema_json ?? tool.schema;
   if (!schema) return null;
   if (typeof schema === "string") {
     try {
-      return JSON.parse(schema);
+      return JSON.parse(schema) as Record<string, unknown>;
     } catch {
       return null;
     }
@@ -46,12 +47,19 @@ function schemaEntries(schema: Tool["schema_json"]): Record<string, unknown> | n
   return schema;
 }
 
+/** Tool Service records carry no top-level description — the schema holds it. */
+function toolDescription(tool: Tool): string {
+  if (tool.description) return tool.description;
+  const fn = schemaEntries(tool)?.["function"] as { description?: string } | undefined;
+  return fn?.description ?? "";
+}
+
 export function ToolCard({ tool, pending = false }: { tool: Tool; pending?: boolean }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [source, setSource] = useState(tool.source_code ?? "");
-  const [description, setDescription] = useState(tool.description ?? "");
+  const [description, setDescription] = useState(toolDescription(tool));
   const [publishOpen, setPublishOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [serverName, setServerName] = useState("");
@@ -60,7 +68,8 @@ export function ToolCard({ tool, pending = false }: { tool: Tool; pending?: bool
 
   const src = toolSource(tool.id);
   const editable = src === "dynamic";
-  const schema = schemaEntries(tool.schema_json);
+  const schema = schemaEntries(tool);
+  const summary = toolDescription(tool);
 
   const invalidateLists = () => {
     qc.invalidateQueries({ queryKey: QK.tools() });
@@ -158,8 +167,8 @@ export function ToolCard({ tool, pending = false }: { tool: Tool; pending?: bool
               </span>
             ) : null}
           </div>
-          {tool.description ? (
-            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{tool.description}</p>
+          {summary ? (
+            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{summary}</p>
           ) : null}
         </div>
       </button>

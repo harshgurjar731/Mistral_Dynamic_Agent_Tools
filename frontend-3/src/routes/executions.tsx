@@ -1,22 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ExecutionsDashboard } from "@/components/workflows/ExecutionsDashboard";
 
 export const Route = createFileRoute("/executions")({
   head: () => ({
     meta: [
       { title: "Executions — Agentic AI Design Patterns" },
-      { name: "description", content: "Workflow execution history." },
+      { name: "description", content: "Fleet view of every workflow run, local and remote." },
       { property: "og:title", content: "Executions — Agentic AI Design Patterns" },
-      { property: "og:description", content: "Workflow execution history." },
+      {
+        property: "og:description",
+        content: "Fleet view of every workflow run, local and remote.",
+      },
     ],
   }),
-  component: ExecutionsPage,
+  component: ExecutionsDashboard,
 });
-
-function ExecutionsPage() {
-  return (
-    <div className="px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">Executions</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Workflow execution history.</p>
-    </div>
-  );
-}

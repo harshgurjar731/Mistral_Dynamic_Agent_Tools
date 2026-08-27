@@ -140,12 +140,13 @@ export const TOOL_SOURCE_IDENTITY: Record<ToolSource, StatusIdentity> = {
   dynamic: { label: "Dynamic", text: "text-purple", bg: "bg-purple/10", border: "border-purple/30" },
 };
 
-export function toolSource(id: string): ToolSource {
-  if (id.startsWith("native-")) return "native";
-  if (id.startsWith("builtin-")) return "builtin";
+export function toolSource(id: string | number | null | undefined): ToolSource {
+  const str = String(id ?? "");
+  if (str.startsWith("native-")) return "native";
+  if (str.startsWith("builtin-")) return "builtin";
   return "dynamic";
 }
-export const isEditableTool = (id: string) => toolSource(id) === "dynamic";
+export const isEditableTool = (id: string | number | null | undefined) => toolSource(id) === "dynamic";
 
 export const DOCUMENT_STATUS_IDENTITY: Record<string, StatusIdentity> = {
   uploaded: {

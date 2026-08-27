@@ -144,12 +144,18 @@ export interface BuilderCatalog {
 /* ── Tools ──────────────────────────────────────────────────────────── */
 export type ToolSource = "builtin" | "native" | "dynamic";
 export interface Tool {
-  id: string;
+  id: string | number;
   name: string;
   version?: number | string;
   status?: string;
   description?: string;
+  /**
+   * The Tool Service returns `schema`; the native and built-in records the
+   * backend appends return `schema_json`. Both shapes reach the UI, so both
+   * are declared and `toolSchema()` picks whichever is present.
+   */
   schema_json?: Record<string, unknown> | string | null;
+  schema?: Record<string, unknown> | string | null;
   source_code?: string | null;
   hash?: string | null;
   sandbox_output?: string | null;

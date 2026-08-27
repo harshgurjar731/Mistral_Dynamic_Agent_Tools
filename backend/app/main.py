@@ -4,7 +4,13 @@ Mistral Dynamic Agent Backend — FastAPI Application Entry Point.
 
 import asyncio
 import logging
+import platform
 from contextlib import asynccontextmanager
+
+# Python 3.14 on Windows uses WMI queries for platform info by default.
+# When Windows WMI is unresponsive or blocked, WMI queries block indefinitely.
+if hasattr(platform, "_wmi"):
+    platform._wmi = None
 
 
 from fastapi import FastAPI

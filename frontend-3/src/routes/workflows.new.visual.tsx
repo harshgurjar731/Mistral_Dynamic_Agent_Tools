@@ -1,22 +1,41 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { WorkflowBuilder } from "@/components/workflows/WorkflowBuilder";
+import { emptyDefinition } from "@/components/workflows/builderModel";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/workflows/new/visual")({
   head: () => ({
     meta: [
-      { title: "Workflow Builder — Agentic AI Design Patterns" },
-      { name: "description", content: "Design a workflow visually." },
-      { property: "og:title", content: "Workflow Builder — Agentic AI Design Patterns" },
-      { property: "og:description", content: "Design a workflow visually." },
+      { title: "Workflow builder — Agentic AI Design Patterns" },
+      { name: "description", content: "Assemble a workflow DAG step by step on a canvas." },
+      { property: "og:title", content: "Workflow builder — Agentic AI Design Patterns" },
+      {
+        property: "og:description",
+        content: "Assemble a workflow DAG step by step on a canvas.",
+      },
     ],
   }),
-  component: WorkflowsNewVisualPage,
+  component: VisualBuilderPage,
 });
 
-function WorkflowsNewVisualPage() {
+function VisualBuilderPage() {
   return (
-    <div className="px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">Workflow Builder</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Design a workflow visually.</p>
+    <div className="space-y-5 px-6 py-8">
+      <PageHeader
+        eyebrow="Builder"
+        title="New workflow"
+        description="Add steps from the palette, drag between handles to wire them, and set an entry point. Validation runs as you edit."
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/workflows/new">
+              <ArrowLeft className="size-3.5" /> Back
+            </Link>
+          </Button>
+        }
+      />
+      <WorkflowBuilder mode="create" initial={emptyDefinition()} />
     </div>
   );
 }

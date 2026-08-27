@@ -175,7 +175,7 @@ function RemoteServerDetailPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {(toolsQuery.data ?? []).map((t: Tool) => (
-                    <SelectItem key={t.id} value={t.id}>
+                    <SelectItem key={t.id} value={String(t.id)}>
                       {t.name}
                     </SelectItem>
                   ))}

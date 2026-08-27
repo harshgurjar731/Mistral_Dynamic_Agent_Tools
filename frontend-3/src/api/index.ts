@@ -111,13 +111,13 @@ export const toolsApi = {
   list: () => get<Tool[]>("/api/tools"),
   pending: () => get<{ tools: Tool[]; count: number }>("/api/tools/pending"),
   synthesize: (task: string) => post<unknown>("/api/tools/synthesize", { task }),
-  approve: (id: string) => post<unknown>(`/api/tools/${id}/approve`),
-  reject: (id: string) => post<unknown>(`/api/tools/${id}/reject`),
-  update: (id: string, body: { source_code: string; description: string }) =>
+  approve: (id: string | number) => post<unknown>(`/api/tools/${id}/approve`),
+  reject: (id: string | number) => post<unknown>(`/api/tools/${id}/reject`),
+  update: (id: string | number, body: { source_code: string; description: string }) =>
     put<unknown>(`/api/tools/${id}`, body),
-  remove: (id: string) => del<unknown>(`/api/tools/${id}`),
+  remove: (id: string | number) => del<unknown>(`/api/tools/${id}`),
   byHash: (hash: string) => get<Tool>(`/api/tools/by-hash/${hash}`),
-  publishMcp: (id: string, serverName: string) =>
+  publishMcp: (id: string | number, serverName: string) =>
     post<unknown>(`/api/tools/${id}/publish-mcp`, { server_name: serverName }),
 };
 
@@ -147,8 +147,8 @@ export const remoteServersApi = {
     post<{ reachable: boolean; url: string; health?: unknown }>("/api/remote-servers/check", {
       url,
     }),
-  sendTool: (id: string, toolId: string) =>
-    post<unknown>(`/api/remote-servers/${id}/send-tool`, { tool_id: toolId }),
+  sendTool: (id: string, toolId: string | number) =>
+    post<unknown>(`/api/remote-servers/${id}/send-tool`, { tool_id: String(toolId) }),
 };
 
 /* ── Libraries ──────────────────────────────────────────────────────── */
@@ -353,7 +353,15 @@ export const ontologyApi = {
 /* ── Workflows ──────────────────────────────────────────────────────── */
 export const workflowsApi = {
   list: () => get<{ workflows: WorkflowDefinition[]; count: number }>("/api/workflows"),
-  get: (name: string) => get<WorkflowDefinition>(`/api/workflows/${name}`),
+  get: async (name: string): Promise<WorkflowDefinition> => {
+    const res = await get<WorkflowDefinition | { workflow: WorkflowDefinition }>(
+      `/api/workflows/${name}`,
+    );
+    if (res && typeof res === "object" && "workflow" in res && res.workflow) {
+      return res.workflow;
+    }
+    return res as WorkflowDefinition;
+  },
   create: (definition: WorkflowDefinition) => post<unknown>("/api/workflows", { definition }),
   update: (name: string, definition: WorkflowDefinition) =>
     put<unknown>(`/api/workflows/${name}`, { definition }),
