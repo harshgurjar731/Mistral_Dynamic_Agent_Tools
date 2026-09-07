@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, Check, FolderGit2, Layers, Loader2, Network, Search, Sparkles, Wand2,
+  AlertCircle, Check, FolderGit2, Layers, Loader2, Network, Search, Sparkles, Terminal, Wand2,
 } from 'lucide-react';
 import {
   ontologyApi,
@@ -22,21 +22,28 @@ import {
   PREDICATE_SCHEME,
   type AnnotationMap,
   type Predicate,
+  type SubjectType,
 } from '../../api/ontology';
 import { agentsApi } from '../../api/agents';
+import { workflowsApi } from '../../api/workflows';
 import OverviewTab from './OverviewTab';
 import VocabularyTab from './VocabularyTab';
 import KnowledgeTab from './KnowledgeTab';
+import RulesTab from './RulesTab';
 import RagTab from './RagTab';
 import RetrievalTab from './RetrievalTab';
+import QueryTab from './QueryTab';
+import DomainClassificationEditor from './DomainClassificationEditor';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 
-type Tab = 'overview' | 'taxonomy' | 'libraries' | 'retrieval';
+type Tab = 'overview' | 'taxonomy' | 'libraries' | 'retrieval' | 'query';
 
-const AGENT_PREDICATES: Predicate[] = [
+// `serves_domain` gets its own hierarchical editor (see `DomainClassificationEditor`)
+// rather than sitting in this flat chip-list loop — the domain scheme is a real
+// industry → domain → subdomain tree, and a wrapped button list flattened it.
+const CLASSIFICATION_PREDICATES: Predicate[] = [
   'has_tier',
-  'serves_domain',
   'requires_capability',
   'provides_capability',
   'handles_data_class',
@@ -58,6 +65,7 @@ export default function ConceptBrowser() {
     { key: 'taxonomy', label: 'Taxonomy', icon: Layers },
     { key: 'libraries', label: 'Libraries', icon: FolderGit2 },
     { key: 'retrieval', label: 'Retrieval', icon: Search },
+    { key: 'query', label: 'Query', icon: Terminal },
   ];
 
   return (
@@ -65,7 +73,7 @@ export default function ConceptBrowser() {
     <div
       className={cn(
         'p-8 mx-auto',
-        tab === 'overview' || tab === 'libraries' ? 'max-w-[1600px]' : 'max-w-5xl',
+        tab === 'overview' || tab === 'libraries' || tab === 'query' ? 'max-w-[1600px]' : 'max-w-5xl',
       )}
     >
       <div className="flex items-end justify-between mb-8">
@@ -121,6 +129,7 @@ export default function ConceptBrowser() {
       {tab === 'taxonomy' && <TaxonomyTab />}
       {tab === 'libraries' && <RagTab />}
       {tab === 'retrieval' && <RetrievalTab />}
+      {tab === 'query' && <QueryTab />}
     </div>
   );
 }
@@ -148,7 +157,7 @@ const AGENT_PAGE_SIZE = 200;
  * both need.
  */
 function TaxonomyTab() {
-  const [view, setView] = useState<'vocabulary' | 'annotations' | 'knowledge'>('vocabulary');
+  const [view, setView] = useState<'vocabulary' | 'annotations' | 'knowledge' | 'rules'>('vocabulary');
 
   return (
     <div className="space-y-4">
@@ -157,6 +166,7 @@ function TaxonomyTab() {
           { key: 'vocabulary' as const, label: 'Concepts', hint: 'The terms themselves' },
           { key: 'annotations' as const, label: 'What uses them', hint: 'Agents, workflows and libraries filed against each concept' },
           { key: 'knowledge' as const, label: 'Knowledge', hint: 'What each domain involves — retrieved at runtime alongside the document graph' },
+          { key: 'rules' as const, label: 'Rules', hint: 'The governance checks the builder runs before publish, and any granted exceptions' },
         ]).map((option) => (
           <button
             key={option.key}
@@ -177,73 +187,135 @@ function TaxonomyTab() {
       {view === 'vocabulary' && <VocabularyTab />}
       {view === 'annotations' && <AnnotationsTab />}
       {view === 'knowledge' && <KnowledgeTab />}
+      {view === 'rules' && <RulesTab />}
     </div>
   );
 }
 
 
+interface AnnotationSubject {
+  id: string;
+  name: string;
+  tier?: string;
+}
+
 function AnnotationsTab() {
+  const [subjectKind, setSubjectKind] = useState<SubjectType>('agent');
   const [query, setQuery] = useState('');
   const [onlyGaps, setOnlyGaps] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const { data: agentData, isLoading, isError, refetch } = useQuery({
+  const {
+    data: agentData, isLoading: agentLoading, isError: agentError, refetch: refetchAgents,
+  } = useQuery({
     queryKey: QK.agentsPage(0, AGENT_PAGE_SIZE),
     queryFn: () => agentsApi.list(0, AGENT_PAGE_SIZE).then((r) => r.data),
+    enabled: subjectKind === 'agent',
   });
 
-  const agents = useMemo(() => {
-    const items = agentData?.items ?? [];
-    // The upstream listing can repeat an agent across pages; a duplicate id
-    // would collide as a React key and render as a ghost row.
-    const byId = new Map(items.map((a) => [a.id, a]));
-    return [...byId.values()].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
-    );
-  }, [agentData]);
-
-  // One round trip for every agent's annotations, so the list can show which
-  // ones are still unreviewed — the whole reason to open this tab.
-  const { data: bulk } = useQuery({
-    queryKey: ['ontology', 'annotations', 'agent', 'bulk', agents.map((a) => a.id).join(',')],
+  const {
+    data: workflowData, isLoading: workflowLoading, isError: workflowError, refetch: refetchWorkflows,
+  } = useQuery({
+    queryKey: QK.workflows(),
     queryFn: () =>
-      ontologyApi.annotationsBulk('agent', agents.map((a) => a.id)).then((r) => r.data),
-    enabled: agents.length > 0,
+      workflowsApi.list().then((r) => {
+        const d = r.data;
+        return Array.isArray(d) ? d : ((d as { workflows?: unknown[] }).workflows ?? []);
+      }),
+    enabled: subjectKind === 'workflow',
+  });
+
+  const isLoading = subjectKind === 'agent' ? agentLoading : workflowLoading;
+  const isError = subjectKind === 'agent' ? agentError : workflowError;
+  const refetch = subjectKind === 'agent' ? refetchAgents : refetchWorkflows;
+
+  // Workflows are keyed by `name` everywhere else in the app — routes, and
+  // the annotation writes the auto-classifier already makes on creation —
+  // there's no separate id to key this list by instead.
+  const subjects: AnnotationSubject[] = useMemo(() => {
+    if (subjectKind === 'agent') {
+      const items = agentData?.items ?? [];
+      // The upstream listing can repeat an agent across pages; a duplicate id
+      // would collide as a React key and render as a ghost row.
+      const byId = new Map(items.map((a) => [a.id, a]));
+      return [...byId.values()]
+        .map((a) => ({ id: a.id, name: a.name, tier: a.tier }))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    }
+    const items = ((workflowData ?? []) as Record<string, unknown>[]).filter((w) => !w.archived);
+    return items
+      .map((w) => ({ id: String(w.name), name: String(w.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }, [subjectKind, agentData, workflowData]);
+
+  // One round trip for every subject's annotations, so the list can show
+  // which ones are still unreviewed — the whole reason to open this tab.
+  const { data: bulk } = useQuery({
+    queryKey: ['ontology', 'annotations', subjectKind, 'bulk', subjects.map((s) => s.id).join(',')],
+    queryFn: () =>
+      ontologyApi.annotationsBulk(subjectKind, subjects.map((s) => s.id)).then((r) => r.data),
+    enabled: subjects.length > 0,
   });
 
   const annotationsById = bulk?.annotations ?? {};
   const countFor = (id: string) =>
     Object.values(annotationsById[id] ?? {}).reduce((sum, ids) => sum + (ids?.length ?? 0), 0);
 
-  // Names are not unique — two agents called "TestAgent" are indistinguishable
+  // Names are not unique — two subjects called "TestAgent" are indistinguishable
   // in a bare list, so those rows get their id as a subtitle.
   const duplicateNames = useMemo(() => {
     const seen = new Map<string, number>();
-    for (const a of agents) {
-      const key = a.name.toLowerCase();
+    for (const s of subjects) {
+      const key = s.name.toLowerCase();
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
     return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([name]) => name));
-  }, [agents]);
+  }, [subjects]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return agents.filter((a) => {
-      if (onlyGaps && countFor(a.id) > 0) return false;
+    return subjects.filter((s) => {
+      if (onlyGaps && countFor(s.id) > 0) return false;
       if (!q) return true;
       return (
-        a.name.toLowerCase().includes(q) ||
-        a.id.toLowerCase().includes(q) ||
-        (a.tier ?? '').toLowerCase().includes(q)
+        s.name.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q) ||
+        (s.tier ?? '').toLowerCase().includes(q)
       );
     });
-  }, [agents, query, onlyGaps, annotationsById]);
+  }, [subjects, query, onlyGaps, annotationsById]);
 
-  const unannotated = agents.filter((a) => countFor(a.id) === 0).length;
+  const unannotated = subjects.filter((s) => countFor(s.id) === 0).length;
+  const noun = subjectKind === 'agent' ? 'agent' : 'workflow';
 
   return (
     <div className="grid grid-cols-[280px_1fr] gap-6 items-start">
       <div className="flex flex-col gap-2 min-h-0">
+        <div className="flex gap-1 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-0.5">
+          {([
+            { key: 'agent' as const, label: 'Agents' },
+            { key: 'workflow' as const, label: 'Workflows' },
+          ]).map((option) => (
+            <button
+              key={option.key}
+              onClick={() => {
+                setSubjectKind(option.key);
+                setSelected(null);
+                setQuery('');
+                setOnlyGaps(false);
+              }}
+              className={cn(
+                'flex-1 rounded px-2 py-1 text-[11px] transition-colors',
+                subjectKind === option.key
+                  ? 'bg-indigo-500/15 text-white'
+                  : 'text-[var(--color-text-muted)] hover:text-white',
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
         <div className="relative">
           <Search
             size={13}
@@ -252,14 +324,14 @@ function AnnotationsTab() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find an agent…"
+            placeholder={`Find a ${noun}…`}
             className="w-full pl-8 pr-2 py-1.5 rounded-lg bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] text-xs text-white focus:outline-none focus:border-[rgba(99,102,241,0.5)]"
           />
         </div>
 
         <div className="flex items-center justify-between gap-2 px-0.5">
           <span className="text-[10px] text-[var(--color-text-muted)] tabular-nums">
-            {filtered.length} of {agents.length}
+            {filtered.length} of {subjects.length}
           </span>
           {unannotated > 0 && (
             <button
@@ -270,7 +342,7 @@ function AnnotationsTab() {
                   ? 'border-amber-400/50 bg-amber-500/15 text-amber-300'
                   : 'border-[var(--color-border-subtle)] text-[var(--color-text-muted)] hover:text-white',
               )}
-              title="Show only agents with no annotations"
+              title={`Show only ${noun}s with no annotations`}
             >
               {unannotated} unannotated
             </button>
@@ -281,11 +353,11 @@ function AnnotationsTab() {
           {isLoading ? (
             <div className="flex items-center gap-2 px-2.5 py-6 text-xs text-[var(--color-text-muted)]">
               <Loader2 size={13} className="animate-spin" />
-              Loading agents…
+              Loading {noun}s…
             </div>
           ) : isError ? (
             <div className="px-2.5 py-6 text-xs">
-              <p className="text-red-300">Could not load agents.</p>
+              <p className="text-red-300">Could not load {noun}s.</p>
               <button
                 onClick={() => refetch()}
                 className="mt-1 text-[var(--color-text-muted)] underline hover:text-white"
@@ -295,28 +367,28 @@ function AnnotationsTab() {
             </div>
           ) : filtered.length === 0 ? (
             <p className="px-2.5 py-6 text-xs text-[var(--color-text-muted)]">
-              {agents.length === 0
-                ? 'No agents exist yet. Create one in the Agent Studio.'
-                : 'No agents match this filter.'}
+              {subjects.length === 0
+                ? `No ${noun}s exist yet.`
+                : `No ${noun}s match this filter.`}
             </p>
           ) : (
-            filtered.map((a) => {
-              const count = countFor(a.id);
-              const ambiguous = duplicateNames.has(a.name.toLowerCase());
+            filtered.map((s) => {
+              const count = countFor(s.id);
+              const ambiguous = duplicateNames.has(s.name.toLowerCase());
               return (
                 <button
-                  key={a.id}
-                  onClick={() => setSelected(a.id)}
+                  key={s.id}
+                  onClick={() => setSelected(s.id)}
                   className={cn(
                     'text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors',
-                    selected === a.id
+                    selected === s.id
                       ? 'bg-[rgba(99,102,241,0.15)] text-white'
                       : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]',
                   )}
-                  title={`${a.name}\n${a.id}`}
+                  title={`${s.name}\n${s.id}`}
                 >
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate flex-1 min-w-0">{a.name}</span>
+                    <span className="truncate flex-1 min-w-0">{s.name}</span>
                     <span
                       className={cn(
                         'shrink-0 tabular-nums text-[10px] px-1 rounded',
@@ -331,7 +403,7 @@ function AnnotationsTab() {
                   </span>
                   {ambiguous && (
                     <code className="block truncate text-[9px] font-mono text-[var(--color-text-muted)] opacity-70">
-                      {a.id}
+                      {s.id}
                     </code>
                   )}
                 </button>
@@ -343,24 +415,33 @@ function AnnotationsTab() {
 
       {selected ? (
         <AnnotationEditor
+          subjectType={subjectKind}
           subjectId={selected}
-          subjectName={agents.find((a) => a.id === selected)?.name ?? selected}
+          subjectName={subjects.find((s) => s.id === selected)?.name ?? selected}
         />
       ) : (
         <div className="flex items-center justify-center rounded-xl border border-dashed border-[var(--color-border-subtle)] p-12 text-sm text-[var(--color-text-muted)]">
-          Pick an agent to review its annotations.
+          Pick a {noun} to review its annotations.
         </div>
       )}
     </div>
   );
 }
 
-function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subjectName: string }) {
+function AnnotationEditor({
+  subjectType,
+  subjectId,
+  subjectName,
+}: {
+  subjectType: SubjectType;
+  subjectId: string;
+  subjectName: string;
+}) {
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: QK.annotations('agent', subjectId),
-    queryFn: () => ontologyApi.annotations('agent', subjectId).then((r) => r.data),
+    queryKey: QK.annotations(subjectType, subjectId),
+    queryFn: () => ontologyApi.annotations(subjectType, subjectId).then((r) => r.data),
   });
 
   const { data: conceptData } = useQuery({
@@ -368,7 +449,7 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
     queryFn: () => ontologyApi.concepts().then((r) => r.data),
   });
 
-  // Ask a model to classify this agent against the vocabulary and write the
+  // Ask a model to classify this subject against the vocabulary and write the
   // result. Distinct from the lexical guesses: it is shown the actual concept
   // list and picks from it, which is what catches an agent whose instructions
   // describe mortgage work without ever using the word.
@@ -376,12 +457,12 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
     mutationFn: () =>
       ontologyApi.classify({
         name: subjectName,
-        subject_kind: 'agent',
-        subject_type: 'agent',
+        subject_kind: subjectType,
+        subject_type: subjectType,
         subject_id: subjectId,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.annotations('agent', subjectId) });
+      qc.invalidateQueries({ queryKey: QK.annotations(subjectType, subjectId) });
       qc.invalidateQueries({ queryKey: ['ontology'] });
     },
   });
@@ -389,7 +470,7 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
   const save = useMutation({
     mutationFn: (body: { predicate: Predicate; concept_ids: string[] }) =>
       ontologyApi.setAnnotations({
-        subject_type: 'agent',
+        subject_type: subjectType,
         subject_id: subjectId,
         // Saving from here is a human decision, so it is recorded as such —
         // which is what promotes a capability gap from advisory to blocking.
@@ -397,12 +478,12 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
         ...body,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.annotations('agent', subjectId) });
+      qc.invalidateQueries({ queryKey: QK.annotations(subjectType, subjectId) });
       qc.invalidateQueries({ queryKey: QK.builderCatalog() });
-      qc.invalidateQueries({ queryKey: QK.agents() });
-      // Refresh the picker's coverage counts, so an agent stops showing as
+      qc.invalidateQueries({ queryKey: subjectType === 'agent' ? QK.agents() : QK.workflows() });
+      // Refresh the picker's coverage counts, so a subject stops showing as
       // unannotated the moment its first concept is saved.
-      qc.invalidateQueries({ queryKey: ['ontology', 'annotations', 'agent', 'bulk'] });
+      qc.invalidateQueries({ queryKey: ['ontology', 'annotations', subjectType, 'bulk'] });
       qc.invalidateQueries({ queryKey: QK.ontology() });
     },
   });
@@ -421,7 +502,7 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
           <button
             onClick={() => classify.mutate()}
             disabled={classify.isPending}
-            title="Ask a model to classify this agent against the vocabulary"
+            title="Ask a model to classify this against the vocabulary"
             className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:border-indigo-400/40 hover:text-indigo-300 disabled:opacity-40"
           >
             {classify.isPending
@@ -440,8 +521,15 @@ function AnnotationEditor({ subjectId, subjectName }: { subjectId: string; subje
       )}
       <code className="text-[10px] font-mono text-[var(--color-text-muted)]">{subjectId}</code>
 
+      <div className="mt-5">
+        <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+          {PREDICATE_LABELS.serves_domain}
+        </label>
+        <DomainClassificationEditor subjectType={subjectType} subjectId={subjectId} />
+      </div>
+
       <div className="mt-5 space-y-5">
-        {AGENT_PREDICATES.map((predicate) => {
+        {CLASSIFICATION_PREDICATES.map((predicate) => {
           const scheme = PREDICATE_SCHEME[predicate];
           const options = concepts.filter((c) => c.scheme_id === scheme);
           const current = annotations[predicate] ?? [];

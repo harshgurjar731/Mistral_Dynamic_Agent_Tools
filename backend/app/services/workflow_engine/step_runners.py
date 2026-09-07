@@ -111,11 +111,11 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
                 "Always provide a complete response — never return empty."
             ),
             description=f"Auto-created workflow agent: {agent_id}",
-            # The stand-in gets it too. With no library of its own it searches
-            # everything graphed, which is the right default for an agent
-            # invented mid-workflow; the boot reconcile removes it if that
-            # never becomes useful.
-            tools=[_domain_search_spec()],
+            # No retrieval tools. This agent was invented from a step name, so
+            # nothing is known about what it should search — and knowledge-graph
+            # access is a deliberate choice, not a default. Turn it on from the
+            # agent's own page once its job is clear.
+            tools=[],
         )
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id
@@ -665,7 +665,7 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         if isinstance(result, dict) and "not found" in str(result.get("error", "")).lower():
             logger.info("Tool '%s' not found — triggering auto-synthesis", tool_name)
             description = config.get("description", f"A tool to perform {tool_name}")
-            synth = await tool_resolver.synthesize_from_task(description)
+            synth = await tool_resolver.synthesize_from_task(description, purpose="activity")
             if synth.get("status") in ("synthesized", "approved"):
                 await refresh_dynamic_tools()
                 result = await execute_tool(tool_name, arguments)

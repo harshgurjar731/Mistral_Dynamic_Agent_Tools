@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, ArrowRight, CheckCircle2, AlertCircle,
   RefreshCw, Wrench, Cpu, Sparkles, CircleDot,
-  Code2, Server, PackageCheck, PackagePlus, History
+  Code2, Server, PackageCheck, PackagePlus, History, Zap
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -18,7 +18,7 @@ import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 /* ── Timeline Step Types ──────────────────────────────────────────────── */
 export interface TimelineStep {
   id: string;
-  type: 'status' | 'requirements' | 'tool_exists' | 'tool_new' | 'agent_exists' | 'agent_new'
+  type: 'status' | 'requirements' | 'tool_exists' | 'tool_new' | 'activity_new' | 'agent_exists' | 'agent_new'
       | 'workflow_ready' | 'compiled' | 'registered' | 'fatal_error' | 'error';
   content: string | Record<string, unknown>;
   status: 'pending' | 'active' | 'completed';
@@ -96,6 +96,26 @@ function ToolNewCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+function ActivityCard({ data }: { data: Record<string, unknown> }) {
+  const status = data.status as string | undefined;
+  const label =
+    status === 'existing' ? 'Standalone step' : status === 'approved' ? 'Synthesised & Approved' : (status ?? 'Activity');
+  return (
+    <div className="flex items-center justify-between rounded-lg px-4 py-2.5 mt-2 shadow-lg transition-all border border-[rgba(244,114,182,0.3)] bg-gradient-to-br from-[rgba(244,114,182,0.15)] to-[rgba(244,114,182,0.02)] backdrop-blur-md">
+      <div className="flex items-center gap-2.5">
+        <Zap size={14} className="text-pink-300" />
+        <span className="text-sm font-mono text-[var(--color-text-primary)]">{data.tool_name as string}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border text-pink-300 bg-[rgba(244,114,182,0.1)] border-[rgba(244,114,182,0.25)]">
+          Activity
+        </span>
+      </div>
+      <span className="text-[10px] font-medium uppercase px-2 py-0.5 rounded border text-pink-300 bg-[rgba(244,114,182,0.1)] border-[rgba(244,114,182,0.25)]">
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function AgentExistsCard({ data }: { data: Record<string, unknown> }) {
   const tools = (data.tools as string[]) ?? [];
   const tier = data.tier as string | undefined;
@@ -163,6 +183,11 @@ function AgentNewCard({ data }: { data: Record<string, unknown> }) {
 }
 
 function WorkflowReadyCard({ data }: { data: Record<string, unknown> }) {
+  // The full DAG rides along on this event — use it to break the step count
+  // down by kind rather than just reporting a bare total.
+  const dagSteps = ((data.dag as Record<string, unknown> | undefined)?.steps ?? []) as Array<{ type?: string }>;
+  const activityCount = dagSteps.filter(s => s.type === 'tool').length;
+
   return (
     <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.3)] bg-[rgba(99,102,241,0.05)]">
       <div className="flex items-center gap-3 mb-3">
@@ -174,9 +199,15 @@ function WorkflowReadyCard({ data }: { data: Record<string, unknown> }) {
           <p className="text-xs text-[var(--color-text-muted)]">{data.description as string}</p>
         </div>
       </div>
-      <div className="flex gap-4 text-xs text-[var(--color-text-muted)]">
+      <div className="flex flex-wrap gap-4 text-xs text-[var(--color-text-muted)]">
         <span><strong className="text-white">{data.step_count as number}</strong> steps</span>
         <span><strong className="text-white">{(data.agents as string[])?.length ?? 0}</strong> agents</span>
+        {activityCount > 0 && (
+          <span className="flex items-center gap-1">
+            <Zap size={11} className="text-pink-300" />
+            <strong className="text-white">{activityCount}</strong> activit{activityCount === 1 ? 'y' : 'ies'}
+          </span>
+        )}
         <span>Entry: <strong className="text-white font-mono">{data.entry_step as string}</strong></span>
       </div>
     </div>
@@ -233,6 +264,67 @@ function RegisteredCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+/* ── Timeline grouping ────────────────────────────────────────────────── */
+
+/**
+ * Consecutive tool events and consecutive activity events collapse into one
+ * labelled section each, so the timeline reads as "here is what was built for
+ * the agents to call" and "here is what became a step of its own" rather than
+ * a flat run of similar-looking cards.
+ *
+ * Grouping is deliberately *consecutive* only — the two kinds are synthesised
+ * in different phases (tools in Phase 2, activities in Phase 4b), and merging
+ * across the phases between them would misrepresent the order things happened.
+ */
+type TimelineRow =
+  | { kind: 'single'; key: string; step: TimelineStep }
+  | { kind: 'group'; family: 'tool' | 'activity'; key: string; steps: TimelineStep[] };
+
+const GROUP_META = {
+  tool: {
+    label: 'Tools',
+    caption: 'attached to agents',
+    icon: Wrench,
+    dot: '#818cf8',
+    text: 'text-[#a5b4fc]',
+    border: 'border-[rgba(129,140,248,0.25)]',
+    bg: 'bg-[rgba(129,140,248,0.05)]',
+  },
+  activity: {
+    label: 'Activities',
+    caption: 'standalone workflow steps',
+    icon: Zap,
+    dot: '#f472b6',
+    text: 'text-pink-300',
+    border: 'border-[rgba(244,114,182,0.25)]',
+    bg: 'bg-[rgba(244,114,182,0.05)]',
+  },
+} as const;
+
+function familyOf(type: TimelineStep['type']): 'tool' | 'activity' | null {
+  if (type === 'tool_exists' || type === 'tool_new') return 'tool';
+  if (type === 'activity_new') return 'activity';
+  return null;
+}
+
+function groupTimeline(steps: TimelineStep[]): TimelineRow[] {
+  const rows: TimelineRow[] = [];
+  for (const step of steps) {
+    const family = familyOf(step.type);
+    if (!family) {
+      rows.push({ kind: 'single', key: step.id, step });
+      continue;
+    }
+    const last = rows[rows.length - 1];
+    if (last?.kind === 'group' && last.family === family) {
+      last.steps.push(step);
+    } else {
+      rows.push({ kind: 'group', family, key: step.id, steps: [step] });
+    }
+  }
+  return rows;
+}
+
 /* ── Main Component ───────────────────────────────────────────────────── */
 
 export default function WorkflowPlanner() {
@@ -272,29 +364,33 @@ export default function WorkflowPlanner() {
       .filter(wf => !wf.archived && wf.name && !knownNames.has(wf.name))
       .map(wf => {
         const steps: TimelineStep[] = [];
-        // Reconstruct a minimal timeline from the workflow definition
+        // Reconstruct a minimal timeline from the workflow definition. A
+        // "tool"-type DAG step is a standalone Activity (see graphModel.ts) —
+        // never an agent capability — so it renders as one here too.
         const wfSteps = (wf.steps ?? []) as Record<string, any>[];
         const agentSteps = wfSteps.filter(s => s.type === 'agent');
-        const toolSteps = wfSteps.filter(s => s.type === 'tool');
+        const activitySteps = wfSteps.filter(s => s.type === 'tool');
         const agentNames = agentSteps.map(s => s.config?.agent_name ?? s.config?.agent_id ?? s.id);
-        const toolNames = toolSteps.map(s => s.config?.tool_name ?? s.id);
 
         steps.push({
           id: `${wf.name}-req`,
           type: 'requirements',
           content: {
             description: wf.description ?? '',
-            tools_needed: toolNames,
+            // Phase-1 "tools_needed" (agent capabilities) isn't recoverable
+            // from a saved DAG alone — the Activity steps below cover what
+            // this reconstruction *can* show accurately.
+            tools_needed: [],
             agents_needed: agentNames,
           },
           status: 'completed',
         });
 
-        toolSteps.forEach(s => {
+        activitySteps.forEach(s => {
           steps.push({
-            id: `${wf.name}-tool-${s.id}`,
-            type: 'tool_exists',
-            content: { tool_name: s.config?.tool_name ?? s.id },
+            id: `${wf.name}-activity-${s.id}`,
+            type: 'activity_new',
+            content: { tool_name: s.config?.tool_name ?? s.id, status: 'existing' },
             status: 'completed',
           });
         });
@@ -322,6 +418,7 @@ export default function WorkflowPlanner() {
             step_count: wfSteps.length,
             agents: agentNames,
             entry_step: wf.entry_step ?? '',
+            dag: { steps: wfSteps },
           },
           status: 'completed',
         });
@@ -363,6 +460,9 @@ export default function WorkflowPlanner() {
       return updated;
     });
   };
+
+  // Tools and activities collapse into their own labelled sections.
+  const timelineRows = useMemo(() => groupTimeline(steps), [steps]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -411,6 +511,8 @@ export default function WorkflowPlanner() {
           try { addStep('tool_exists', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'tool_new') {
           try { addStep('tool_new', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'activity_new') {
+          try { addStep('activity_new', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'agent_exists') {
           try { addStep('agent_exists', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'agent_new') {
@@ -480,6 +582,7 @@ export default function WorkflowPlanner() {
     if (step.type === 'requirements') return <RequirementsCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'tool_exists') return <ToolExistsCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'tool_new') return <ToolNewCard data={step.content as Record<string, unknown>} />;
+    if (step.type === 'activity_new') return <ActivityCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'agent_exists') return <AgentExistsCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'agent_new') return <AgentNewCard data={step.content as Record<string, unknown>} />;
     if (step.type === 'workflow_ready') return <WorkflowReadyCard data={step.content as Record<string, unknown>} />;
@@ -561,7 +664,50 @@ export default function WorkflowPlanner() {
         <div className="max-w-3xl mx-auto w-full pb-32">
           <div className="relative border-l border-[var(--color-border-subtle)] ml-4 md:ml-8 space-y-6 pb-8">
             <AnimatePresence>
-              {steps.map(step => (
+              {timelineRows.map(row => {
+                /* ── Tools / Activities sections ───────────────────────── */
+                if (row.kind === 'group') {
+                  const meta = GROUP_META[row.family];
+                  const GroupIcon = meta.icon;
+                  return (
+                    <motion.div
+                      key={row.key}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="relative pl-8 md:pl-12"
+                    >
+                      <div
+                        className="absolute left-[-9px] top-1.5 w-4 h-4 rounded-full bg-[var(--color-bg-base)] border-2 flex items-center justify-center"
+                        style={{ borderColor: meta.dot }}
+                      >
+                        <CheckCircle2
+                          size={16}
+                          className="absolute bg-[var(--color-bg-base)] rounded-full"
+                          style={{ color: meta.dot }}
+                        />
+                      </div>
+
+                      <div className={cn('rounded-xl border px-3 pb-3 pt-2.5 mt-2', meta.border, meta.bg)}>
+                        <div className="flex items-center gap-1.5">
+                          <GroupIcon size={11} className={meta.text} />
+                          <span className={cn('text-[10px] font-bold uppercase tracking-wider', meta.text)}>
+                            {meta.label}
+                          </span>
+                          <span className={cn('text-[10px] opacity-60', meta.text)}>
+                            {row.steps.length} · {meta.caption}
+                          </span>
+                        </div>
+                        {row.steps.map(s => (
+                          <div key={s.id}>{renderStepContent(s)}</div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  );
+                }
+
+                /* ── Everything else keeps its own timeline entry ───────── */
+                const step = row.step;
+                return (
                 <motion.div
                   key={step.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -605,7 +751,8 @@ export default function WorkflowPlanner() {
 
                   {renderStepContent(step)}
                 </motion.div>
-              ))}
+                );
+              })}
             </AnimatePresence>
 
             {/* Final CTA */}

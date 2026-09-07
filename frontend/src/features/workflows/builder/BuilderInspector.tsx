@@ -17,12 +17,13 @@ import {
   PanelRightOpen,
   Plus,
   Settings2,
+  Sparkles,
   Trash2,
   Variable,
   X,
   XCircle,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CatalogAgent,
   CatalogConnector,
@@ -34,11 +35,15 @@ import { connectorsApi } from '../../../api/connectors';
 import { QK } from '../../../lib/queryClient';
 import { useBuilderStore } from './useBuilderStore';
 import { STEP_META, availableVariables, unresolvedPlaceholders } from './graphModel';
+import { CreateToolModal } from './CreateModals';
 import { cn } from '../../../lib/utils';
 
 interface Props {
   agents: CatalogAgent[];
+  /** Agent capabilities — used by the agent-step tool picker. */
   tools: CatalogTool[];
+  /** Standalone workflow steps — used by the Activity-step picker. */
+  activities: CatalogTool[];
   connectors: CatalogConnector[];
   tiers: string[];
   /** Replace the tool set on a Mistral agent. Attach and detach both go through here. */
@@ -593,46 +598,54 @@ function AgentToolManager({
   );
 }
 
+const SYNTHESIZE_OPTION = '__synthesize_new_activity__';
+
 function ToolStepEditor({
   step,
-  tools,
+  activities,
   variables,
 }: {
   step: WorkflowStep;
-  tools: CatalogTool[];
+  activities: CatalogTool[];
   variables: { name: string; origin: string }[];
 }) {
   const updateStepConfig = useBuilderStore((s) => s.updateStepConfig);
+  const queryClient = useQueryClient();
   const cfg = step.config ?? {};
   const toolName = (cfg.tool_name as string) ?? '';
-  const args = (cfg.arguments_template as Record<string, unknown>) ?? {};
-  const selectedTool = tools.find((t) => t.name === toolName);
+  // `arguments` is what `run_tool_step` reads at execution time
+  // (step_runners.py) — `arguments_template` is a legacy key some older saved
+  // steps still carry, read here only as a display fallback.
+  const args = ((cfg.arguments ?? cfg.arguments_template) as Record<string, unknown>) ?? {};
+  const selectedTool = activities.find((t) => t.name === toolName);
+  const [showSynthesize, setShowSynthesize] = useState(false);
 
   // Remembered so the variable picker knows which argument to append into.
   const [activeArg, setActiveArg] = useState<string | null>(null);
 
   const setArg = (key: string, value: string) =>
-    updateStepConfig(step.id, { arguments_template: { ...args, [key]: value } });
+    updateStepConfig(step.id, { arguments: { ...args, [key]: value } });
 
   return (
-    <Group title="Tool">
-      {/* The builder does not create these any more. Explain what the step
-          actually does so the difference from an agent-called tool is clear. */}
-      <div className="flex items-start gap-1.5 rounded-md px-2 py-1.5 border border-amber-400/25 bg-amber-400/8">
-        <AlertTriangle size={11} className="text-amber-400 shrink-0 mt-px" />
-        <p className="text-[9.5px] text-amber-300 leading-relaxed">
-          This step calls the tool directly with the arguments below — no agent is involved, so
-          nothing decides <em>how</em> to call it. New workflows should attach the tool to an agent
-          instead. Kept editable so existing workflows keep working.
+    <Group title="Activity">
+      <div className="flex items-start gap-1.5 rounded-md px-2 py-1.5 border border-[rgba(244,114,182,0.25)] bg-[rgba(244,114,182,0.06)]">
+        <Sparkles size={11} className="text-pink-300 shrink-0 mt-px" />
+        <p className="text-[9.5px] text-pink-200 leading-relaxed">
+          This step runs the activity directly with the arguments below — an isolated, retryable
+          unit of work with no agent in the loop.
         </p>
       </div>
 
       <div>
-        <label className={labelClass}>Tool</label>
+        <label className={labelClass}>Activity</label>
         <select
           value={toolName}
           onChange={(e) => {
-            const tool = tools.find((t) => t.name === e.target.value);
+            if (e.target.value === SYNTHESIZE_OPTION) {
+              setShowSynthesize(true);
+              return;
+            }
+            const tool = activities.find((t) => t.name === e.target.value);
             // Reseed argument keys from the new tool's schema; keeping the old
             // keys would send parameters the tool does not accept.
             const seeded: Record<string, string> = {};
@@ -641,15 +654,18 @@ function ToolStepEditor({
             }
             updateStepConfig(step.id, {
               tool_name: e.target.value,
-              arguments_template: seeded,
+              arguments: seeded,
             });
           }}
           className={cn(inputClass, 'font-mono')}
         >
           <option value="" className="bg-[#0d121e]">
-            — select a tool —
+            — select an activity —
           </option>
-          {tools.map((t) => (
+          <option value={SYNTHESIZE_OPTION} className="bg-[#0d121e]">
+            + Synthesise new activity…
+          </option>
+          {activities.map((t) => (
             <option key={`${t.source}:${t.name}`} value={t.name} className="bg-[#0d121e]">
               {t.name}
             </option>
@@ -703,8 +719,24 @@ function ToolStepEditor({
 
       {selectedTool && Object.keys(selectedTool.parameters ?? {}).length === 0 && (
         <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
-          This tool takes no parameters.
+          This activity takes no parameters.
         </p>
+      )}
+
+      {showSynthesize && (
+        <CreateToolModal
+          purpose="activity"
+          onClose={() => setShowSynthesize(false)}
+          onCreated={(newName) => {
+            setShowSynthesize(false);
+            if (!newName) return;
+            // The catalog fetch is owned by the builder page; invalidating here
+            // picks up the new activity's schema so re-selecting it seeds
+            // arguments correctly.
+            queryClient.invalidateQueries({ queryKey: QK.builderCatalog() });
+            updateStepConfig(step.id, { tool_name: newName, arguments: {} });
+          }}
+        />
       )}
     </Group>
   );
@@ -991,6 +1023,7 @@ function TransformStepEditor({ step }: { step: WorkflowStep }) {
 export default function BuilderInspector({
   agents,
   tools,
+  activities,
   connectors,
   tiers,
   onSetAgentTools,
@@ -1161,7 +1194,7 @@ export default function BuilderInspector({
           />
         )}
         {step.type === 'tool' && (
-          <ToolStepEditor step={step} tools={tools} variables={variables} />
+          <ToolStepEditor step={step} activities={activities} variables={variables} />
         )}
         {step.type === 'connector' && (
           <ConnectorStepEditor step={step} connectors={connectors} variables={variables} />

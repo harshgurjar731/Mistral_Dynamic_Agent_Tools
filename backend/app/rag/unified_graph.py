@@ -165,11 +165,18 @@ def link_library(library_id: str, concept_ids: Iterable[str]) -> bool:
         return False
 
 
+# A caller passing no `entity_limit` gets everything — the renderer (Sigma,
+# WebGL) is what scales now, not this query. Still a finite number rather than
+# an unbounded Cypher `LIMIT`-less query, so a runaway graph degrades to "very
+# large" instead of exhausting the driver.
+NO_LIMIT = 2_000_000
+
+
 def snapshot(
     *,
     library_id: Optional[str] = None,
     document_id: Optional[str] = None,
-    entity_limit: int = 300,
+    entity_limit: Optional[int] = None,
     include_documents: bool = True,
 ) -> dict:
     """One graph at one of three scopes: a document, a library, or everything.
@@ -184,10 +191,12 @@ def snapshot(
     ancestors — which is the path from the entity up to the domain, and the
     reason this is one graph rather than two.
 
-    Entities are the only unbounded level, so they are capped by degree: a
-    truncated view should still show the hubs, which are what makes the shape
-    readable at a glance.
+    Entities have no default cap: pass `entity_limit` to constrain a view,
+    omit it for everything. When capped, entities are ranked by degree first
+    so a truncated view still shows the hubs that make the shape readable.
     """
+    effective_limit = entity_limit or NO_LIMIT
+
     if not graph_store.available():
         return {
             "available": False, "nodes": [], "edges": [],
@@ -317,7 +326,7 @@ def snapshot(
             """,
             library=library_id,
             document=document_id,
-            limit=entity_limit,
+            limit=effective_limit,
         )
         for row in entity_rows:
             key = f"entity::{row['library_id']}::{row['normalized']}::{row['type']}"
@@ -345,7 +354,7 @@ def snapshot(
             """,
             library=library_id,
             document=document_id,
-            limit=entity_limit * 6,
+            limit=effective_limit * 6,
         ):
             source = f"entity::{row['s_lib']}::{row['s_norm']}::{row['s_type']}"
             target = f"entity::{row['t_lib']}::{row['t_norm']}::{row['t_type']}"
@@ -370,7 +379,7 @@ def snapshot(
                 """,
                 library=library_id,
                 document=document_id,
-                limit=entity_limit * 4,
+                limit=effective_limit * 4,
             ):
                 entity_key = f"entity::{row['lib']}::{row['norm']}::{row['type']}"
                 document_key = f"document::{row['document']}"
@@ -392,7 +401,7 @@ def snapshot(
         "available": True,
         "nodes": list(nodes.values()),
         "edges": edges,
-        "truncated": counts.get("entity", 0) >= entity_limit,
+        "truncated": counts.get("entity", 0) >= effective_limit,
         "counts": counts,
         "library_id": library_id,
         "document_id": document_id,

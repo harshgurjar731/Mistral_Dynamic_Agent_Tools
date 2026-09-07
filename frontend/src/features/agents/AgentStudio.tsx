@@ -1,13 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge , Lock } from 'lucide-react';
+import { Plus, Trash2, Cpu, Search, Sparkles, X, Thermometer, Gauge , Lock, RotateCcw, Tag } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { agentsApi, type Agent } from '../../api/agents';
+import { agentsApi, type Agent, type GuardrailConfig } from '../../api/agents';
+import { ontologyApi } from '../../api/ontology';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
+import { Switch } from '../../components/ui/Switch';
+import DomainFilterDropdown from '../ontology/DomainFilterDropdown';
+import { buildDomainTree, expandedMatchSet, intersects } from '../ontology/domainTree';
+import AgentClassificationModal from './AgentClassificationModal';
+import GuardrailEditor from './GuardrailEditor';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -22,12 +28,20 @@ const itemVariants = {
   show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
-function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: string) => void; onClick: () => void }) {
+function AgentCard({
+  agent, domains, onDelete, onClick, onClassify,
+}: {
+  agent: Agent;
+  domains: string[];
+  onDelete: (id: string) => void;
+  onClick: () => void;
+  onClassify: () => void;
+}) {
   const tier = agent.tier || 'foundation';
   const cfg = getTierConfig(tier);
 
   return (
-    <motion.div 
+    <motion.div
       variants={itemVariants}
       onClick={onClick}
       className={cn('rounded-xl p-5 group flex flex-col h-full cursor-pointer hover:scale-[1.01] transition-all shadow-lg', cfg.cardBg, cfg.cardBorder, 'border')}
@@ -43,6 +57,19 @@ function AgentCard({ agent, onDelete, onClick }: { agent: Agent; onDelete: (id: 
             <span className="inline-block px-2 py-0.5 rounded bg-[var(--color-bg-hover)] text-[10px] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] font-[family-name:var(--font-mono)]">
               {agent.model}
             </span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClassify(); }}
+              title={domains.length ? `Domain: ${domains.join(', ')} — click to edit` : 'Click to classify this agent by domain'}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-400/10 hover:bg-indigo-400/20 text-indigo-300 border border-indigo-400/20 hover:border-indigo-400/40 text-[10px] font-medium transition-colors"
+            >
+              <Tag size={10} />
+              {domains.length === 0
+                ? 'Classify'
+                : domains.length > 2
+                  ? `${domains.slice(0, 2).join(', ')} +${domains.length - 2}`
+                  : domains.join(', ')}
+            </button>
           </div>
           {(agent.temperature != null || agent.top_p != null) && (
             <div className="mt-1.5 flex items-center gap-2 flex-wrap">
@@ -95,8 +122,10 @@ export default function AgentStudio() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [domainFilter, setDomainFilter] = useState<Set<string>>(new Set());
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true });
+  const [classifyAgent, setClassifyAgent] = useState<Agent | null>(null);
+  const [form, setForm] = useState({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true, guardrail: null as GuardrailConfig | null });
 
   const { data, isLoading } = useQuery({
     // Keyed on the request, not on `search` — the filter below is client-side,
@@ -104,11 +133,57 @@ export default function AgentStudio() {
     queryKey: QK.agentsPage(0, 200),
     queryFn: () => agentsApi.list(0, 200).then(r => r.data),
   });
-  const agents = (data?.items ?? []).filter(a => !search || a.name?.toLowerCase().includes(search.toLowerCase()));
+  const allAgents = data?.items ?? [];
+
+  const { data: domainConceptData } = useQuery({
+    queryKey: QK.ontologyConcepts('domain'),
+    queryFn: () => ontologyApi.concepts('domain').then(r => r.data),
+  });
+  // `?? []` alone would hand useMemo a fresh array every render while the
+  // query is still loading — memoized here so the fallback stays referentially
+  // stable too.
+  const domainConcepts = useMemo(() => domainConceptData?.concepts ?? [], [domainConceptData]);
+  const domainTree = useMemo(() => buildDomainTree(domainConcepts), [domainConcepts]);
+
+  // Which domain each agent serves — fetched once for the whole list (one
+  // request instead of one per card) and used both by the filter and by
+  // each card's own classification badge.
+  const { data: domainBulk } = useQuery({
+    queryKey: ['ontology', 'annotations', 'agent', 'bulk', allAgents.map(a => a.id).join(',')],
+    queryFn: () => ontologyApi.annotationsBulk('agent', allAgents.map(a => a.id)).then(r => r.data),
+    enabled: allAgents.length > 0,
+  });
+
+  const domainMatchSet = useMemo(
+    () => expandedMatchSet(domainTree, domainFilter),
+    [domainTree, domainFilter],
+  );
+
+  const domainLabelById = useMemo(
+    () => new Map(domainConcepts.map((c) => [c.id, c.label])),
+    [domainConcepts],
+  );
+  const domainsFor = (id: string): string[] =>
+    (domainBulk?.annotations[id]?.serves_domain ?? []).map((cid) => domainLabelById.get(cid) ?? cid);
+
+  const agents = allAgents.filter(a => {
+    if (search && !a.name?.toLowerCase().includes(search.toLowerCase())) return false;
+    if (domainFilter.size > 0) {
+      const domains = domainBulk?.annotations[a.id]?.serves_domain;
+      if (!intersects(domains, domainMatchSet)) return false;
+    }
+    return true;
+  });
+
+  const filtersActive = !!search || domainFilter.size > 0;
+  const clearFilters = () => { setSearch(''); setDomainFilter(new Set()); };
 
   const createMut = useMutation({
-    mutationFn: () => agentsApi.create(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true }); },
+    mutationFn: () => {
+      const { guardrail, ...rest } = form;
+      return agentsApi.create({ ...rest, guardrails: guardrail ? [guardrail] : [] });
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.agents() }); setShowCreate(false); setForm({ name: '', model: 'mistral-large-latest', instructions: '', description: '', tier: 'foundation', industry_knowledge: true, guardrail: null }); },
   });
 
   const deleteMut = useMutation({
@@ -158,7 +233,7 @@ export default function AgentStudio() {
                 </button>
               </div>
               
-              <div className="p-6">
+              <div className="p-6 max-h-[75vh] overflow-y-auto custom-scrollbar">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   <div>
                     <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">Name</label>
@@ -187,13 +262,7 @@ export default function AgentStudio() {
                   <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Brief description of the agent's purpose" className="w-full minimal-input rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all" />
                 </div>
                 <div className="mb-6">
-                  <label className="flex items-start gap-2.5 cursor-pointer rounded-md border border-[var(--color-border-subtle)] bg-[rgba(99,102,241,0.05)] px-3 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={form.industry_knowledge}
-                      onChange={e => setForm({ ...form, industry_knowledge: e.target.checked })}
-                      className="mt-0.5 h-3.5 w-3.5 accent-indigo-500"
-                    />
+                  <div className="flex items-start justify-between gap-3 rounded-md border border-[var(--color-border-subtle)] bg-[rgba(99,102,241,0.05)] px-3 py-2.5">
                     <span className="text-xs leading-relaxed">
                       <span className="font-medium text-white">Industry knowledge</span>
                       <span className="block text-[var(--color-text-muted)] mt-0.5">
@@ -202,12 +271,18 @@ export default function AgentStudio() {
                         from the agent's domain — leave on unless it has no industry.
                       </span>
                     </span>
-                  </label>
+                    <Switch
+                      checked={form.industry_knowledge}
+                      onChange={(industry_knowledge) => setForm({ ...form, industry_knowledge })}
+                      className="mt-0.5"
+                    />
+                  </div>
                 </div>
-                <div className="mb-2">
+                <div className="mb-6">
                   <label className="block text-xs text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wider font-medium">System Instructions</label>
                   <textarea value={form.instructions} onChange={e => setForm({ ...form, instructions: e.target.value })} rows={4} placeholder="You are a helpful assistant that…" className="w-full minimal-input rounded-md px-3 py-2 text-sm font-[family-name:var(--font-mono)] resize-y min-h-[100px] focus:ring-2 focus:ring-[var(--color-border-focus)] transition-all outline-none" />
                 </div>
+                <GuardrailEditor value={form.guardrail} onChange={(guardrail) => setForm({ ...form, guardrail })} />
               </div>
               <div className="flex justify-end gap-3 p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] mt-auto">
                 <button onClick={() => setShowCreate(false)} className="btn-secondary px-4 py-2 text-sm rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">Cancel</button>
@@ -222,10 +297,28 @@ export default function AgentStudio() {
         document.body
       )}
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search agents…" className="w-full minimal-input bg-[var(--color-bg-surface)] rounded-md pl-9 pr-4 py-2.5 text-sm" />
+      {/* Search + filters — its own row, kept separate from the primary
+          actions above so "narrow the list" and "do something" don't blur
+          into one dense button row. */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search agents…" className="w-full minimal-input bg-[var(--color-bg-surface)] rounded-md pl-9 pr-4 py-2 text-sm" />
+        </div>
+        <DomainFilterDropdown concepts={domainConcepts} selected={domainFilter} onChange={setDomainFilter} />
+        {filtersActive && (
+          <button
+            onClick={clearFilters}
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-border-subtle)] px-3 py-2 text-sm text-[var(--color-text-secondary)] transition-colors hover:border-indigo-400/40 hover:text-white"
+          >
+            <RotateCcw size={13} /> Clear
+          </button>
+        )}
+        {!isLoading && (
+          <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-[var(--color-text-muted)]">
+            {filtersActive ? `${agents.length} of ${allAgents.length}` : `${allAgents.length} agent${allAgents.length === 1 ? '' : 's'}`}
+          </span>
+        )}
       </div>
 
       {/* Grid */}
@@ -264,14 +357,21 @@ export default function AgentStudio() {
             <Cpu size={32} className="text-cyan-400" />
           </div>
           <div className="relative z-10">
-            <p className="text-xl font-semibold text-[var(--color-text-primary)]">No agents found</p>
-            <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">Create a specialized AI agent to handle specific tasks and workflows.</p>
+            <p className="text-xl font-semibold text-[var(--color-text-primary)]">
+              {filtersActive ? 'No agents match your filters' : 'No agents found'}
+            </p>
+            <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">
+              {filtersActive
+                ? 'Try a different search term, or widen the domain filter.'
+                : 'Create a specialized AI agent to handle specific tasks and workflows.'}
+            </p>
           </div>
-          <button 
-            onClick={() => setShowCreate(true)} 
+          <button
+            onClick={filtersActive ? clearFilters : () => setShowCreate(true)}
             className="relative z-10 btn-primary flex items-center gap-2 px-6 py-3 text-sm rounded-lg mt-4 shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] transition-all"
           >
-            <Plus size={16} /> Create Agent
+            {filtersActive ? <RotateCcw size={16} /> : <Plus size={16} />}
+            {filtersActive ? 'Clear filters' : 'Create Agent'}
           </button>
         </motion.div>
       ) : (
@@ -281,8 +381,25 @@ export default function AgentStudio() {
           animate="show"
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
         >
-          {agents.map(a => <AgentCard key={a.id} agent={a} onClick={() => navigate(`/agents/${a.id}`)} onDelete={(id) => deleteMut.mutate(id)} />)}
+          {agents.map(a => (
+            <AgentCard
+              key={a.id}
+              agent={a}
+              domains={domainsFor(a.id)}
+              onClick={() => navigate(`/agents/${a.id}`)}
+              onDelete={(id) => deleteMut.mutate(id)}
+              onClassify={() => setClassifyAgent(a)}
+            />
+          ))}
         </motion.div>
+      )}
+
+      {classifyAgent && (
+        <AgentClassificationModal
+          agentId={classifyAgent.id}
+          agentName={classifyAgent.name}
+          onClose={() => setClassifyAgent(null)}
+        />
       )}
     </div>
   );

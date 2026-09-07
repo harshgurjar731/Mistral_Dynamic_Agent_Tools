@@ -10,6 +10,7 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '../../lib/utils';
+import { Switch } from '../../components/ui/Switch';
 
 export default function GeneralChat() {
   const { sessions, activeSessionId, createSession, addMessage, appendChunk, setStreaming, finalizeStreaming } = useSessionStore();
@@ -313,9 +314,9 @@ export default function GeneralChat() {
                   <input type="range" min="0" max="1" step="0.01" value={temperature} onChange={e => setTemperature(parseFloat(e.target.value))} className="w-full accent-white" />
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <input type="checkbox" id="safeprompt" checked={safePrompt} onChange={e => setSafePrompt(e.target.checked)} className="rounded border-[var(--color-border-subtle)] bg-transparent accent-white w-4 h-4" />
-                  <label htmlFor="safeprompt" className="text-sm text-[var(--color-text-secondary)]">Enable Safe Prompt</label>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-[var(--color-text-secondary)]">Enable Safe Prompt</span>
+                  <Switch checked={safePrompt} onChange={setSafePrompt} />
                 </div>
               </div>
             </div>

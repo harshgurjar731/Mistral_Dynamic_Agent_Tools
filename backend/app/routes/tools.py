@@ -45,9 +45,10 @@ async def update_tool(tool_id: str, request: Request):
         
     body = await request.json()
     return await tool_resolver.update_tool(
-        int(tool_id), 
+        int(tool_id),
         source_code=body.get("source_code", ""),
-        description=body.get("description", "")
+        description=body.get("description", ""),
+        purpose=body.get("purpose"),
     )
 
 
@@ -72,7 +73,8 @@ async def list_all_tools():
                 "status": "approved",
                 "description": desc,
                 "schema_json": json.dumps(schema),
-                "source_code": "# Native backend tool. Code is hardcoded in the backend for security and cannot be edited here."
+                "source_code": "# Native backend tool. Code is hardcoded in the backend for security and cannot be edited here.",
+                "purpose": "tool",
             })
             
     # Append Mistral built-ins
@@ -84,7 +86,8 @@ async def list_all_tools():
             "status": "approved",
             "description": f"Mistral built-in capability: {schema.get('type')}",
             "schema_json": json.dumps(schema),
-            "source_code": "# Mistral built-in capability. No source code available."
+            "source_code": "# Mistral built-in capability. No source code available.",
+            "purpose": "tool",
         })
         
     return all_tools
@@ -102,7 +105,8 @@ async def get_tool_by_hash(hash: str):
 async def synthesize_tool(request: Request):
     """Proxy → Docker Tool Service: trigger tool synthesis."""
     body = await request.json()
-    return await tool_resolver.synthesize_from_task(body.get("task", ""))
+    purpose = body.get("purpose") or "tool"
+    return await tool_resolver.synthesize_from_task(body.get("task", ""), purpose=purpose)
 
 
 # ── MCP Proxy ──────────────────────────────────────────────────────────────

@@ -21,12 +21,14 @@ import {
   ArrowLeft, Play, X, Cpu, Wrench, HelpCircle,
   Shuffle, GitBranch, Loader2, Clock, Server,
   Maximize2, LayoutList, Columns, Eye, Settings, ChevronRight, Layers,
-  Copy, EyeOff, Zap, Thermometer, Save, Check, Pencil, Plug,
+  Copy, EyeOff, Zap, Thermometer, Save, Check, Pencil, Plug, Package, Tag,
 } from 'lucide-react';
 import { workflowsApi } from '../../api/workflows';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
 import WorkflowHistoryPanel from './WorkflowHistoryPanel';
+import DeployPackageModal from './DeployPackageModal';
+import WorkflowClassificationModal from './WorkflowClassificationModal';
 import { TierBadge } from '../../components/ui/TierBadge';
 import { agentsApi, type Agent } from '../../api/agents';
 import dagre from 'dagre';
@@ -1115,7 +1117,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
       border: 'border-pink-500/30',
       glow: 'rgba(236, 72, 153, 0.15)',
       text: 'text-pink-400',
-      label: 'Tool Execution'
+      label: 'Activity'
     },
     condition: {
       gradient: 'from-amber-600 to-orange-600',
@@ -1505,7 +1507,7 @@ function NodeInspectDrawer({ step, onClose, workflow, onNavigateToNode }: NodeIn
             {step.type === 'tool' && (
               <>
                 {!!step.config.tool_name && (
-                  <CopyableField label="Tool Definition Called" value={step.config.tool_name as string} />
+                  <CopyableField label="Activity Called" value={step.config.tool_name as string} />
                 )}
                 {!!step.config.arguments && (
                   <div>
@@ -1613,6 +1615,8 @@ export default function WorkflowVisualizer() {
   const [rfInstance, setRfInstance] = useState<any>(null);
 
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isDeployOpen, setIsDeployOpen] = useState(false);
+  const [isClassifyOpen, setIsClassifyOpen] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
   const exportMutation = useMutation({
@@ -1725,6 +1729,20 @@ export default function WorkflowVisualizer() {
           >
             {exportMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Server size={14} />}
             {exportSuccess ? "Exported!" : "Export Workflow"}
+          </button>
+          <button
+            onClick={() => setIsDeployOpen(true)}
+            className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-sm rounded-md whitespace-nowrap"
+            title="Package this workflow for deployment on another server"
+          >
+            <Package size={14} /> Package
+          </button>
+          <button
+            onClick={() => setIsClassifyOpen(true)}
+            className="btn-secondary flex items-center gap-2 px-3 py-1.5 text-sm rounded-md whitespace-nowrap"
+            title="Which domain this workflow serves"
+          >
+            <Tag size={14} /> Classify
           </button>
           <button
             onClick={() => setIsHistoryOpen(true)}
@@ -1910,6 +1928,17 @@ export default function WorkflowVisualizer() {
           />
         )}
       </AnimatePresence>
+
+      {isDeployOpen && workflow && (
+        <DeployPackageModal workflowName={workflow.name} onClose={() => setIsDeployOpen(false)} />
+      )}
+
+      {isClassifyOpen && workflow && (
+        <WorkflowClassificationModal
+          workflowName={workflow.name}
+          onClose={() => setIsClassifyOpen(false)}
+        />
+      )}
     </div>
   );
 }

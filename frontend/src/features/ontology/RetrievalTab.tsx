@@ -6,7 +6,7 @@ import {
 import { ragApi, type LibraryCard } from '../../api/rag';
 import { ontologyApi, type Concept } from '../../api/ontology';
 import { cn } from '../../lib/utils';
-import { nodeStyle } from './graph/UnifiedGraphCanvas';
+import { nodeStyle } from './graph/entityStyle';
 
 /**
  * The retrieval bench — ask what an agent would ask, and watch it happen.

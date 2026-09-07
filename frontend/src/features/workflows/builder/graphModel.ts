@@ -14,6 +14,7 @@ import { MarkerType } from '@xyflow/react';
 import type {
   CatalogAgent,
   CatalogConnector,
+  CatalogTool,
   NodeLayout,
   StepType,
   ValidationIssue,
@@ -44,10 +45,10 @@ export const STEP_META: Record<
     hint: 'Runs a Mistral agent with a templated prompt',
   },
   tool: {
-    label: 'Tool',
+    label: 'Activity',
     accent: '#f472b6',
     glow: '244,114,182',
-    hint: 'Calls a single tool with templated arguments',
+    hint: 'A standalone unit of work — a computation, API call or lookup — run directly with templated arguments, no agent involved',
   },
   connector: {
     label: 'Connector',
@@ -123,14 +124,33 @@ export function makeAgentStep(agent: CatalogAgent, id: string): WorkflowStep {
   };
 }
 
-// NOTE: there is deliberately no makeToolStep.
-//
-// A tool cannot run on its own — `run_agent_step` passes only `agent_id` to
-// `client.agents.complete`, and the tools the model may call come from the
-// agent's own definition on Mistral. Tools are therefore attached to agents,
-// not dropped onto the canvas as standalone steps. Legacy `tool` steps from
-// older definitions still render and execute; the builder just never creates
-// new ones.
+/**
+ * A standalone Activity step: the workflow calls this directly, with the
+ * arguments templated below, and no agent decides how or whether to call it.
+ *
+ * Activities and Tools are disjoint catalogs (see BuilderCatalog) — a Tool
+ * only ever attaches to an agent as a capability; only something classified
+ * as an Activity can become a step of its own.
+ */
+export function makeActivityStep(tool: CatalogTool, id: string): WorkflowStep {
+  const arguments_: Record<string, string> = {};
+  for (const param of Object.keys(tool.parameters ?? {})) {
+    arguments_[param] = `{{${param}}}`;
+  }
+  return {
+    id,
+    type: 'tool',
+    description: tool.name,
+    config: {
+      tool_name: tool.name,
+      // Matches what `run_tool_step` reads at execution time
+      // (`config.get("arguments", {})`) — see step_runners.py.
+      arguments: arguments_,
+    },
+    next_steps: [],
+    parallel_group: null,
+  };
+}
 
 // NOTE: there is deliberately no makeConnectorStep, for the same reason there
 // is no makeToolStep.

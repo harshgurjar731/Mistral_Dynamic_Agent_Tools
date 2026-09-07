@@ -356,6 +356,13 @@ try:
 except ImportError:
     logger.exception("Workflow routes could not be loaded")
 
+try:
+    from app.routes import workflow_deployment
+    app.include_router(workflow_deployment.router, prefix=settings.API_PREFIX)
+    logger.info("Workflow deployment routes loaded")
+except ImportError:
+    logger.exception("Workflow deployment routes could not be loaded")
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():

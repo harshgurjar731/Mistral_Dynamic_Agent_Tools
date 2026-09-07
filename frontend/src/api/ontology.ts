@@ -136,6 +136,35 @@ export interface KnowledgeEntry {
   score?: number;
 }
 
+export type RuleKind =
+  | 'capability_gap'
+  | 'egress'
+  | 'guardrail'
+  | 'library_domain'
+  | 'cardinality'
+  | 'derives_annotation';
+
+export interface OntologyRule {
+  id: string;
+  kind: RuleKind | string;
+  label: string;
+  params: Record<string, unknown>;
+  severity: string;
+  message_template: string;
+  status: 'draft' | 'approved' | 'superseded';
+  source: 'seed' | 'user';
+}
+
+export interface RuleException {
+  id: number;
+  rule_id: string;
+  subject_type: string;
+  subject_id: string;
+  reason: string;
+  granted_by: string;
+  expires_at: string | null;
+}
+
 export interface ConceptUsage {
   concept_id: string;
   children: string[];
@@ -337,6 +366,50 @@ export const ontologyApi = {
       checked: number; attached: number; detached: number;
       unchanged: number; failed: number;
     }>('/api/ontology/knowledge/attach-tool'),
+
+  // ── Rules ───────────────────────────────────────────────────────────────
+  rules: (status?: string) =>
+    api.get<{ rules: OntologyRule[]; count: number }>('/api/ontology/rules', {
+      params: status ? { status } : {},
+    }),
+
+  createRule: (body: {
+    id: string;
+    kind: RuleKind | string;
+    label: string;
+    params?: Record<string, unknown>;
+    severity?: string;
+    message_template?: string;
+    status?: string;
+  }) => api.post<OntologyRule>('/api/ontology/rules', body),
+
+  updateRule: (
+    id: string,
+    body: {
+      label?: string;
+      params?: Record<string, unknown>;
+      severity?: string;
+      message_template?: string;
+    },
+  ) => api.patch<OntologyRule>(`/api/ontology/rules/${encodeURIComponent(id)}`, body),
+
+  approveRule: (id: string) =>
+    api.post<OntologyRule>(`/api/ontology/rules/${encodeURIComponent(id)}/approve`),
+
+  deleteRule: (id: string) => api.delete(`/api/ontology/rules/${encodeURIComponent(id)}`),
+
+  ruleExceptions: (ruleId: string) =>
+    api.get<{ rule_id: string; exceptions: RuleException[] }>(
+      `/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`,
+    ),
+
+  addRuleException: (
+    ruleId: string,
+    body: { subject_type: string; subject_id: string; reason: string; granted_by: string; expires_at?: string },
+  ) => api.post<RuleException>(`/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`, body),
+
+  removeRuleException: (exceptionId: number) =>
+    api.delete(`/api/ontology/rules/exceptions/${exceptionId}`),
 
   /** What a goal would be narrowed to. Useful for explaining planner behaviour. */
   scope: (goal: string) =>

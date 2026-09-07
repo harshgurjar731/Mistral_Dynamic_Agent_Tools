@@ -45,7 +45,7 @@ import { JsonPanel, ScriptPanel, ValidationBar } from './BuilderPanels';
 import { CreateAgentModal, CreateToolModal } from './CreateModals';
 
 const EMPTY_CATALOG: BuilderCatalog = {
-  agents: [], tools: [], connectors: [], domains: [], models: [], tiers: [],
+  agents: [], tools: [], activities: [], connectors: [], domains: [], models: [], tiers: [],
 };
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -78,7 +78,9 @@ export default function WorkflowBuilder() {
 
   const [toast, setToast] = useState<Toast>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
-  const [showToolModal, setShowToolModal] = useState(false);
+  // Which flavour of the synthesis modal is open, if any — the same modal
+  // component serves both, tagging the record it creates accordingly.
+  const [synthesizeKind, setSynthesizeKind] = useState<'tool' | 'activity' | null>(null);
 
   const showToast = useCallback((kind: 'success' | 'error', message: string) => {
     setToast({ kind, message });
@@ -505,12 +507,15 @@ export default function WorkflowBuilder() {
         <BuilderPalette
           agents={catalog.agents}
           tools={catalog.tools}
+          activities={catalog.activities}
           connectors={catalog.connectors}
           domains={catalog.domains}
           isLoading={catalogLoading}
           onRefresh={() => void refetchCatalog()}
           onCreateAgent={() => setShowAgentModal(true)}
-          onCreateTool={() => setShowToolModal(true)}
+          onCreateTool={() => setSynthesizeKind('tool')}
+          onCreateActivity={() => setSynthesizeKind('activity')}
+          onManageActivities={() => window.open('/workflows/activities', '_blank', 'noopener')}
         />
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -553,6 +558,7 @@ export default function WorkflowBuilder() {
         <BuilderInspector
           agents={catalog.agents}
           tools={catalog.tools}
+          activities={catalog.activities}
           connectors={catalog.connectors}
           tiers={catalog.tiers}
           onSetAgentTools={setAgentTools}
@@ -603,15 +609,18 @@ export default function WorkflowBuilder() {
           }}
         />
       )}
-      {showToolModal && (
+      {synthesizeKind && (
         <CreateToolModal
-          onClose={() => setShowToolModal(false)}
-          onCreated={(toolName) => {
-            setShowToolModal(false);
+          purpose={synthesizeKind}
+          onClose={() => setSynthesizeKind(null)}
+          onCreated={(name) => {
+            setSynthesizeKind(null);
             void refetchCatalog();
             showToast(
               'success',
-              `Tool "${toolName}" synthesised. Drop it onto an agent to let that agent call it.`,
+              synthesizeKind === 'activity'
+                ? `Activity "${name}" synthesised. Drop it onto the canvas to use it.`
+                : `Tool "${name}" synthesised. Drop it onto an agent to let that agent call it.`,
             );
           }}
         />

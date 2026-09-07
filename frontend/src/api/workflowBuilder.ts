@@ -123,7 +123,10 @@ export interface CatalogConnector {
 
 export interface BuilderCatalog {
   agents: CatalogAgent[];
+  /** Attach to an agent as a capability. Disjoint from `activities`. */
   tools: CatalogTool[];
+  /** Standalone workflow steps — drop directly onto the canvas. Disjoint from `tools`. */
+  activities: CatalogTool[];
   connectors: CatalogConnector[];
   domains: CatalogDomain[];
   models: string[];

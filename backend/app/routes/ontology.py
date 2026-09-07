@@ -16,6 +16,7 @@ annotations point at, and orphaning one fails silently.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -101,6 +102,31 @@ class KnowledgeRequest(BaseModel):
     body: str
     kind: str = "definition"
     tags: list[str] = Field(default_factory=list)
+
+
+class RuleRequest(BaseModel):
+    id: str
+    kind: str
+    label: str
+    params: dict = Field(default_factory=dict)
+    severity: str = "warning"
+    message_template: Optional[str] = None
+    status: str = "draft"
+
+
+class RuleUpdate(BaseModel):
+    label: Optional[str] = None
+    params: Optional[dict] = None
+    severity: Optional[str] = None
+    message_template: Optional[str] = None
+
+
+class ExceptionRequest(BaseModel):
+    subject_type: str
+    subject_id: str
+    reason: str
+    granted_by: str
+    expires_at: Optional[datetime] = None
 
 
 class ClassifyRequest(BaseModel):
@@ -300,6 +326,60 @@ async def remove_annotation(
 async def clear_subject(subject_type: str, subject_id: str):
     """Forget everything recorded about one subject."""
     return store.delete_subject_annotations(subject_type, subject_id)
+
+
+# ── Rules ──────────────────────────────────────────────────────────────────
+#
+# The declarative governance layer (ontology/rules.py). A draft rule has zero
+# effect on validation until approved — see OntologyRule's docstring for why.
+
+@router.get("/ontology/rules")
+async def list_rules(status: Optional[str] = Query(None, description="draft | approved | superseded")):
+    rules = store.list_rules(status)
+    return {"rules": rules, "count": len(rules)}
+
+
+@router.post("/ontology/rules", status_code=201)
+async def create_rule(request: RuleRequest):
+    return _vocab_guard(store.upsert_rule)(
+        request.id, request.kind, request.label, request.params,
+        request.severity, request.message_template, request.status, "user",
+    )
+
+
+@router.patch("/ontology/rules/{rule_id}")
+async def update_rule(rule_id: str, request: RuleUpdate):
+    return _vocab_guard(store.update_rule)(
+        rule_id, request.label, request.params, request.severity, request.message_template,
+    )
+
+
+@router.post("/ontology/rules/{rule_id}/approve")
+async def approve_rule(rule_id: str):
+    return _vocab_guard(store.approve_rule)(rule_id)
+
+
+@router.delete("/ontology/rules/{rule_id}")
+async def delete_rule(rule_id: str):
+    return _vocab_guard(store.delete_rule)(rule_id)
+
+
+@router.get("/ontology/rules/{rule_id}/exceptions")
+async def list_rule_exceptions(rule_id: str):
+    return {"rule_id": rule_id, "exceptions": store.list_exceptions(rule_id)}
+
+
+@router.post("/ontology/rules/{rule_id}/exceptions", status_code=201)
+async def create_rule_exception(rule_id: str, request: ExceptionRequest):
+    return _vocab_guard(store.add_exception)(
+        rule_id, request.subject_type, request.subject_id,
+        request.reason, request.granted_by, request.expires_at,
+    )
+
+
+@router.delete("/ontology/rules/exceptions/{exception_id}")
+async def delete_rule_exception(exception_id: int):
+    return store.remove_exception(exception_id)
 
 
 # ── Graph ──────────────────────────────────────────────────────────────────

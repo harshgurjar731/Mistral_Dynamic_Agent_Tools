@@ -35,7 +35,7 @@ def _read_seed_files(path: Path | None) -> dict:
     about the other.
     """
     files = [path] if path else sorted(SEED_DIR.glob("*.yaml"))
-    merged: dict = {"schemes": [], "concepts": [], "entries": []}
+    merged: dict = {"schemes": [], "concepts": [], "entries": [], "rules": []}
 
     for seed_file in files:
         if not seed_file.exists():
@@ -49,6 +49,7 @@ def _read_seed_files(path: Path | None) -> dict:
         merged["schemes"].extend(data.get("schemes") or [])
         merged["concepts"].extend(data.get("concepts") or [])
         merged["entries"].extend(data.get("entries") or [])
+        merged["rules"].extend(data.get("rules") or [])
         logger.debug(
             "Read %s: %d schemes, %d concepts",
             seed_file.name, len(data.get("schemes") or []), len(data.get("concepts") or []),
@@ -60,7 +61,7 @@ def _read_seed_files(path: Path | None) -> dict:
 def load_seed(path: Path | None = None) -> dict:
     """Upsert the YAML vocabulary. Returns a summary of what changed."""
     summary = {"schemes_added": 0, "concepts_added": 0, "concepts_updated": 0,
-               "knowledge_upserted": 0, "skipped": 0}
+               "knowledge_upserted": 0, "rules_upserted": 0, "skipped": 0}
 
     if SessionLocal is None:
         logger.warning("No database — skipping ontology seed")
@@ -133,11 +134,12 @@ def load_seed(path: Path | None = None) -> dict:
         # Knowledge entries are upserted after the concept commit so an entry
         # can reference a concept this same pass introduced.
         summary["knowledge_upserted"] = _load_knowledge(data.get("entries") or [])
+        summary["rules_upserted"] = _load_rules(data.get("rules") or [])
 
         logger.info(
-            "Ontology seed: +%d schemes, +%d concepts, ~%d updated, %d skipped",
+            "Ontology seed: +%d schemes, +%d concepts, ~%d updated, %d rules, %d skipped",
             summary["schemes_added"], summary["concepts_added"],
-            summary["concepts_updated"], summary["skipped"],
+            summary["concepts_updated"], summary["rules_upserted"], summary["skipped"],
         )
     except Exception as e:
         db.rollback()
@@ -187,5 +189,43 @@ def _load_knowledge(entries: list[dict]) -> int:
             written += 1
         except Exception as e:
             logger.warning("Could not seed knowledge %r: %s", title, e)
+
+    return written
+
+
+def _load_rules(entries: list[dict]) -> int:
+    """Upsert seeded governance rules — overwrite, not skip-if-exists.
+
+    Overwrite because these rows encode the platform's default behavior; if a
+    seed rule's params change in a later release, every deployment should pick
+    that up on next boot the same way a changed ``schemes.yaml`` label does. A
+    user's own rules use a different id namespace and are never touched here.
+    """
+    if not entries:
+        return 0
+
+    from app.ontology import store
+
+    written = 0
+    for raw in entries:
+        rule_id = (raw.get("id") or "").strip()
+        kind = raw.get("kind")
+        if not rule_id or not kind:
+            logger.warning("Skipping rule seed with no id/kind: %r", raw)
+            continue
+        try:
+            store.upsert_rule(
+                rule_id=rule_id,
+                kind=kind,
+                label=raw.get("label", rule_id),
+                params=raw.get("params") or {},
+                severity=raw.get("severity", "warning"),
+                message_template=raw.get("message_template"),
+                status=raw.get("status", "draft"),
+                source=raw.get("source", "seed"),
+            )
+            written += 1
+        except Exception as e:
+            logger.warning("Could not seed rule %r: %s", rule_id, e)
 
     return written

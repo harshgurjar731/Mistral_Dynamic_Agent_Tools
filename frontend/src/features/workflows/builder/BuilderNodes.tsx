@@ -340,7 +340,9 @@ export const BuilderToolNode = memo(function BuilderToolNode({ data, selected }:
   const nodeData = data as NodeData;
   const cfg = nodeData.step.config ?? {};
   const meta = STEP_META.tool;
-  const args = (cfg.arguments_template ?? cfg.arguments) as Record<string, unknown> | undefined;
+  // `arguments` is what `run_tool_step` reads at execution time; `arguments_template`
+  // is kept only so an older saved step still displays its argument count.
+  const args = (cfg.arguments ?? cfg.arguments_template) as Record<string, unknown> | undefined;
   const argCount = args ? Object.keys(args).length : 0;
 
   return (
@@ -350,17 +352,15 @@ export const BuilderToolNode = memo(function BuilderToolNode({ data, selected }:
       icon={<Wrench size={12} />}
       accent={meta.accent}
       glow={meta.glow}
-      typeLabel="Tool"
+      typeLabel="Activity"
     >
-      <Field label="tool" value={cfg.tool_name as string} mono />
+      <Field label="activity" value={cfg.tool_name as string} mono />
       <Field label="args" value={argCount > 0 ? `${argCount} mapped` : 'none'} />
-      {/* The builder no longer creates these — flag them so it is obvious the
-          call bypasses any agent and the arguments are hand-written. */}
       <span
-        title="Runs the tool directly, without an agent deciding how to call it"
-        className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 mt-0.5"
+        title="Runs directly with the templated arguments below — no agent decides how to call it"
+        className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-pink-400/30 bg-pink-400/10 text-pink-300 mt-0.5"
       >
-        direct call
+        standalone
       </span>
     </NodeShell>
   );

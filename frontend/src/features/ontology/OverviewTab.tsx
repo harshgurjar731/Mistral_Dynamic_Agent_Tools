@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Info, Loader2, Maximize2, Minimize2, RotateCcw, Search, X,
+  Info, Loader2, Maximize2, Minimize2, Network, RotateCcw, Search, Share2, X,
 } from 'lucide-react';
 import {
   ontologyApi,
@@ -11,9 +11,13 @@ import {
 } from '../../api/ontology';
 import { cn } from '../../lib/utils';
 import OntologyGraphCanvas, { GraphLegend } from './graph/OntologyGraphCanvas';
-import UnifiedGraphCanvas from './graph/UnifiedGraphCanvas';
+import SigmaGraphCanvas from './graph/SigmaGraphCanvas';
+import Neo4jGraphCanvas from './graph/Neo4jGraphCanvas';
+import { toUnifiedGraph } from './graph/toUnifiedGraph';
 import { ragApi } from '../../api/rag';
 import { kindStyle, type LayoutKind } from './graph/graphLayout';
+
+type RenderStyle = 'structured' | 'neo4j';
 
 /**
  * Overview — the platform as one picture.
@@ -77,6 +81,24 @@ export default function OverviewTab() {
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [layout, setLayout] = useState<LayoutKind>('tree');
+  // Which engine draws the graph: this app's own hierarchy-aware canvas, or a
+  // Neo4j-Browser-style force layout (colour per kind, always-on edge labels,
+  // a property panel). Independent of `mode` — either style can render any of
+  // taxonomy/resources/everything/content, since both consume the same
+  // filtered `displayed` graph below.
+  const [renderStyle, setRenderStyle] = useState<RenderStyle>('structured');
+  // Kinds hidden from the canvas — a click on the legend toggles one. Reset
+  // whenever the underlying graph changes shape (mode switch, reset button),
+  // the same rule every other filter here follows.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
+  const toggleKind = (kind: string) => {
+    setHiddenKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
 
   // The content graph answers a different question from a different store:
   // what is *inside* the libraries, from Neo4j. Fetched only when that mode is
@@ -84,7 +106,7 @@ export default function OverviewTab() {
   // two are separate queries rather than one.
   const { data: contentGraph } = useQuery({
     queryKey: ['rag', 'graph', 'unified', 'overview'],
-    queryFn: () => ragApi.unifiedGraph({ entity_limit: 400 }).then((r) => r.data),
+    queryFn: () => ragApi.unifiedGraph().then((r) => r.data),
     enabled: mode === 'content',
   });
 
@@ -180,6 +202,31 @@ export default function OverviewTab() {
     };
   }, [graph, mode, expanded, appliedSearch, reveals, showUnlinked]);
 
+  /**
+   * `visible`, minus whatever kinds the legend has toggled off.
+   *
+   * A separate pass rather than folded into `visible` above: the expand/
+   * collapse walk needs the *full* kind set to know what a node reveals, so a
+   * hidden kind can stay toggleable (and keep its count) instead of vanishing
+   * from the legend the moment it's turned off.
+   */
+  const displayed: OntologyGraph | undefined = useMemo(() => {
+    if (!visible) return undefined;
+    if (hiddenKinds.size === 0) return visible;
+    const nodes = visible.nodes.filter((n) => !hiddenKinds.has(n.kind));
+    const kept = new Set(nodes.map((n) => n.id));
+    const edges = visible.edges.filter((e) => kept.has(e.source) && kept.has(e.target));
+    const counts: Record<string, number> = {};
+    for (const n of nodes) counts[n.kind] = (counts[n.kind] ?? 0) + 1;
+    return {
+      ...visible,
+      nodes,
+      edges,
+      counts,
+      totals: { ...visible.totals, nodes: nodes.length, edges: edges.length },
+    };
+  }, [visible, hiddenKinds]);
+
   /** Resources nothing references — a finding, but not the default view. */
   const unlinkedCount = useMemo(
     () => (graph?.nodes ?? []).filter((n) => n.subject_type && n.degree === 0).length,
@@ -238,7 +285,7 @@ export default function OverviewTab() {
             {MODES.map((m) => (
               <button
                 key={m.key}
-                onClick={() => { setMode(m.key); setSelected(null); }}
+                onClick={() => { setMode(m.key); setSelected(null); setHiddenKinds(new Set()); }}
                 className={cn(
                   'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
                   mode === m.key
@@ -249,6 +296,34 @@ export default function OverviewTab() {
                 {m.label}
               </button>
             ))}
+          </div>
+
+          <div
+            className="flex shrink-0 gap-0.5 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 p-0.5"
+            title="How the graph is drawn — this app's hierarchy-aware canvas, or a Neo4j-Browser-style force layout"
+          >
+            <button
+              onClick={() => setRenderStyle('structured')}
+              className={cn(
+                'flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                renderStyle === 'structured'
+                  ? 'bg-indigo-500/25 text-indigo-100'
+                  : 'text-[var(--color-text-muted)] hover:text-white',
+              )}
+            >
+              <Share2 size={11} /> Structured
+            </button>
+            <button
+              onClick={() => setRenderStyle('neo4j')}
+              className={cn(
+                'flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                renderStyle === 'neo4j'
+                  ? 'bg-indigo-500/25 text-indigo-100'
+                  : 'text-[var(--color-text-muted)] hover:text-white',
+              )}
+            >
+              <Network size={11} /> Neo4j style
+            </button>
           </div>
 
           <form
@@ -307,19 +382,20 @@ export default function OverviewTab() {
           )}
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            {visible && (
+            {displayed && (
               <span className="font-mono text-[10px] tabular-nums text-[var(--color-text-muted)]">
-                {visible.totals.nodes} of {graph?.nodes.length ?? 0} shown
+                {displayed.totals.nodes} of {graph?.nodes.length ?? 0} shown
               </span>
             )}
             {isFetching && <Loader2 size={12} className="animate-spin text-[var(--color-text-muted)]" />}
-            {(appliedSearch || expanded.size > 0) && (
+            {(appliedSearch || expanded.size > 0 || hiddenKinds.size > 0) && (
               <button
                 onClick={() => {
                   setExpanded(new Set());
                   setSearch('');
                   setAppliedSearch('');
                   setSelected(null);
+                  setHiddenKinds(new Set());
                 }}
                 className="flex items-center gap-1 rounded-lg border border-[var(--color-border-subtle)] px-2 py-1 text-[10px] text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
               >
@@ -332,12 +408,20 @@ export default function OverviewTab() {
         <p className="flex items-center gap-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
           <Info size={10} className="shrink-0" />
           {modeHint}
-          {mode !== 'full' && !appliedSearch && ' Click a circle to expand or collapse it.'}
+          {renderStyle === 'structured' && mode !== 'full' && !appliedSearch && ' Click a circle to expand or collapse it.'}
+          {renderStyle === 'neo4j' && mode !== 'content' && (
+            ' Force-scattered, coloured by kind, same as the Query tab — switch back to Structured to expand further.'
+          )}
+          {' '}Click a kind below to filter it out of the graph.
         </p>
 
         {visible && (
           <div className="max-h-16 overflow-y-auto custom-scrollbar">
-            <GraphLegend counts={visible.counts} />
+            <GraphLegend
+              counts={visible.counts}
+              active={new Set(Object.keys(visible.counts).filter((k) => !hiddenKinds.has(k)))}
+              onToggle={toggleKind}
+            />
           </div>
         )}
       </div>
@@ -347,20 +431,34 @@ export default function OverviewTab() {
         <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-[var(--color-border-subtle)]">
           {mode === 'content' ? (
             contentGraph ? (
-              <UnifiedGraphCanvas
-                graph={contentGraph}
-                height={fullscreen ? window.innerHeight - 40 : 620}
-                clusterBy="kind"
-                title="Content across every library"
-              />
+              renderStyle === 'neo4j' ? (
+                <Neo4jGraphCanvas
+                  graph={contentGraph}
+                  height={fullscreen ? window.innerHeight - 40 : 620}
+                  title="Content across every library"
+                />
+              ) : (
+                <SigmaGraphCanvas
+                  graph={contentGraph}
+                  height={fullscreen ? window.innerHeight - 40 : 620}
+                  clusterBy="kind"
+                  title="Content across every library"
+                />
+              )
             ) : (
               <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-muted)]">
                 Loading the content graph…
               </div>
             )
+          ) : renderStyle === 'neo4j' ? (
+            <Neo4jGraphCanvas
+              graph={displayed ? toUnifiedGraph(displayed) : { available: true, nodes: [], edges: [], truncated: false, counts: {} }}
+              height={fullscreen ? window.innerHeight - 40 : 620}
+              title={MODES.find((m) => m.key === mode)!.label}
+            />
           ) : (
           <OntologyGraphCanvas
-            graph={visible}
+            graph={displayed}
             isLoading={isLoading}
             selectedId={selected?.id ?? null}
             onSelect={onSelect}
@@ -372,9 +470,11 @@ export default function OverviewTab() {
             layout={layout}
             onLayoutChange={setLayout}
             emptyHint={
-              appliedSearch
-                ? 'Nothing matched that search.'
-                : 'The vocabulary is empty — add concepts in the Taxonomy tab.'
+              hiddenKinds.size > 0
+                ? 'Every visible node is hidden by the kind filter — click a kind in the legend to bring it back.'
+                : appliedSearch
+                  ? 'Nothing matched that search.'
+                  : 'The vocabulary is empty — add concepts in the Taxonomy tab.'
             }
           />
           )}

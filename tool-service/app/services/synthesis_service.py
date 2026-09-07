@@ -176,6 +176,7 @@ def synthesize_tool(
     required: list[str],
     api_details: str = "No external API. This is a pure computation using standard library.",
     expected_output_shape: str = "A dictionary containing the result.",
+    purpose: str = "tool",
 ) -> dict:
     """
     Run the full 6-stage synthesis pipeline.
@@ -294,6 +295,7 @@ def synthesize_tool(
             module_path=module_path,
             status="approved",
             sandbox_output=sandbox_output,
+            purpose=purpose,
         )
         db.add(record)
         db.commit()
@@ -311,6 +313,7 @@ def synthesize_tool(
             source_code=generated_code,
             status="pending_approval",
             sandbox_output=sandbox_output,
+            purpose=purpose,
         )
         db.add(record)
         db.commit()
@@ -336,6 +339,43 @@ def approve_tool(db: Session, tool_id: int) -> dict:
 
     logger.info("Tool '%s' approved and registered at %s", record.name, module_path)
     return {"status": "approved", "message": "Tool approved and registered", "tool_name": record.name}
+
+
+def import_tool(db: Session, name: str, schema: dict, source_code: str, content_hash: str, version: str = "1.0.0", purpose: str = "tool") -> dict:
+    """Install a tool from known-good source, skipping codegen/lint/sandbox.
+
+    For reproducing a tool that was already vetted and approved elsewhere (a
+    deployment package) — not for accepting arbitrary code from an untrusted
+    caller. The source is trusted the same way approve_tool() trusts a
+    record's stored source_code: it already went through synthesis once.
+    """
+    existing = db.query(ToolRecord).filter_by(hash=content_hash).first()
+    if existing:
+        return {
+            "status": "approved" if existing.status == "approved" else existing.status,
+            "message": "Tool already present",
+            "tool_name": existing.name,
+            "tool_id": existing.id,
+        }
+
+    module_path = _write_and_register(source_code, name, content_hash)
+
+    record = ToolRecord(
+        name=name,
+        hash=content_hash,
+        version=version,
+        schema_json=json.dumps(schema),
+        source_code=source_code,
+        module_path=module_path,
+        status="approved",
+        purpose=purpose,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    logger.info("Tool '%s' imported and registered at %s", name, module_path)
+    return {"status": "approved", "message": "Tool imported and registered", "tool_name": name, "tool_id": record.id}
 
 
 def reject_tool(db: Session, tool_id: int) -> dict:
@@ -380,14 +420,17 @@ def delete_tool(db: Session, tool_id: int) -> dict:
     return {"status": "deleted", "message": "Tool deleted", "tool_name": record.name}
 
 
-def update_tool(db: Session, tool_id: int, code: str, description: str) -> dict:
-    """Update a tool's code and description."""
+def update_tool(db: Session, tool_id: int, code: str, description: str, purpose: str | None = None) -> dict:
+    """Update a tool's code and description. `purpose` left as None keeps it unchanged."""
     import os
     import hashlib
-    
+
     record = db.query(ToolRecord).filter_by(id=tool_id).first()
     if not record:
         return {"status": "error", "message": "Tool not found"}
+
+    if purpose:
+        record.purpose = purpose
 
     # Re-verify static analysis
     ok, error, formatted_code = _static_analyse(code)

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Activity, Copy, Check, Filter, ScrollText } from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import { Switch } from '../../../components/ui/Switch';
 import type { TraceEvent } from '../../../api/executions';
 import type { WorkflowEvent } from './useExecutionStream';
 import { statusStyle } from './ExecutionStatusBadge';
@@ -148,16 +149,11 @@ export default function ExecutionEventLog({
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-2 pb-2">
-        <label className="flex cursor-pointer select-none items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-          <input
-            type="checkbox"
-            checked={showInternal}
-            onChange={(e) => onToggleInternal(e.target.checked)}
-            className="h-3 w-3 accent-indigo-500"
-          />
+        <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
           <Filter size={10} />
-          Internal events
-        </label>
+          <span>Internal events</span>
+          <Switch checked={showInternal} onChange={onToggleInternal} size="xs" />
+        </div>
         <button
           type="button"
           onClick={copyAll}

@@ -13,9 +13,11 @@ import {
   type RagDocument,
 } from '../../api/rag';
 import { cn } from '../../lib/utils';
-import UnifiedGraphCanvas, { nodeStyle as entityStyle } from './graph/UnifiedGraphCanvas';
+import { Switch } from '../../components/ui/Switch';
+import SigmaGraphCanvas from './graph/SigmaGraphCanvas';
+import { nodeStyle as entityStyle } from './graph/entityStyle';
 import OntologyDesigner from './OntologyDesigner';
-import RagTimeline, { TraceView } from './RagTimeline';
+import IngestTimeline from './IngestTimeline';
 
 /**
  * Graph RAG — the document side of what an agent knows.
@@ -64,7 +66,7 @@ const ENTITY_TYPES = [
   'Regulation', 'System', 'Location', 'Event', 'Concept',
 ];
 
-type View = 'libraries' | 'graph' | 'timeline';
+type View = 'libraries' | 'graph';
 
 export default function RagTab() {
   const [view, setView] = useState<View>('libraries');
@@ -81,7 +83,6 @@ export default function RagTab() {
   const views: { key: View; label: string; icon: typeof Layers }[] = [
     { key: 'libraries', label: 'Libraries', icon: Database },
     { key: 'graph', label: 'Graph', icon: Network },
-    { key: 'timeline', label: 'Timeline', icon: GitBranch },
   ];
 
   return (
@@ -148,7 +149,6 @@ export default function RagTab() {
         ))}
 
       {view === 'graph' && <GraphView libraries={data?.libraries ?? []} />}
-      {view === 'timeline' && <RagTimeline />}
     </div>
   );
 }
@@ -261,6 +261,154 @@ function LibraryGrid({
   );
 }
 
+/**
+ * The four things that have to happen to a library, in order, with where you
+ * are marked on them.
+ *
+ * The page used to be a row of equal-looking buttons — Domain, Content schema,
+ * Rules, Upload — with nothing to say which came first or which had been done.
+ * That is the whole reason the feature read as complicated: the steps are
+ * genuinely sequential (a schema is designed *from* documents; extraction runs
+ * *under* a schema), and the interface was hiding that.
+ *
+ * Every step is still reachable at any time. This says what is done and what is
+ * worth doing next, it does not lock anything.
+ */
+function SetupSteps({
+  library,
+  documents,
+  onDomain,
+  onSchema,
+  onUpload,
+}: {
+  library: LibraryCard;
+  documents: RagDocument[];
+  onDomain: () => void;
+  onSchema: () => void;
+  onUpload: () => void;
+}) {
+  const uploaded = documents.length;
+  const graphed = documents.filter((d) => d.status === 'graphed').length;
+  const awaiting = documents.filter((d) => d.status === 'proposed').length;
+
+  const steps = [
+    {
+      key: 'documents',
+      n: 1,
+      label: 'Add documents',
+      icon: Upload,
+      done: uploaded > 0,
+      status: uploaded ? `${uploaded} uploaded` : 'none yet',
+      hint: 'Upload the files this library is made of. A schema is designed from them, so these come first.',
+      action: onUpload,
+      actionLabel: 'Upload',
+    },
+    {
+      key: 'schema',
+      n: 2,
+      label: 'Design the schema',
+      icon: Shapes,
+      done: !!library.ontology_version,
+      status: library.ontology_version
+        ? `v${library.ontology_version} · ${library.content_types.length} types`
+        : 'generic vocabulary',
+      hint: 'What kinds of thing these documents contain, and how they relate. Extraction is only as good as this.',
+      action: onSchema,
+      actionLabel: library.ontology_version ? 'Review' : 'Design',
+    },
+    {
+      key: 'extract',
+      n: 3,
+      label: 'Review and commit',
+      icon: Check,
+      done: graphed > 0,
+      status: awaiting
+        ? `${awaiting} waiting for review`
+        : graphed
+          ? `${graphed} in the graph`
+          : 'nothing extracted',
+      hint: 'Nothing reaches the graph until you approve it. Check what was extracted, correct it, commit.',
+      action: onUpload,
+      actionLabel: awaiting ? 'Review' : undefined,
+    },
+    {
+      key: 'domain',
+      n: 4,
+      label: 'Assign a domain',
+      icon: Tag,
+      done: (library.serves_domain?.length ?? 0) > 0,
+      status: library.serves_domain?.length
+        ? library.serves_domain.join(', ')
+        : 'unassigned',
+      hint: 'Which business domain this library is about. Lets a planner pick it for a matching goal.',
+      action: onDomain,
+      actionLabel: 'Set',
+    },
+  ];
+
+  // The first unfinished step is what to nudge towards.
+  const nextStep = steps.find((step) => !step.done)?.key;
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {steps.map((step) => (
+        <div
+          key={step.key}
+          className={cn(
+            'rounded-xl border p-3 transition-colors',
+            step.done
+              ? 'border-[var(--color-border-subtle)] bg-black/20'
+              : step.key === nextStep
+                ? 'border-indigo-400/40 bg-indigo-500/[0.07]'
+                : 'border-[var(--color-border-subtle)] bg-black/10',
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium',
+                step.done
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : step.key === nextStep
+                    ? 'bg-indigo-500/20 text-indigo-200'
+                    : 'bg-white/5 text-[var(--color-text-muted)]',
+              )}
+            >
+              {step.done ? <Check size={11} /> : step.n}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-white">
+              {step.label}
+            </span>
+            <step.icon size={12} className="shrink-0 text-[var(--color-text-muted)]" />
+          </div>
+
+          <p className="mt-1.5 truncate text-[11px] text-[var(--color-text-secondary)]">
+            {step.status}
+          </p>
+          <p className="mt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+            {step.hint}
+          </p>
+
+          {step.actionLabel && (
+            <button
+              onClick={step.action}
+              className={cn(
+                'mt-2 w-full rounded-lg border px-2 py-1 text-[10px] transition-colors',
+                step.key === nextStep
+                  ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
+                  : 'border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] hover:text-white',
+              )}
+            >
+              {step.actionLabel}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 // ── One library: documents, rules, upload ──────────────────────────────────
 
 function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () => void }) {
@@ -336,24 +484,11 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
         </button>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setAssigningDomain(true)}
-            title="Which business domain this library serves — what lets a planner pick it"
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
-          >
-            <Tag size={12} /> Domain
-          </button>
-          <button
-            onClick={() => setDesigning(true)}
-            title="The entity types and predicates everything extracted from this library must use"
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
-          >
-            <Shapes size={12} /> Content schema
-          </button>
-          <button
             onClick={() => setShowRules(true)}
+            title="Extra instructions applied to every document here, on top of the schema"
             className="rounded-lg border border-[var(--color-border-subtle)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:border-indigo-400/40 hover:text-white"
           >
-            Rules
+            Extra rules
           </button>
           <input
             ref={fileInput}
@@ -380,22 +515,18 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
       <div>
         <h3 className="text-sm font-medium text-white">{library.name}</h3>
         <p className="text-[11px] text-[var(--color-text-muted)]">
-          {library.entities} entities · {library.relations} relations ·{' '}
-          {library.ontology_version
-            ? `content schema v${library.ontology_version}`
-            : 'no content schema — extraction uses the generic vocabulary'}
-          {library.serves_domain?.length
-            ? ` · serves ${library.serves_domain.join(', ')}`
-            : ' · no domain assigned'}
+          {library.entities} entities · {library.relations} relations across{' '}
+          {documents.length} document{documents.length === 1 ? '' : 's'}
         </p>
-        {!library.ontology_version && (
-          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-200/90">
-            <Wand2 size={12} className="mt-px shrink-0" />
-            Designing a content schema first gives this library types and
-            predicates that fit its documents, instead of ten generic buckets.
-          </p>
-        )}
       </div>
+
+      <SetupSteps
+        library={library}
+        documents={documents}
+        onDomain={() => setAssigningDomain(true)}
+        onSchema={() => setDesigning(true)}
+        onUpload={() => fileInput.current?.click()}
+      />
 
       {upload.isError && (
         <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
@@ -416,6 +547,20 @@ function LibraryDetail({ library, onBack }: { library: LibraryCard; onBack: () =
         </div>
       ) : (
         <div className="space-y-2">
+          {/* Anything in flight shows its progress unprompted — that is the
+              moment the detail is wanted, and the reason the separate Timeline
+              tab was not worth keeping. */}
+          {documents
+            .filter((doc) => LIVE.has(doc.status) && doc.trace_id)
+            .map((doc) => (
+              <IngestTimeline
+                key={`live-${doc.id}`}
+                traceId={doc.trace_id}
+                filename={doc.filename}
+                onFinished={refresh}
+              />
+            ))}
+
           {documents.map((doc) => (
             <DocumentRow
               key={doc.id}
@@ -491,8 +636,7 @@ function DocumentRow({
   const { data: docGraph } = useQuery({
     queryKey: ['rag', 'graph', 'unified', 'document', document.id],
     queryFn: () =>
-      ragApi.unifiedGraph({ document_id: document.id, entity_limit: 200 })
-        .then((r) => r.data),
+      ragApi.unifiedGraph({ document_id: document.id }).then((r) => r.data),
     enabled: openGraph,
   });
 
@@ -576,7 +720,7 @@ function DocumentRow({
       {openGraph && (
         <div className="space-y-2 border-t border-[var(--color-border-subtle)] p-2">
           {docGraph ? (
-            <UnifiedGraphCanvas
+            <SigmaGraphCanvas
               graph={docGraph}
               height={380}
               clusterBy="type"
@@ -592,7 +736,7 @@ function DocumentRow({
 
       {openTrace && document.trace_id && (
         <div className="border-t border-[var(--color-border-subtle)] p-2">
-          <TraceView traceId={document.trace_id} />
+          <IngestTimeline traceId={document.trace_id} filename={document.filename} />
         </div>
       )}
     </div>
@@ -621,9 +765,10 @@ function RulesEditor({ libraryId, onClose }: { libraryId: string; onClose: () =>
           <div>
             <h3 className="text-sm font-medium text-white">Extraction rules</h3>
             <p className="mt-1 max-w-lg text-xs text-[var(--color-text-muted)]">
-              What to pull out of documents in this library. These extend the built-in
-              contract below — they narrow or add to it, and never replace the
-              evidence requirement or the output format.
+              Extra instructions applied to every document in this library, on top
+              of its content schema. The schema&apos;s types, predicates and
+              extraction prompt are already included automatically — this is only
+              for anything they do not cover.
             </p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-[var(--color-text-muted)] hover:text-white">
@@ -697,12 +842,24 @@ function ExtractionDialog({
 }) {
   const [rules, setRules] = useState(initialRules);
   const [autoExtract, setAutoExtract] = useState(true);
+  const [showApplied, setShowApplied] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['rag', 'rules', libraryId],
     queryFn: () => ragApi.rules(libraryId).then((r) => r.data),
     staleTime: 300_000,
   });
+
+  // The library's content schema — its types, predicates and extraction prompt
+  // — is spliced into every extraction automatically. Users were copying the
+  // prompt into this box by hand, which would have sent it twice; showing what
+  // is already applied is the fix, not prefilling it.
+  const { data: ontology } = useQuery({
+    queryKey: ['rag', 'ontology', libraryId],
+    queryFn: () => ragApi.ontology(libraryId).then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const approved = ontology?.approved;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -721,10 +878,64 @@ function ExtractionDialog({
           </button>
         </div>
 
+        {/* What is already in force, so nobody copies it in by hand. */}
+        <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+          <p className="flex items-center gap-1.5 text-[11px] text-emerald-300">
+            <Check size={12} />
+            {approved
+              ? `Content schema v${approved.version} is applied automatically`
+              : 'The built-in extraction contract is applied automatically'}
+          </p>
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            {approved ? (
+              <>
+                Its {approved.entity_types.length} entity types,{' '}
+                {approved.predicates.length} predicates and extraction prompt are
+                already part of every extraction in this library.{' '}
+                <strong className="text-[var(--color-text-secondary)]">
+                  You do not need to copy anything below into the box.
+                </strong>
+              </>
+            ) : (
+              <>
+                This library has no content schema, so extraction uses the generic
+                vocabulary. Designing one gives it types and predicates that fit
+                its documents.
+              </>
+            )}
+          </p>
+          <button
+            onClick={() => setShowApplied((v) => !v)}
+            className="mt-1.5 text-[10px] text-[var(--color-text-muted)] underline-offset-2 hover:text-white hover:underline"
+          >
+            {showApplied ? 'Hide' : 'Show'} what is already applied
+          </button>
+          {showApplied && (
+            <div className="mt-2 space-y-2">
+              {approved && (
+                <div className="flex flex-wrap gap-1">
+                  {approved.entity_types.map((t) => (
+                    <span
+                      key={t.name}
+                      className="rounded border border-[var(--color-border-subtle)] px-1.5 py-px text-[9px] text-[var(--color-text-secondary)]"
+                    >
+                      {t.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <pre className="max-h-56 overflow-auto rounded bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                {ontology?.effective_prompt ?? data?.default_instructions ?? '…'}
+              </pre>
+            </div>
+          )}
+        </div>
+
         <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-          Tell the extractor what matters in this document. Leave it empty to use
-          the built-in contract alone — that already extracts typed entities and
-          evidence-backed relations.
+          <strong className="text-[var(--color-text-secondary)]">Extra</strong>{' '}
+          instructions for this document only, on top of everything above. Leave
+          it empty unless this file needs something the rest of the library does
+          not.
           {mode === 'reextract' && ' The existing graph stands until you commit the new draft.'}
         </p>
 
@@ -733,33 +944,21 @@ function ExtractionDialog({
           onChange={(e) => setRules(e.target.value)}
           rows={5}
           autoFocus
-          placeholder={'e.g. "Treat each numbered clause as a source of obligations. Capture parties, subcontractors and named standards."'}
+          placeholder={'e.g. "This one is a scanned amendment — ignore the header block on every page."'}
           className="mt-3 w-full rounded-lg border border-[var(--color-border-subtle)] bg-black/30 px-3 py-2 text-xs text-white placeholder:text-[var(--color-text-muted)] focus:border-indigo-400/50 focus:outline-none"
         />
 
-        <details className="mt-3">
-          <summary className="cursor-pointer text-[11px] text-[var(--color-text-muted)] hover:text-white">
-            Show the built-in contract these rules extend
-          </summary>
-          <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-black/40 p-3 font-mono text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-            {data?.default_instructions ?? '…'}
-          </pre>
-        </details>
-
         {mode === 'upload' && (
-          <label className="mt-3 flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-            <input
-              type="checkbox"
-              checked={autoExtract}
-              onChange={(e) => setAutoExtract(e.target.checked)}
-              className="accent-indigo-500"
-            />
-            Extract entities now
-            <span className="text-[var(--color-text-muted)]">
-              — uncheck to upload only; the document stays searchable through the
-              document library and can be extracted later.
+          <div className="mt-3 flex items-start justify-between gap-3 text-xs text-[var(--color-text-secondary)]">
+            <span>
+              Extract entities now
+              <span className="text-[var(--color-text-muted)]">
+                {' '}— uncheck to upload only; the document stays searchable through the
+                document library and can be extracted later.
+              </span>
             </span>
-          </label>
+            <Switch checked={autoExtract} onChange={setAutoExtract} className="mt-0.5" />
+          </div>
         )}
 
         <div className="mt-4 flex justify-end gap-2">
@@ -1130,10 +1329,7 @@ function GraphView({ libraries }: { libraries: LibraryCard[] }) {
   const { data, isFetching } = useQuery({
     queryKey: ['rag', 'graph', 'unified', libraryId || 'all'],
     queryFn: () =>
-      ragApi.unifiedGraph({
-        library_id: libraryId || undefined,
-        entity_limit: libraryId ? 600 : 300,
-      }).then((r) => r.data),
+      ragApi.unifiedGraph({ library_id: libraryId || undefined }).then((r) => r.data),
   });
 
   const graphed = libraries.filter((library) => library.entities > 0);
@@ -1181,7 +1377,7 @@ function GraphView({ libraries }: { libraries: LibraryCard[] }) {
       </p>
 
       {data && (
-        <UnifiedGraphCanvas
+        <SigmaGraphCanvas
           graph={data}
           height={620}
           clusterBy={libraryId ? 'type' : 'kind'}

@@ -27,8 +27,31 @@ def init_db():
     # Lightweight column migrations for SQLite
     _migrate_add_column("tools", "mcp_published", "BOOLEAN DEFAULT 0 NOT NULL")
     _migrate_add_column("tools", "mcp_server_name", "VARCHAR")
+    _migrate_add_column("tools", "purpose", "VARCHAR DEFAULT 'tool' NOT NULL")
+    _normalize_purpose_values()
 
     logger.info("Database tables initialized")
+
+
+def _normalize_purpose_values():
+    """Collapse retired "agent"/"both" purpose values down to "tool".
+
+    "purpose" briefly had three values (agent/activity/both); it now has two
+    (tool/activity), with every existing tool classified as "tool" unless it
+    was explicitly synthesised as an activity. Safe to re-run — a no-op once
+    every row already reads "tool" or "activity".
+    """
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(
+                text("UPDATE tools SET purpose = 'tool' WHERE purpose IS NULL OR purpose NOT IN ('tool', 'activity')")
+            )
+            conn.commit()
+            if result.rowcount:
+                logger.info("Normalized purpose on %d tool row(s) to 'tool'", result.rowcount)
+        except Exception as e:
+            logger.warning("Purpose normalization skipped: %s", e)
 
 
 def _migrate_add_column(table: str, column: str, col_type: str):

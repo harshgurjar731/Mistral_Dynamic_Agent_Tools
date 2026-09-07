@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Settings, Cpu, ArrowLeft, Save, Paperclip, X, ImageIcon, Thermometer, Library, Check, ChevronDown, Plug } from 'lucide-react';
-import { agentsApi } from '../../api/agents';
+import { ArrowLeft, Check, ChevronDown, Cpu, ImageIcon, Library, Network, Paperclip, Plug, Save, Send, Settings, Thermometer, X } from 'lucide-react';
+import { agentsApi, type GuardrailConfig } from '../../api/agents';
 import { connectorsApi } from '../../api/connectors';
 import { librariesApi } from '../../api/libraries';
 import { orchestratorApi } from '../../api/orchestrator';
@@ -16,6 +16,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '../../lib/utils';
 import { QK } from '../../lib/queryClient';
+import { Switch } from '../../components/ui/Switch';
+import GuardrailEditor from './GuardrailEditor';
 
 export default function AgentDetail() {
   const { id } = useParams<{ id: string }>();
@@ -572,8 +574,14 @@ export default function AgentDetail() {
                 {/* Document Library Tool */}
                 <DocumentLibrarySection agentId={id!} agent={agent} />
 
+                {/* Knowledge graph — independent of the library above */}
+                <KnowledgeGraphSection agentId={id!} agent={agent} />
+
                 {/* Mistral Connectors */}
                 <ConnectorsSection agentId={id!} agent={agent} />
+
+                {/* Content moderation guardrails */}
+                <GuardrailSection agentId={id!} agent={agent} />
               </div>
             </div>
           </motion.div>
@@ -727,6 +735,129 @@ function ConnectorsSection({ agentId, agent }: { agentId: string; agent: any }) 
   );
 }
 
+/* ─── Guardrails Section ─────────────────────────────────────────────── */
+
+/**
+ * Content-moderation policy, edited in place and saved on its own.
+ *
+ * The agent carries at most one guardrail config in practice, so this reads
+ * `agent.guardrails[0]` and writes back a one- or zero-element array — an
+ * empty array explicitly clears the policy, matching the backend's contract
+ * for connectors and tools: omitted leaves it alone, `[]` detaches it.
+ */
+function GuardrailSection({ agentId, agent }: { agentId: string; agent: any }) {
+  const qc = useQueryClient();
+  const existing: GuardrailConfig | null = agent.guardrails?.[0] ?? null;
+  const [draft, setDraft] = useState<GuardrailConfig | null>(existing);
+
+  useEffect(() => {
+    setDraft(agent.guardrails?.[0] ?? null);
+  }, [agentId, agent.guardrails]);
+
+  const saveMut = useMutation({
+    mutationFn: () => agentsApi.update(agentId, { guardrails: draft ? [draft] : [] } as any),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+      qc.invalidateQueries({ queryKey: QK.agents() });
+    },
+  });
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(existing);
+
+  return (
+    <div className="pt-4 border-t border-[var(--color-border-subtle)] space-y-3">
+      {/* Keyed on the agent so switching agents remounts it — otherwise its
+          internal "thresholds panel open" state would carry over from
+          whichever agent was viewed previously. */}
+      <GuardrailEditor key={agentId} value={draft} onChange={setDraft} />
+      {dirty && (
+        <button
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+          className="btn-primary flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50"
+        >
+          <Save size={12} />
+          {saveMut.isPending ? 'Saving…' : draft ? 'Save guardrails' : 'Remove guardrails'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ─── Knowledge Graph Tool Section ───────────────────────────────────── */
+
+/**
+ * Knowledge-graph access, on its own.
+ *
+ * It used to live inside the document-library card, which made it look like
+ * something you could only have *with* a library. It is not: the tool searches
+ * the graph built from every library it is allowed to see, plus the curated
+ * industry knowledge for this agent's domain. An agent with no library at all
+ * can use it — that is a legitimate configuration, and it was unreachable while
+ * the switch was buried in another feature's card.
+ */
+function KnowledgeGraphSection({ agentId, agent }: { agentId: string; agent: any }) {
+  const qc = useQueryClient();
+
+  const attached = (agent.tools || []).some(
+    (t: any) => (t?.function?.name || t?.type) === 'search_domain_knowledge',
+  );
+  const [enabled, setEnabled] = useState<boolean>(!!attached);
+
+  const hasLibrary = (agent.tools || []).some((t: any) => t?.type === 'document_library');
+
+  const saveMut = useMutation({
+    mutationFn: () => agentsApi.update(agentId, { knowledge_graph: enabled }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...QK.agents(), agentId] });
+      qc.invalidateQueries({ queryKey: QK.agents() });
+    },
+  });
+
+  const dirty = enabled !== !!attached;
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface,rgba(0,0,0,0.2))] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-sm font-medium text-[var(--color-text-primary)]">
+            <Network size={14} className="text-cyan-400" />
+            Knowledge graph
+          </h3>
+          <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            Lets this agent search the entities and relations extracted from
+            documents, plus the industry knowledge for its domain — how things
+            connect, who supplies whom, what governs what.
+            {' '}Independent of the document library: an agent can have either,
+            both, or neither.
+          </p>
+        </div>
+
+        <Switch checked={enabled} onChange={setEnabled} className="mt-0.5" />
+      </div>
+
+      {enabled && (
+        <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+          {hasLibrary
+            ? 'Searches the graph built from this agent\u2019s libraries.'
+            : 'With no library attached, it searches every graphed library and this agent\u2019s domain knowledge.'}
+        </p>
+      )}
+
+      {dirty && (
+        <button
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+          className="btn-primary mt-3 flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50"
+        >
+          <Save size={12} />
+          {saveMut.isPending ? 'Saving…' : enabled ? 'Enable knowledge graph' : 'Disable knowledge graph'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ─── Document Library Tool Section ──────────────────────────────────── */
 
 function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: any }) {
@@ -739,6 +870,10 @@ function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: an
   const [enabled, setEnabled] = useState(!!existingDocLib);
   const [selectedIds, setSelectedIds] = useState<string[]>(existingLibIds);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  // Knowledge-graph access is a separate decision from having a library, and a
+  // deliberate one. An agent that holds documents to quote a clause does not
+  // want a second retrieval tool competing for every turn.
 
   // Fetch available libraries
   const { data: libraries = [] } = useQuery({
@@ -813,9 +948,9 @@ function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: an
         </div>
 
         {/* Toggle Switch */}
-        <button
-          onClick={() => {
-            const newEnabled = !enabled;
+        <Switch
+          checked={enabled}
+          onChange={(newEnabled) => {
             setEnabled(newEnabled);
             if (!newEnabled) {
               // Toggling OFF — immediately save to remove document_library from agent
@@ -835,18 +970,7 @@ function DocumentLibrarySection({ agentId, agent }: { agentId: string; agent: an
               });
             }
           }}
-          className={cn(
-            'relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none',
-            enabled ? 'bg-indigo-500' : 'bg-[var(--color-bg-hover)]',
-          )}
-        >
-          <span
-            className={cn(
-              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
-              enabled ? 'translate-x-4' : 'translate-x-0',
-            )}
-          />
-        </button>
+        />
       </div>
 
       <AnimatePresence>

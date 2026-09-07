@@ -271,10 +271,66 @@ class CatalogDomain(BaseModel):
     agent_count: int = 0
 
 
+class DeploymentAgentSpec(BaseModel):
+    """A workflow's agent, captured with enough fidelity to recreate it.
+
+    ``tool_defs`` holds only function/builtin tool schemas (portable across
+    workspaces). ``connector_ids`` is informational — connector ids are
+    workspace-bound, so they are never fed back into agent creation; the
+    deploy checklist surfaces them for manual authorization instead.
+    """
+    source_agent_id: str
+    name: str
+    model: str
+    description: Optional[str] = None
+    instructions: str
+    tier: Optional[str] = None
+    tool_defs: list[dict] = Field(default_factory=list)
+    connector_ids: list[str] = Field(default_factory=list)
+
+
+class DeploymentDynamicTool(BaseModel):
+    """A synthesized tool, with real source so it can be reproduced verbatim."""
+    name: str
+    schema: dict
+    source_code: str
+    hash: str
+    version: str = "1.0.0"
+
+
+class DeploymentConnectorRef(BaseModel):
+    """A Mistral Connector a workflow step depends on — never auto-provisioned."""
+    connector_id: Optional[str] = None
+    connector_name: Optional[str] = None
+    credentials_name: Optional[str] = None
+
+
+class DeploymentManifest(BaseModel):
+    """Everything needed to reproduce a workflow's execution environment
+    on a different Mistral workspace: the agents it calls, the tool code
+    those agents and steps depend on, and the connectors that need manual
+    authorization on the target.
+    """
+    workflow_name: str
+    description: Optional[str] = None
+    agents: list[DeploymentAgentSpec] = Field(default_factory=list)
+    native_tools: list[str] = Field(default_factory=list)
+    dynamic_tools: list[DeploymentDynamicTool] = Field(default_factory=list)
+    connectors: list[DeploymentConnectorRef] = Field(default_factory=list)
+    uses_knowledge_graph: bool = False
+    generated_at: str
+
+
 class BuilderCatalogResponse(BaseModel):
-    """Everything the builder palette needs, in one round trip."""
+    """Everything the builder palette needs, in one round trip.
+
+    ``tools`` and ``activities`` are disjoint: a tool attaches to an agent as
+    a capability, an activity becomes a standalone step of its own. Which list
+    a synthesised tool lands in is decided by its Tool Service ``purpose``.
+    """
     agents: list[CatalogAgent] = Field(default_factory=list)
     tools: list[CatalogTool] = Field(default_factory=list)
+    activities: list[CatalogTool] = Field(default_factory=list)
     connectors: list[CatalogConnector] = Field(default_factory=list)
     domains: list[CatalogDomain] = Field(default_factory=list)
     models: list[str] = Field(default_factory=list)

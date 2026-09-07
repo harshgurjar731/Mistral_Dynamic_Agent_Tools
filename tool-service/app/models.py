@@ -23,4 +23,9 @@ class ToolRecord(Base):
     created_at = Column(DateTime, server_default=func.now())
     mcp_published = Column(Boolean, nullable=False, default=False)
     mcp_server_name = Column(String, nullable=True)
+    # "tool" — an agent capability; "activity" — a standalone workflow step.
+    # Mutually exclusive. Set at synthesis time, editable afterwards. Defaults
+    # to "tool" so anything predating this field keeps showing up on the
+    # Tools page rather than vanishing from both.
+    purpose = Column(String, nullable=False, default="tool")
 

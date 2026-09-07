@@ -21,6 +21,39 @@ class ConnectorRef(BaseModel):
     requires_confirmation: Optional[List[str]] = None
 
 
+class GuardrailCategoryThresholdsRequest(BaseModel):
+    """Per-category moderation thresholds (0-1). Unset categories use the model default.
+
+    `dangerous_and_criminal_content` is the v1 moderation model's combined
+    category; `dangerous`, `criminal` and `jailbreaking` only exist on v2.
+    """
+    sexual: Optional[float] = None
+    hate_and_discrimination: Optional[float] = None
+    violence_and_threats: Optional[float] = None
+    dangerous: Optional[float] = None
+    criminal: Optional[float] = None
+    dangerous_and_criminal_content: Optional[float] = None
+    selfharm: Optional[float] = None
+    health: Optional[float] = None
+    financial: Optional[float] = None
+    law: Optional[float] = None
+    pii: Optional[float] = None
+    jailbreaking: Optional[float] = None
+
+
+class GuardrailModerationConfigRequest(BaseModel):
+    model_name: Optional[str] = None
+    custom_category_thresholds: Optional[GuardrailCategoryThresholdsRequest] = None
+    ignore_other_categories: Optional[bool] = None
+    action: Optional[str] = None  # "none" | "block"
+
+
+class GuardrailConfigRequest(BaseModel):
+    block_on_error: Optional[bool] = None
+    moderation_llm_v1: Optional[GuardrailModerationConfigRequest] = None
+    moderation_llm_v2: Optional[GuardrailModerationConfigRequest] = None
+
+
 class CreateAgentRequest(BaseModel):
     name: str
     model: str = "mistral-large-latest"
@@ -30,6 +63,13 @@ class CreateAgentRequest(BaseModel):
     tools: list = []
     document_library_ids: Optional[List[str]] = None
     connectors: Optional[List[ConnectorRef]] = None
+    # Opt-in access to the knowledge graph and curated industry knowledge.
+    # Off by default: an agent that holds a library to quote one clause does not
+    # need a second retrieval tool competing for every turn.
+    knowledge_graph: bool = False
+    # At most one entry in practice — the array shape mirrors the Mistral API,
+    # which allows several, but nothing scopes multiple entries differently.
+    guardrails: Optional[List[GuardrailConfigRequest]] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -49,6 +89,10 @@ class UpdateAgentRequest(BaseModel):
     # Omitted (None) means "leave the attached connectors alone"; an explicit
     # empty list detaches all of them.
     connectors: Optional[List[ConnectorRef]] = None
+    # Omitted means "leave it as it is"; False actively detaches the tool.
+    knowledge_graph: Optional[bool] = None
+    # Omitted means "leave guardrails alone"; an explicit empty list clears them.
+    guardrails: Optional[List[GuardrailConfigRequest]] = None
 
 
 @router.get("/agents")

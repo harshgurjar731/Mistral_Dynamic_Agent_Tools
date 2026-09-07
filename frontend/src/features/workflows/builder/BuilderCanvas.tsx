@@ -53,6 +53,7 @@ import {
   agentStepAt,
   definitionToFlow,
   makeAgentStep,
+  makeActivityStep,
   makeLogicStep,
   uniqueStepId,
 } from './graphModel';
@@ -66,22 +67,27 @@ import { cn } from '../../../lib/utils';
 
 /** Payload written to dataTransfer by palette items. */
 export interface DragPayload {
-  kind: 'agent' | 'tool' | 'connector' | 'logic';
+  kind: 'agent' | 'tool' | 'connector' | 'logic' | 'activity';
   agent?: CatalogAgent;
   tool?: CatalogTool;
   connector?: CatalogConnector;
   logic?: 'condition' | 'transform';
+  /** A standalone Activity — always becomes a step of its own, never attaches. */
+  activity?: CatalogTool;
 }
 
 export const DRAG_MIME = 'application/x-mistral-workflow-step';
 
 /**
- * A second, payload-free MIME type set when dragging anything that attaches to
- * an agent rather than becoming a step of its own — tools and connectors.
+ * A second, payload-free MIME type set when dragging something that only
+ * attaches to an agent — a tool or a connector — rather than becoming a step
+ * of its own.
  *
  * `dataTransfer.getData()` returns "" during dragover for security reasons —
  * only `types` is readable. Advertising the kind as its own type is what lets
  * the canvas highlight valid agent targets while the drag is still in flight.
+ * An Activity drag sets neither hint: it always has somewhere to go, so
+ * dragover never needs to gate or highlight it.
  */
 export const DRAG_ATTACH_HINT = 'application/x-mistral-agent-attachment';
 
@@ -522,7 +528,7 @@ function CanvasInner({
 
       const point = instance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const target = agentStepAt(definition, point);
-      // Tools and connectors have nowhere to go except onto an agent, so say so
+      // A tool or connector has nowhere to go except onto an agent, so say so
       // with the cursor.
       event.dataTransfer.dropEffect = target ? 'copy' : 'none';
       setAttachTargetId(target?.id ?? null);
@@ -589,6 +595,8 @@ function CanvasInner({
       let step;
       if (payload.kind === 'agent' && payload.agent) {
         step = makeAgentStep(payload.agent, uniqueStepId(payload.agent.name, taken));
+      } else if (payload.kind === 'activity' && payload.activity) {
+        step = makeActivityStep(payload.activity, uniqueStepId(payload.activity.name, taken));
       } else if (payload.kind === 'logic' && payload.logic) {
         step = makeLogicStep(payload.logic, uniqueStepId(payload.logic, taken));
       }
@@ -976,11 +984,11 @@ function CanvasInner({
             <div className="w-14 h-14 rounded-2xl border-2 border-dashed border-[var(--color-border-subtle)] flex items-center justify-center mx-auto mb-4">
               <LayoutGrid size={22} className="text-[var(--color-text-muted)]" />
             </div>
-            <p className="text-sm font-semibold text-white mb-1.5">Drag an agent onto the canvas</p>
+            <p className="text-sm font-semibold text-white mb-1.5">Drag an agent or activity onto the canvas</p>
             <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-              Agents are the steps. The first one you drop becomes the entry point. Connect steps by
-              dragging from the dot at the bottom of a card, and drop tools <em>onto</em> an agent to
-              give it new capabilities.
+              Agents and Activities are the steps. The first one you drop becomes the entry point.
+              Connect steps by dragging from the dot at the bottom of a card, and drop a tool{' '}
+              <em>onto</em> an agent to give it a new capability.
             </p>
           </div>
         </div>

@@ -1,9 +1,10 @@
 /**
  * BuilderPalette — the drag source for the canvas.
  *
- * Three sections: agents (from the Mistral account), tools (native, built-in
- * and synthesised), and logic primitives. Agents and tools can also be created
- * inline, so assembling a workflow never requires leaving the builder.
+ * Agents, Activities and logic all become steps of their own. Tools and
+ * Connectors are capabilities — they only ever attach to an agent, never a
+ * step on their own. All of these can also be created inline, so assembling
+ * a workflow never requires leaving the builder.
  */
 
 import { useMemo, useState } from 'react';
@@ -11,6 +12,7 @@ import {
   ChevronDown,
   Cpu,
   GitBranch,
+  LayoutGrid,
   MousePointerSquareDashed,
   PanelLeftClose,
   PanelLeftOpen,
@@ -21,6 +23,7 @@ import {
   Shuffle,
   Sparkles,
   Wrench,
+  Zap,
 } from 'lucide-react';
 import type {
   CatalogAgent,
@@ -35,19 +38,25 @@ import { cn } from '../../../lib/utils';
 
 interface Props {
   agents: CatalogAgent[];
+  /** Agent capabilities — attach to an agent, never a step of their own. */
   tools: CatalogTool[];
+  /** Standalone workflow steps — drop directly onto the canvas. */
+  activities: CatalogTool[];
   connectors: CatalogConnector[];
   domains: CatalogDomain[];
   isLoading: boolean;
   onRefresh: () => void;
   onCreateAgent: () => void;
   onCreateTool: () => void;
+  onCreateActivity: () => void;
+  onManageActivities: () => void;
 }
 
 function startDrag(event: React.DragEvent, payload: DragPayload) {
   event.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
   // Tools and connectors get a second, payload-free type so the canvas can
   // recognise them mid-drag and highlight the agents they can attach to.
+  // Activities need no such hint — they always land as a step of their own.
   if (payload.kind === 'tool' || payload.kind === 'connector') {
     event.dataTransfer.setData(DRAG_ATTACH_HINT, '1');
   }
@@ -183,12 +192,15 @@ const TOOL_SOURCE_STYLE: Record<CatalogTool['source'], { label: string; classNam
 export default function BuilderPalette({
   agents,
   tools,
+  activities,
   connectors,
   domains,
   isLoading,
   onRefresh,
   onCreateAgent,
   onCreateTool,
+  onCreateActivity,
+  onManageActivities,
 }: Props) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState(false);
@@ -227,6 +239,18 @@ export default function BuilderPalette({
               (t.description ?? '').toLowerCase().includes(needle),
           ),
     [tools, needle],
+  );
+
+  const filteredActivities = useMemo(
+    () =>
+      !needle
+        ? activities
+        : activities.filter(
+            (t) =>
+              t.name.toLowerCase().includes(needle) ||
+              (t.description ?? '').toLowerCase().includes(needle),
+          ),
+    [activities, needle],
   );
 
   const filteredConnectors = useMemo(
@@ -278,7 +302,7 @@ export default function BuilderPalette({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search agents and tools…"
+            placeholder="Search the palette…"
             aria-label="Search palette"
             className="minimal-input w-full rounded-lg pl-8 pr-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-border-focus)]"
           />
@@ -374,6 +398,77 @@ export default function BuilderPalette({
           })}
         </Section>
 
+        {/* Activities — standalone steps in their own right. Never attach to an agent. */}
+        <Section
+          title="Activities"
+          count={filteredActivities.length}
+          icon={<Zap size={12} />}
+          action={
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onManageActivities}
+                title="Open the Activity Gallery"
+                aria-label="Open the Activity Gallery"
+                className={iconButton}
+              >
+                <LayoutGrid size={12} />
+              </button>
+              <button
+                type="button"
+                onClick={onCreateActivity}
+                title="Synthesise a new activity"
+                aria-label="Synthesise a new activity"
+                className={iconButton}
+              >
+                <Sparkles size={12} />
+              </button>
+            </div>
+          }
+        >
+          <p className="flex items-start gap-1.5 text-[9.5px] text-[var(--color-text-muted)] leading-relaxed px-1 pb-1">
+            <MousePointerSquareDashed size={11} className="shrink-0 mt-px" />
+            <span>
+              Drop <strong className="text-[var(--color-text-secondary)]">onto the canvas</strong> to
+              run it directly — an isolated, retryable unit of work with no agent in the loop.
+            </span>
+          </p>
+
+          {!isLoading && filteredActivities.length === 0 && (
+            <p className="text-[10px] text-[var(--color-text-muted)] px-1 py-2 leading-relaxed">
+              {needle ? 'No activities match your search.' : 'No activities yet — synthesise one to get started.'}
+            </p>
+          )}
+          {filteredActivities.map((activity) => {
+            const style = TOOL_SOURCE_STYLE[activity.source] ?? TOOL_SOURCE_STYLE.dynamic;
+            return (
+              <DragCard
+                key={`${activity.source}:${activity.name}`}
+                payload={{ kind: 'activity', activity }}
+                accent={STEP_META.tool.accent}
+                icon={<Zap size={12} />}
+                title={activity.name}
+                subtitle={
+                  Object.keys(activity.parameters ?? {}).length > 0
+                    ? `${Object.keys(activity.parameters).length} param(s)`
+                    : 'no params'
+                }
+                tooltip={activity.description ?? activity.name}
+                badge={
+                  <span
+                    className={cn(
+                      'text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0',
+                      style.className,
+                    )}
+                  >
+                    {style.label}
+                  </span>
+                }
+              />
+            );
+          })}
+        </Section>
+
         {/* Tools — attach to an agent, never a step of their own */}
         <Section
           title="Tools"
@@ -411,7 +506,7 @@ export default function BuilderPalette({
               <DragCard
                 key={`${tool.source}:${tool.name}`}
                 payload={{ kind: 'tool', tool }}
-                accent={STEP_META.tool.accent}
+                accent={STEP_META.connector.accent}
                 icon={<Wrench size={12} />}
                 title={tool.name}
                 subtitle={
@@ -507,8 +602,8 @@ export default function BuilderPalette({
 
       <div className="px-3 py-2 border-t border-[var(--color-border-subtle)] shrink-0">
         <p className="text-[9.5px] text-[var(--color-text-muted)] leading-relaxed">
-          Agents and logic become steps on the canvas. Tools and connectors attach to an agent.
-          Connect steps by dragging from the dot at the bottom of a card.
+          Agents, activities and logic become steps on the canvas. Tools and connectors attach to
+          an agent. Connect steps by dragging from the dot at the bottom of a card.
         </p>
       </div>
     </aside>

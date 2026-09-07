@@ -74,6 +74,8 @@ class SynthesisLayer(Layer):
                 description=data.get("tool_description", ""),
                 parameters=data.get("parameters", {}),
                 required=data.get("required", []),
+                # A single dynamic agent calls this itself — it's an agent capability.
+                purpose="tool",
             )
 
             logger.info("Synthesis result: %s", synthesis_result)

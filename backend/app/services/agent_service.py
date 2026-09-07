@@ -11,12 +11,31 @@ from functools import partial
 import httpx
 from mistralai.client import Mistral
 from mistralai.client.models.completionargs import CompletionArgs
+from mistralai.client.models.guardrailconfig import GuardrailConfig
+from mistralai.client.models.moderationllmv1categorythresholds import ModerationLlmv1CategoryThresholds
+from mistralai.client.models.moderationllmv1config import ModerationLlmv1Config
+from mistralai.client.models.moderationllmv2categorythresholds import ModerationLlmv2CategoryThresholds
+from mistralai.client.models.moderationllmv2config import ModerationLlmv2Config
 from app.config import settings, map_model_name
 from app.exceptions import MistralAPIError, AgentNotFoundError
 from app.ontology import store as annotation_store
 from app.ontology.vocab import DEFAULT_TIER, AgentTier, Predicate, SubjectType, coerce_tier
 
 logger = logging.getLogger(__name__)
+
+
+def _has_graph_tool(tools) -> bool:
+    """Whether this agent has knowledge-graph access turned on.
+
+    Read off the live tools array rather than stored separately: the tool being
+    attached *is* the setting, so there is nothing to keep in step.
+    """
+    try:
+        from app.rag.rag_tools import has_knowledge_graph
+
+        return has_knowledge_graph(tools if isinstance(tools, list) else [])
+    except Exception:
+        return False
 
 
 def _connector_refs(tools) -> list[dict]:
@@ -83,6 +102,71 @@ def _current_attachments(agent_id: str) -> dict:
         "document_library_ids": doc_lib_ids,
         "connectors": extract_connector_refs(tools),
     }
+
+
+_V1_THRESHOLD_FIELDS = {
+    "sexual", "hate_and_discrimination", "violence_and_threats",
+    "dangerous_and_criminal_content", "selfharm", "health", "financial", "law", "pii",
+}
+_V2_THRESHOLD_FIELDS = {
+    "sexual", "hate_and_discrimination", "violence_and_threats", "dangerous",
+    "criminal", "selfharm", "health", "financial", "law", "pii", "jailbreaking",
+}
+
+
+def _moderation_config(raw: dict | None, *, v2: bool):
+    """Build a ModerationLlmv1Config/v2Config from the request dict, or None if empty."""
+    if not raw:
+        return None
+
+    config_cls = ModerationLlmv2Config if v2 else ModerationLlmv1Config
+    thresholds_cls = ModerationLlmv2CategoryThresholds if v2 else ModerationLlmv1CategoryThresholds
+    allowed_fields = _V2_THRESHOLD_FIELDS if v2 else _V1_THRESHOLD_FIELDS
+
+    kwargs = {}
+    if raw.get("model_name"):
+        kwargs["model_name"] = raw["model_name"]
+    if raw.get("action"):
+        kwargs["action"] = raw["action"]
+    if raw.get("ignore_other_categories") is not None:
+        kwargs["ignore_other_categories"] = raw["ignore_other_categories"]
+
+    thresholds = raw.get("custom_category_thresholds") or {}
+    threshold_kwargs = {k: v for k, v in thresholds.items() if k in allowed_fields and v is not None}
+    if threshold_kwargs:
+        kwargs["custom_category_thresholds"] = thresholds_cls(**threshold_kwargs)
+
+    return config_cls(**kwargs) if kwargs else None
+
+
+def _build_guardrails(raw_list: list[dict] | None) -> list:
+    """Turn the request's guardrail dicts into SDK GuardrailConfig objects.
+
+    Entries with nothing meaningful set are dropped rather than sent as an
+    empty GuardrailConfig() — the SDK would otherwise ship a no-op object that
+    still counts against whatever entry limit the API enforces.
+    """
+    if not raw_list:
+        return []
+
+    built = []
+    for raw in raw_list:
+        kwargs = {}
+        if raw.get("block_on_error") is not None:
+            kwargs["block_on_error"] = raw["block_on_error"]
+
+        v1 = _moderation_config(raw.get("moderation_llm_v1"), v2=False)
+        if v1 is not None:
+            kwargs["moderation_llm_v1"] = v1
+
+        v2 = _moderation_config(raw.get("moderation_llm_v2"), v2=True)
+        if v2 is not None:
+            kwargs["moderation_llm_v2"] = v2
+
+        if kwargs:
+            built.append(GuardrailConfig(**kwargs))
+
+    return built
 
 
 def _extract_completion_args(agent: dict) -> dict:
@@ -279,6 +363,7 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "created_at": str(agent.get("created_at", "")),
                     "protected": (agent.get("id") in protected_ids)
                                  or str(meta.get("protected", "")).lower() == "true",
+                    "knowledge_graph": _has_graph_tool(agent.get("tools")),
                     "tier": coerce_tier(
                         explicit_tier
                         or annotated_tiers.get(agent.get("id") or "")
@@ -305,6 +390,7 @@ async def list_agents(client: Mistral, page: int = 0, page_size: int = 20) -> di
                     "protected": (getattr(agent, "id", None) in protected_ids)
                                  or (isinstance(meta, dict)
                                      and str(meta.get("protected", "")).lower() == "true"),
+                    "knowledge_graph": _has_graph_tool(getattr(agent, "tools", None)),
                     "tier": coerce_tier(
                         explicit_tier
                         or annotated_tiers.get(getattr(agent, "id", "") or "")
@@ -359,6 +445,7 @@ async def get_agent(client: Mistral, agent_id: str) -> dict:
             "connectors": _connector_refs(agent.get("tools")),
             "created_at": str(agent.get("created_at", "")),
             "tier": _resolve_tier(agent.get("id"), a_name, a_instr, explicit_tier),
+            "guardrails": agent.get("guardrails") or [],
             **_extract_completion_args(agent),
         }
     except httpx.HTTPStatusError as e:
@@ -393,12 +480,13 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         if not tool_keys and doc_lib_ids:
             tool_keys = ["document_library"]
 
-        # One grounded-knowledge tool, attached when the agent has documents or
-        # a domain to search. Its partner is document_library: that one searches
-        # the text, this one searches what we know about it.
+        # The grounded-knowledge tool is opt-in per agent — see rag_tools. The
+        # document library is separate and follows the ids the caller supplied.
         from app.rag.rag_tools import with_rag_tools
 
-        tool_keys = with_rag_tools(tool_keys, doc_lib_ids, data.get("domains"))
+        tool_keys = with_rag_tools(
+            tool_keys, doc_lib_ids, bool(data.get("knowledge_graph"))
+        )
 
         tool_specs = get_tools(
             tool_keys,
@@ -407,6 +495,10 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         )
         if tool_specs:
             create_kwargs["tools"] = tool_specs
+
+        guardrails = _build_guardrails(data.get("guardrails"))
+        if guardrails:
+            create_kwargs["guardrails"] = guardrails
 
         agent = await asyncio.to_thread(partial(client.beta.agents.create, **create_kwargs))
         record_agent_annotations(agent.id, data, source="user")
@@ -456,6 +548,11 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
         if ca_data:
             update_kwargs["completion_args"] = CompletionArgs(**ca_data)
 
+        # Omitted entirely leaves guardrails untouched; an explicit (possibly
+        # empty) list replaces them wholesale — same contract as tools/connectors.
+        if "guardrails" in data:
+            update_kwargs["guardrails"] = _build_guardrails(data["guardrails"])
+
         # Handle tools update (named tools, document_library and connectors).
         #
         # All three share one `tools` array on the agent, and the array is
@@ -468,8 +565,14 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
         # connector must not strip the agent's tools, and passing `tools: []`
         # must still remove them all — a silent no-op there would leave the
         # agent able to call a tool the UI says it lost.
-        if "tools" in data or "document_library_ids" in data or "connectors" in data:
-            from app.services.tool_registry import get_tools
+        if (
+            "tools" in data
+            or "document_library_ids" in data
+            or "connectors" in data
+            or "knowledge_graph" in data
+        ):
+            from app.rag.rag_tools import tool_key_present
+            from app.services.tool_registry import DOMAIN_SEARCH_TOOL, get_tools
 
             current = _current_attachments(agent_id)
 
@@ -486,8 +589,16 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
             # completed here too.
             from app.rag.rag_tools import with_rag_tools
 
+            # Omitting the flag leaves the agent's current choice alone; only an
+            # explicit value changes it, the same contract the tools, libraries
+            # and connectors already follow.
+            knowledge_graph = (
+                bool(data["knowledge_graph"])
+                if "knowledge_graph" in data
+                else tool_key_present(current["tools"], DOMAIN_SEARCH_TOOL)
+            )
             update_kwargs["tools"] = get_tools(
-                with_rag_tools(tool_keys, doc_lib_ids, data.get("domains")),
+                with_rag_tools(tool_keys, doc_lib_ids, knowledge_graph),
                 document_library_ids=doc_lib_ids,
                 connectors=connectors,
             )

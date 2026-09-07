@@ -56,6 +56,10 @@ frontend/dist/
 frontend/.cache/
 *.tsbuildinfo
 tsc_errors.txt
+.output/
+.wrangler/
+.open-next/
+
 
 # ───────────────────────────────────────────────
 # Docker

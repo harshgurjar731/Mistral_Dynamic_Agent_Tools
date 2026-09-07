@@ -9,7 +9,7 @@ import {
   type OntologyType,
 } from '../../api/rag';
 import { cn } from '../../lib/utils';
-import { nodeStyle } from './graph/UnifiedGraphCanvas';
+import { nodeStyle } from './graph/entityStyle';
 
 /**
  * Designing what a library's documents are made of.

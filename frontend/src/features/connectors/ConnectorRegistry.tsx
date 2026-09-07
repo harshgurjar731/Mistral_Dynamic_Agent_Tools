@@ -21,6 +21,7 @@ import {
 import { connectorsApi, type Connector, type CreateConnectorBody } from '../../api/connectors';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
+import { Switch } from '../../components/ui/Switch';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -276,15 +277,10 @@ export default function ConnectorRegistry() {
                   multiline
                 />
 
-                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={useOAuth}
-                    onChange={(e) => setUseOAuth(e.target.checked)}
-                    className="accent-indigo-500"
-                  />
-                  This server uses OAuth2
-                </label>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-[var(--color-text-secondary)]">This server uses OAuth2</span>
+                  <Switch checked={useOAuth} onChange={setUseOAuth} />
+                </div>
 
                 {useOAuth && (
                   <div className="space-y-3 pl-5 border-l border-[var(--color-border-subtle)]">

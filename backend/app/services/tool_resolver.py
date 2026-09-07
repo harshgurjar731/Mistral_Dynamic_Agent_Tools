@@ -46,7 +46,8 @@ class ToolResolver:
     async def trigger_synthesis(
         self, name: str, description: str, parameters: dict, required: list[str],
         api_details: str = "No external API. This is a pure computation using standard library.",
-        expected_output_shape: str = "A dictionary containing the result."
+        expected_output_shape: str = "A dictionary containing the result.",
+        purpose: str = "tool",
     ) -> dict:
         """Trigger tool synthesis on the Docker Tool Service.
         Auto-approves pending tools so they never block the pipeline.
@@ -66,6 +67,7 @@ class ToolResolver:
                 "required": safe_required,
                 "api_details": safe_api_details,
                 "expected_output_shape": safe_expected_output,
+                "purpose": purpose if purpose in ("tool", "activity") else "tool",
             })
             result = resp.json()
 
@@ -145,13 +147,13 @@ class ToolResolver:
         except Exception as e:
             return {"error": str(e)}
 
-    async def update_tool(self, tool_id: int, source_code: str, description: str) -> dict:
-        """Update a tool's code and description via the Docker Tool Service."""
+    async def update_tool(self, tool_id: int, source_code: str, description: str, purpose: str | None = None) -> dict:
+        """Update a tool's code, description and (optionally) purpose via the Docker Tool Service."""
         try:
-            resp = await self._client.put(f"/tools/{tool_id}", json={
-                "source_code": source_code,
-                "description": description
-            })
+            body = {"source_code": source_code, "description": description}
+            if purpose:
+                body["purpose"] = purpose
+            resp = await self._client.put(f"/tools/{tool_id}", json=body)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}
@@ -176,7 +178,7 @@ class ToolResolver:
         except Exception:
             return None
 
-    async def synthesize_from_task(self, task: str) -> dict:
+    async def synthesize_from_task(self, task: str, purpose: str = "tool") -> dict:
         """Trigger tool synthesis from a plain English task description by first generating a schema."""
         try:
             from mistralai.client import Mistral
@@ -220,7 +222,8 @@ class ToolResolver:
                 parameters=data.get("parameters", {}),
                 required=data.get("required", []),
                 api_details=data.get("api_details", "No external API. This is a pure computation using standard library."),
-                expected_output_shape=data.get("expected_output_shape", "A dictionary containing the result.")
+                expected_output_shape=data.get("expected_output_shape", "A dictionary containing the result."),
+                purpose=purpose,
             )
         except Exception as e:
             logger.error("Failed to parse task to schema: %s", e)

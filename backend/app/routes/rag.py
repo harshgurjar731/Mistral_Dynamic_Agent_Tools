@@ -501,7 +501,7 @@ async def commit_draft(document_id: int):
 async def unified_graph_view(
     library_id: Optional[str] = Query(None),
     document_id: Optional[int] = Query(None),
-    entity_limit: int = Query(300, ge=10, le=1500),
+    entity_limit: Optional[int] = Query(None, ge=1),
     include_documents: bool = Query(True),
 ):
     """Concepts, libraries, documents and entities as one interconnected graph.
@@ -536,6 +536,37 @@ async def sync_taxonomy():
     behind.
     """
     return unified_graph.sync_taxonomy()
+
+
+class CypherQueryRequest(BaseModel):
+    query: str
+    params: dict[str, Any] = {}
+    limit: int = 200
+
+
+@router.post("/rag/graph/query")
+async def query_graph(body: CypherQueryRequest):
+    """Run a read-only Cypher query against the knowledge graph directly.
+
+    For the Query tab: whatever nodes and relationships the query touches come
+    back in the same shape as the unified graph, so they render on the same
+    canvas. A query that returns scalars instead (counts, aggregations,
+    property projections) comes back as rows/columns for a table.
+
+    Write clauses are rejected — this is a read surface onto the graph, not an
+    admin console.
+    """
+    query = (body.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is empty.")
+    if not graph_store.available():
+        raise HTTPException(status_code=503, detail="The knowledge graph is unavailable.")
+    try:
+        return graph_store.run_cypher(query, params=body.params, limit=max(1, min(body.limit, 2000)))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Query failed: {e}")
 
 
 @router.get("/rag/graph")

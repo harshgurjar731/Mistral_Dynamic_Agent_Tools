@@ -6,6 +6,7 @@ export interface PlannerEvent extends SSEEvent {
     | 'requirements'
     | 'tool_exists'
     | 'tool_new'
+    | 'activity_new'
     | 'agent_exists'
     | 'agent_new'
     | 'workflow_ready'

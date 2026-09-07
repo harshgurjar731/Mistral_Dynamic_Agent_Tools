@@ -17,6 +17,8 @@ class SynthesizeRequest(BaseModel):
     required: list[str] = []
     api_details: str = "No external API. This is a pure computation using standard library."
     expected_output_shape: str = "A dictionary containing the result."
+    # "tool" | "activity" — see ToolRecord.purpose.
+    purpose: str = "tool"
 
 
 class SynthesizeResponse(BaseModel):
@@ -55,6 +57,7 @@ class ToolResponse(BaseModel):
     created_at: Optional[datetime] = None
     mcp_published: bool = False
     mcp_server_name: Optional[str] = None
+    purpose: str = "tool"
 
     class Config:
         from_attributes = True
@@ -76,3 +79,20 @@ class ToolUpdateRequest(BaseModel):
     """Request to update a tool's code and description."""
     source_code: str
     description: str
+    # Omitted (None) leaves the existing purpose unchanged.
+    purpose: Optional[str] = None
+
+
+class ToolImportRequest(BaseModel):
+    """Request to install a tool from known-good source, bypassing synthesis.
+
+    Used to reproduce an already-approved tool verbatim on another Tool
+    Service instance (e.g. a deployment package) — the schema and hash travel
+    with the source so the target can dedupe against tools it already has.
+    """
+    name: str
+    schema: dict
+    source_code: str
+    hash: str
+    version: str = "1.0.0"
+    purpose: str = "tool"

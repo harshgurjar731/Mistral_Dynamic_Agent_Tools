@@ -503,7 +503,10 @@ async def get_builder_catalog():
             source="native",
         ))
 
-    # Synthesised tools living in the Tool Service.
+    # Synthesised tools living in the Tool Service — split by purpose so the
+    # builder never mixes an agent capability with a standalone workflow step.
+    # A record with no "purpose" (pre-dating the field) counts as a tool.
+    activities: list[CatalogTool] = []
     if isinstance(tool_records, Exception):
         logger.warning("Builder catalog: could not list tools: %s", tool_records)
     else:
@@ -518,14 +521,18 @@ async def get_builder_catalog():
                 continue
             known.add(name)
             params = fn.get("parameters", {}) or {}
-            tools.append(CatalogTool(
+            catalog_tool = CatalogTool(
                 name=name,
                 description=fn.get("description"),
                 parameters=params.get("properties", {}),
                 required=params.get("required", []),
                 status=record.get("status", "approved"),
                 source="dynamic",
-            ))
+            )
+            if record.get("purpose") == "activity":
+                activities.append(catalog_tool)
+            else:
+                tools.append(catalog_tool)
 
     # Mistral Connectors — MCP servers the platform hosts credentials for.
     connectors: list[CatalogConnector] = []
@@ -566,6 +573,7 @@ async def get_builder_catalog():
     return BuilderCatalogResponse(
         agents=sorted(agents, key=lambda a: a.name.lower()),
         tools=sorted(tools, key=lambda t: t.name.lower()),
+        activities=sorted(activities, key=lambda t: t.name.lower()),
         connectors=sorted(connectors, key=lambda c: c.name.lower()),
         domains=sorted(domains, key=lambda d: d.label.lower()),
         models=[

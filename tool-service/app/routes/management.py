@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ToolRecord
-from app.schemas import ToolResponse, ToolListResponse, ApproveRejectResponse, ToolUpdateRequest
-from app.services.synthesis_service import approve_tool, reject_tool, delete_tool, update_tool
+from app.schemas import ToolResponse, ToolListResponse, ApproveRejectResponse, ToolUpdateRequest, ToolImportRequest
+from app.services.synthesis_service import approve_tool, reject_tool, delete_tool, update_tool, import_tool
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def _record_to_response(record: ToolRecord) -> ToolResponse:
         created_at=record.created_at,
         mcp_published=record.mcp_published if record.mcp_published else False,
         mcp_server_name=record.mcp_server_name,
+        purpose=record.purpose or "tool",
     )
 
 
@@ -92,11 +93,26 @@ def delete(tool_id: int, db: Session = Depends(get_db)):
 
 @router.put("/tools/{tool_id}")
 def update(tool_id: int, request: ToolUpdateRequest, db: Session = Depends(get_db)):
-    """Update a tool's code and description."""
-    result = update_tool(db, tool_id, request.source_code, request.description)
+    """Update a tool's code, description and (optionally) its purpose."""
+    result = update_tool(db, tool_id, request.source_code, request.description, request.purpose)
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+
+@router.post("/tools/import", response_model=ApproveRejectResponse)
+def import_tool_endpoint(request: ToolImportRequest, db: Session = Depends(get_db)):
+    """Install a tool from known-good source, bypassing the synthesis pipeline.
+
+    Used by workflow deployment packages to reproduce a tool that was already
+    vetted and approved on the source instance — no LLM codegen, lint or
+    sandbox run. Idempotent by content hash: importing the same tool twice is
+    a no-op the second time.
+    """
+    result = import_tool(db, request.name, request.schema, request.source_code, request.hash, request.version, request.purpose)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return ApproveRejectResponse(**{k: result[k] for k in ("status", "message", "tool_name")})
 
 
 @router.post("/tools/{tool_id}/publish-mcp")

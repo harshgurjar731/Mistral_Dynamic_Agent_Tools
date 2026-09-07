@@ -24,6 +24,10 @@ export const workflowsApi = {
   register:        (name: string) => api.post(`/api/workflows/${name}/register`, {}),
   exportToMistral: (name: string) => api.post(`/api/workflows/${name}/export`, {}),
 
+  // ── Deployment packaging ─────────────────────────────────────────────────
+  getDeploymentManifest: (name: string) => api.get(`/api/workflows/${name}/deployment/manifest`),
+  deploymentPackageUrl:  (name: string) => `${API_BASE}/api/workflows/${name}/deployment/package`,
+
   // ── Signals (send user messages to running execution) ────────────────────
   // The API takes `name` / `input`; the older `signal_name` / `payload` spelling
   // was accepted at the HTTP layer but never reached the workflow handler.

@@ -12,7 +12,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { AlertCircle, Cpu, Loader2, Sparkles, X } from 'lucide-react';
 import { agentsApi, type Agent } from '../../../api/agents';
-import { toolsApi } from '../../../api/tools';
+import { toolsApi, type ToolPurpose } from '../../../api/tools';
 import type { CatalogTool } from '../../../api/workflowBuilder';
 import { cn } from '../../../lib/utils';
 
@@ -323,9 +323,12 @@ export function CreateAgentModal({
 export function CreateToolModal({
   onClose,
   onCreated,
+  purpose,
 }: {
   onClose: () => void;
   onCreated: (toolName: string) => void;
+  /** Tags the record so it shows up in the right gallery — see toolGalleryShared.tsx. */
+  purpose: ToolPurpose;
 }) {
   const [task, setTask] = useState('');
   const [busy, setBusy] = useState(false);
@@ -340,7 +343,7 @@ export function CreateToolModal({
     try {
       // Synthesis is the full codegen → lint → sandbox → approve pipeline, so
       // this can legitimately take a while; the axios client allows for it.
-      const res = await toolsApi.synthesize(task.trim());
+      const res = await toolsApi.synthesize(task.trim(), purpose);
       const data = res.data as { status?: string; tool_name?: string; message?: string };
 
       if (data.status === 'failed' || data.status === 'error') {
@@ -357,7 +360,7 @@ export function CreateToolModal({
 
   return (
     <ModalShell
-      title="Synthesise tool"
+      title={purpose === 'activity' ? 'Synthesise activity' : 'Synthesise tool'}
       subtitle="Codestral writes it, then it is linted and sandbox-tested"
       icon={<Sparkles size={17} className="text-white" />}
       onClose={onClose}
@@ -387,7 +390,7 @@ export function CreateToolModal({
       {error && <ErrorNote message={error} />}
 
       <Field
-        label="What should the tool do?"
+        label={purpose === 'activity' ? 'What should the activity do?' : 'What should the tool do?'}
         hint="Describe the inputs, the work, and the shape of the result. Name any external API it should call — the generator can only use the standard library plus a fixed allow-list of packages."
       >
         <textarea

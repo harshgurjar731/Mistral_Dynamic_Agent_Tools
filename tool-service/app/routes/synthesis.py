@@ -24,6 +24,7 @@ def synthesize(request: SynthesizeRequest, db: Session = Depends(get_db)):
         required=request.required,
         api_details=request.api_details,
         expected_output_shape=request.expected_output_shape,
+        purpose=request.purpose,
     )
     return SynthesizeResponse(
         status=result["status"],

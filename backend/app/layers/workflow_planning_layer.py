@@ -185,6 +185,27 @@ class WorkflowPlanningLayer(Layer):
             )
 
             existing_tool_names = [t.get("name", "") for t in existing_tools]
+
+            # Catalog of Activities (standalone tool steps) the DAG builder may
+            # reference by tool_name. Disjoint from the tools Phase 3 attaches
+            # to agents — only records classified "activity" belong here.
+            # Extended below when Phase 4 invents one that doesn't exist yet.
+            activities_catalog: list[dict] = []
+            for t in existing_tools:
+                if t.get("purpose") != "activity":
+                    continue
+                schema = t.get("schema") or {}
+                fn = schema.get("function", {}) if isinstance(schema, dict) else {}
+                name = fn.get("name") or t.get("name")
+                if not name:
+                    continue
+                params = fn.get("parameters", {}) or {}
+                activities_catalog.append({
+                    "name": name,
+                    "description": fn.get("description") or "",
+                    "parameters": params.get("properties", {}),
+                    "required": params.get("required", []),
+                })
             all_agents = [
                 {
                     "id": a["id"],
@@ -292,6 +313,9 @@ class WorkflowPlanningLayer(Layer):
                             required=tool_spec.get("required", []),
                             api_details=tool_spec.get("api_details", "No external API. This is a pure computation using standard library."),
                             expected_output_shape=tool_spec.get("expected_output_shape", "A dictionary containing the result."),
+                            # These are attached to an agent's tool list in Phase 3,
+                            # not wired as a standalone step — tag accordingly.
+                            purpose="tool",
                         )
                         return tool_name, synth_result
 
@@ -313,6 +337,10 @@ class WorkflowPlanningLayer(Layer):
                         ctx.emit("fatal_error", json.dumps({"error": error_msg}))
                         return ctx
                     ctx.emit("tool_new", json.dumps({"tool_name": tool_name, "status": status}))
+
+                # These are agent capabilities (purpose="tool"), attached to an
+                # agent in Phase 3 below — never added to activities_catalog,
+                # which is reserved for standalone steps.
 
                 # Single refresh after all tools are synthesized
                 await refresh_dynamic_tools()
@@ -379,7 +407,9 @@ class WorkflowPlanningLayer(Layer):
                         ]
                         tool_definitions = get_tools(
                             with_rag_tools(
-                                tool_keys, agent_libraries, agent_spec.get("domains")
+                                tool_keys,
+                                agent_libraries,
+                                bool(agent_spec.get("knowledge_graph")),
                             ),
                             document_library_ids=agent_libraries or None,
                             connectors=agent_connectors,
@@ -468,6 +498,7 @@ class WorkflowPlanningLayer(Layer):
                 system=WORKFLOW_DAG_SYSTEM_PROMPT,
                 user=WORKFLOW_DAG_USER_PROMPT.format(
                     agents_json=json.dumps(created_agents, indent=2),
+                    activities_json=json.dumps(activities_catalog, indent=2),
                     existing_connectors=connector_descriptions,
                     goal=goal,
                     requirements_json=json.dumps(requirements, indent=2),
@@ -479,6 +510,66 @@ class WorkflowPlanningLayer(Layer):
 
             if not dag_dict:
                 raise ValueError("LLM returned invalid DAG JSON")
+
+            # ── Phase 4b: Synthesise any Activity the DAG invented ─────────
+            # The DAG builder is told to prefer citing an existing tool_name, but
+            # is still allowed to name one that doesn't exist yet when nothing in
+            # the catalog fits. Catch those here — before the workflow is saved —
+            # rather than leaving the step to fail at run time.
+            known_activity_names = {a["name"] for a in activities_catalog}
+            dag_steps = dag_dict.get("steps", []) or []
+            activity_steps_needed = {}
+            for step in dag_steps:
+                if step.get("type") != "tool":
+                    continue
+                tool_name = (step.get("config") or {}).get("tool_name")
+                if tool_name and tool_name not in known_activity_names:
+                    activity_steps_needed[tool_name] = step
+
+            if activity_steps_needed:
+                ctx.emit("status", f"Synthesising {len(activity_steps_needed)} activity(ies)…")
+
+                activity_semaphore = asyncio.Semaphore(_SYNTHESIS_CONCURRENCY)
+
+                async def _synth_activity(tool_name: str, step: dict) -> tuple[str, dict]:
+                    arg_keys = list((step.get("config") or {}).get("arguments", {}).keys())
+                    async with activity_semaphore:
+                        synth_result = await tool_resolver.trigger_synthesis(
+                            name=tool_name,
+                            description=step.get("description") or f"Perform {tool_name.replace('_', ' ')}",
+                            parameters={k: {"type": "string"} for k in arg_keys},
+                            required=arg_keys,
+                            purpose="activity",
+                        )
+                        return tool_name, synth_result
+
+                activity_results = await asyncio.gather(
+                    *[_synth_activity(name, step) for name, step in activity_steps_needed.items()],
+                    return_exceptions=True,
+                )
+
+                for result in activity_results:
+                    if isinstance(result, Exception):
+                        logger.warning("Activity synthesis task failed (non-fatal): %s", result)
+                        continue
+                    tool_name, synth_result = result
+                    status = synth_result.get("status", "unknown")
+                    if status in ("failed", "error"):
+                        # Non-fatal: the step keeps its tool_name and will hit
+                        # run_tool_step's own runtime auto-synthesis fallback,
+                        # or surface a clear per-step error rather than blocking
+                        # the whole workflow from being saved.
+                        logger.warning(
+                            "Activity synthesis failed for '%s' (non-fatal): %s",
+                            tool_name, synth_result.get("message"),
+                        )
+                        continue
+                    # Distinct from "tool_new" (Phase 2, agent capabilities) so
+                    # the planner timeline can render this as what it is — a
+                    # standalone workflow step, not something an agent calls.
+                    ctx.emit("activity_new", json.dumps({"tool_name": tool_name, "status": status}))
+
+                await refresh_dynamic_tools()
 
             # ── Phase 5: Save & compile & register ────────────────────────
             ctx.emit("status", "Saving workflow…")

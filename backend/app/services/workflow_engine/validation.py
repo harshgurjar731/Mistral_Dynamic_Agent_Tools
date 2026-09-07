@@ -78,34 +78,27 @@ def _validate_agent_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
 
 
 def _validate_tool_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
+    """Validate a standalone Activity step — an isolated unit of work the
+    workflow calls directly, with no agent deciding how or whether to call it.
+    """
     cfg = step.config or {}
-
-    # Tools are meant to be invoked *by* an agent: the model decides when to
-    # call them and with what arguments. A bare tool step calls the function
-    # directly with a hand-written argument template, so there is no reasoning
-    # step and no tool-result round trip. Legacy definitions still execute, but
-    # the visual builder no longer creates these.
-    yield _issue(
-        "warning", "tool.standalone_step",
-        "This tool runs directly, bypassing any agent — arguments come from the template "
-        "rather than from a model deciding how to call it. Prefer attaching the tool to an "
-        "agent and letting the agent invoke it.",
-        step.id, "tool_name",
-    )
 
     if not cfg.get("tool_name"):
         yield _issue(
             "error", "tool.missing_name",
-            "Tool step must specify which tool to call.",
+            "Activity step must specify which tool to call.",
             step.id, "tool_name",
         )
 
-    args = cfg.get("arguments_template", cfg.get("arguments"))
+    # `arguments` is what `run_tool_step` reads at execution time
+    # (step_runners.py); `arguments_template` is a legacy key some older saved
+    # steps still carry, read here only as a fallback so they still validate.
+    args = cfg.get("arguments", cfg.get("arguments_template"))
     if args is not None and not isinstance(args, dict):
         yield _issue(
             "error", "tool.bad_arguments",
-            "Tool arguments must be an object mapping parameter names to values or {{variables}}.",
-            step.id, "arguments_template",
+            "Activity arguments must be an object mapping parameter names to values or {{variables}}.",
+            step.id, "arguments",
         )
 
 

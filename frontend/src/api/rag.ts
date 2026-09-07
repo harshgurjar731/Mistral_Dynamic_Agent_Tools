@@ -290,6 +290,10 @@ export interface UnifiedNode {
   library_id?: string | null;
   concept_id?: string;
   level?: number;
+  /** Ad hoc query results only: the node's real Neo4j labels and element id. */
+  labels?: string[];
+  element_id?: string;
+  [property: string]: unknown;
 }
 
 export interface UnifiedEdge {
@@ -298,6 +302,7 @@ export interface UnifiedEdge {
   predicate: string;
   evidence?: string;
   confidence?: number | null;
+  [property: string]: unknown;
 }
 
 export interface UnifiedGraph {
@@ -308,6 +313,13 @@ export interface UnifiedGraph {
   counts: Record<string, number>;
   library_id?: string | null;
   reason?: string;
+}
+
+/** Result of an ad hoc Cypher query — a graph slice, a row table, or both. */
+export interface CypherQueryResult extends UnifiedGraph {
+  rows: Record<string, unknown>[];
+  columns: string[];
+  row_count?: number;
 }
 
 export interface Concept {
@@ -489,6 +501,10 @@ export const ragApi = {
     api.post<{ synced: boolean; concepts?: number; library_links?: number; reason?: string }>(
       '/api/rag/graph/sync-taxonomy',
     ),
+
+  /** Run an arbitrary, read-only Cypher query and get back a graph and/or rows. */
+  queryGraph: (query: string, params: Record<string, unknown> = {}, limit = 200) =>
+    api.post<CypherQueryResult>('/api/rag/graph/query', { query, params, limit }),
 
   /** Reconcile the grounded-knowledge tool across every agent. */
   syncAgents: () =>

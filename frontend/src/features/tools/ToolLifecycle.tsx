@@ -2,23 +2,28 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, X, Wrench, FlaskConical, Sparkles, Shield, Edit2, Trash2, Code2, Globe, Send, CheckCircle, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Check, X, Wrench, FlaskConical, Sparkles, Shield, Search, RotateCcw, ArrowRight } from 'lucide-react';
 import { toolsApi } from '../../api/tools';
-import { remoteServersApi } from '../../api/remoteServers';
 import { QK } from '../../lib/queryClient';
 import { cn } from '../../lib/utils';
+import {
+  containerVariants,
+  itemVariants,
+  ToolKindBadge,
+  ToolDetailsModal,
+  SkeletonGrid,
+  EmptyState,
+  KIND_CONFIG,
+  toolKind,
+  toolPurpose,
+  type ToolKind,
+} from './toolGalleryShared';
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.05 } }
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
-};
+/** This page is scoped to tools an agent can call — not standalone workflow
+ * Activities, which live in the Activity Gallery (/workflows/activities). */
+function isAgentTool(tool: Record<string, unknown>): boolean {
+  return toolPurpose(tool) === 'tool';
+}
 
 export default function ToolLifecycle() {
   const [tab, setTab] = useState<'active' | 'pending'>('active');
@@ -39,9 +44,9 @@ export default function ToolLifecycle() {
       <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div className="flex items-center gap-1 bg-[var(--color-bg-surface)] p-1 rounded-lg border border-[var(--color-border-subtle)] w-fit">
           {tabs.map(t => (
-            <button 
-              key={t.key} 
-              onClick={() => setTab(t.key)} 
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
               className={cn(
                 'relative px-4 py-1.5 text-sm font-medium rounded-md transition-colors z-10',
                 tab === t.key ? 'text-[var(--color-bg-base)]' : 'text-[var(--color-text-muted)] hover:text-white'
@@ -59,8 +64,8 @@ export default function ToolLifecycle() {
             </button>
           ))}
         </div>
-        <button 
-          onClick={() => setShowSynthesizeModal(true)} 
+        <button
+          onClick={() => setShowSynthesizeModal(true)}
           className="btn-primary flex items-center gap-2 px-5 py-2 text-sm rounded-md shadow-sm hover:shadow-md transition-all"
         >
           <Sparkles size={16} /> Synthesize Tool
@@ -89,44 +94,122 @@ export default function ToolLifecycle() {
   );
 }
 
+const KIND_FILTERS: { key: ToolKind | 'all'; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'builtin', label: 'Built-in' },
+  { key: 'synthesized', label: 'Synthesized' },
+];
+
 function ActiveTools() {
-  const { data = [], isLoading } = useQuery({
+  const { data: rawData = [], isLoading } = useQuery({
     queryKey: QK.tools(),
     queryFn: () => toolsApi.list().then(r => Array.isArray(r.data) ? r.data : r.data.tools ?? []),
   });
+  const data = (rawData as Record<string, unknown>[]).filter(isAgentTool);
   const [selectedTool, setSelectedTool] = useState<Record<string, any> | null>(null);
+  const [search, setSearch] = useState('');
+  const [kindFilter, setKindFilter] = useState<ToolKind | 'all'>('all');
 
   if (isLoading) return <SkeletonGrid />;
   if (!data.length) return <EmptyState icon={Wrench} text="No active tools. Synthesize one to get started." />;
 
+  const tools = data.filter((tool) => {
+    if (search && !String(tool.name ?? '').toLowerCase().includes(search.toLowerCase())) return false;
+    if (kindFilter !== 'all' && toolKind(tool) !== kindFilter) return false;
+    return true;
+  });
+
+  const filtersActive = !!search || kindFilter !== 'all';
+  const clearFilters = () => { setSearch(''); setKindFilter('all'); };
+
   return (
     <>
-      <motion.div variants={containerVariants} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.map((tool: Record<string, unknown>, i: number) => (
-          <motion.div 
-            key={String(tool.id ?? i)} 
-            variants={itemVariants} 
-            className="surface-card rounded-xl p-5 group cursor-pointer hover:border-[var(--color-border-focus)] transition-all hover:scale-[1.01] flex flex-col h-full"
-            onClick={() => setSelectedTool(tool)}
+      {/* Search + kind filter */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search tools…"
+            className="w-full minimal-input bg-[var(--color-bg-surface)] rounded-md pl-9 pr-4 py-2 text-sm"
+          />
+        </div>
+        <div className="flex items-center gap-1 bg-[var(--color-bg-surface)] p-1 rounded-lg border border-[var(--color-border-subtle)] w-fit shrink-0">
+          {KIND_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setKindFilter(f.key)}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+                kindFilter === f.key
+                  ? 'bg-[var(--color-bg-hover)] text-white'
+                  : 'text-[var(--color-text-muted)] hover:text-white'
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {filtersActive && (
+          <button
+            onClick={clearFilters}
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-[var(--color-border-subtle)] px-3 py-2 text-sm text-[var(--color-text-secondary)] transition-colors hover:border-indigo-400/40 hover:text-white"
           >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-8 h-8 rounded-md bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-                <Wrench size={14} className="text-[var(--color-text-primary)]" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-[family-name:var(--font-mono)] font-medium text-[var(--color-text-primary)] block truncate">{String(tool.name)}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.2)]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-success)]" />
-                  <span className="text-[10px] font-medium text-[var(--color-accent-success)] uppercase tracking-wider">Active</span>
+            <RotateCcw size={13} /> Clear
+          </button>
+        )}
+        <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-[var(--color-text-muted)]">
+          {filtersActive ? `${tools.length} of ${data.length}` : `${data.length} tool${data.length === 1 ? '' : 's'}`}
+        </span>
+      </div>
+
+      {tools.length === 0 ? (
+        <EmptyState icon={Search} text="No tools match your filters. Try a different search term or filter." />
+      ) : (
+      <motion.div variants={containerVariants} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {tools.map((tool: Record<string, unknown>, i: number) => {
+          const kind = toolKind(tool);
+          const cfg = KIND_CONFIG[kind];
+          const Icon = cfg.icon;
+          return (
+            <motion.div
+              key={String(tool.id ?? i)}
+              variants={itemVariants}
+              className="surface-card rounded-xl p-5 group cursor-pointer hover:border-[var(--color-border-focus)] transition-all hover:scale-[1.01] flex flex-col h-full"
+              onClick={() => setSelectedTool(tool)}
+            >
+              <div className="flex items-start gap-3 mb-4">
+                <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border', cfg.bg, cfg.border)}>
+                  <Icon size={18} className={cfg.color} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-[family-name:var(--font-mono)] font-medium text-[var(--color-text-primary)] truncate">{String(tool.name)}</h3>
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                    <ToolKindBadge kind={kind} />
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.2)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-success)]" />
+                      <span className="text-[9px] font-bold text-[var(--color-accent-success)] uppercase tracking-wider">Active</span>
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-            {!!tool.description && <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1 line-clamp-4">{String(tool.description)}</p>}
-          </motion.div>
-        ))}
+              <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed flex-1 line-clamp-4">
+                {tool.description ? String(tool.description) : <span className="italic opacity-50">No description provided</span>}
+              </p>
+              <div className="mt-4 pt-4 border-t border-[var(--color-border-subtle)] flex items-center justify-between">
+                <p className="text-[10px] text-[var(--color-text-muted)] font-[family-name:var(--font-mono)] uppercase tracking-wider truncate">
+                  {tool.version ? `v${String(tool.version)}` : ' '}
+                </p>
+                <span className="text-[10px] text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                  View details <ArrowRight size={10} />
+                </span>
+              </div>
+            </motion.div>
+          );
+        })}
       </motion.div>
+      )}
 
       <AnimatePresence>
         {selectedTool && (
@@ -139,11 +222,12 @@ function ActiveTools() {
 
 function PendingTools() {
   const qc = useQueryClient();
-  const { data = [], isLoading } = useQuery({
+  const { data: rawData = [], isLoading } = useQuery({
     queryKey: QK.pendingTools(),
     queryFn: () => toolsApi.listPending().then(r => Array.isArray(r.data) ? r.data : r.data.tools ?? []),
     refetchInterval: 5_000,
   });
+  const data = (rawData as Record<string, unknown>[]).filter(isAgentTool);
 
   const approve = useMutation({ mutationFn: (id: string) => toolsApi.approve(id), onSuccess: () => { qc.invalidateQueries({ queryKey: QK.pendingTools() }); qc.invalidateQueries({ queryKey: QK.tools() }); } });
   const reject  = useMutation({ mutationFn: (id: string) => toolsApi.reject(id), onSuccess: () => qc.invalidateQueries({ queryKey: QK.pendingTools() }) });
@@ -160,8 +244,11 @@ function PendingTools() {
               <Shield size={14} className="text-[var(--color-accent-warning)]" />
             </div>
             <div className="flex-1 min-w-0">
-              <span className="font-[family-name:var(--font-mono)] text-sm font-medium text-[var(--color-text-primary)] block mb-0.5">{String(tool.name)}</span>
-              <span className="text-[10px] text-[var(--color-accent-warning)] uppercase tracking-wider font-medium">Pending Review</span>
+              <span className="font-[family-name:var(--font-mono)] text-sm font-medium text-[var(--color-text-primary)] block mb-1">{String(tool.name)}</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <ToolKindBadge kind={toolKind(tool)} />
+                <span className="text-[10px] text-[var(--color-accent-warning)] uppercase tracking-wider font-medium">Pending Review</span>
+              </div>
             </div>
             <div className="flex flex-wrap gap-2 mt-2 sm:mt-0 sm:ml-auto w-full sm:w-auto">
               <button onClick={() => approve.mutate(String(tool.id))} disabled={approve.isPending} className="btn-primary flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-transparent flex-1 sm:flex-none">
@@ -182,14 +269,14 @@ function SynthesizeToolModal({ onClose }: { onClose: () => void }) {
   const [task, setTask] = useState('');
   const qc = useQueryClient();
   const synthesis = useMutation({
-    mutationFn: () => toolsApi.synthesize(task).then(r => r.data),
+    mutationFn: () => toolsApi.synthesize(task, 'tool').then(r => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.pendingTools() }),
   });
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
         onClick={e => e.stopPropagation()}
@@ -221,7 +308,7 @@ function SynthesizeToolModal({ onClose }: { onClose: () => void }) {
 
           <AnimatePresence>
             {synthesis.data && synthesis.data.status !== 'error' && (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 className="mt-4 surface-card rounded-xl p-4 border-[rgba(16,185,129,0.3)] bg-[rgba(16,185,129,0.02)] flex items-center gap-3"
               >
@@ -232,7 +319,7 @@ function SynthesizeToolModal({ onClose }: { onClose: () => void }) {
               </motion.div>
             )}
             {synthesis.data && synthesis.data.status === 'error' && (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 className="mt-4 surface-card rounded-xl p-4 border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.02)] flex items-start gap-3"
               >
@@ -246,405 +333,6 @@ function SynthesizeToolModal({ onClose }: { onClose: () => void }) {
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
-      </motion.div>
-    </div>,
-    document.body
-  );
-}
-
-function EmptyState({ icon: Icon, text }: { icon: React.ComponentType<{ size: number; className?: string }>; text: string }) {
-  return (
-    <motion.div 
-          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="relative overflow-hidden text-center py-24 px-6 rounded-2xl flex flex-col items-center justify-center min-h-[50vh] gap-4 bg-[var(--color-bg-surface)] backdrop-blur-xl border border-[var(--color-border-subtle)] shadow-xl w-full mt-2 group"
-    >
-      {/* Background Glow */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--color-bg-base)] pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-pink-500/10 rounded-full blur-[80px] pointer-events-none group-hover:bg-pink-500/20 transition-all duration-700" />
-
-      <div className="relative z-10 w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-[rgba(236,72,153,0.2)] flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(236,72,153,0.15)] group-hover:scale-110 transition-transform duration-500">
-        <Icon size={32} className="text-pink-400" />
-      </div>
-      <div className="relative z-10">
-        <p className="text-xl font-semibold text-[var(--color-text-primary)]">Nothing to show</p>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm mx-auto">{text}</p>
-      </div>
-    </motion.div>
-  );
-}
-
-function SkeletonGrid() {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {[...Array(4)].map((_, i) => (
-        <div key={i} className="surface-card rounded-xl p-5 flex flex-col h-full gap-4 animate-pulse">
-          <div className="flex items-start gap-3 mb-1">
-            <div className="w-8 h-8 rounded-md bg-[var(--color-bg-hover)] shrink-0" />
-            <div className="flex-1 space-y-2 py-1">
-              <div className="h-4 w-3/4 rounded bg-[var(--color-bg-hover)]" />
-            </div>
-            <div className="h-5 w-16 rounded-full bg-[var(--color-bg-hover)] shrink-0" />
-          </div>
-          <div className="space-y-2 flex-1">
-            <div className="h-3 w-full rounded bg-[var(--color-bg-hover)]" />
-            <div className="h-3 w-full rounded bg-[var(--color-bg-hover)]" />
-            <div className="h-3 w-4/5 rounded bg-[var(--color-bg-hover)]" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function ToolDetailsModal({ tool, onClose, isPending, onApprove, onReject }: { tool: Record<string, any>; onClose: () => void; isPending?: boolean; onApprove?: () => void; onReject?: () => void; }) {
-  const qc = useQueryClient();
-  const [isEditing, setIsEditing] = useState(false);
-  const [showRemotePicker, setShowRemotePicker] = useState(false);
-  const [selectedRemoteServer, setSelectedRemoteServer] = useState<number | null>(null);
-  const [reachability, setReachability] = useState<Record<number, { status: 'checking' | 'reachable' | 'unreachable', data?: any }>>({});
-  const [sendSuccess, setSendSuccess] = useState<{serverName: string, response?: any} | null>(null);
-  const initialDesc = tool.schema?.function?.description || tool.description || '';
-  const [editForm, setEditForm] = useState({
-    description: initialDesc,
-    source_code: tool.source_code || ''
-  });
-
-  // Remote servers for send picker
-  const { data: remoteServers = [] } = useQuery({
-    queryKey: QK.remoteServers(),
-    queryFn: () => remoteServersApi.list().then(r => Array.isArray(r.data) ? r.data : []),
-    enabled: showRemotePicker,
-  });
-
-  const checkServer = async (id: number, url: string) => {
-    setReachability(prev => ({ ...prev, [id]: { status: 'checking' } }));
-    try {
-      const res = await remoteServersApi.check(url);
-      setReachability(prev => ({ ...prev, [id]: { status: res.data.reachable ? 'reachable' : 'unreachable', data: res.data.health } }));
-    } catch {
-      setReachability(prev => ({ ...prev, [id]: { status: 'unreachable' } }));
-    }
-  };
-
-  const sendMut = useMutation({
-    mutationFn: () => remoteServersApi.sendTool(selectedRemoteServer!, tool.id),
-    onSuccess: (res) => {
-      const serverName = (remoteServers as Record<string, unknown>[]).find(s => s.id === selectedRemoteServer)?.name;
-      setSendSuccess({
-        serverName: String(serverName || 'remote server'),
-        response: res.data.remote_response
-      });
-      setShowRemotePicker(false);
-      setSelectedRemoteServer(null);
-    },
-  });
-
-  const updateMut = useMutation({
-    mutationFn: () => toolsApi.update(tool.id, editForm),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.tools() });
-      qc.invalidateQueries({ queryKey: QK.pendingTools() });
-      setIsEditing(false);
-      if (!isPending) onClose();
-    }
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: () => toolsApi.delete(tool.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.tools() });
-      onClose();
-    }
-  });
-
-  const approveMut = useMutation({
-    mutationFn: () => toolsApi.approve(tool.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.tools() });
-      qc.invalidateQueries({ queryKey: QK.pendingTools() });
-      if (onApprove) onApprove();
-      onClose();
-    }
-  });
-
-  const rejectMut = useMutation({
-    mutationFn: () => toolsApi.reject(tool.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.pendingTools() });
-      if (onReject) onReject();
-      onClose();
-    }
-  });
-
-  const handleSaveAndApprove = async () => {
-    if (isEditing) {
-      await updateMut.mutateAsync();
-    }
-    approveMut.mutate();
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-bg-surface)] border border-[var(--color-border-subtle)] rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col shadow-2xl"
-      >
-        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-md bg-[var(--color-bg-hover)] flex items-center justify-center">
-              <Wrench size={14} className="text-white" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-white font-[family-name:var(--font-mono)]">{tool.name}</h3>
-              <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider font-medium">Tool Definition</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-white p-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-        
-        <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-transparent">
-          {/* Remote Server Picker Dropdown */}
-          <AnimatePresence>
-            {showRemotePicker && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-4 mb-2">
-                  <h4 className="text-xs uppercase tracking-wider text-cyan-300 font-semibold mb-3 flex items-center gap-2">
-                    <Globe size={12} /> Select Remote Server
-                  </h4>
-                  {remoteServers.length === 0 ? (
-                    <div className="space-y-3">
-                      <p className="text-xs text-[var(--color-text-muted)]">No remote servers configured.</p>
-                      <div className="bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] rounded-lg p-4">
-                        <h5 className="text-xs font-semibold text-[var(--color-text-primary)] mb-2 flex items-center gap-2">
-                          <ArrowRight size={12} className="text-cyan-400" /> How to add a remote server
-                        </h5>
-                        <ol className="text-xs text-[var(--color-text-secondary)] space-y-1.5 list-decimal list-inside">
-                          <li>Navigate to <span className="text-cyan-400 font-medium">MCP Servers</span> page from the sidebar</li>
-                          <li>Switch to the <span className="text-cyan-400 font-medium">Remote Servers</span> tab</li>
-                          <li>Click <span className="text-cyan-400 font-medium">Add Server</span> and enter the server URL</li>
-                          <li>Come back here and select your server to send the tool code</li>
-                        </ol>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {(remoteServers as Record<string, unknown>[]).map((s) => {
-                        const sId = s.id as number;
-                        const statusObj = reachability[sId];
-                        const status = statusObj?.status;
-                        return (
-                          <label
-                            key={sId}
-                            className={cn(
-                              'flex flex-col gap-2 px-3 py-2.5 rounded-md cursor-pointer transition-colors border',
-                              selectedRemoteServer === sId
-                                ? 'bg-cyan-500/10 border-cyan-500/30'
-                                : 'bg-[var(--color-bg-base)] border-[var(--color-border-subtle)] hover:border-cyan-500/20'
-                            )}
-                          >
-                            <div className="flex items-center gap-3">
-                              <input
-                                type="radio"
-                                name="remote-server"
-                                value={sId}
-                                checked={selectedRemoteServer === sId}
-                                onChange={() => setSelectedRemoteServer(sId)}
-                                className="accent-cyan-400"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <span className="text-sm font-medium text-white block">{String(s.name)}</span>
-                                <span className="text-xs text-[var(--color-text-muted)] font-mono block truncate">{String(s.url)}</span>
-                              </div>
-                              {/* Reachability indicator */}
-                              <div className="flex items-center gap-2">
-                                {status === 'reachable' && <CheckCircle size={14} className="text-emerald-400" />}
-                                {status === 'unreachable' && <AlertCircle size={14} className="text-red-400" />}
-                                {status === 'checking' && <Loader2 size={14} className="text-indigo-400 animate-spin" />}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); checkServer(sId, String(s.url)); }}
-                                  disabled={status === 'checking'}
-                                  className="text-[10px] text-cyan-400 hover:text-cyan-300 font-medium uppercase tracking-wider"
-                                >
-                                  Check
-                                </button>
-                              </div>
-                            </div>
-                            
-                            {status === 'reachable' && statusObj?.data && (
-                              <div className="mt-1 ml-6 text-[10px] text-[var(--color-text-muted)] bg-black/20 p-2 rounded border border-[var(--color-border-subtle)] font-mono">
-                                <div className="text-emerald-400/80 font-semibold mb-1">Server Health Info</div>
-                                {statusObj.data.service && <div>Service: {statusObj.data.service}</div>}
-                                {statusObj.data.tools_loaded !== undefined && <div>Tools Loaded: {statusObj.data.tools_loaded}</div>}
-                              </div>
-                            )}
-                          </label>
-                        );
-                      })}
-                      <button
-                        onClick={() => sendMut.mutate()}
-                        disabled={!selectedRemoteServer || sendMut.isPending}
-                        className="w-full mt-2 px-4 py-2 text-sm rounded-md bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        <Send size={14} />
-                        {sendMut.isPending ? 'Sending...' : 'Send to ' + ((remoteServers as Record<string, unknown>[]).find(s => s.id === selectedRemoteServer)?.name || '...')}
-                      </button>
-                      {sendMut.isError && (
-                        <p className="text-xs text-red-400 mt-1">Failed to send: {(sendMut.error as Error).message}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Send success banner */}
-          <AnimatePresence>
-            {sendSuccess && (
-              <motion.div
-                initial={{ opacity: 0, y: -5 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -5 }}
-                className="flex flex-col gap-3 px-4 py-3 rounded-lg bg-[rgba(16,185,129,0.08)] border border-[rgba(16,185,129,0.25)] w-full"
-              >
-                <div className="flex items-start gap-3 w-full">
-                  <CheckCircle size={16} className="text-emerald-400 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm text-emerald-300">
-                      Tool code sent successfully to <span className="font-semibold text-white">{sendSuccess.serverName}</span>. It will be available as an MCP tool once the remote server processes it.
-                    </p>
-                  </div>
-                  <button onClick={() => setSendSuccess(null)} className="text-[var(--color-text-muted)] hover:text-white shrink-0">
-                    <X size={14} />
-                  </button>
-                </div>
-                {sendSuccess.response && (
-                  <div className="ml-7 bg-black/30 rounded border border-emerald-500/20 p-3 max-h-[150px] overflow-y-auto custom-scrollbar">
-                    <h5 className="text-[10px] uppercase tracking-wider font-semibold text-emerald-500/70 mb-1">Remote Server Response</h5>
-                    <pre className="text-[11px] font-mono text-emerald-100/70 whitespace-pre-wrap leading-relaxed">
-                      {JSON.stringify(sendSuccess.response, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Description */}
-          <div>
-            <h4 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-2 flex items-center gap-2">
-              <Sparkles size={12} /> Description
-            </h4>
-            {isEditing ? (
-              <textarea 
-                value={editForm.description}
-                onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-                rows={3}
-                className="w-full minimal-input rounded-md px-4 py-3 text-sm resize-none focus:bg-[var(--color-bg-hover)]"
-              />
-            ) : (
-              <p className="text-sm text-[var(--color-text-primary)] leading-relaxed bg-[var(--color-bg-base)] p-4 rounded-lg border border-[var(--color-border-subtle)]">
-                {initialDesc || 'No description available.'}
-              </p>
-            )}
-          </div>
-          
-          {/* Source Code */}
-          <div>
-            <h4 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-2 flex items-center gap-2">
-              <Code2 size={12} /> Source Code
-            </h4>
-            {isEditing ? (
-              <textarea 
-                value={editForm.source_code}
-                onChange={e => setEditForm({ ...editForm, source_code: e.target.value })}
-                rows={12}
-                className="w-full minimal-input font-mono rounded-md px-4 py-3 text-xs resize-none focus:bg-[var(--color-bg-hover)] whitespace-pre"
-              />
-            ) : (
-              <div className="bg-[#000000] border border-[var(--color-border-subtle)] rounded-lg overflow-hidden shadow-inner text-xs">
-                <SyntaxHighlighter
-                  language="python"
-                  style={vscDarkPlus}
-                  customStyle={{ margin: 0, padding: '1.25rem', background: 'transparent' }}
-                >
-                  {tool.source_code || '# No source code available'}
-                </SyntaxHighlighter>
-              </div>
-            )}
-          </div>
-
-          {/* Schema Read-only */}
-          {!isEditing && tool.schema?.function?.parameters && (
-            <div>
-              <h4 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-2">Parameters Schema</h4>
-              <div className="bg-[#000000] border border-[var(--color-border-subtle)] rounded-lg p-5 overflow-x-auto custom-scrollbar shadow-inner">
-                <pre className="text-[13px] font-mono text-[#E2E8F0] leading-loose">
-                  {JSON.stringify(tool.schema.function.parameters, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Sticky Footer Actions */}
-        <div className="flex flex-wrap items-center justify-end gap-2 p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] mt-auto">
-          {!isEditing && !isPending ? (
-            <>
-              {/* Send to Remote button — only for approved tools */}
-              {tool.status === 'approved' && (
-                <button
-                  onClick={() => setShowRemotePicker(!showRemotePicker)}
-                  className="flex items-center justify-center gap-2 text-xs font-medium bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 px-4 py-2 rounded-md transition-colors border border-cyan-500/30 w-full sm:w-auto"
-                >
-                  <Globe size={14} /> Send to Remote
-                </button>
-              )}
-              <button onClick={() => setIsEditing(true)} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
-                <Edit2 size={14} /> Edit
-              </button>
-              {!['get_weather', 'calculate', 'search_knowledge', 'create_document', 'send_email'].includes(tool.name) && (
-                <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-400 px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
-                  <Trash2 size={14} /> {deleteMut.isPending ? 'Deleting...' : 'Delete'}
-                </button>
-              )}
-            </>
-          ) : isEditing ? (
-            <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium bg-[var(--color-bg-hover)] text-white hover:bg-[var(--color-bg-surface)] px-4 py-2 rounded-md transition-colors w-full sm:w-auto">
-              <Check size={14} /> {updateMut.isPending ? 'Saving...' : 'Save Changes'}
-            </button>
-          ) : null}
-
-          {isPending && !isEditing && (
-            <button onClick={() => setIsEditing(true)} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-white px-4 py-2 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors w-full sm:w-auto">
-                <Edit2 size={14} /> Edit
-            </button>
-          )}
-
-          {isPending && (
-            <>
-              <button onClick={() => rejectMut.mutate()} disabled={rejectMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium text-[var(--color-accent-danger)] hover:bg-[rgba(239,68,68,0.1)] px-4 py-2 rounded-md transition-colors w-full sm:w-auto">
-                <X size={14} /> Reject
-              </button>
-              <button onClick={handleSaveAndApprove} disabled={updateMut.isPending || approveMut.isPending} className="flex items-center justify-center gap-2 text-xs font-medium bg-[var(--color-accent-success)] text-black hover:bg-[#34d399] px-4 py-2 rounded-md transition-colors shadow-lg shadow-[rgba(16,185,129,0.2)] w-full sm:w-auto">
-                <Check size={14} /> {updateMut.isPending || approveMut.isPending ? 'Processing...' : (isEditing ? 'Save & Approve' : 'Approve')}
-              </button>
-            </>
-          )}
         </div>
       </motion.div>
     </div>,

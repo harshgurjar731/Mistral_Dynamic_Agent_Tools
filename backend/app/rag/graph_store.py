@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from app.config import settings
 
@@ -144,6 +144,149 @@ def _run(query: str, **params) -> list[dict]:
     except Exception as e:
         logger.warning("Cypher failed (%.60s…): %s", query.strip().replace("\n", " "), e)
         raise
+
+
+# ── Ad hoc queries (the Query tab) ──────────────────────────────────────────
+
+import re as _re
+
+# A fast, friendly pre-check. The actual boundary is `execute_read` below —
+# Neo4j itself rejects a write clause inside a read transaction — this just
+# turns the common case into a clear 400 instead of a driver stack trace.
+_WRITE_KEYWORDS = _re.compile(
+    r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|FOREACH)\b"
+    r"|CALL\s*\{",
+    _re.IGNORECASE,
+)
+
+
+def run_cypher(query: str, params: Optional[dict] = None, limit: int = 200) -> dict:
+    """Run an arbitrary, read-only Cypher query and shape it as a graph.
+
+    Built for the Query tab: paste a Cypher statement, get back whichever
+    nodes and relationships it touched — the same ``{nodes, edges}`` shape the
+    unified graph endpoint returns, so the existing Sigma canvas renders it
+    with no adapter. A query that returns scalars instead of graph elements
+    (``RETURN count(*)``, an aggregation, a property projection) still comes
+    back as ``rows``/``columns`` for a plain table.
+
+    Read-only is enforced twice: the keyword pre-check above, and — the real
+    boundary — ``session.execute_read``, which Neo4j rejects a write clause
+    inside regardless of what slipped past the regex.
+    """
+    query = (query or "").strip()
+    if not query:
+        raise ValueError("Empty query.")
+    if _WRITE_KEYWORDS.search(query):
+        raise ValueError(
+            "Only read queries are allowed here — no CREATE, MERGE, DELETE, SET, "
+            "REMOVE, DROP, CALL {…}, LOAD CSV or FOREACH."
+        )
+
+    driver = _get_driver()
+    if driver is None:
+        return {
+            "available": False, "nodes": [], "edges": [], "rows": [], "columns": [],
+            "counts": {}, "truncated": False, "reason": _unavailable_reason,
+        }
+
+    from neo4j.graph import Node as Neo4jNode, Path, Relationship
+
+    nodes: dict[str, dict] = {}
+    edges: dict[str, dict] = {}
+    rows: list[dict] = []
+    state: dict[str, Any] = {"columns": []}
+
+    def node_key(n: Neo4jNode) -> str:
+        return f"n{getattr(n, 'element_id', None) or n.id}"
+
+    def add_node(n: Neo4jNode) -> str:
+        key = node_key(n)
+        if key not in nodes:
+            props = dict(n)
+            label_kind = ":".join(sorted(n.labels)) or "Node"
+            display = props.get("name") or props.get("label") or props.get("title") or props.get("id")
+            nodes[key] = {
+                "id": key,
+                "kind": "entity",
+                "type": label_kind,
+                "labels": sorted(n.labels),
+                "label": str(display) if display is not None else label_kind,
+                "degree": 0,
+                # The real Neo4j element id, distinct from `id` above (which is
+                # namespaced for this response) — what a follow-up "expand this
+                # node" query addresses it by, via Cypher's elementId().
+                "element_id": getattr(n, "element_id", None) or str(n.id),
+                **{k: v for k, v in props.items() if k not in ("name", "label")},
+            }
+        return key
+
+    def add_rel(r: Relationship) -> None:
+        key = f"e{getattr(r, 'element_id', None) or r.id}"
+        if key in edges or r.start_node is None or r.end_node is None:
+            return
+        source = add_node(r.start_node)
+        target = add_node(r.end_node)
+        edges[key] = {
+            "source": source,
+            "target": target,
+            "predicate": r.type,
+            **dict(r),
+        }
+        nodes[source]["degree"] += 1
+        nodes[target]["degree"] += 1
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, Neo4jNode):
+            add_node(value)
+            return dict(value)
+        if isinstance(value, Relationship):
+            add_rel(value)
+            return dict(value)
+        if isinstance(value, Path):
+            for n in value.nodes:
+                add_node(n)
+            for r in value.relationships:
+                add_rel(r)
+            return {"path_length": len(value.relationships)}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        if isinstance(value, dict):
+            return {k: walk(v) for k, v in value.items()}
+        return value
+
+    def work(tx):
+        result = tx.run(query, **(params or {}))
+        state["columns"] = list(result.keys())
+        count = 0
+        for record in result:
+            if count >= limit:
+                break
+            rows.append({key: walk(record[key]) for key in state["columns"]})
+            count += 1
+        return count
+
+    try:
+        with driver.session(database=settings.NEO4J_DATABASE) as session:
+            returned = session.execute_read(work)
+    except Exception as e:
+        logger.info("Ad hoc Cypher rejected or failed (%.80s…): %s", query.replace("\n", " "), e)
+        raise
+
+    counts: dict[str, int] = {}
+    for node in nodes.values():
+        counts[node["type"]] = counts.get(node["type"], 0) + 1
+
+    return {
+        "available": True,
+        "nodes": list(nodes.values()),
+        "edges": list(edges.values()),
+        "rows": rows,
+        "columns": state["columns"],
+        "row_count": returned,
+        "counts": counts,
+        "truncated": returned >= limit,
+    }
 
 
 # ── Schema ─────────────────────────────────────────────────────────────────

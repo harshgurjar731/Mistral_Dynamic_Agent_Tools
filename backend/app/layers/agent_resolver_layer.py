@@ -226,7 +226,7 @@ class AgentResolverLayer(Layer):
         dynamic_tools = with_rag_tools(
             agent_config["tools"],
             agent_config.get("document_library_ids"),
-            agent_config.get("domains"),
+            bool(agent_config.get("knowledge_graph")),
         )
         tool_definitions = get_tools(
             dynamic_tools,

@@ -1,32 +1,25 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  BotMessageSquare, Wrench, GitBranch, MessageSquare,
-  Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Library, Plug, Network, Radio
-} from 'lucide-react';
+import { BotMessageSquare, Wrench, GitBranch, Server, Activity, Cpu, ChevronLeft, Sparkles, Terminal, ChevronDown, Plus, MessageCircle, Trash2, Edit2, Library, Plug, Network, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState, useMemo } from 'react';
 import { useSessionStore } from '../../store/sessionStore';
-import { useQuery } from '@tanstack/react-query';
-import { agentsApi } from '../../api/agents';
-import { QK } from '../../lib/queryClient';
 
 interface NavItem {
   to: string;
   icon: any;
   label: string;
   expandable?: boolean;
-  type?: 'general' | 'agent';
+  type?: 'general';
 }
 
 const NAV: NavItem[] = [
   { to: '/',              icon: BotMessageSquare, label: 'Orchestrator' },
   { to: '/playground',    icon: Terminal,         label: 'Playground', expandable: true, type: 'general' },
-  { to: '/agents',        icon: Cpu,              label: 'Agents', expandable: true, type: 'agent' },
+  { to: '/agents',        icon: Cpu,              label: 'Agents' },
   { to: '/tools',         icon: Wrench,           label: 'Tools' },
   { to: '/workflows',     icon: GitBranch,        label: 'Workflows' },
-  { to: '/executions',    icon: Radio,            label: 'Executions' },
-  { to: '/conversations', icon: MessageSquare,    label: 'Conversations' },
+  { to: '/workflows/activities', icon: Zap,       label: 'Activities' },
   { to: '/connectors',    icon: Plug,             label: 'Connectors' },
   { to: '/ontology',      icon: Network,          label: 'Ontology' },
   { to: '/mcp',           icon: Server,           label: 'MCP Servers' },
@@ -38,20 +31,12 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
   const [collapsed, setCollapsed] = useState(false);
   const [expandedNav, setExpandedNav] = useState<Record<string, boolean>>({
     '/playground': true,
-    '/agents': true
   });
-  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
-  
+
   const location = useLocation();
   const navigate = useNavigate();
 
   const { sessions, activeSessionId, switchSession, createSession, deleteSession, renameSession } = useSessionStore();
-  
-  const { data = { items: [] } } = useQuery({
-    queryKey: QK.agentsPage(0, 20),
-    queryFn: () => agentsApi.list(0, 20).then(r => r.data),
-  });
-  const agents = Array.from(new Map((data.items || []).map((a: any) => [a.id, a])).values()) as any[];
 
   const generalSessions = useMemo(() => {
     return Object.values(sessions)
@@ -61,10 +46,6 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
 
   const toggleNav = (to: string) => {
     setExpandedNav(prev => ({ ...prev, [to]: !prev[to] }));
-  };
-
-  const toggleAgent = (id: string) => {
-    setExpandedAgents(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleSessionClick = (id: string, e: React.MouseEvent, type: 'general' | 'agent', agentId?: string) => {
@@ -257,81 +238,6 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
                           )}
                         </div>
                       )}
-
-                      {/* Agents & their Sessions */}
-                      {type === 'agent' && (
-                        <div className="py-1">
-                          <div className="flex items-center justify-between px-3 mb-1">
-                            <span className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider pl-4">Active Agents</span>
-                            <button onClick={() => navigate('/agents')} className="p-1 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] hover:text-white">
-                              <Plus size={12} />
-                            </button>
-                          </div>
-                          {agents.length === 0 && (
-                            <div className="pl-7 pr-3 py-1 text-xs text-[var(--color-text-muted)] italic">No agents created</div>
-                          )}
-                          <div className="max-h-[40vh] overflow-y-auto custom-scrollbar">
-                          {agents.map(agent => {
-                            const isAgentExpanded = expandedAgents[agent.id];
-                            const agentSessions = Object.values(sessions)
-                              .filter(s => s.type === 'agent' && s.agentId === agent.id)
-                              .sort((a, b) => b.updatedAt - a.updatedAt);
-                            
-                            return (
-                              <div key={agent.id} className="mb-1 pl-4">
-                                <div className="flex items-center justify-between pr-2 group">
-                                  <NavLink 
-                                    to={`/agents/${agent.id}`}
-                                    className={({ isActive }) => cn(
-                                      "flex-1 flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors",
-                                      isActive ? "text-white bg-[rgba(255,255,255,0.05)] font-medium" : "text-[var(--color-text-secondary)] hover:text-white hover:bg-[rgba(255,255,255,0.02)]"
-                                    )}
-                                  >
-                                    <Cpu size={12} className="opacity-70" />
-                                    <span className="truncate">{agent.name}</span>
-                                  </NavLink>
-                                  <button 
-                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleAgent(agent.id); }}
-                                    className="p-1 rounded text-[var(--color-text-muted)] hover:text-white opacity-0 group-hover:opacity-100"
-                                  >
-                                    <ChevronDown size={12} className={cn("transition-transform", isAgentExpanded ? "rotate-180" : "")} />
-                                  </button>
-                                </div>
-                                
-                                <AnimatePresence>
-                                  {isAgentExpanded && (
-                                    <motion.div
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: 'auto', opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                      className="overflow-hidden mt-1 pl-3 border-l border-[rgba(255,255,255,0.05)] ml-5 max-h-[30vh] overflow-y-auto custom-scrollbar"
-                                    >
-                                      <div className="flex items-center justify-between px-2 mb-1">
-                                        <span className="text-[9px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Sessions</span>
-                                        <button 
-                                          onClick={() => { const id = createSession('agent', agent.id); switchSession(id); navigate(`/agents/${agent.id}`); }}
-                                          className="p-0.5 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] hover:text-white"
-                                        >
-                                          <Plus size={10} />
-                                        </button>
-                                      </div>
-                                      {agentSessions.map(session => (
-                                        <div key={session.id} className="-ml-2">
-                                           <SessionItem session={session} type="agent" agentId={agent.id} />
-                                        </div>
-                                      ))}
-                                      {agentSessions.length === 0 && (
-                                        <div className="px-2 py-1 text-[10px] text-[var(--color-text-muted)] italic">No sessions</div>
-                                      )}
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            );
-                          })}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </motion.div>
                 )}
@@ -340,20 +246,6 @@ export default function Sidebar({ mobileMenuOpen, setMobileMenuOpen }: { mobileM
           );
         })}
       </nav>
-
-      {/* Footer */}
-      {!collapsed && (
-        <div className="px-4 py-4 border-t border-[var(--color-border-subtle)]">
-          <a
-            href="/docs"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-[var(--color-text-muted)] hover:text-white transition-colors flex items-center gap-2"
-          >
-            API Docs ↗
-          </a>
-        </div>
-      )}
     </motion.aside>
     </>
   );

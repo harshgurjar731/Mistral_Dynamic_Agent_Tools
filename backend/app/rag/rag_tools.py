@@ -1,10 +1,19 @@
 """
 Attaching the grounded-knowledge tool to agents.
 
-The rule is one sentence: **an agent gets it when it has something to search.**
-Documents in a library, or a domain with curated industry knowledge behind it —
-either is enough. An agent with neither gains only a wasted round trip, so it
-does not get the tool at all.
+The rule is one sentence: **an agent gets it when someone says so.**
+
+It used to attach itself wherever an agent had a library or a domain, on the
+reasoning that an agent with documents obviously wants to search them. That was
+wrong in practice. Plenty of agents hold a library for one narrow purpose —
+quoting a clause, checking a figure — and giving them a second retrieval tool
+they never needed makes every turn weigh two tools instead of one, and invites
+calls that return nothing useful. Whether an agent should reason over the
+knowledge graph is a judgement about that agent's job, and the person building
+it is the one who knows.
+
+So it is opt-in, everywhere: the create form, the edit form, and the planners,
+which set it when the goal actually calls for it.
 
 Five places in this codebase create an agent, so the merge lives here and every
 creation path calls it. Attaching is additive and idempotent: an agent's
@@ -58,13 +67,17 @@ def tool_key_present(tool_keys: Iterable[Any], name: str = DOMAIN_SEARCH_TOOL) -
 def with_rag_tools(
     tool_keys: Optional[Iterable[Any]],
     library_ids: Optional[Iterable[str]] = None,
-    domains: Optional[Iterable[str]] = None,
+    knowledge_graph: bool = False,
 ) -> list[Any]:
-    """Return ``tool_keys`` with the RAG pair completed.
+    """Return ``tool_keys`` with the knowledge-graph tool added or removed.
 
-    Does nothing to an agent that has no library and is not being given one:
-    the graph tool alone would search a graph the agent has no documents in,
-    which is worse than not having it.
+    ``knowledge_graph`` is the agent's own setting, not an inference. False
+    removes the tool as well as declining to add it, so unticking the box on an
+    existing agent actually detaches it.
+
+    A document library is attached whenever library ids are supplied,
+    independently — that is what the agent was given, and it is not what this
+    flag controls.
     """
     keys = [
         key for key in (tool_keys or [])
@@ -75,20 +88,21 @@ def with_rag_tools(
     ]
     ids = [lid for lid in (library_ids or []) if lid]
 
-    has_library = tool_key_present(keys, _DOCUMENT_LIBRARY) or bool(ids)
-    has_domain = bool(domains)
-
-    # The tool covers documents and curated industry knowledge, so either is
-    # reason enough to carry it. An agent with neither gains only a wasted
-    # round trip.
-    if not has_library and not has_domain:
-        return keys
-
     if ids and not tool_key_present(keys, _DOCUMENT_LIBRARY):
         keys.append(_DOCUMENT_LIBRARY)
-    if not tool_key_present(keys, DOMAIN_SEARCH_TOOL):
-        keys.append(DOMAIN_SEARCH_TOOL)
+
+    if knowledge_graph:
+        if not tool_key_present(keys, DOMAIN_SEARCH_TOOL):
+            keys.append(DOMAIN_SEARCH_TOOL)
+    else:
+        keys = [key for key in keys if not tool_key_present([key], DOMAIN_SEARCH_TOOL)]
+
     return keys
+
+
+def has_knowledge_graph(tools: Iterable[Any]) -> bool:
+    """Whether an agent currently carries the tool. The UI reads this."""
+    return spec_present(tools)
 
 
 def spec_present(tools: Iterable[Any], name: str = DOMAIN_SEARCH_TOOL) -> bool:
@@ -194,23 +208,26 @@ def _invalidate(agent_id: str) -> None:
 
 
 async def backfill_rag_tool(client, page_size: int = 200) -> dict:
-    """Reconcile every agent against graph coverage. Idempotent, both ways."""
-    from app.rag import graph_store
+    """Migrate agents off the two retired retrieval tools. Idempotent.
+
+    This used to attach and detach the tool based on whether an agent's sources
+    held anything. It no longer does either: the tool is now an explicit choice
+    per agent, and a reconcile that added it back — or took away what someone
+    deliberately enabled — would silently overrule that choice on every boot.
+
+    What remains is migration. An agent created before the consolidation still
+    carries ``query_industry_knowledge`` or ``query_knowledge_graph``, names the
+    registry can no longer execute; those are replaced with the current tool,
+    because that agent *had* opted into graph retrieval under the old scheme.
+    """
     from app.services import agent_service
 
     summary = {"checked": 0, "attached": 0, "detached": 0, "unchanged": 0, "failed": 0}
 
-    if not graph_store.available():
-        # Without a graph, half the coverage test cannot run and the reconcile
-        # would strip the tool off every document-backed agent — then put it
-        # back on the next boot. Doing nothing is the correct response.
-        summary["skipped"] = "knowledge graph unavailable"
-        return summary
-
     try:
         listing = await agent_service.list_agents(client, page=0, page_size=page_size)
     except Exception as e:
-        logger.warning("RAG tool sync: could not list agents: %s", e)
+        logger.warning("RAG tool migration: could not list agents: %s", e)
         return summary
 
     for item in listing.get("items", []):
@@ -220,21 +237,22 @@ async def backfill_rag_tool(client, page_size: int = 200) -> dict:
         summary["checked"] += 1
         tools = item.get("tools") or []
 
+        carries_legacy = any(
+            spec_present(tools, legacy) for legacy in LEGACY_RETRIEVAL_TOOLS
+        )
+        if not carries_legacy:
+            summary["unchanged"] += 1
+            continue
+
         try:
-            if agent_has_coverage(tools, agent_id):
-                if await attach_to_agent(client, agent_id, tools):
-                    summary["attached"] += 1
-                else:
-                    summary["unchanged"] += 1
+            if await attach_to_agent(client, agent_id, tools):
+                summary["attached"] += 1
             else:
-                if await detach_from_agent(client, agent_id, tools):
-                    summary["detached"] += 1
-                else:
-                    summary["unchanged"] += 1
+                summary["unchanged"] += 1
         except Exception as e:
             summary["failed"] += 1
-            logger.debug("Could not sync graph tool on %s: %s", agent_id, e)
+            logger.debug("Could not migrate retrieval tools on %s: %s", agent_id, e)
 
-    if summary["attached"] or summary["detached"] or summary["failed"]:
-        logger.info("Domain search tool sync: %s", summary)
+    if summary["attached"] or summary["failed"]:
+        logger.info("Retrieval tool migration: %s", summary)
     return summary

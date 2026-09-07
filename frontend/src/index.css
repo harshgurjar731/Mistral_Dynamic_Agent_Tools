@@ -7,6 +7,10 @@
     color: var(--color-text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Without this, native checkboxes/radios/range inputs render with the
+       browser's light-mode chrome — a white box behind the accent color —
+       even though the whole UI is dark. */
+    color-scheme: dark;
   }
   
   html, body, #root {
