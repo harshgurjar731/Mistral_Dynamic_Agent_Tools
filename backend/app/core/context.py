@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.core.events import SSEEvent
+from app.core.specs import AgentSpec, RequirementSpec, WorkflowSpec
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +40,21 @@ class PipelineContext:
     stream: bool = False            # True when invoked via the /stream route
 
     # ── Accumulated state (layers write here) ───────────────────────────
-    agent_config: Optional[dict] = None         # set by AgentResolverLayer
-    created_agent_id: Optional[str] = None      # set by AgentResolverLayer
-    synthesis_result: Any = None                 # set by SynthesisLayer
+    # Flattened view of ``agent_spec``, published by AgentAssemblyLayer. Kept
+    # because the routes, the SSE payloads and the ontology autotagger were all
+    # written against this shape.
+    agent_config: Optional[dict] = None         # set by AgentAssemblyLayer
+    created_agent_id: Optional[str] = None      # set by AgentAssemblyLayer
+    synthesis_result: Any = None                # set by CapabilityGapLayer
     response_text: Optional[str] = None         # set by ExecutionLayer
+
+    # ── Decision specs (one field group per decision layer) ─────────────
+    # ``requirements`` is decided first and read by every layer after it;
+    # ``agent_spec`` accumulates one facet per layer, including across the
+    # concurrent branches of the facet ParallelGroup.
+    requirements: Optional[RequirementSpec] = None
+    agent_spec: AgentSpec = field(default_factory=AgentSpec)
+    workflow_spec: Optional[WorkflowSpec] = None
 
     # ── Output ──────────────────────────────────────────────────────────
     events: list[SSEEvent] = field(default_factory=list)
@@ -72,6 +84,47 @@ class PipelineContext:
         if self.event_queue is not None:
             self.event_queue.put_nowait(sse)
 
+    def set_layer_summary(self, name: str, text: str) -> None:
+        """Record a layer's own account of what it decided.
+
+        Read back when the layer settles and shown under its timeline row, so a
+        user watching a run sees the reasoning rather than only a tick.
+        """
+        if text:
+            self.metadata.setdefault("_layer_summaries", {})[name] = text
+
+    def layer_summary(self, name: str) -> str:
+        return (self.metadata.get("_layer_summaries") or {}).get(name, "")
+
+    def emit_layer(
+        self,
+        name: str,
+        state: str,
+        *,
+        ms: Optional[float] = None,
+        summary: str = "",
+        error: str = "",
+    ) -> None:
+        """Announce a layer's state change to the UI.
+
+        The pipeline is a known, ordered chain, so the client is sent the whole
+        manifest up front and then told as each layer moves through
+        ``active`` → ``completed`` / ``skipped`` / ``failed``. That lets the
+        timeline show what is still to come, which a stream of free-text status
+        strings never could.
+
+        ``summary`` carries the layer's own one-line account of what it decided
+        — the reason shown under a completed row.
+        """
+        payload: dict = {"name": name, "state": state}
+        if ms is not None:
+            payload["ms"] = round(ms)
+        if summary:
+            payload["summary"] = summary
+        if error:
+            payload["error"] = error
+        self.emit("layer", payload)
+
     def set_error(self, message: str) -> None:
         """Mark the pipeline as failed."""
         self.error = message
@@ -80,12 +133,19 @@ class PipelineContext:
     def snapshot(self) -> "PipelineContext":
         """Return a shallow copy suitable for parallel layer execution.
 
-        Each parallel layer gets its own events list and metadata dict so they
-        can write without races, while still sharing the immutable input fields.
+        Each parallel layer gets its own events list, metadata dict and
+        ``agent_spec`` so they can write without races, while still sharing the
+        immutable input fields.
+
+        ``agent_spec`` is deep-copied rather than shared: ``copy.copy`` is
+        shallow, so without this every concurrent facet layer would be mutating
+        one object and ``merge`` would have nothing left to do. Branches are
+        meant to decide independently and be reconciled afterwards.
         """
         ctx = copy.copy(self)
         ctx.events = []
         ctx.metadata = dict(self.metadata)
+        ctx.agent_spec = self.agent_spec.copy()
         return ctx
 
     def merge(self, other: "PipelineContext") -> None:
@@ -94,6 +154,16 @@ class PipelineContext:
         Only non-None accumulated-state fields are copied over, and events are
         appended.
         """
+        # Fold in whichever facets this branch decided. Only fields the branch
+        # actually set are copied, so concurrent facet layers cannot blank out
+        # each other's work.
+        if other.agent_spec is not None:
+            self.agent_spec.merge_from(other.agent_spec)
+        if other.requirements is not None:
+            self.requirements = other.requirements
+        if other.workflow_spec is not None:
+            self.workflow_spec = other.workflow_spec
+
         # Merge accumulated state (only overwrite if the other ctx set it)
         if other.agent_config is not None:
             self.agent_config = other.agent_config

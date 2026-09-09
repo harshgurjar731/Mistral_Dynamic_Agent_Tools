@@ -143,11 +143,33 @@ async def _execute_tool_call(tc) -> dict:
     }
 
 
-async def _process_tool_calls_parallel(client, conv_result, conversation_id: str):
-    """Loop to process tool calls — executes all calls in a round concurrently."""
+#: Mistral refuses to stream a conversation for an agent that carries a
+#: guardrail configuration (400, code 3001). The guardrail is a security
+#: control and the streaming is a presentation choice, so the streaming is what
+#: gives way — see ExecutionLayer._deliver_without_streaming.
+_GUARDRAIL_STREAM_MARKERS = (
+    "guardrails are not supported in streaming",
+    "not supported in streaming mode",
+)
+
+
+def _is_guardrail_stream_refusal(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _GUARDRAIL_STREAM_MARKERS)
+
+
+async def _process_tool_calls_parallel(
+    client, conv_result, conversation_id: str, max_rounds: int = 5
+):
+    """Loop to process tool calls — executes all calls in a round concurrently.
+
+    ``max_rounds`` comes from the agent's guardrail envelope. Bounding the loop
+    is what makes that part of the envelope real: instructions can be ignored
+    by the model, the loop bound cannot.
+    """
     current_result = conv_result
 
-    for _ in range(5):
+    for _ in range(max(1, max_rounds)):
         outputs = (
             getattr(current_result, "outputs", None)
             or getattr(current_result, "entries", None)
@@ -203,6 +225,8 @@ class ExecutionLayer(Layer):
     """
 
     name = "execution"
+    label = "Run the agent"
+    detail = "Holds the conversation and executes any tools the agent calls."
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         # Determine which agent to use
@@ -221,7 +245,13 @@ class ExecutionLayer(Layer):
     async def _handle_json(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
         # Scope any industry-knowledge lookup to this agent's own domain.
         from app.services import tool_registry
+        from app.layers.agent.assembly_layer import MAX_TOOL_ROUNDS_KEY
         tool_registry.CURRENT_AGENT.set(agent_id or ctx.agent_id)
+
+        # Set by GuardrailConfigLayer for a freshly designed agent. A follow-up
+        # or a pre-selected agent has no envelope in this context, so the
+        # engine default applies.
+        max_rounds = ctx.metadata.get(MAX_TOOL_ROUNDS_KEY, 5)
 
         inputs = _build_user_inputs(ctx.query, ctx.image)
 
@@ -234,7 +264,9 @@ class ExecutionLayer(Layer):
                     inputs=inputs,
                 )
             )
-            result = await _process_tool_calls_parallel(client, result, ctx.conversation_id)
+            result = await _process_tool_calls_parallel(
+                client, result, ctx.conversation_id, max_rounds
+            )
             ctx.response_text = _extract_response(result)
             ctx.result = {
                 "response": ctx.response_text,
@@ -260,7 +292,9 @@ class ExecutionLayer(Layer):
             getattr(conv_result, "conversation_id", None)
             or getattr(conv_result, "id", None)
         )
-        conv_result = await _process_tool_calls_parallel(client, conv_result, conversation_id)
+        conv_result = await _process_tool_calls_parallel(
+            client, conv_result, conversation_id, max_rounds
+        )
         ctx.response_text = _extract_response(conv_result)
         ctx.conversation_id = conversation_id
 
@@ -279,7 +313,61 @@ class ExecutionLayer(Layer):
 
     # ── Streaming mode ──────────────────────────────────────────────────
 
+    async def _deliver_without_streaming(
+        self, ctx: PipelineContext, client, agent_id: str | None
+    ) -> None:
+        """Answer through the non-streaming path, emitting SSE as if streamed.
+
+        Used when the agent carries guardrails. The whole reply arrives at once
+        instead of token by token — the tool loop, the conversation id and the
+        final payload are otherwise identical, because this reuses the JSON
+        path rather than reimplementing it.
+        """
+        ctx.emit(
+            "status",
+            "Guardrails are active on this agent, so the answer arrives complete "
+            "rather than word by word.",
+        )
+        await self._handle_json(ctx, client, agent_id)
+
+        if ctx.error:
+            return
+
+        text = ctx.response_text or ""
+        if text:
+            ctx.emit("text_chunk", text)
+        if ctx.conversation_id:
+            ctx.emit("conversation_id", ctx.conversation_id)
+
+        agent_config = ctx.agent_config or {}
+        ctx.emit("done", json.dumps({
+            "agent_id": ctx.created_agent_id or ctx.agent_id,
+            "agent_name": agent_config.get("agent_name"),
+        }))
+
     async def _handle_stream(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
+        # Known up front for an agent this run just created: no point spending a
+        # round trip to be told no.
+        spec_guardrails = ctx.agent_spec.guardrails if ctx.agent_spec else None
+        if ctx.created_agent_id and spec_guardrails and spec_guardrails.enabled:
+            logger.info(
+                "Agent %s carries guardrails — answering without streaming",
+                ctx.created_agent_id,
+            )
+            await self._deliver_without_streaming(ctx, client, agent_id)
+            return
+
+        try:
+            await self._stream(ctx, client, agent_id)
+        except Exception as e:
+            # A pre-selected agent's guardrails are not visible from here, so
+            # the refusal is the first time we learn of them.
+            if not _is_guardrail_stream_refusal(e):
+                raise
+            logger.info("Stream refused for a guarded agent — falling back to a single reply")
+            await self._deliver_without_streaming(ctx, client, agent_id)
+
+    async def _stream(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
         if ctx.conversation_id:
             # Follow-up stream
             inputs = _build_user_inputs(ctx.query, ctx.image)
@@ -320,7 +408,7 @@ class ExecutionLayer(Layer):
             ctx.set_error("No agent_id available for execution")
             return
 
-        # New query stream (agent was created by AgentResolverLayer)
+        # New query stream (agent was created by AgentAssemblyLayer)
         ctx.emit("status", "Processing your query…")
         inputs = _build_user_inputs(ctx.query, ctx.image)
 

@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
 
     # Workflow engine (future)
+    # ── Decision-call pacing ────────────────────────────────────────────
+    # The orchestrators ask many small questions instead of one large one, and
+    # the agent pipeline's facet layers ask five of them at once. That is fine
+    # against a generous quota and a 429 storm against a modest one, so the
+    # concurrency is capped and every call retries on a rate limit.
+    DECISION_CONCURRENCY: int = 2
+    DECISION_MAX_RETRIES: int = 4
+    DECISION_RETRY_BASE_SECONDS: float = 2.0
+
     WORKFLOW_MAX_STEPS: int = 20
     WORKFLOW_STEP_TIMEOUT: int = 60
 

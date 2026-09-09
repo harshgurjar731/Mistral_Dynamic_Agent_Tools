@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, ArrowRight, CheckCircle2, AlertCircle,
   RefreshCw, Wrench, Cpu, Sparkles, CircleDot,
-  Code2, Server, PackageCheck, PackagePlus, History, Zap
+  Code2, Server, PackageCheck, PackagePlus, History, Zap,
+  Shield, ListChecks, Share2, Repeat, Split, ShieldAlert
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -12,13 +13,21 @@ import { workflowsApi } from '../../api/workflows';
 import { cn } from '../../lib/utils';
 import { QK } from '../../lib/queryClient';
 import PlannerHistoryPanel, { type PlannerHistoryEntry } from './PlannerHistoryPanel';
+import PipelineTimeline, { type LayerManifestEntry, type LayerRuntime } from '../../components/pipeline/PipelineTimeline';
+import AgentGuardrailCard from '../../components/pipeline/GuardrailCard';
+import LibraryProvisionedCard from '../../components/pipeline/LibraryProvisionedCard';
+import { usePipelineRun } from '../../components/pipeline/usePipelineRun';
 
 import { getTierConfig, TierBadge } from '../../components/ui/TierBadge';
 
 /* ── Timeline Step Types ──────────────────────────────────────────────── */
 export interface TimelineStep {
   id: string;
-  type: 'status' | 'requirements' | 'tool_exists' | 'tool_new' | 'activity_new' | 'agent_exists' | 'agent_new'
+  type: 'status' | 'capabilities' | 'execution_modes' | 'reuse_plan'
+      | 'activity_plan' | 'agent_designed' | 'library_provisioned'
+      | 'topology' | 'data_flow'
+      | 'workflow_guardrails' | 'validation'
+      | 'tool_exists' | 'tool_new' | 'activity_new' | 'agent_exists' | 'agent_new'
       | 'workflow_ready' | 'compiled' | 'registered' | 'fatal_error' | 'error';
   content: string | Record<string, unknown>;
   status: 'pending' | 'active' | 'completed';
@@ -26,43 +35,276 @@ export interface TimelineStep {
 
 /* ── Sub-cards ────────────────────────────────────────────────────────── */
 
-function RequirementsCard({ data }: { data: Record<string, unknown> }) {
-  const tools = (data.tools_needed as string[]) ?? [];
-  const agents = (data.agents_needed as string[]) ?? [];
+type Capability = {
+  id: string; name: string; purpose: string;
+  tier: string; kind: string; depends_on: string[]; parallelisable: boolean;
+};
+
+const KIND_STYLE: Record<string, { icon: typeof Cpu; text: string; bg: string; border: string }> = {
+  agent:     { icon: Cpu,    text: 'text-[#a5b4fc]',   bg: 'bg-[rgba(99,102,241,0.1)]', border: 'border-[rgba(99,102,241,0.2)]' },
+  activity:  { icon: Zap,    text: 'text-pink-300',    bg: 'bg-[rgba(236,72,153,0.1)]', border: 'border-[rgba(236,72,153,0.2)]' },
+  connector: { icon: Server, text: 'text-emerald-300', bg: 'bg-[rgba(16,185,129,0.1)]', border: 'border-[rgba(16,185,129,0.2)]' },
+};
+
+/** Why a layer decided what it decided. Every decision event carries one. */
+function Rationale({ text }: { text?: unknown }) {
+  if (!text || typeof text !== 'string') return null;
+  return (
+    <p className="text-[11px] text-[var(--color-text-muted)] mt-3 pt-3 border-t border-[var(--color-border-subtle)] italic leading-relaxed">
+      {text}
+    </p>
+  );
+}
+
+function CapabilitiesCard({ data }: { data: Record<string, unknown> }) {
+  const caps = (data.capabilities as Capability[]) ?? [];
   return (
     <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
       <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
-        Workflow Requirements
+        Required Capabilities ({caps.length})
       </p>
       {!!data.description && (
         <p className="text-sm text-[var(--color-text-secondary)] mb-4 italic">
           "{data.description as string}"
         </p>
       )}
+      <div className="space-y-1.5">
+        {caps.map((c, i) => {
+          const style = KIND_STYLE[c.kind] ?? KIND_STYLE.agent;
+          const Icon = style.icon;
+          return (
+            <div key={c.id} className="flex items-start gap-2.5 text-xs">
+              <span className="text-[10px] font-mono text-[var(--color-text-muted)] w-5 shrink-0 pt-0.5">{i + 1}.</span>
+              <Icon size={12} className={cn(style.text, 'shrink-0 mt-0.5')} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-[var(--color-text-primary)]">{c.name}</span>
+                  <span className={cn('px-1.5 py-0.5 rounded text-[9px] font-mono border', style.bg, style.border, style.text)}>
+                    {c.kind}
+                  </span>
+                  {c.parallelisable && (
+                    <span className="text-[9px] uppercase tracking-wider text-amber-300/80">parallel</span>
+                  )}
+                </div>
+                <p className="text-[var(--color-text-muted)] mt-0.5">{c.purpose}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function ReusePlanCard({ data }: { data: Record<string, unknown> }) {
+  const reused = (data.reused as Array<Record<string, string>>) ?? [];
+  const toCreate = (data.to_create as Array<Record<string, string>>) ?? [];
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <Repeat size={11} /> Reuse Decision
+      </p>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-2 font-medium flex items-center gap-1">
-            <Wrench size={10} /> Tools ({tools.length})
+          <p className="text-[10px] uppercase tracking-wider text-emerald-400/80 mb-2 font-medium">
+            Reusing ({reused.length})
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {tools.map(t => (
-              <span key={t} className="px-2 py-0.5 rounded bg-[rgba(236,72,153,0.1)] border border-[rgba(236,72,153,0.2)] text-[11px] font-mono text-[#f9a8d4]">{t}</span>
+          <div className="space-y-1.5">
+            {reused.map(r => (
+              <div key={r.capability} className="text-[11px]">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-mono text-[var(--color-text-primary)]">{r.capability}</span>
+                  {r.guardrail_fit === 'adequate' && (
+                    <span className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-emerald-400/80">
+                      <Shield size={9} /> safety ok
+                    </span>
+                  )}
+                </div>
+                <p className="text-[var(--color-text-muted)] mt-0.5">{r.reason}</p>
+              </div>
             ))}
-            {tools.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">None needed</span>}
+            {reused.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing reusable</span>}
           </div>
         </div>
         <div>
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-2 font-medium flex items-center gap-1">
-            <Cpu size={10} /> Agents ({agents.length})
+          <p className="text-[10px] uppercase tracking-wider text-[#a5b4fc] mb-2 font-medium">
+            Creating ({toCreate.length})
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {agents.map(a => (
-              <span key={a} className="px-2 py-0.5 rounded bg-[rgba(99,102,241,0.1)] border border-[rgba(99,102,241,0.2)] text-[11px] font-mono text-[#a5b4fc]">{a}</span>
+          <div className="space-y-1.5">
+            {toCreate.map(c => (
+              <div key={c.capability} className="text-[11px]">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-mono text-[var(--color-text-primary)]">{c.name}</span>
+                  {c.guardrail_fit === 'insufficient' && (
+                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/25 text-[9px] uppercase tracking-wider text-amber-300">
+                      <ShieldAlert size={9} /> safety gap
+                    </span>
+                  )}
+                </div>
+                <p className="text-[var(--color-text-muted)] mt-0.5">{c.reason}</p>
+                {!!c.guardrail_gap && (
+                  <p className="text-amber-300/90 mt-0.5">Missing: {c.guardrail_gap}</p>
+                )}
+              </div>
             ))}
-            {agents.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">None needed</span>}
+            {toCreate.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing new needed</span>}
           </div>
         </div>
       </div>
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function TopologyCard({ data }: { data: Record<string, unknown> }) {
+  const steps = (data.steps as Array<Record<string, unknown>>) ?? [];
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <Share2 size={11} /> Graph Shape ({steps.length} steps)
+      </p>
+      <div className="space-y-1">
+        {steps.map(st => (
+          <div key={st.id as string} className="flex items-center gap-2 text-[11px] flex-wrap">
+            <span className="font-mono text-[var(--color-text-primary)]">{st.id as string}</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)] border border-[var(--color-border-subtle)] text-[var(--color-text-muted)]">
+              {st.type as string}
+            </span>
+            {!!st.parallel_group && (
+              <span className="text-[9px] uppercase tracking-wider text-amber-300/80">
+                concurrent: {st.parallel_group as string}
+              </span>
+            )}
+            {((st.next_steps as string[]) ?? []).length > 0 && (
+              <>
+                <ArrowRight size={10} className="text-[var(--color-text-muted)]" />
+                <span className="font-mono text-[var(--color-text-muted)]">
+                  {((st.next_steps as string[]) ?? []).join(', ')}
+                </span>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function DataFlowCard({ data }: { data: Record<string, unknown> }) {
+  const inputs = (data.input_schema as Array<Record<string, unknown>>) ?? [];
+  const steps = (data.steps as Array<Record<string, unknown>>) ?? [];
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <ArrowRight size={11} /> Data Flow
+      </p>
+      {inputs.length > 0 && (
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 font-medium">Workflow inputs</p>
+          <div className="flex flex-wrap gap-1.5">
+            {inputs.map(i => (
+              <span key={i.name as string} className="px-2 py-0.5 rounded bg-[rgba(99,102,241,0.1)] border border-[rgba(99,102,241,0.2)] text-[11px] font-mono text-[#a5b4fc]">
+                {i.name as string}{i.required ? '' : '?'}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="space-y-1">
+        {steps.map(st => (
+          <div key={st.id as string} className="flex items-center gap-2 text-[11px]">
+            <span className="font-mono text-[var(--color-text-primary)]">{st.id as string}</span>
+            <span className="text-[var(--color-text-muted)] font-mono text-[10px]">
+              {((st.config_keys as string[]) ?? []).join(' / ') || 'no config'}
+            </span>
+          </div>
+        ))}
+      </div>
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function GuardrailCard({ data }: { data: Record<string, unknown> }) {
+  if (data.reviewed === false) {
+    return (
+      <div className="surface-card rounded-xl p-4 mt-2 border border-[rgba(245,158,11,0.25)] flex items-center gap-2.5">
+        <AlertCircle size={14} className="text-amber-400 shrink-0" />
+        <p className="text-xs text-amber-300">{data.reasoning as string}</p>
+      </div>
+    );
+  }
+  const missing = (data.missing_gates as Array<Record<string, unknown>>) ?? [];
+  const exposure = (data.data_exposure as Array<Record<string, string>>) ?? [];
+  const policy = (data.workflow_policy as Record<string, unknown>) ?? {};
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(16,185,129,0.2)] bg-[rgba(16,185,129,0.03)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <Shield size={11} /> Safety Review
+      </p>
+      <div className="flex flex-wrap gap-3 text-[11px] mb-3">
+        <span className={cn('flex items-center gap-1', data.has_input_gate ? 'text-emerald-400' : 'text-amber-400')}>
+          {data.has_input_gate ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />} Input gate
+        </span>
+        <span className={cn('flex items-center gap-1', data.has_output_gate ? 'text-emerald-400' : 'text-amber-400')}>
+          {data.has_output_gate ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />} Output gate
+        </span>
+        <span className="text-[var(--color-text-muted)]">
+          PII: <strong className="text-white">{policy.pii_policy as string}</strong>
+        </span>
+      </div>
+      {missing.length > 0 && (
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1.5 font-medium">Missing gates</p>
+          {missing.map((g, i) => (
+            <p key={i} className="text-[11px] text-[var(--color-text-secondary)]">
+              After <span className="font-mono">{g.after_step as string}</span> &mdash; {g.purpose as string}
+            </p>
+          ))}
+        </div>
+      )}
+      {exposure.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 font-medium">Data exposure</p>
+          {exposure.map((e, i) => (
+            <p key={i} className="text-[11px] text-[var(--color-text-secondary)]">
+              <span className="font-mono">{e.from}</span> &rarr; <span className="font-mono">{e.to}</span>: {e.risk}
+            </p>
+          ))}
+        </div>
+      )}
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function ValidationCard({ data }: { data: Record<string, unknown> }) {
+  const issues = (data.issues as Array<Record<string, string>>) ?? [];
+  const valid = data.valid as boolean;
+  return (
+    <div className={cn(
+      'surface-card rounded-xl p-4 mt-2 border',
+      valid ? 'border-[rgba(16,185,129,0.2)]' : 'border-[rgba(239,68,68,0.25)]',
+    )}>
+      <div className="flex items-center gap-2.5">
+        <ListChecks size={14} className={valid ? 'text-emerald-400' : 'text-red-400'} />
+        <p className="text-xs font-semibold text-white">
+          {valid
+            ? 'Validated — ready to register'
+            : `${data.error_count as number} error(s) — saved, but not registered`}
+        </p>
+      </div>
+      {issues.length > 0 && (
+        <div className="mt-3 space-y-1">
+          {issues.map((iss, i) => (
+            <p key={i} className={cn('text-[11px]', iss.severity === 'error' ? 'text-red-300' : 'text-amber-300')}>
+              {iss.step_id && <span className="font-mono">{iss.step_id}: </span>}{iss.message}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -307,6 +549,251 @@ function familyOf(type: TimelineStep['type']): 'tool' | 'activity' | null {
   return null;
 }
 
+/**
+ * Which layer produced each kind of card.
+ *
+ * The planner is a chain of single-decision layers, so every payload it emits
+ * belongs to exactly one of them. Attaching cards this way puts each decision's
+ * evidence directly under the decision, instead of in a parallel log whose
+ * ordering only coincidentally matched.
+ */
+const CARD_OWNER: Partial<Record<TimelineStep['type'], string>> = {
+  capabilities:        'goal_decomposition',
+  execution_modes:     'execution_mode',
+  reuse_plan:          'capability_reuse',
+  // One consolidated plan per layer, not a scatter of one-line rows. The
+  // per-activity events are still accepted for older history entries.
+  activity_plan:       'activity_gap',
+  tool_exists:         'activity_gap',
+  tool_new:            'activity_gap',
+  activity_new:        'activity_gap',
+  agent_designed:      'agent_design',
+  library_provisioned: 'agent_provisioning',
+  agent_exists:        'agent_provisioning',
+  agent_new:           'agent_provisioning',
+  topology:            'step_topology',
+  data_flow:           'data_flow',
+  workflow_guardrails: 'workflow_guardrail',
+  validation:          'workflow_validation',
+  workflow_ready:      'workflow_persistence',
+  compiled:            'workflow_compilation',
+  registered:          'workflow_registration',
+};
+
+const MODE_STYLE: Record<string, { icon: typeof Cpu; text: string; bg: string; border: string; label: string }> = {
+  agent:     { icon: Cpu,    text: 'text-[#a5b4fc]',   bg: 'bg-[rgba(99,102,241,0.1)]', border: 'border-[rgba(99,102,241,0.2)]', label: 'Agent' },
+  activity:  { icon: Zap,    text: 'text-pink-300',    bg: 'bg-[rgba(236,72,153,0.1)]', border: 'border-[rgba(236,72,153,0.2)]', label: 'Function' },
+  connector: { icon: Server, text: 'text-emerald-300', bg: 'bg-[rgba(16,185,129,0.1)]', border: 'border-[rgba(16,185,129,0.2)]', label: 'Integration' },
+};
+
+function ExecutionModesCard({ data }: { data: Record<string, unknown> }) {
+  const decisions = (data.decisions as Array<Record<string, unknown>>) ?? [];
+  const counts = (data.counts as Record<string, number>) ?? {};
+  const pruned = (data.pruned as Array<Record<string, string>>) ?? [];
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(99,102,241,0.15)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <Split size={11} /> How Each Step Runs
+      </p>
+      <div className="flex flex-wrap gap-3 text-[11px] mb-4">
+        {Object.entries(MODE_STYLE).map(([mode, style]) => (
+          <span key={mode} className={cn('px-2 py-0.5 rounded border', style.bg, style.border, style.text)}>
+            {counts[mode] ?? 0} {style.label.toLowerCase()}{(counts[mode] ?? 0) === 1 ? '' : 's'}
+          </span>
+        ))}
+        {pruned.length > 0 && (
+          <span className="px-2 py-0.5 rounded border border-amber-400/25 bg-amber-400/10 text-amber-300">
+            {pruned.length} removed
+          </span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {decisions.map(d => {
+          const style = MODE_STYLE[d.mode as string] ?? MODE_STYLE.agent;
+          const Icon = style.icon;
+          return (
+            <div key={d.id as string} className="flex items-start gap-2.5 text-xs">
+              <Icon size={12} className={cn(style.text, 'shrink-0 mt-0.5')} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-[var(--color-text-primary)]">{d.name as string}</span>
+                  <span className={cn('px-1.5 py-0.5 rounded text-[9px] border', style.bg, style.border, style.text)}>
+                    {style.label}
+                  </span>
+                  {d.mode === 'agent' && !d.agent_needs_tools && (
+                    <span className="text-[9px] uppercase tracking-wider text-[var(--color-text-muted)]">no tools</span>
+                  )}
+                </div>
+                <p className="text-[var(--color-text-muted)] mt-0.5">{d.rationale as string}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {pruned.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-[var(--color-border-subtle)]">
+          <p className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1.5">Removed as redundant</p>
+          {pruned.map((pr, i) => (
+            <p key={i} className="text-[11px] text-[var(--color-text-secondary)]">
+              <span className="font-mono">{pr.capability}</span> merged into{' '}
+              <span className="font-mono">{pr.merged_into}</span>
+            </p>
+          ))}
+        </div>
+      )}
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function ActivityPlanCard({ data }: { data: Record<string, unknown> }) {
+  const reused = (data.reused as Array<Record<string, string>>) ?? [];
+  const built = (data.built as Array<Record<string, unknown>>) ?? [];
+  const failed = (data.failed as Array<Record<string, string>>) ?? [];
+  if (data.note && reused.length === 0 && built.length === 0) {
+    return (
+      <div className="surface-card rounded-xl p-4 mt-2 border border-[var(--color-border-subtle)]">
+        <p className="text-xs text-[var(--color-text-muted)]">{data.note as string}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(236,72,153,0.18)]">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+        <Zap size={11} className="text-pink-300" /> Deterministic Steps
+      </p>
+
+      {reused.length > 0 && (
+        <div className="mb-4">
+          <p className="text-[10px] uppercase tracking-wider text-emerald-400/80 mb-2">
+            Already existed ({reused.length})
+          </p>
+          {reused.map(r => (
+            <div key={r.capability} className="flex items-center gap-2 text-[11px] mb-1">
+              <PackageCheck size={11} className="text-[var(--color-text-muted)] shrink-0" />
+              <span className="font-mono text-[var(--color-text-primary)]">{r.tool_name}</span>
+              <span className="text-[var(--color-text-muted)]">for {r.capability_name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {built.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-pink-300/80 mb-2">
+            Built now ({built.length})
+          </p>
+          <div className="space-y-2">
+            {built.map(b => (
+              <div key={b.tool_name as string} className="rounded-lg border border-[rgba(236,72,153,0.2)] bg-[rgba(236,72,153,0.04)] px-3 py-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <PackagePlus size={11} className="text-[#f9a8d4] shrink-0" />
+                  <span className="text-[11px] font-mono text-[var(--color-text-primary)]">{b.tool_name as string}</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">for {b.capability_name as string}</span>
+                </div>
+                {!!b.description && (
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-1">{b.description as string}</p>
+                )}
+                {((b.parameters as string[]) ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {((b.parameters as string[]) ?? []).map(pn => (
+                      <span key={pn} className="px-1.5 py-0.5 rounded bg-[rgba(236,72,153,0.1)] text-[10px] font-mono text-[#f9a8d4]">
+                        {pn}{((b.required as string[]) ?? []).includes(pn) ? '' : '?'}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {failed.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-[var(--color-border-subtle)]">
+          <p className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1.5">
+            Could not be built ({failed.length}) — these fall back to runtime synthesis
+          </p>
+          {failed.map((f, i) => (
+            <p key={i} className="text-[11px] text-amber-300">
+              <span className="font-mono">{f.tool_name}</span>: {f.error}
+            </p>
+          ))}
+        </div>
+      )}
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+function AgentDesignedCard({ data }: { data: Record<string, unknown> }) {
+  const tools = (data.tools as string[]) ?? [];
+  const g = data.guardrails as Record<string, unknown> | null;
+  const cfg = getTierConfig(data.tier as string | undefined);
+  return (
+    <div className={cn('rounded-xl p-4 mt-2 border', cfg.cardBg, cfg.cardBorder)}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Cpu size={13} className={cfg.color} />
+        <span className="text-xs font-bold text-white">{data.agent_name as string}</span>
+        <TierBadge tier={data.tier as string | undefined} />
+        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+          {data.model as string}{data.temperature !== undefined ? ` · ${data.temperature}` : ''}
+        </span>
+        <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">
+          {data.instruction_chars as number} chars of instructions
+        </span>
+      </div>
+      {!!data.output_contract && (
+        <p className="text-[11px] text-[var(--color-text-secondary)] mt-2">
+          <span className="text-[var(--color-text-muted)]">Returns — </span>{data.output_contract as string}
+        </p>
+      )}
+      {tools.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {tools.map(t => (
+            <span key={t} className="px-1.5 py-0.5 rounded bg-[rgba(236,72,153,0.08)] border border-[rgba(236,72,153,0.15)] text-[10px] font-mono text-[#f9a8d4]">{t}</span>
+          ))}
+        </div>
+      )}
+      {!!data.requested_library && (
+        <p className="text-[11px] text-[#a5b4fc] mt-2">
+          Needs a document library that does not exist yet — “
+          {(data.requested_library as Record<string, string>).name}” will be created empty.
+        </p>
+      )}
+      {g && <AgentGuardrailCard data={g} compact />}
+      <Rationale text={data.reasoning} />
+    </div>
+  );
+}
+
+/**
+ * The card for one payload. Pure — it closes over nothing in the component,
+ * which is what lets the layer-cards memo call it before the component body
+ * has finished evaluating.
+ */
+function renderCard(step: TimelineStep) {
+  if (step.type === 'capabilities') return <CapabilitiesCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'execution_modes') return <ExecutionModesCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'reuse_plan') return <ReusePlanCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'activity_plan') return <ActivityPlanCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'agent_designed') return <AgentDesignedCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'library_provisioned') return <LibraryProvisionedCard data={step.content as Record<string, any>} />;
+  if (step.type === 'topology') return <TopologyCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'data_flow') return <DataFlowCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'workflow_guardrails') return <GuardrailCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'validation') return <ValidationCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'tool_exists') return <ToolExistsCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'tool_new') return <ToolNewCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'activity_new') return <ActivityCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'agent_exists') return <AgentExistsCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'agent_new') return <AgentNewCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'workflow_ready') return <WorkflowReadyCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'compiled') return <CompiledCard data={step.content as Record<string, unknown>} />;
+  if (step.type === 'registered') return <RegisteredCard data={step.content as Record<string, unknown>} />;
+  return null;
+}
+
 function groupTimeline(steps: TimelineStep[]): TimelineRow[] {
   const rows: TimelineRow[] = [];
   for (const step of steps) {
@@ -331,6 +818,7 @@ export default function WorkflowPlanner() {
   const [input, setInput] = useState('');
   const [isPlanning, setIsPlanning] = useState(false);
   const [steps, setSteps] = useState<TimelineStep[]>([]);
+  const { run, reset, restore, handleEvent, settle, failRunning } = usePipelineRun();
   const [workflowName, setWorkflowName] = useState<string | null>(null);
   const [hasFatalError, setHasFatalError] = useState(false);
 
@@ -372,16 +860,27 @@ export default function WorkflowPlanner() {
         const activitySteps = wfSteps.filter(s => s.type === 'tool');
         const agentNames = agentSteps.map(s => s.config?.agent_name ?? s.config?.agent_id ?? s.id);
 
+        // Reconstruct the capability list from the saved DAG. The planner's
+        // own decomposition is not recoverable — dependency edges and stated
+        // purposes are not persisted — so this shows what the steps became
+        // rather than what was originally asked for.
         steps.push({
-          id: `${wf.name}-req`,
-          type: 'requirements',
+          id: `${wf.name}-capabilities`,
+          type: 'capabilities',
           content: {
+            workflow_name: wf.name,
             description: wf.description ?? '',
-            // Phase-1 "tools_needed" (agent capabilities) isn't recoverable
-            // from a saved DAG alone — the Activity steps below cover what
-            // this reconstruction *can* show accurately.
-            tools_needed: [],
-            agents_needed: agentNames,
+            capabilities: wfSteps.map(s => ({
+              id: s.id,
+              name: s.config?.agent_name ?? s.config?.tool_name ?? s.id,
+              purpose: s.description ?? '',
+              tier: s.tier ?? 'domain',
+              kind: s.type === 'tool' ? 'activity'
+                : s.type === 'connector' ? 'connector'
+                : 'agent',
+              depends_on: [],
+              parallelisable: !!s.parallel_group,
+            })),
           },
           status: 'completed',
         });
@@ -445,7 +944,14 @@ export default function WorkflowPlanner() {
     return [...history, ...synthetic];
   }, [history, wfListData]);
 
-  const saveToHistory = (goalToSave: string, finalSteps: TimelineStep[], finalWorkflowName: string | null, fatalError: boolean) => {
+  const saveToHistory = (
+    goalToSave: string,
+    finalSteps: TimelineStep[],
+    finalWorkflowName: string | null,
+    fatalError: boolean,
+    finalManifest: LayerManifestEntry[],
+    finalRuntime: Record<string, LayerRuntime>,
+  ) => {
     setHistory(prev => {
       const newEntry: PlannerHistoryEntry = {
         id: crypto.randomUUID(),
@@ -453,7 +959,9 @@ export default function WorkflowPlanner() {
         goal: goalToSave,
         workflowName: finalWorkflowName,
         steps: finalSteps,
-        hasFatalError: fatalError
+        hasFatalError: fatalError,
+        manifest: finalManifest,
+        runtime: finalRuntime,
       };
       const updated = [newEntry, ...prev].slice(0, 50);
       localStorage.setItem('agent_planner_history', JSON.stringify(updated));
@@ -461,8 +969,50 @@ export default function WorkflowPlanner() {
     });
   };
 
-  // Tools and activities collapse into their own labelled sections.
-  const timelineRows = useMemo(() => groupTimeline(steps), [steps]);
+  /** Cards grouped under the layer that produced them. */
+  const layerCards = useMemo(() => {
+    const byLayer: Record<string, React.ReactNode[]> = {};
+    for (const step of steps) {
+      const owner = CARD_OWNER[step.type];
+      if (!owner) continue;
+      (byLayer[owner] ??= []).push(
+        <div key={step.id}>{renderCard(step)}</div>,
+      );
+    }
+    return Object.fromEntries(
+      Object.entries(byLayer).map(([layer, nodes]) => [
+        layer,
+        <div className="space-y-2">{nodes}</div>,
+      ]),
+    );
+  }, [steps]);
+
+  /** The decision payloads behind each layer, for the raw JSON view. */
+  const layerRaw = useMemo(() => {
+    const byLayer: Record<string, unknown[]> = {};
+    for (const step of steps) {
+      const owner = CARD_OWNER[step.type];
+      if (!owner || typeof step.content === 'string') continue;
+      (byLayer[owner] ??= []).push(step.content);
+    }
+    return Object.fromEntries(
+      Object.entries(byLayer).map(([k, v]) => [k, v.length === 1 ? v[0] : v]),
+    );
+  }, [steps]);
+
+  /**
+   * Rows the layer timeline does not own.
+   *
+   * A live run leaves only errors here. History entries synthesised from a
+   * saved workflow have no manifest at all, so they still render as the
+   * grouped rows they were written for.
+   */
+  const legacyRows = useMemo(() => {
+    const unowned = run.manifest.length > 0
+      ? steps.filter(st => !CARD_OWNER[st.type])
+      : steps;
+    return groupTimeline(unowned);
+  }, [steps, run.manifest.length]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -478,7 +1028,7 @@ export default function WorkflowPlanner() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [steps]);
+  }, [steps, run]);
 
   const addStep = (type: TimelineStep['type'], content: string | Record<string, unknown>, status: TimelineStep['status'] = 'completed') => {
     setSteps(prev => {
@@ -499,14 +1049,34 @@ export default function WorkflowPlanner() {
     setSteps([]);
     setWorkflowName(null);
     setHasFatalError(false);
+    reset();
 
     const cancel = workflowPlannerApi.plan(
       goal,
       (event: PlannerEvent) => {
-        if (event.type === 'status') {
-          addStep('status', event.data, 'active');
-        } else if (event.type === 'requirements') {
-          try { addStep('requirements', JSON.parse(event.data)); } catch { /* ignore */ }
+        // `pipeline`, `layer` and `status` drive the chain itself.
+        if (handleEvent(event.type, event.data)) return;
+
+        if (event.type === 'capabilities') {
+          try { addStep('capabilities', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'execution_modes') {
+          try { addStep('execution_modes', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'reuse_plan') {
+          try { addStep('reuse_plan', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'activity_plan') {
+          try { addStep('activity_plan', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'agent_designed') {
+          try { addStep('agent_designed', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'library_provisioned') {
+          try { addStep('library_provisioned', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'topology') {
+          try { addStep('topology', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'data_flow') {
+          try { addStep('data_flow', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'workflow_guardrails') {
+          try { addStep('workflow_guardrails', JSON.parse(event.data)); } catch { /* ignore */ }
+        } else if (event.type === 'validation') {
+          try { addStep('validation', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'tool_exists') {
           try { addStep('tool_exists', JSON.parse(event.data)); } catch { /* ignore */ }
         } else if (event.type === 'tool_new') {
@@ -534,9 +1104,11 @@ export default function WorkflowPlanner() {
           } catch {
             addStep('fatal_error', event.data);
           }
+          failRunning('This step could not be completed.');
           setHasFatalError(true);
         } else if (event.type === 'error') {
           addStep('error', event.data);
+          failRunning(event.data);
           setHasFatalError(true);
         } else if (event.type === 'done') {
           try {
@@ -547,6 +1119,7 @@ export default function WorkflowPlanner() {
       },
       () => {
         setIsPlanning(false);
+        settle();
         setSteps(prev => {
           const updated = [...prev];
           if (updated.length > 0 && updated[updated.length - 1].status === 'active') {
@@ -555,7 +1128,9 @@ export default function WorkflowPlanner() {
           const fatal = updated.some(s => s.type === 'fatal_error' || s.type === 'error');
           const nameStep = updated.find(s => s.type === 'workflow_ready');
           const finalName = nameStep ? (nameStep.content as Record<string, any>).workflow_name : null;
-          saveToHistory(goal, updated, finalName, fatal);
+          // `run` is read here rather than passed in: settle() has already
+          // queued its update, and the entry only needs the terminal states.
+          saveToHistory(goal, updated, finalName, fatal, run.manifest, run.runtime);
           return updated;
         });
       },
@@ -579,15 +1154,7 @@ export default function WorkflowPlanner() {
         </span>
       );
     }
-    if (step.type === 'requirements') return <RequirementsCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'tool_exists') return <ToolExistsCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'tool_new') return <ToolNewCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'activity_new') return <ActivityCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'agent_exists') return <AgentExistsCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'agent_new') return <AgentNewCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'workflow_ready') return <WorkflowReadyCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'compiled') return <CompiledCard data={step.content as Record<string, unknown>} />;
-    if (step.type === 'registered') return <RegisteredCard data={step.content as Record<string, unknown>} />;
+    // The only branch needing component scope: retrying re-runs the planner.
     if (step.type === 'fatal_error' || step.type === 'error') {
       return (
         <div className="surface-card rounded-xl p-5 mt-2 border border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.05)] flex flex-col gap-4">
@@ -598,7 +1165,7 @@ export default function WorkflowPlanner() {
         </div>
       );
     }
-    return null;
+    return renderCard(step);
   };
 
   return (
@@ -660,11 +1227,23 @@ export default function WorkflowPlanner() {
       </motion.div>
 
       {/* Timeline */}
-      {steps.length > 0 && (
+      {(steps.length > 0 || run.started) && (
         <div className="max-w-3xl mx-auto w-full pb-32">
+          {/* A live or replayed run draws the layer chain, with each decision's
+              evidence attached to the layer that made it. */}
+          {run.manifest.length > 0 && (
+            <PipelineTimeline
+              manifest={run.manifest}
+              runtime={run.runtime}
+              activeNote={run.activeNote}
+              cards={layerCards}
+              raw={layerRaw}
+            />
+          )}
+
           <div className="relative border-l border-[var(--color-border-subtle)] ml-4 md:ml-8 space-y-6 pb-8">
             <AnimatePresence>
-              {timelineRows.map(row => {
+              {legacyRows.map(row => {
                 /* ── Tools / Activities sections ───────────────────────── */
                 if (row.kind === 'group') {
                   const meta = GROUP_META[row.family];
@@ -794,6 +1373,9 @@ export default function WorkflowPlanner() {
               setSteps(entry.steps);
               setWorkflowName(entry.workflowName);
               setHasFatalError(entry.hasFatalError);
+              // Entries synthesised from a saved workflow carry no manifest;
+              // those fall back to the legacy row rendering below.
+              restore(entry.manifest ?? [], entry.runtime ?? {});
             }}
             onClearHistory={() => {
               setHistory([]);

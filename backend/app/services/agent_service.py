@@ -169,6 +169,16 @@ def _build_guardrails(raw_list: list[dict] | None) -> list:
     return built
 
 
+def build_guardrails(raw_list: list[dict] | None) -> list:
+    """Public alias for :func:`_build_guardrails`.
+
+    The orchestration layers decide a guardrail configuration and need to turn
+    it into the same SDK objects the agents API already builds. Re-implementing
+    that conversion there would let the two drift; this keeps one builder.
+    """
+    return _build_guardrails(raw_list)
+
+
 def _extract_completion_args(agent: dict) -> dict:
     """Extract completion_args from a raw Mistral agent dict into a flat dict."""
     ca = agent.get("completion_args") or {}

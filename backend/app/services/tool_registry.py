@@ -331,6 +331,37 @@ def get_mcp_published_tools() -> dict[str, str]:
     return _mcp_published_tools
 
 
+def _is_usable_tool_spec(key: str, spec: object) -> bool:
+    """Reject a tool definition the API will not accept.
+
+    Dynamic tools arrive from the Tool Service and go into ``ALL_TOOLS``
+    unvalidated. A malformed one is accepted by agent creation but rejected
+    when a conversation is started, which surfaces as a bare 500 with no
+    indication of which tool caused it — long after the agent was made.
+    """
+    if not isinstance(spec, dict) or not spec.get("type"):
+        logger.warning("Skipping tool '%s': definition is not a typed object", key)
+        return False
+
+    if spec["type"] != "function":
+        return True  # built-ins carry no schema of their own
+
+    fn = spec.get("function")
+    if not isinstance(fn, dict) or not fn.get("name"):
+        logger.warning("Skipping tool '%s': function definition has no name", key)
+        return False
+
+    params = fn.get("parameters")
+    if not isinstance(params, dict) or params.get("type") != "object" \
+            or not isinstance(params.get("properties"), dict):
+        logger.warning(
+            "Skipping tool '%s': parameters are not a JSON-Schema object", fn["name"],
+        )
+        return False
+
+    return True
+
+
 def get_tools(
     tool_keys: List[str],
     document_library_ids: List[str] | None = None,
@@ -369,7 +400,9 @@ def get_tools(
             continue
 
         if lower_key in ALL_TOOLS:
-            tools.append(ALL_TOOLS[lower_key])
+            spec = ALL_TOOLS[lower_key]
+            if _is_usable_tool_spec(lower_key, spec):
+                tools.append(spec)
 
     if connectors:
         from app.services.connector_service import build_connector_tool_specs

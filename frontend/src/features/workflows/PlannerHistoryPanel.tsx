@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { X, Clock, GitBranch, AlertCircle, CheckCircle2, Trash2, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { TimelineStep } from './WorkflowPlanner';
+import type { LayerManifestEntry, LayerRuntime } from '../../components/pipeline/PipelineTimeline';
 
 export interface PlannerHistoryEntry {
   id: string;
@@ -11,6 +12,14 @@ export interface PlannerHistoryEntry {
   steps: TimelineStep[];
   hasFatalError: boolean;
   restoredFromBackend?: boolean;
+  /**
+   * The layer chain this run executed, and where each layer ended up. Absent
+   * on entries synthesised from a saved workflow, and on entries recorded
+   * before the planner became a layer chain — both fall back to rendering
+   * their steps as plain rows.
+   */
+  manifest?: LayerManifestEntry[];
+  runtime?: Record<string, LayerRuntime>;
 }
 
 function HistorySkeleton() {

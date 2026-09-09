@@ -1,10 +1,10 @@
 """
 Workflow Planner Service — Thin pipeline adapter.
 
-All 5-phase planning logic has been extracted into
-``WorkflowPlanningLayer`` (see ``app/layers/workflow_planning_layer.py``).
+Planning is a chain of single-decision layers under ``app.layers.workflow``,
+assembled into ``workflow_pipeline`` in ``app.layers``.
 
-This module is now a slim adapter that:
+This module is a slim adapter that:
 1. Builds a ``PipelineContext`` from the goal string.
 2. Runs ``workflow_pipeline.execute(ctx)`` in a background task.
 3. Yields SSE events in real-time via an ``asyncio.Queue``.

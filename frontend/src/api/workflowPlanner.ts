@@ -3,7 +3,18 @@ import { createSSEStream, type SSEEvent } from './sse';
 export interface PlannerEvent extends SSEEvent {
   type:
     | 'status'
-    | 'requirements'
+    // One event per planning decision. The planner is a chain of
+    // single-decision layers, and each announces its own verdict.
+    | 'capabilities'
+    | 'execution_modes'
+    | 'reuse_plan'
+    | 'activity_plan'
+    | 'library_provisioned'
+    | 'agent_designed'
+    | 'topology'
+    | 'data_flow'
+    | 'workflow_guardrails'
+    | 'validation'
     | 'tool_exists'
     | 'tool_new'
     | 'activity_new'

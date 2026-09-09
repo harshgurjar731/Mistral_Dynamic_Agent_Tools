@@ -485,6 +485,12 @@ def build_connector_tool_specs(connectors: list[dict] | None) -> list[dict]:
     return specs
 
 
+#: Connectors that duplicate a capability this platform already models better
+#: as a tool. Excluded from the planner's connector inventory so no layer can
+#: attach one by the wrong mechanism. Matched on connector name, lowercased.
+_TOOL_EQUIVALENT_CONNECTORS = {"document_library"}
+
+
 async def describe_for_prompt(scope: dict | None = None) -> tuple[str, list[str]]:
     """Render the connector inventory for an LLM prompt.
 
@@ -526,6 +532,16 @@ async def describe_for_prompt(scope: dict | None = None) -> tuple[str, list[str]
     for connector in items:
         connector_id = connector.get("id")
         if not connector_id or not connector.get("active", True):
+            continue
+
+        # A document library is a first-class platform capability, not an
+        # integration: it is attached by supplying `document_library_ids`,
+        # which also carries the library's own domain scoping and lets an empty
+        # one be provisioned on demand. Mistral additionally publishes it as a
+        # connector, and offering it here is a category error — an agent that
+        # picked the connector got a generic search surface instead of a bound
+        # library, and the layer that owns library selection never saw it.
+        if (connector.get("name") or "").strip().lower() in _TOOL_EQUIVALENT_CONNECTORS:
             continue
 
         ids.append(connector_id)

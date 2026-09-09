@@ -23,6 +23,11 @@ class CleanupLayer(Layer):
     """
 
     name = "cleanup"
+    label = "Reclaim the dynamic agent"
+    detail = "Deletes the agent once the answer is delivered."
+    # A try/finally wrapper around the whole pipeline, so it sorts first in the
+    # chain while actually running last. Drawing it as step one would be a lie.
+    timeline = False
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         try:

@@ -4,7 +4,7 @@ Pipeline — The executor that chains layers together in middleware fashion.
 Usage::
 
     pipeline = Pipeline()
-    pipeline.add(SynthesisLayer())
+    pipeline.add(RequirementAnalysisLayer())
     pipeline.add(ExecutionLayer())
 
     ctx = PipelineContext(query="Hello")
@@ -14,6 +14,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from app.core.context import PipelineContext
@@ -82,13 +83,23 @@ class Pipeline:
 
     # ── Execution ───────────────────────────────────────────────────────
 
+    def manifest(self) -> list[dict]:
+        """The ordered chain, as the UI should draw it before the run starts."""
+        return [layer.describe() for layer in self._layers]
+
     async def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Run all layers in sequence, middleware-style.
 
         Each layer receives a ``next`` callable.  When it calls
         ``await next(ctx)``, the *next* layer in the chain is invoked.
         The last layer's ``next`` is a no-op that simply returns the context.
+
+        The chain is announced to the client up front and each layer's state
+        change is emitted as it happens, so the UI can show the whole pipeline
+        with the current position marked rather than an append-only log.
         """
+        ctx.emit("pipeline", {"layers": self.manifest()})
+
         # Build the middleware chain from the inside out (last layer first).
         async def _terminal(c: PipelineContext) -> PipelineContext:
             return c
@@ -100,9 +111,43 @@ class Pipeline:
             # late-binding closure issues.
             def _make_next(current_layer: Layer, downstream: NextFn) -> NextFn:
                 async def _next(c: PipelineContext) -> PipelineContext:
-                    if current_layer.should_run(c):
-                        return await current_layer.process(c, downstream)
-                    return await downstream(c)
+                    if not current_layer.should_run(c):
+                        c.emit_layer(current_layer.name, "skipped")
+                        return await downstream(c)
+
+                    c.emit_layer(current_layer.name, "active")
+                    started = time.monotonic()
+                    settled = False
+
+                    def _settle(state: str, **kw) -> None:
+                        nonlocal settled
+                        if settled:
+                            return
+                        settled = True
+                        c.emit_layer(
+                            current_layer.name, state,
+                            ms=(time.monotonic() - started) * 1000,
+                            summary=c.layer_summary(current_layer.name),
+                            **kw,
+                        )
+
+                    async def _handoff(inner: PipelineContext) -> PipelineContext:
+                        # A layer calling next() has finished its own work. This
+                        # is the moment it completed — not when process() returns,
+                        # which for a wrapping layer is after the entire rest of
+                        # the pipeline has run.
+                        _settle("completed")
+                        return await downstream(inner)
+
+                    try:
+                        result = await current_layer.process(c, _handoff)
+                    except Exception as e:
+                        _settle("failed", error=str(e))
+                        raise
+                    # A layer that short-circuited without calling next() still
+                    # finished; settle it here.
+                    _settle("completed")
+                    return result
                 return _next
 
             chain = _make_next(layer, chain)
