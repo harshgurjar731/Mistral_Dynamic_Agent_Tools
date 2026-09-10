@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 #: Set when validation found blocking errors; read by the registration layer.
 VALIDATION_FAILED_KEY = "workflow_validation_failed"
 
+#: Warnings for a hand-built draft — a builder user may add a node before
+#: wiring it — but defects in a finished plan: each one means a step, and the
+#: business rule it carries, silently never runs.
+_PLANNER_BLOCKING = {"step.unreachable", "step.multiple_next"}
+
 
 class WorkflowValidationLayer(WorkflowStepLayer):
     """Check the assembled definition before anything is persisted."""
@@ -68,13 +73,19 @@ class WorkflowValidationLayer(WorkflowStepLayer):
         spec.definition = definition
         result = validate_workflow(definition)
 
+        blocking = [
+            i for i in result.issues
+            if i.severity == "error" or i.code in _PLANNER_BLOCKING
+        ]
+        planner_valid = not blocking
+
         ctx.emit("validation", json.dumps({
-            "valid": result.valid,
-            "error_count": result.error_count,
-            "warning_count": result.warning_count,
+            "valid": planner_valid,
+            "error_count": len(blocking),
+            "warning_count": len(result.issues) - len(blocking),
             "issues": [
                 {
-                    "severity": i.severity,
+                    "severity": "error" if i in blocking else i.severity,
                     "code": i.code,
                     "message": i.message,
                     "step_id": i.step_id,
@@ -83,7 +94,7 @@ class WorkflowValidationLayer(WorkflowStepLayer):
             ],
         }))
 
-        if not result.valid:
+        if not planner_valid:
             # Saved but not registered — see the module docstring.
             ctx.metadata[VALIDATION_FAILED_KEY] = True
             logger.warning(

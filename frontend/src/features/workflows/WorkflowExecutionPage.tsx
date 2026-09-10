@@ -127,6 +127,15 @@ export default function WorkflowExecutionPage() {
     enabled: !!workflowName,
   });
   const workflow = wfData?.workflow ?? wfData;
+  // A Mistral run returns every step's output keyed by step id; the ids are how
+  // the result formatter recognises that shape and lays it out step by step.
+  const stepIds = useMemo<string[]>(
+    () =>
+      ((workflow?.steps ?? []) as Array<{ id?: string }>)
+        .map((step) => step?.id)
+        .filter((id): id is string => !!id),
+    [workflow],
+  );
 
   // ── Chat + execution state ─────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([]);
@@ -264,7 +273,7 @@ Use the key "user_input" for their description.`,
     if (status === 'COMPLETED') {
       const body = isEmptyResult(detail.result)
         ? '_The workflow finished without returning output. The step timeline on the right shows what ran._'
-        : formatWorkflowResult(detail.result);
+        : formatWorkflowResult(detail.result, { stepIds });
       notify(`🎉 **Execution complete**\n\n---\n\n${body}\n\n---\n_Ask me anything about this result._`);
     } else {
       const reason = detail.error
@@ -272,7 +281,7 @@ Use the key "user_input" for their description.`,
         : '';
       notify(`⚠️ Execution **${status.toLowerCase().replace(/_/g, ' ')}**.${reason}`);
     }
-  }, [detail?.status, detail?.result, detail?.error, resultAnnounced, notify]);
+  }, [detail?.status, detail?.result, detail?.error, resultAnnounced, notify, stepIds]);
 
   // ── Execute ────────────────────────────────────────────────────────────
   const executeMut = useMutation({
@@ -554,8 +563,11 @@ Use the key "user_input" for their description.`,
                         </>
                       ) : (
                         <div className="prose prose-invert prose-sm max-w-none prose-p:my-1.5 prose-headings:my-2 prose-strong:text-white prose-code:rounded-md prose-code:bg-black/20 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-xs prose-code:text-indigo-300 prose-pre:rounded-xl prose-pre:border prose-pre:border-[var(--color-border-subtle)] prose-pre:bg-black/30">
+                          {/* Only an explicit ```markdown fence is unwrapped. Matching bare
+                              fences paired one block's closing fence with the next
+                              block's opening one, breaking every code block after it. */}
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                            {message.content.replace(/```(?:markdown)?\n([\s\S]*?)```/g, '$1')}
+                            {message.content.replace(/```markdown\n([\s\S]*?)```/g, '$1')}
                           </ReactMarkdown>
                         </div>
                       )}
@@ -691,6 +703,7 @@ Use the key "user_input" for their description.`,
                   logs={logs}
                   onReconnect={reconnect}
                   onNotice={notify}
+                  stepIds={stepIds}
                 />
               </div>
             </motion.aside>

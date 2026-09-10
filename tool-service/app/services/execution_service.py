@@ -56,15 +56,45 @@ def execute_tool(db: Session, tool_name: str, arguments: dict) -> dict:
       4. Always return something useful to the caller.
     """
     # ── Look up tool ──────────────────────────────────────────────────────
-    record = db.query(ToolRecord).filter_by(
-        name=tool_name, status="approved"
-    ).first()
+    # The reason is separated from the message so the route can pick a status
+    # code. "Never synthesised", "awaiting approval" and "wrong arguments" want
+    # different responses, and collapsing them into one 400 left the caller
+    # unable to tell a permanent failure from a retryable one.
+    record = db.query(ToolRecord).filter_by(name=tool_name).first()
     if not record:
-        return {"error": f"Tool '{tool_name}' not found or not approved"}
+        return {
+            "error": f"Tool '{tool_name}' does not exist. It was never "
+                     f"synthesised, or synthesis failed.",
+            "reason": "not_found",
+            "tool_name": tool_name,
+        }
+
+    if record.status != "approved":
+        return {
+            "error": f"Tool '{tool_name}' is '{record.status}', not approved.",
+            "reason": "not_registered",
+            "tool_name": tool_name,
+        }
 
     if not record.module_path:
         return {
-            "error": f"Tool '{tool_name}' has no module path — needs re-approval"
+            "error": f"Tool '{tool_name}' is approved but was never written to "
+                     f"disk — re-approve it to register the module.",
+            "reason": "not_registered",
+            "tool_name": tool_name,
+        }
+
+    missing = _missing_required(record, arguments)
+    if missing:
+        # Caught before the call rather than as a TypeError inside it: an
+        # argument error reaching the LLM fallback would be answered with a
+        # fabricated result, which is the one outcome this service must not
+        # produce.
+        return {
+            "error": f"Tool '{tool_name}' requires {', '.join(missing)}, "
+                     f"which {'was' if len(missing) == 1 else 'were'} not supplied.",
+            "reason": "bad_arguments",
+            "tool_name": tool_name,
         }
 
     tool_description = _get_tool_description(record)
@@ -146,6 +176,18 @@ def execute_tool(db: Session, tool_name: str, arguments: dict) -> dict:
                 "error": f"Execution error: {str(e)}",
                 "tool_name": tool_name,
             }
+
+
+def _missing_required(record: ToolRecord, arguments: dict) -> list[str]:
+    """Required parameters the caller did not supply."""
+    try:
+        schema = json.loads(record.schema_json)
+        params = schema.get("function", {}).get("parameters", {})
+        required = params.get("required") or []
+    except Exception:
+        return []
+    supplied = set(arguments or {})
+    return [name for name in required if name not in supplied]
 
 
 def _is_error_result(result) -> bool:

@@ -1109,6 +1109,18 @@ validation that already passed on it.
 - Templates reference variables with double braces: two open braces, the
   variable name, two close braces.
 - Workflow inputs come from `input_schema` and are available from the start.
+- Tools reply {"status": "success", "data": {...}}. A tool step's output is the
+  inner `data` object, so address its fields with a dot path —
+  step_<id>_output.field_name — never the envelope.
+- A parameter declared as a number, boolean or string must be given exactly
+  that field, not the whole upstream object: pass
+  step_excess_output.calculated_excess, not step_excess_output.
+- A validation or safety-gate step outputs a verdict, not the data it
+  checked. Steps after it must read the original workflow input variable,
+  never the gate's output.
+- An agent whose answer feeds a condition or a tool must be told to reply with
+  a JSON object containing exactly the named fields. Its output is then
+  addressable by dot path.
 
 ## What to produce per step type
 

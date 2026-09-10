@@ -102,6 +102,7 @@ export default function ExecutionMonitor({
   logs,
   onReconnect,
   onNotice,
+  stepIds,
 }: {
   executionId: string | null;
   detail: ExecutionDetail | null;
@@ -111,6 +112,8 @@ export default function ExecutionMonitor({
   logs: LogLine[];
   onReconnect: () => void;
   onNotice?: (message: string) => void;
+  /** Step ids from the workflow definition — lets the Result tab lay out per-step output. */
+  stepIds?: string[];
 }) {
   const [tab, setTab] = useState<Tab>('steps');
   const [showInternal, setShowInternal] = useState(false);
@@ -178,8 +181,8 @@ export default function ExecutionMonitor({
   const style = statusStyle(detail?.status);
 
   const resultMarkdown = useMemo(
-    () => (detail && !isEmptyResult(detail.result) ? formatWorkflowResult(detail.result) : ''),
-    [detail?.result],
+    () => (detail && !isEmptyResult(detail.result) ? formatWorkflowResult(detail.result, { stepIds }) : ''),
+    [detail?.result, stepIds],
   );
 
   const historyJson = useMemo(() => {

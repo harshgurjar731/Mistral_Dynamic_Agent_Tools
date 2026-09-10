@@ -30,6 +30,121 @@ _VALID_TYPES = {"agent", "tool", "connector", "condition", "transform"}
 BINDING_KEYS = ("agent_id", "tool_name", "connector_id", "connector_name",
                 "true_step", "false_step")
 
+def _depends_on(a: str, b: str, deps: dict) -> bool:
+    """True when capability ``a`` depends on ``b``, directly or transitively."""
+    seen, stack = set(), list(deps.get(a, ()))
+    while stack:
+        current = stack.pop()
+        if current == b:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(deps.get(current, ()))
+    return False
+
+
+def _dependency_order(ids: list, deps: dict) -> list:
+    """Order ids so each comes after the ones it depends on; stable otherwise."""
+    ordered, remaining = [], list(ids)
+    while remaining:
+        ready = [i for i in remaining
+                 if not any(_depends_on(i, j, deps) for j in remaining if j != i)]
+        pick = ready[0] if ready else remaining[0]
+        ordered.append(pick)
+        remaining.remove(pick)
+    return ordered
+
+
+def _repair_fan_outs(steps: list, deps: dict) -> None:
+    """Make a step with several continuations actually run all of them.
+
+    Both executors follow only ``next_steps[0]`` from a step outside a parallel
+    group, so the remaining continuations were silently dropped — the
+    subsidence workflow lost its depreciation, underwriting and fraud steps
+    this way. Independent targets become one parallel group; if any target
+    depends on another, they are chained in dependency order instead.
+    """
+    by_id = {s["id"]: s for s in steps}
+    for step in steps:
+        if step["type"] == "condition" or len(step["next_steps"]) < 2:
+            continue
+        targets = [t for t in step["next_steps"] if t in by_id]
+        groups = {by_id[t]["parallel_group"] for t in targets}
+        if len(groups) == 1 and None not in groups:
+            continue
+
+        order = _dependency_order(targets, deps)
+        independent = not any(
+            _depends_on(a, b, deps) for a in targets for b in targets if a != b
+        )
+        if independent:
+            group = f"{step['id']}_fanout"
+            for t in targets:
+                by_id[t]["parallel_group"] = group
+            step["next_steps"] = [order[0]]
+            logger.warning(
+                "Step '%s' fanned out to %s outside a group — made them parallel group '%s'",
+                step["id"], targets, group,
+            )
+        else:
+            outside = [n for t in targets for n in by_id[t]["next_steps"] if n not in targets]
+            successor = max(set(outside), key=outside.count) if outside else None
+            step["next_steps"] = [order[0]]
+            for a, b in zip(order, order[1:]):
+                by_id[a]["next_steps"] = [b]
+                by_id[a]["parallel_group"] = None
+            by_id[order[-1]]["next_steps"] = [successor] if successor else []
+            by_id[order[-1]]["parallel_group"] = None
+            logger.warning(
+                "Step '%s' fanned out to dependent steps %s — chained them in dependency order",
+                step["id"], order,
+            )
+
+
+def _reachable(steps: list, entry: str) -> set:
+    by_id = {s["id"]: s for s in steps}
+    seen, stack = set(), [entry]
+    while stack:
+        current = stack.pop()
+        if current in seen or current not in by_id:
+            continue
+        seen.add(current)
+        step = by_id[current]
+        stack.extend(step["next_steps"])
+        config = step.get("config") or {}
+        stack.extend(v for v in (config.get("true_step"), config.get("false_step")) if v)
+        if step.get("parallel_group"):
+            stack.extend(o["id"] for o in steps if o.get("parallel_group") == step["parallel_group"])
+    return seen
+
+
+def _wire_unreachable_conditions(steps: list, entry: str, deps: dict) -> None:
+    """Route a condition nobody points at from the steps it depends on.
+
+    An unreachable condition is not an inert leftover — it is a business rule
+    that silently never runs. The subsidence workflow's fraud gate was one:
+    every claim went straight to a settlement letter. The condition's own
+    capability dependencies say what it reads, so those producers flow into it.
+    """
+    by_id = {s["id"]: s for s in steps}
+    reachable = _reachable(steps, entry)
+    for cond in steps:
+        if cond["type"] != "condition" or cond["id"] in reachable:
+            continue
+        producers = [p for p in deps.get(cond["id"], ()) if p in by_id and p in reachable]
+        if not producers:
+            logger.warning("Condition '%s' is unreachable and names no reachable producer", cond["id"])
+            continue
+        for p in producers:
+            group = by_id[p].get("parallel_group")
+            members = [s for s in steps if group and s.get("parallel_group") == group] or [by_id[p]]
+            for m in members:
+                m["next_steps"] = [cond["id"]]
+        logger.warning("Condition '%s' was unreachable — wired after %s", cond["id"], producers)
+        reachable = _reachable(steps, entry)
+
+
 
 class StepTopologyLayer(WorkflowDecisionLayer):
     """Decide steps, types, edges, parallel groups and bindings."""
@@ -171,6 +286,11 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                 logger.warning("Step '%s' points at unknown steps %s — dropping", step["id"], dropped)
             step["next_steps"] = [n for n in step["next_steps"] if n in known_ids]
 
+        # Repair fan-outs first, so the convergence pass below sees the groups
+        # they create.
+        deps = {c.id: set(c.depends_on) for c in spec.capabilities}
+        _repair_fan_outs(steps, deps)
+
         # Every branch of a parallel group must converge on the same successor.
         # The execution engine advances a whole group from its first member's
         # next_steps, so divergent branches silently lose their successors.
@@ -193,6 +313,8 @@ class StepTopologyLayer(WorkflowDecisionLayer):
         if entry_step not in known_ids:
             entry_step = steps[0]["id"]
             logger.warning("Entry step missing or unknown — defaulting to '%s'", entry_step)
+
+        _wire_unreachable_conditions(steps, entry_step, deps)
 
         spec.topology = {
             "name": spec.workflow_name or str(data.get("name") or "generated_workflow"),

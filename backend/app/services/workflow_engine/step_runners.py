@@ -177,7 +177,9 @@ def _first_choice_message(response: Any) -> Any:
     tool — ``document_library`` above all — returns ``messages`` (plural): the
     transcript of what the server ran on its side, with ``message`` left null.
     Every RAG agent has that tool by definition, so this is the ordinary case
-    for them rather than an edge one. The last entry is the assistant's reply.
+    for them rather than an edge one. The last entry is usually the assistant's
+    reply — but not when the server stopped mid-round to hand our own tool
+    calls back; ``_pending_tool_round`` handles that case.
     """
     choices = getattr(response, "choices", None)
     if not choices and isinstance(response, dict):
@@ -197,6 +199,73 @@ def _first_choice_message(response: Any) -> Any:
     if found is not None:
         return found
     return transcript[-1] if transcript else None
+
+
+def _pending_tool_round(response: Any, round_num: int) -> tuple[list[dict], list] | None:
+    """Split a transcript that stopped mid tool-round into ``(replay, calls_to_run)``.
+
+    With a server-executed tool on the agent, one model turn can request a
+    server call (``library_search``) and one of ours together. The server runs
+    its own, appends the result and stops, so the transcript ends on a tool
+    message. Reading that as the answer is what turned an empty library result
+    into a step output of ``{}`` — and our call was never run at all.
+
+    ``replay`` is the transcript rebuilt as request messages, to append as-is:
+    the assistant turn with every call, then the server's results. The calls
+    the server left unanswered are ours to run. Returns None when the reply is
+    final, or is not a transcript at all.
+    """
+    choices = getattr(response, "choices", None)
+    if not choices and isinstance(response, dict):
+        choices = response.get("choices")
+    if not choices:
+        return None
+    choice = choices[0]
+    transcript = choice.get("messages") if isinstance(choice, dict) else getattr(choice, "messages", None)
+    if not transcript:
+        return None
+
+    def field(m: Any, key: str) -> Any:
+        return m.get(key) if isinstance(m, dict) else getattr(m, key, None)
+
+    last = transcript[-1]
+    if field(last, "role") != "tool" and not _message_tool_calls(last):
+        return None  # ends on the agent's reply: this turn is final
+
+    answered = {field(m, "tool_call_id") for m in transcript if field(m, "role") == "tool"}
+    names: dict[str, str] = {}
+    replay: list[dict] = []
+    pending: list = []
+    for m in transcript:
+        role = field(m, "role")
+        if role == "assistant":
+            calls = []
+            for tc in _message_tool_calls(m):
+                parsed = _parse_tool_call(tc, round_num)
+                if parsed is None:
+                    continue
+                call_id, name, raw_args, _ = parsed
+                names[call_id] = name
+                calls.append({"id": call_id, "type": "function", "function": {
+                    "name": name,
+                    "arguments": raw_args if isinstance(raw_args, str) else json.dumps(raw_args),
+                }})
+                if call_id not in answered:
+                    pending.append(tc)
+            entry: dict[str, Any] = {"role": "assistant", "content": _message_text(m)}
+            if calls:
+                entry["tool_calls"] = calls
+            replay.append(entry)
+        elif role == "tool":
+            call_id = field(m, "tool_call_id")
+            content = field(m, "content")
+            replay.append({
+                "role": "tool",
+                "name": names.get(call_id, ""),
+                "tool_call_id": call_id,
+                "content": content if isinstance(content, str) else json.dumps(content, default=str),
+            })
+    return replay, pending
 
 
 def _finish_reason(response: Any) -> str:
@@ -304,30 +373,216 @@ class SafeDict(dict):
     def __missing__(self, key):
         return "{" + key + "}"
 
-def substitute_double_brackets(text: str, variables: dict) -> str:
-    """Safely replace {{key}} with variables[key] without breaking on single {JSON} braces. Supports dot notation."""
+#: Returned by _lookup when a reference cannot be resolved. Distinct from None,
+#: which is a value an earlier step genuinely produced.
+_MISSING = object()
+
+_WHOLE_TEMPLATE = re.compile(r"^\s*\{\{\s*([^{}]+?)\s*\}\}\s*$")
+_FENCED_JSON = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.S)
+
+
+def _as_data(value, lenient: bool = False):
+    """Turn a JSON string back into data; leave everything else untouched.
+
+    Strict by default: only a string that *is* JSON is parsed, so a claim text
+    that happens to contain braces stays a string. ``lenient`` also looks for a
+    JSON object inside prose or a ```json fence — the shape agent answers take —
+    and is used only when a caller needs structure, such as walking a dot path
+    into an agent's output.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text[:1] in ("{", "["):
+        try:
+            return json.loads(text)
+        except ValueError:
+            pass
+    if not lenient:
+        return value
+    fenced = _FENCED_JSON.search(text)
+    if fenced:
+        try:
+            return json.loads(fenced.group(1))
+        except ValueError:
+            pass
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        try:
+            return json.loads(text[start:end + 1])
+        except ValueError:
+            pass
+    return value
+
+
+def _unwrap(value):
+    """Strip the ``{"status": "success", "data": ...}`` envelope tools return."""
+    if isinstance(value, dict) and value.get("status") == "success" and "data" in value:
+        return value["data"]
+    return value
+
+
+def _lookup(path: str, variables: dict):
+    """Resolve ``step_x_output.field.sub`` against the run's variables.
+
+    Walks into JSON strings, agent prose containing JSON, and tool envelopes at
+    every hop. The previous walker only descended through dicts, but step
+    outputs are stored as JSON strings by the local engine and agent outputs
+    are text on both engines — so ``step_fraud_risk_scoring_output.
+    fraud_evaluation_result`` always came back empty, and the fraud condition
+    evaluated as if no fraud had been found.
+    """
+    parts = [p for p in (path or "").strip().split(".") if p]
+    if not parts or parts[0] not in variables:
+        return _MISSING
+    value = variables[parts[0]]
+    for part in parts[1:]:
+        value = _unwrap(_as_data(value, lenient=True))
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return _MISSING
+    return _unwrap(_as_data(value))
+
+
+def substitute_double_brackets(
+    text: str,
+    variables: dict,
+    missing: list | None = None,
+    mark_missing: bool = False,
+) -> str:
+    """Replace {{ref}} inside a larger string. Supports dot paths.
+
+    An unresolved reference is left as-is by default. With ``mark_missing`` it
+    becomes an explicit note instead — used for agent prompts, where a literal
+    ``{{step_x_output}}`` was being echoed straight into a customer letter, or
+    worse, treated by the model as a gap it was free to fill with invented
+    figures.
+    """
     if not isinstance(text, str) or not variables:
         return text
-    
+
     def repl(match):
         key = match.group(1).strip()
-        parts = key.split('.')
-        val = variables.get(parts[0])
-        if val is None:
+        val = _lookup(key, variables)
+        if val is _MISSING or val is None:
+            if missing is not None:
+                missing.append(key)
+            if mark_missing:
+                return f"[not available: '{key}' was not produced by an earlier step]"
             return match.group(0)
-            
-        for part in parts[1:]:
-            if isinstance(val, dict):
-                val = val.get(part)
-            else:
-                return match.group(0)
-
-        # Convert dicts/lists to JSON strings for prompt insertion
         if isinstance(val, (dict, list)):
             return json.dumps(val)
         return str(val)
 
     return re.sub(r'\{{2,}([^{}]+)\}{2,}', repl, text)
+
+
+def _coerce(value, expected: str | None):
+    """Shape a resolved value to the parameter type the tool declared."""
+    if not expected:
+        return value
+    if expected in ("object", "array"):
+        return _unwrap(_as_data(value, lenient=True))
+    if expected == "string":
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return value if isinstance(value, str) else str(value)
+    if expected in ("number", "integer", "boolean"):
+        v = _unwrap(_as_data(value, lenient=True))
+        # A single-field object carrying the scalar — {"calculated_excess": 500}
+        # — is the commonest shape a tool returns for "a number".
+        if isinstance(v, dict) and len(v) == 1:
+            v = next(iter(v.values()))
+        if expected == "boolean":
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+                return v.strip().lower() == "true"
+            if isinstance(v, (int, float)):
+                return bool(v)
+            return v
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return int(v) if expected == "integer" and float(v).is_integer() else v
+        if isinstance(v, str):
+            cleaned = v.strip().replace(",", "").lstrip("£$€")
+            try:
+                number = float(cleaned)
+            except ValueError:
+                return v
+            return int(number) if expected == "integer" and number.is_integer() else number
+        return v
+    return value
+
+
+def _resolve_value(raw, variables: dict, missing: list):
+    if isinstance(raw, str):
+        whole = _WHOLE_TEMPLATE.match(raw)
+        if whole:
+            # Exactly one reference: pass the referenced data itself, not its
+            # string form. This is the fix for every tool in a chain rejecting
+            # its input with "must be a dictionary".
+            value = _lookup(whole.group(1), variables)
+            if value is _MISSING:
+                missing.append(whole.group(1).strip())
+                return raw
+            return value
+        if "{{" in raw:
+            return substitute_double_brackets(raw, variables, missing=missing)
+        return raw
+    if isinstance(raw, dict):
+        return {k: _resolve_value(v, variables, missing) for k, v in raw.items()}
+    if isinstance(raw, list):
+        return [_resolve_value(v, variables, missing) for v in raw]
+    return raw
+
+
+def _resolve_arguments(template: dict, variables: dict, param_types: dict) -> tuple[dict, list]:
+    """Resolve a tool step's arguments. Returns ``(arguments, unresolved_refs)``."""
+    missing: list = []
+    resolved = {}
+    for key, raw in (template or {}).items():
+        resolved[key] = _coerce(_resolve_value(raw, variables, missing), param_types.get(key))
+    return resolved, missing
+
+
+async def _tool_param_types(tool_name: str) -> dict:
+    """The tool's declared parameter types, from the registry.
+
+    Refreshes once on a miss: the worker runs in its own process and may not
+    have loaded dynamic tool schemas yet.
+    """
+    from app.services.tool_registry import ALL_TOOLS, refresh_dynamic_tools
+
+    spec = ALL_TOOLS.get(tool_name)
+    if spec is None:
+        try:
+            await refresh_dynamic_tools()
+        except Exception as e:
+            logger.debug("Could not refresh tool schemas for '%s': %s", tool_name, e)
+        spec = ALL_TOOLS.get(tool_name)
+    try:
+        props = spec["function"]["parameters"]["properties"]
+        return {k: v.get("type") for k, v in props.items() if isinstance(v, dict)}
+    except Exception:
+        return {}
+
+
+def _envelope_error(value) -> str:
+    """The message from a ``{"status": "error", ...}`` reply, or ''."""
+    if isinstance(value, dict) and str(value.get("status", "")).lower() in ("error", "failed"):
+        message = value.get("message") or value.get("error") or "the tool reported an error"
+        kind = value.get("error_type")
+        text = f"{kind}: {message}" if kind else str(message)
+        detail = value.get("detail")
+        if detail:
+            text += f" — {str(detail)[:400]}"
+        return text
+    return ""
 
 class DotDict(dict):
     """Dictionary supporting dot notation for condition evaluation."""
@@ -364,6 +619,31 @@ def _execute_tool_via_service(tool_name: str, arguments: dict) -> Any:
         return f"Error executing tool '{tool_name}': {str(e)}"
 
 
+async def _agent_complete_with_backoff(client, base_kwargs: dict, messages: list, step_id: str):
+    """Call the agent, retrying only on rate limits.
+
+    Temporal's own activity retry spacing (~1s, ~2s) is shorter than a
+    rate-limit window, so without this a single 429 failed the whole run.
+    """
+    import random
+
+    delay = 2.0
+    for attempt in range(5):
+        try:
+            return await asyncio.to_thread(client.agents.complete, **base_kwargs, messages=messages)
+        except Exception as e:
+            text = str(e).lower()
+            if ("429" not in text and "rate limit" not in text) or attempt == 4:
+                raise
+            wait = delay + random.uniform(0, delay / 2)
+            logger.warning(
+                "Step '%s' rate limited (attempt %d/5) — retrying in %.1fs",
+                step_id, attempt + 1, wait,
+            )
+            await asyncio.sleep(wait)
+            delay *= 2
+
+
 async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
     """
     Execute an agent step.
@@ -386,7 +666,15 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
         # Resolve query template with variables
         query_template = config.get("query_template", config.get("query", ""))
-        query = substitute_double_brackets(query_template, variables)
+        _missing_refs: list = []
+        query = substitute_double_brackets(
+            query_template, variables, missing=_missing_refs, mark_missing=True
+        )
+        if _missing_refs:
+            logger.warning(
+                "Step '%s' prompt references data no earlier step produced: %s",
+                step.id, sorted(set(_missing_refs)),
+            )
 
         agent_id = config.get("agent_id")
 
@@ -423,8 +711,8 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 # completion can take tens of seconds. Running it on the event
                 # loop froze the whole API for the duration of every step —
                 # which is why execution status appeared to stop updating mid-run.
-                response = await asyncio.to_thread(
-                    client.agents.complete, **base_kwargs, messages=messages
+                response = await _agent_complete_with_backoff(
+                    client, base_kwargs, messages, step.id
                 )
 
                 msg = _first_choice_message(response)
@@ -439,8 +727,20 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                     )
                     break
 
-                content = _message_text(msg)
-                tool_calls = _message_tool_calls(msg)
+                # A server-run tool (document_library) returns a transcript. If it
+                # stopped mid-round, its last entry is the server's tool result,
+                # not the agent's answer, and our own calls are still waiting.
+                pending_round = _pending_tool_round(response, round_num)
+                if pending_round is not None:
+                    replay, tool_calls = pending_round
+                    content = ""
+                    if not tool_calls:
+                        messages.extend(replay)
+                        continue
+                else:
+                    replay = None
+                    content = _message_text(msg)
+                    tool_calls = _message_tool_calls(msg)
 
                 if not tool_calls:
                     # No tool calls → agent produced final text answer
@@ -486,7 +786,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                         for call_id, name, raw_args, _ in parsed_calls
                     ],
                 }
-                messages.append(assistant_msg)
+                if replay is not None:
+                    # The transcript already holds the assistant turn with every
+                    # call, plus the server's results for its own calls.
+                    messages.extend(replay)
+                else:
+                    messages.append(assistant_msg)
 
                 # Execute each tool and append its result
                 for call_id, tool_name, _raw_args, arguments in parsed_calls:
@@ -639,6 +944,48 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
 
 
+def _is_missing_tool(result) -> bool:
+    """True when the tool service says the tool does not exist.
+
+    ``execute_tool`` flattens every outcome to a string, so the shape has to be
+    matched on text rather than on a dict key.
+    """
+    text = str(result).lower()
+    return (
+        "not found" in text
+        or "not approved" in text
+        or "no module path" in text
+    )
+
+
+def _is_tool_error(result) -> bool:
+    """True when the result is an error rather than a tool's output."""
+    if isinstance(result, dict):
+        return "error" in result
+    text = str(result).strip()
+    return text.startswith("Error:") or _is_missing_tool(text)
+
+
+def _infer_parameters(arguments: dict) -> dict:
+    """A JSON-Schema properties block matching the arguments actually passed."""
+    types = {
+        bool: "boolean", int: "integer", float: "number",
+        list: "array", dict: "object", str: "string",
+    }
+    return {
+        key: {
+            # bool before int: bool is a subclass of int in Python, and a
+            # parameter declared "integer" would take the wrong sample value.
+            "type": next(
+                (name for cls, name in types.items() if isinstance(value, cls)),
+                "string",
+            ),
+            "description": f"Value for {key.replace('_', ' ')}",
+        }
+        for key, value in arguments.items()
+    }
+
+
 async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
     """Execute a tool step — calls tool_registry.execute() (native/dynamic/MCP)."""
     start = time.time()
@@ -650,39 +997,94 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         config = step.config
         tool_name = config.get("tool_name", "")
 
-        # Resolve arguments template with variables
-        args_template = config.get("arguments", {})
-        arguments = {}
-        for k, v in args_template.items():
-            if isinstance(v, str) and "{{" in v:
-                arguments[k] = substitute_double_brackets(v, variables)
-            else:
-                arguments[k] = v
+        # Resolve arguments against the tool's own declared parameter types.
+        #
+        # Every argument used to be run through string substitution, so an
+        # object parameter received the previous step's output as a JSON
+        # *string* and the tool rejected it. A value that is exactly one
+        # {{reference}} now resolves to the referenced data itself.
+        param_types = await _tool_param_types(tool_name)
+        arguments, unresolved = _resolve_arguments(
+            config.get("arguments", {}), variables, param_types
+        )
+        if unresolved:
+            duration = (time.time() - start) * 1000
+            refs = ", ".join(f"{{{{{r}}}}}" for r in sorted(set(unresolved)))
+            message = (
+                f"Arguments reference {refs}, which no earlier step produced. "
+                f"Either the producing step has not run yet, or it returns "
+                f"different field names from the ones referenced."
+            )
+            logger.error("Tool step '%s': %s", step.id, message)
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=message,
+                duration_ms=duration,
+                input_preview=json.dumps(config.get("arguments", {}), default=str)[:1000],
+            )
 
         result = await execute_tool(tool_name, arguments)
 
-        # Auto-synthesis fallback: if tool not found, synthesise and retry
-        if isinstance(result, dict) and "not found" in str(result.get("error", "")).lower():
-            logger.info("Tool '%s' not found — triggering auto-synthesis", tool_name)
-            description = config.get("description", f"A tool to perform {tool_name}")
-            synth = await tool_resolver.synthesize_from_task(description, purpose="activity")
+        # Auto-synthesis fallback: build the tool if it does not exist yet.
+        if _is_missing_tool(result):
+            logger.info("Tool '%s' not found — synthesising it now", tool_name)
+            synth = await tool_resolver.trigger_synthesis(
+                name=tool_name,
+                description=step.description or f"Perform {tool_name.replace('_', ' ')}",
+                # Derived from the arguments this step actually passes, so the
+                # rebuilt tool has the signature the step calls it with.
+                parameters={"properties": _infer_parameters(arguments)},
+                required=sorted(arguments.keys()),
+                purpose="activity",
+            )
             if synth.get("status") in ("synthesized", "approved"):
                 await refresh_dynamic_tools()
                 result = await execute_tool(tool_name, arguments)
-                logger.info("Auto-synthesis succeeded for '%s', retry result: %s", tool_name, result)
+                logger.info("Auto-synthesis of '%s' succeeded; step retried", tool_name)
             else:
-                logger.warning("Auto-synthesis failed for '%s': %s", tool_name, synth)
+                logger.warning(
+                    "Auto-synthesis of '%s' failed: %s", tool_name, synth.get("message", synth)
+                )
 
         duration = (time.time() - start) * 1000
-        
-        input_preview = json.dumps(arguments)[:1000]
+
+        input_preview = json.dumps(arguments, default=str)[:1000]
         out_str = str(result)
         output_preview = out_str[:1000] + "..." if len(out_str) > 1000 else out_str
-        
+
+        # A tool that could not do its job is a failed step.
+        #
+        # Tools report failure as {"status": "error", ...} with HTTP 200, and
+        # that envelope used to be recorded as a *completed* step. The run then
+        # carried on, and a settlement letter was written to a customer from
+        # calculations that had never succeeded — with the agent inventing the
+        # figures it was not given. Failing here makes the compiled activity
+        # raise, which halts the workflow on both executors.
+        parsed = _as_data(result)
+        envelope_error = _envelope_error(parsed)
+        if envelope_error or _is_tool_error(result):
+            message = (
+                f"{tool_name}: {envelope_error}" if envelope_error else out_str[:1000]
+            )
+            logger.error("Tool step '%s' failed: %s", step.id, message[:300])
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=message,
+                duration_ms=duration,
+                input_preview=input_preview,
+                output_preview=output_preview,
+            )
+
+        # The step's output is the tool's data, not its envelope, so
+        # {{step_x_output.field}} addresses the field directly.
+        output = _unwrap(parsed)
+
         return StepResult(
-            step_id=step.id, 
-            status="completed", 
-            output=result, 
+            step_id=step.id,
+            status="completed",
+            output=output,
             duration_ms=duration,
             input_preview=input_preview,
             output_preview=output_preview,
@@ -691,42 +1093,33 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         duration = (time.time() - start) * 1000
         logger.error("Tool step '%s' failed: %s", step.id, e)
         return StepResult(
-            step_id=step.id, 
-            status="failed", 
-            error=str(e), 
+            step_id=step.id,
+            status="failed",
+            error=str(e),
             duration_ms=duration,
-            input_preview=json.dumps(step.config.get("arguments", {}))[:1000]
+            input_preview=json.dumps(step.config.get("arguments", {}), default=str)[:1000]
         )
 
 
 def substitute_for_eval(text: str, variables: dict) -> str:
-    """Replace {{key}} with properly quoted Python literals for safe eval().
-    
-    Unlike substitute_double_brackets (which produces raw strings for prompt
-    insertion), this function wraps string values in repr() quotes so the
-    result is a valid Python expression, e.g.:
-        {{step_x.input_type}} == 'image'  →  'text' == 'image'
+    """Replace {{key}} with Python literals so the expression can be eval'd.
+
+    Uses the same JSON-aware lookup as prompt substitution, so a condition can
+    read a field out of an agent's JSON answer. A "true"/"false" string — the
+    way a model often writes a boolean — becomes a real boolean.
     """
     if not isinstance(text, str):
         return text
 
     def repl(match):
         key = match.group(1).strip()
-        parts = key.split(".")
-        val = variables.get(parts[0])
-        if val is None:
+        val = _lookup(key, variables)
+        if val is _MISSING or val is None:
             return "None"
-
-        for part in parts[1:]:
-            if isinstance(val, dict):
-                val = val.get(part)
-            else:
-                return "None"
-            if val is None:
-                return "None"
-
         if isinstance(val, bool):
             return "True" if val else "False"
+        if isinstance(val, str) and val.strip().lower() in ("true", "false"):
+            return "True" if val.strip().lower() == "true" else "False"
         if isinstance(val, (int, float)):
             return str(val)
         if isinstance(val, str):
