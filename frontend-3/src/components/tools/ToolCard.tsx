@@ -1,37 +1,14 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { Link } from "@tanstack/react-router";
 import {
-  ChevronDown,
-  Check,
-  X,
-  Pencil,
-  Trash2,
-  Radio,
-  Send,
-  Loader2,
+  Wrench,
+  Zap,
+  Code2,
+  Hash,
+  FileCode,
 } from "lucide-react";
-import { toolsApi, mcpApi, remoteServersApi, QK, errorMessage } from "@/api";
 import type { Tool } from "@/types";
 import { toolSource, TOOL_SOURCE_IDENTITY } from "@/lib/status";
 import { StatusPill } from "@/components/ui/StatusPill";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { CodeBlock } from "@/components/shared/CodeBlock";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 function schemaEntries(tool: Tool): Record<string, unknown> | null {
@@ -54,281 +31,122 @@ function toolDescription(tool: Tool): string {
   return fn?.description ?? "";
 }
 
-export function ToolCard({ tool, pending = false }: { tool: Tool; pending?: boolean }) {
-  const qc = useQueryClient();
-  const [expanded, setExpanded] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [source, setSource] = useState(tool.source_code ?? "");
-  const [description, setDescription] = useState(toolDescription(tool));
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
-  const [serverName, setServerName] = useState("");
-  const [remoteServerId, setRemoteServerId] = useState("");
-  const [remoteResponse, setRemoteResponse] = useState<unknown>(null);
-
-  const src = toolSource(tool.id);
-  const editable = src === "dynamic";
+/** Count parameters from the tool schema. */
+function paramCount(tool: Tool): number {
   const schema = schemaEntries(tool);
+  if (!schema) return 0;
+  const fn = schema["function"] as { parameters?: { properties?: Record<string, unknown> } } | undefined;
+  const props = fn?.parameters?.properties ?? (schema as { properties?: Record<string, unknown> })?.properties;
+  return props ? Object.keys(props).length : 0;
+}
+
+export function ToolCard({
+  tool,
+  pending = false,
+  variant = "tool",
+}: {
+  tool: Tool;
+  pending?: boolean;
+  /** Section the card lives in — decides which detail page the card opens. */
+  variant?: "tool" | "activity";
+}) {
+  const src = toolSource(tool.id);
   const summary = toolDescription(tool);
-
-  const invalidateLists = () => {
-    qc.invalidateQueries({ queryKey: QK.tools() });
-    qc.invalidateQueries({ queryKey: QK.pendingTools() });
-  };
-
-  const approve = useMutation({
-    mutationFn: () => toolsApi.approve(tool.id),
-    onSuccess: () => {
-      toast.success(`"${tool.name}" approved and moved to Active Tools.`);
-      invalidateLists();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const reject = useMutation({
-    mutationFn: () => toolsApi.reject(tool.id),
-    onSuccess: () => {
-      toast.success(`"${tool.name}" rejected.`);
-      invalidateLists();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const update = useMutation({
-    mutationFn: () => toolsApi.update(tool.id, { source_code: source, description }),
-    onSuccess: () => {
-      toast.success("Tool updated.");
-      setEditing(false);
-      invalidateLists();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const remove = useMutation({
-    mutationFn: () => toolsApi.remove(tool.id),
-    onSuccess: () => {
-      toast.success("Tool deleted.");
-      invalidateLists();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const publish = useMutation({
-    mutationFn: () => toolsApi.publishMcp(tool.id, serverName),
-    onSuccess: () => {
-      toast.success(`Published "${tool.name}" to MCP server "${serverName}".`);
-      setPublishOpen(false);
-      invalidateLists();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const sendTool = useMutation({
-    mutationFn: () => remoteServersApi.sendTool(remoteServerId, tool.id),
-    onSuccess: (res) => setRemoteResponse(res),
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-
-  const { data: mcpServers } = useQuery({
-    queryKey: QK.mcpServers(),
-    enabled: publishOpen,
-    queryFn: () => mcpApi.servers(),
-  });
-  const mcpServerNames: string[] = (
-    Array.isArray(mcpServers)
-      ? mcpServers.map((s: { name?: string }) => s?.name)
-      : Array.isArray((mcpServers as { servers?: unknown[] })?.servers)
-        ? ((mcpServers as { servers: { name?: string }[] }).servers ?? []).map((s) => s?.name)
-        : []
-  ).filter((n): n is string => Boolean(n));
-
-  const { data: remoteServers } = useQuery({
-    queryKey: QK.remoteServers(),
-    enabled: sendOpen,
-    queryFn: () => remoteServersApi.list(),
-  });
-  const remoteList: { id: string; name: string }[] = Array.isArray(remoteServers)
-    ? (remoteServers as { id: string; name: string }[])
-    : (remoteServers as { items?: { id: string; name: string }[] })?.items ?? [];
-
+  const isActivity = (tool.purpose ?? "tool") === "activity";
+  const params = paramCount(tool);
   const identity = TOOL_SOURCE_IDENTITY[src];
 
   return (
-    <div className="rounded-2xl border border-border glass">
-      <button
-        type="button"
-        onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
-      >
-        <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-sm font-semibold text-foreground">{tool.name}</p>
-            <span className="text-xs text-muted-foreground">v{tool.version ?? 1}</span>
-            <StatusPill identity={identity} />
-            {tool.status ? (
-              <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">
-                {tool.status}
-              </span>
-            ) : null}
-          </div>
-          {summary ? (
-            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{summary}</p>
-          ) : null}
-        </div>
-      </button>
+    <div
+      className="group relative flex flex-col rounded-2xl border border-border/60 backdrop-blur-md transition-all duration-300 hover:border-primary/30 hover:shadow-[0_0_32px_-8px_var(--primary)]"
+      style={{ background: "var(--surface)" }}
+    >
+      {/* Hover glow accent */}
+      <div
+        className="pointer-events-none absolute -inset-px rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        style={{
+          background: isActivity
+            ? "linear-gradient(135deg, oklch(0.65 0.20 350 / 0.06), oklch(0.70 0.16 330 / 0.04), transparent 70%)"
+            : "linear-gradient(135deg, oklch(0.65 0.18 36 / 0.06), oklch(0.71 0.14 55 / 0.04), transparent 70%)",
+        }}
+      />
 
-      {expanded ? (
-        <div className="space-y-4 border-t border-border px-4 py-4">
-          {editable && editing ? (
-            <div className="space-y-2">
-              <Textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                placeholder="Description"
-              />
-              <Textarea
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                rows={12}
-                className="font-mono text-xs"
-              />
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={() => update.mutate()} disabled={update.isPending}>
-                  {update.isPending ? "Saving…" : "Save"}
-                </Button>
-              </div>
+      {/* Full-card clickable link */}
+      <Link
+        to={variant === "activity" ? "/workflows/activities/$id" : "/tools/$id"}
+        params={{ id: String(tool.id) }}
+        className="absolute inset-0 z-0 rounded-2xl"
+        aria-label={tool.name}
+      />
+
+      <div className="pointer-events-none relative z-[1] flex flex-col p-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              "grid size-11 shrink-0 place-items-center rounded-xl border transition-all duration-300",
+              "border-border/60 bg-background-elevated text-muted-foreground",
+              "group-hover:border-primary/30 group-hover:bg-primary/10 group-hover:text-primary group-hover:shadow-[0_0_12px_-4px_var(--primary)]",
+            )}
+          >
+            {isActivity ? <Zap className="size-5" /> : <Wrench className="size-5" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-sm font-semibold text-foreground">{tool.name}</h3>
+              <StatusPill identity={identity} size="xs" />
             </div>
-          ) : (
-            <div>
-              <p className="eyebrow mb-1.5">Tool Definition</p>
-              <CodeBlock code={tool.source_code ?? "// no source available"} />
-            </div>
+            <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground/70">
+              {summary || "No description provided"}
+            </p>
+          </div>
+        </div>
+
+        {/* Badges */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+              isActivity
+                ? "border-violet-500/25 bg-violet-500/10 text-violet-400"
+                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-400",
+            )}
+          >
+            {isActivity ? <Zap className="size-2.5" /> : <Wrench className="size-2.5" />}
+            {isActivity ? "Activity" : "Agent Tool"}
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-blue/20 bg-blue/8 px-1.5 py-0.5 font-mono text-[10px] text-blue">
+            <Hash className="size-2.5" />
+            v{tool.version ?? 1}
+          </span>
+          {params > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-cyan/20 bg-cyan/8 px-1.5 py-0.5 text-[10px] font-medium text-cyan">
+              <Code2 className="size-2.5" />
+              {params} param{params !== 1 ? "s" : ""}
+            </span>
           )}
-
-          {schema ? (
-            <div>
-              <p className="eyebrow mb-1.5">Parameters Schema</p>
-              <CodeBlock code={JSON.stringify(schema, null, 2)} language="json" />
-            </div>
-          ) : null}
-
-          {tool.sandbox_output ? (
-            <div>
-              <p className="eyebrow mb-1.5">Sandbox Output</p>
-              <CodeBlock code={tool.sandbox_output} language="text" />
-            </div>
-          ) : null}
-
-          {remoteResponse ? (
-            <div>
-              <p className="eyebrow mb-1.5">Remote Server Response</p>
-              <CodeBlock code={JSON.stringify(remoteResponse, null, 2)} language="json" />
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-            {pending ? (
-              <>
-                <Button size="sm" onClick={() => approve.mutate()} disabled={approve.isPending}>
-                  <Check className="size-3.5" /> Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-red hover:text-red"
-                  onClick={() => reject.mutate()}
-                  disabled={reject.isPending}
-                >
-                  <X className="size-3.5" /> Reject
-                </Button>
-              </>
-            ) : null}
-            {editable && !pending ? (
-              <>
-                {!editing ? (
-                  <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-                    <Pencil className="size-3.5" /> Edit
-                  </Button>
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-red hover:text-red"
-                  onClick={() => remove.mutate()}
-                  disabled={remove.isPending}
-                >
-                  <Trash2 className="size-3.5" /> Delete
-                </Button>
-              </>
-            ) : null}
-            {!pending ? (
-              <>
-                <Button size="sm" variant="outline" onClick={() => setPublishOpen(true)}>
-                  <Radio className="size-3.5" /> Publish to MCP
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setSendOpen(true)}>
-                  <Send className="size-3.5" /> Send to Remote Server
-                </Button>
-              </>
-            ) : null}
-          </div>
+          {tool.source_code && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-amber/20 bg-amber/8 px-1.5 py-0.5 text-[10px] font-medium text-amber">
+              <FileCode className="size-2.5" />
+              Source
+            </span>
+          )}
+          {tool.status && (
+            <span className="rounded-md border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {tool.status}
+            </span>
+          )}
         </div>
-      ) : null}
 
-      <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Publish "{tool.name}" to MCP</DialogTitle>
-          </DialogHeader>
-          <Select value={serverName} onValueChange={setServerName}>
-            <SelectTrigger>
-              <SelectValue placeholder="Choose an MCP server…" />
-            </SelectTrigger>
-            <SelectContent>
-              {mcpServerNames.map((n) => (
-                <SelectItem key={n} value={n}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <DialogFooter>
-            <Button onClick={() => publish.mutate()} disabled={!serverName || publish.isPending}>
-              {publish.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Publish
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={sendOpen} onOpenChange={setSendOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Send "{tool.name}" to Remote Server</DialogTitle>
-          </DialogHeader>
-          <Select value={remoteServerId} onValueChange={setRemoteServerId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Choose a remote server…" />
-            </SelectTrigger>
-            <SelectContent>
-              {remoteList.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <DialogFooter>
-            <Button
-              onClick={() => sendTool.mutate()}
-              disabled={!remoteServerId || sendTool.isPending}
-            >
-              {sendTool.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Send
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {/* Footer */}
+        {tool.created_at && (
+          <div className="mt-3.5 flex items-center justify-end border-t border-border/40 pt-3.5">
+            <span className="text-[9px] tabular-nums text-muted-foreground/35">
+              {new Date(tool.created_at).toLocaleDateString()}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

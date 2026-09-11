@@ -9,10 +9,29 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { toast } from "sonner";
-import { Code2, Loader2, Plus, Rocket, Save, Trash2 } from "lucide-react";
+import {
+  Bot,
+  Code2,
+  Columns,
+  Loader2,
+  Map,
+  Plug,
+  Plus,
+  Redo2,
+  Rocket,
+  Rows,
+  Save,
+  Sparkles,
+  Trash2,
+  Undo2,
+  Wrench,
+} from "lucide-react";
 import { errorMessage, QK, workflowsApi } from "@/api";
 import type {
   BuilderCatalog,
+  CatalogAgent,
+  CatalogConnector,
+  CatalogTool,
   InputField,
   StepType,
   ValidationResult,
@@ -22,6 +41,7 @@ import type {
 import { GraphCanvas } from "@/components/graph/GraphCanvas";
 import { GraphLegend } from "@/components/graph/Legend";
 import { stepsToGraph } from "@/components/graph/fromDefinition";
+import { layoutGraph } from "@/components/graph/layout";
 import type { StepFlowEdge, StepFlowNode } from "@/components/graph/types";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { CodeBlock } from "@/components/shared/CodeBlock";
@@ -34,6 +54,7 @@ import { cn } from "@/lib/utils";
 import { IssueList, ValidationSummary } from "./ValidationPanel";
 import { StepInspector } from "./StepInspector";
 import { MAX_STEPS, STEP_TYPES, WORKFLOW_NAME_RE } from "./builderModel";
+import { CreateAgentModal, CreateToolModal } from "./CreateModals";
 
 /** Fills in canvas coordinates for any step that has none, using dagre once. */
 function ensureLayout(def: WorkflowDefinition): WorkflowDefinition {
@@ -95,6 +116,18 @@ export function WorkflowBuilder({
   const [script, setScript] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
+  // Undo / Redo history
+  const [past, setPast] = useState<WorkflowDefinition[]>([]);
+  const [future, setFuture] = useState<WorkflowDefinition[]>([]);
+
+  // Minimap & direction
+  const [showMinimap, setShowMinimap] = useState(false);
+  const [direction, setDirection] = useState<"LR" | "TB">("LR");
+
+  // Inline creation modals
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [synthesizeKind, setSynthesizeKind] = useState<"tool" | "activity" | null>(null);
+
   const catalogQuery = useQuery({
     queryKey: QK.builderCatalog(),
     queryFn: workflowsApi.catalog,
@@ -103,8 +136,76 @@ export function WorkflowBuilder({
   const catalog: BuilderCatalog | undefined = catalogQuery.data;
 
   const update = useCallback((fn: (d: WorkflowDefinition) => WorkflowDefinition) => {
-    setDefinition((d) => ensureLayout(fn(d)));
+    setDefinition((current) => {
+      const next = ensureLayout(fn(current));
+      setPast((p) => [...p.slice(-40), current]);
+      setFuture([]);
+      setDirty(true);
+      return next;
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    if (!previous) return;
+    setPast((p) => p.slice(0, -1));
+    setFuture((f) => [definition, ...f]);
+    setDefinition(previous);
     setDirty(true);
+  }, [past, definition]);
+
+  const redo = useCallback(() => {
+    if (future.length === 0) return;
+    const next = future[0];
+    if (!next) return;
+    setFuture((f) => f.slice(1));
+    setPast((p) => [...p, definition]);
+    setDefinition(next);
+    setDirty(true);
+  }, [future, definition]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        if (e.shiftKey) {
+          e.preventDefault();
+          redo();
+        } else {
+          e.preventDefault();
+          undo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo, redo]);
+
+  const applyAutoLayout = useCallback((dir: "LR" | "TB") => {
+    setDirection(dir);
+    setDefinition((current) => {
+      const { nodes: currentNodes } = stepsToGraph(
+        {
+          steps: current.steps,
+          entry_step: current.entry_step,
+          ui_layout: {},
+        },
+        [],
+        dir,
+      );
+      const layout: Record<string, { x: number; y: number }> = {};
+      for (const n of currentNodes) {
+        layout[n.id] = { x: n.position.x, y: n.position.y };
+      }
+      setPast((p) => [...p.slice(-40), current]);
+      setFuture([]);
+      setDirty(true);
+      return { ...current, ui_layout: layout };
+    });
+    toast.info(`Applied ${dir === "LR" ? "horizontal" : "vertical"} auto-layout`);
   }, []);
 
   /* ── Live validation (debounced) ──────────────────────────────────── */
@@ -233,6 +334,87 @@ export function WorkflowBuilder({
         entry_step: d.entry_step || id,
       }));
       setSelectedId(id);
+    },
+    [definition.steps, update],
+  );
+
+  const addAgentStep = useCallback(
+    (agent: CatalogAgent) => {
+      if (definition.steps.length >= MAX_STEPS) {
+        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
+        return;
+      }
+      const id = uniqueStepId(definition.steps.map((s) => s.id), "agent");
+      const step: WorkflowStep = {
+        id,
+        type: "agent",
+        tier: (agent.tier as any) ?? null,
+        config: { agent_id: agent.id, query_template: "" },
+        next_steps: [],
+        description: agent.description || agent.name,
+        parallel_group: null,
+      };
+      update((d) => ({
+        ...d,
+        steps: [...d.steps, step],
+        entry_step: d.entry_step || id,
+      }));
+      setSelectedId(id);
+      toast.success(`Added agent step "${id}"`);
+    },
+    [definition.steps, update],
+  );
+
+  const addToolStep = useCallback(
+    (tool: CatalogTool) => {
+      if (definition.steps.length >= MAX_STEPS) {
+        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
+        return;
+      }
+      const id = uniqueStepId(definition.steps.map((s) => s.id), "tool");
+      const step: WorkflowStep = {
+        id,
+        type: "tool",
+        tier: null,
+        config: { tool_name: tool.name, arguments: {} },
+        next_steps: [],
+        description: tool.description || tool.name,
+        parallel_group: null,
+      };
+      update((d) => ({
+        ...d,
+        steps: [...d.steps, step],
+        entry_step: d.entry_step || id,
+      }));
+      setSelectedId(id);
+      toast.success(`Added tool step "${id}"`);
+    },
+    [definition.steps, update],
+  );
+
+  const addConnectorStep = useCallback(
+    (conn: CatalogConnector) => {
+      if (definition.steps.length >= MAX_STEPS) {
+        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
+        return;
+      }
+      const id = uniqueStepId(definition.steps.map((s) => s.id), "connector");
+      const step: WorkflowStep = {
+        id,
+        type: "connector",
+        tier: null,
+        config: { connector_id: conn.id, tool_name: conn.tools?.[0]?.name ?? "", arguments: {} },
+        next_steps: [],
+        description: conn.name,
+        parallel_group: null,
+      };
+      update((d) => ({
+        ...d,
+        steps: [...d.steps, step],
+        entry_step: d.entry_step || id,
+      }));
+      setSelectedId(id);
+      toast.success(`Added connector step "${id}"`);
     },
     [definition.steps, update],
   );
@@ -426,46 +608,153 @@ export function WorkflowBuilder({
         </div>
       </GlassPanel>
 
-      <div className="grid gap-4 xl:grid-cols-[188px_minmax(0,1fr)_360px]">
+      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_360px]">
         {/* Palette */}
-        <GlassPanel className="h-fit">
-          <GlassPanelHeader title="Palette" description="Add a step" />
-          <div className="space-y-2 p-3">
-            {STEP_TYPES.map((type) => {
-              const identity = STEP_TYPE_IDENTITY[type];
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => addStep(type)}
-                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-background-elevated/60 px-2.5 py-2 text-left transition hover:border-border-strong hover:bg-surface-hover"
-                >
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full border",
-                      identity.bg,
-                      identity.border,
-                    )}
-                  />
-                  <span className="flex-1 text-xs font-medium text-foreground">
-                    {identity.label}
-                  </span>
-                  <Plus className="size-3 text-muted-foreground" />
-                </button>
-              );
-            })}
-            <div className="border-t border-border pt-2">
-              <p className="technical-label">
-                {definition.steps.length} / {MAX_STEPS} steps
-              </p>
-              {catalogQuery.isLoading ? (
-                <p className="technical-label mt-1">loading catalog…</p>
-              ) : catalog ? (
-                <p className="technical-label mt-1">
-                  {catalog.agents.length} agents · {catalog.tools.length} tools
-                </p>
-              ) : null}
+        <GlassPanel className="flex h-[calc(100vh-19rem)] min-h-[460px] flex-col overflow-hidden">
+          <GlassPanelHeader
+            title="Palette"
+            description={`${definition.steps.length} / ${MAX_STEPS} steps`}
+            actions={
+              catalog ? (
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {catalog.agents.length}A · {catalog.tools.length}T
+                </span>
+              ) : undefined
+            }
+          />
+          <div className="custom-scrollbar flex-1 space-y-3.5 overflow-y-auto p-3">
+            {/* Step types */}
+            <div>
+              <p className="eyebrow mb-1.5 text-[10px]">Step Types</p>
+              <div className="space-y-1">
+                {STEP_TYPES.map((type) => {
+                  const identity = STEP_TYPE_IDENTITY[type];
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => addStep(type)}
+                      className="flex w-full items-center gap-2 rounded-md border border-border bg-background-elevated/60 px-2 py-1.5 text-left transition hover:border-border-strong hover:bg-surface-hover"
+                    >
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full border",
+                          identity.bg,
+                          identity.border,
+                        )}
+                      />
+                      <span className="flex-1 text-xs font-medium text-foreground">
+                        {identity.label}
+                      </span>
+                      <Plus className="size-3 text-muted-foreground" />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* Quick Synthesis */}
+            <div>
+              <p className="eyebrow mb-1.5 text-[10px]">Inline Creation</p>
+              <div className="space-y-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-full justify-start text-[11px] gap-1.5"
+                  onClick={() => setShowAgentModal(true)}
+                >
+                  <Bot className="size-3 text-primary" /> + Agent
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-full justify-start text-[11px] gap-1.5"
+                  onClick={() => setSynthesizeKind("activity")}
+                >
+                  <Sparkles className="size-3 text-cyan" /> + Activity
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-full justify-start text-[11px] gap-1.5"
+                  onClick={() => setSynthesizeKind("tool")}
+                >
+                  <Wrench className="size-3 text-amber" /> + Tool
+                </Button>
+              </div>
+            </div>
+
+            {/* Catalog Agents */}
+            {catalog && catalog.agents.length > 0 && (
+              <div>
+                <p className="eyebrow mb-1.5 text-[10px]">Agents ({catalog.agents.length})</p>
+                <div className="max-h-36 custom-scrollbar space-y-1 overflow-y-auto pr-1">
+                  {catalog.agents.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => addAgentStep(a)}
+                      title={a.description || a.name}
+                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-primary/50 hover:bg-surface-hover"
+                    >
+                      <Bot className="size-3 shrink-0 text-primary" />
+                      <span className="truncate flex-1 font-mono text-[11px] text-foreground">
+                        {a.name}
+                      </span>
+                      <Plus className="size-2.5 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Catalog Tools / Activities */}
+            {catalog && catalog.tools.length > 0 && (
+              <div>
+                <p className="eyebrow mb-1.5 text-[10px]">Tools & Activities ({catalog.tools.length})</p>
+                <div className="max-h-36 custom-scrollbar space-y-1 overflow-y-auto pr-1">
+                  {catalog.tools.map((t) => (
+                    <button
+                      key={`${t.source}:${t.name}`}
+                      type="button"
+                      onClick={() => addToolStep(t)}
+                      title={t.description || t.name}
+                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-cyan/50 hover:bg-surface-hover"
+                    >
+                      <Wrench className="size-3 shrink-0 text-cyan" />
+                      <span className="truncate flex-1 font-mono text-[11px] text-foreground">
+                        {t.name}
+                      </span>
+                      <Plus className="size-2.5 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Catalog Connectors */}
+            {catalog && catalog.connectors.length > 0 && (
+              <div>
+                <p className="eyebrow mb-1.5 text-[10px]">Connectors ({catalog.connectors.length})</p>
+                <div className="max-h-28 custom-scrollbar space-y-1 overflow-y-auto pr-1">
+                  {catalog.connectors.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => addConnectorStep(c)}
+                      title={c.name}
+                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-violet/50 hover:bg-surface-hover"
+                    >
+                      <Plug className="size-3 shrink-0 text-violet" />
+                      <span className="truncate flex-1 text-[11px] text-foreground">
+                        {c.name}
+                      </span>
+                      <Plus className="size-2.5 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </GlassPanel>
 
@@ -479,8 +768,64 @@ export function WorkflowBuilder({
             onConnect={onConnect}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
+            showMinimap={showMinimap}
             className="h-[calc(100vh-19rem)] min-h-[460px] w-full"
-            overlay={<GraphLegend />}
+            overlay={
+              <>
+                <GraphLegend />
+                <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-border bg-background-elevated/90 p-1 backdrop-blur-sm shadow-sm">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2"
+                    onClick={undo}
+                    disabled={past.length === 0}
+                    title="Undo (Ctrl+Z)"
+                  >
+                    <Undo2 className="size-3" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2"
+                    onClick={redo}
+                    disabled={future.length === 0}
+                    title="Redo (Ctrl+Y)"
+                  >
+                    <Redo2 className="size-3" />
+                  </Button>
+                  <div className="h-3 w-px bg-border mx-0.5" />
+                  <Button
+                    size="sm"
+                    variant={direction === "LR" ? "secondary" : "ghost"}
+                    className="h-7 px-2 text-xs"
+                    onClick={() => applyAutoLayout("LR")}
+                    title="Horizontal auto-layout"
+                  >
+                    <Columns className="size-3" /> LR
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={direction === "TB" ? "secondary" : "ghost"}
+                    className="h-7 px-2 text-xs"
+                    onClick={() => applyAutoLayout("TB")}
+                    title="Vertical auto-layout"
+                  >
+                    <Rows className="size-3" /> TB
+                  </Button>
+                  <div className="h-3 w-px bg-border mx-0.5" />
+                  <Button
+                    size="sm"
+                    variant={showMinimap ? "secondary" : "ghost"}
+                    className="h-7 px-2"
+                    onClick={() => setShowMinimap(!showMinimap)}
+                    title="Toggle minimap"
+                  >
+                    <Map className="size-3" />
+                  </Button>
+                </div>
+              </>
+            }
           />
         </GlassPanel>
 
@@ -550,6 +895,64 @@ export function WorkflowBuilder({
           </div>
         </GlassPanel>
       ) : null}
+
+      <CreateAgentModal
+        open={showAgentModal}
+        onOpenChange={setShowAgentModal}
+        models={catalog?.models ?? ["mistral-large-latest", "mistral-small-latest", "codestral-latest"]}
+        tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
+        tools={catalog?.tools ?? []}
+        onCreated={(agentId) => {
+          qc.invalidateQueries({ queryKey: QK.builderCatalog() });
+          qc.invalidateQueries({ queryKey: QK.agents() });
+          toast.success("Agent created");
+          const id = uniqueStepId(definition.steps.map((s) => s.id), "agent");
+          const step: WorkflowStep = {
+            id,
+            type: "agent",
+            tier: null,
+            config: { agent_id: agentId, query_template: "" },
+            next_steps: [],
+            description: "",
+            parallel_group: null,
+          };
+          update((d) => ({
+            ...d,
+            steps: [...d.steps, step],
+            entry_step: d.entry_step || id,
+          }));
+          setSelectedId(id);
+        }}
+      />
+
+      {synthesizeKind && (
+        <CreateToolModal
+          open={Boolean(synthesizeKind)}
+          onOpenChange={(open) => !open && setSynthesizeKind(null)}
+          purpose={synthesizeKind}
+          onCreated={(toolName) => {
+            qc.invalidateQueries({ queryKey: QK.builderCatalog() });
+            qc.invalidateQueries({ queryKey: QK.tools() });
+            toast.success(`${synthesizeKind === "activity" ? "Activity" : "Tool"} created`);
+            const id = uniqueStepId(definition.steps.map((s) => s.id), "tool");
+            const step: WorkflowStep = {
+              id,
+              type: "tool",
+              tier: null,
+              config: { tool_name: toolName, arguments: {} },
+              next_steps: [],
+              description: "",
+              parallel_group: null,
+            };
+            update((d) => ({
+              ...d,
+              steps: [...d.steps, step],
+              entry_step: d.entry_step || id,
+            }));
+            setSelectedId(id);
+          }}
+        />
+      )}
     </div>
   );
 }

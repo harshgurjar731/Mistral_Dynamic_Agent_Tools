@@ -2,10 +2,9 @@ import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plug, Plus, Search, Trash2, ArrowRight, Loader2 } from "lucide-react";
+import { Plug, Plus, Search, Trash2, Loader2, Wrench, Shield, Eye, FolderOpen } from "lucide-react";
 import { connectorsApi, QK, errorMessage } from "@/api";
 import type { Connector } from "@/types";
-import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -53,84 +53,120 @@ function ConnectorCard({ connector }: { connector: Connector }) {
   });
 
   return (
-    <GlassPanel className="group flex min-h-[230px] flex-col p-5">
-      <div className="flex items-start gap-3">
-        {connector.icon_url ? (
-          <img
-            src={connector.icon_url}
-            alt=""
-            className="size-10 shrink-0 rounded-md border border-border object-cover"
-          />
-        ) : (
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30 transition-colors group-hover:border-primary/40">
-            <Plug className="size-4 text-muted-foreground" />
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-display text-sm font-bold text-foreground">
-            {connector.title ?? connector.name}
-          </p>
-          <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-            {connector.description}
-          </p>
-        </div>
-      </div>
+    <div
+      className="group relative flex flex-col rounded-2xl border border-border/60 backdrop-blur-md transition-all duration-300 hover:border-primary/30 hover:shadow-[0_0_32px_-8px_var(--primary)]"
+      style={{ background: "var(--surface)" }}
+    >
+      {/* Hover glow accent */}
+      <div
+        className="pointer-events-none absolute -inset-px rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        style={{
+          background: "linear-gradient(135deg, oklch(0.65 0.18 200 / 0.06), oklch(0.71 0.14 220 / 0.04), transparent 70%)",
+        }}
+      />
 
-      <div className="mt-5 flex flex-wrap items-center gap-1.5">
-        <span className="rounded border border-border bg-muted/30 px-2 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
-          {connector.protocol}
-        </span>
-        <span className="rounded border border-border bg-muted/30 px-2 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
-          {visibilityLabel(String(connector.visibility))}
-        </span>
-        {connector.is_directory ? (
+      {/* Full-card clickable link */}
+      <Link
+        to="/connectors/$id"
+        params={{ id: connector.id }}
+        className="absolute inset-0 z-0 rounded-2xl"
+        aria-label={connector.title ?? connector.name}
+      />
+
+      <div className="pointer-events-none relative z-[1] flex flex-col p-5">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          {connector.icon_url ? (
+            <img
+              src={connector.icon_url}
+              alt=""
+              className="size-11 shrink-0 rounded-xl border border-border/60 object-cover transition-all duration-300 group-hover:border-primary/30 group-hover:shadow-[0_0_12px_-4px_var(--primary)]"
+            />
+          ) : (
+            <div
+              className={cn(
+                "grid size-11 shrink-0 place-items-center rounded-xl border transition-all duration-300",
+                "border-border/60 bg-background-elevated text-muted-foreground",
+                "group-hover:border-primary/30 group-hover:bg-primary/10 group-hover:text-primary group-hover:shadow-[0_0_12px_-4px_var(--primary)]",
+              )}
+            >
+              <Plug className="size-5" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-sm font-semibold text-foreground">
+                {connector.title ?? connector.name}
+              </h3>
+              <StatusPill
+                identity={
+                  connector.active
+                    ? { label: "Active", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30", pulse: true }
+                    : { label: "Inactive", text: "text-slate", bg: "bg-slate/10", border: "border-slate/30" }
+                }
+                size="xs"
+              />
+            </div>
+            <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground/70">
+              {connector.description || "No description provided"}
+            </p>
+          </div>
+        </div>
+
+        {/* Badges */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-md border border-blue/20 bg-blue/8 px-1.5 py-0.5 font-mono text-[10px] text-blue uppercase">
+            {connector.protocol}
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-indigo/20 bg-indigo/8 px-1.5 py-0.5 text-[10px] font-medium text-indigo">
+            <Eye className="size-2.5" />
+            {visibilityLabel(String(connector.visibility))}
+          </span>
           <StatusPill
-            identity={{ label: "Directory", text: "text-cyan", bg: "bg-cyan/10", border: "border-cyan/30" }}
+            identity={
+              connector.is_authenticated
+                ? { label: "Authenticated", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30" }
+                : { label: "Not authenticated", text: "text-amber", bg: "bg-amber/10", border: "border-amber/30" }
+            }
             size="xs"
           />
-        ) : null}
-        <StatusPill
-          identity={
-            connector.is_authenticated
-              ? { label: "Authenticated", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30" }
-              : { label: "Not authenticated", text: "text-amber", bg: "bg-amber/10", border: "border-amber/30" }
-          }
-          size="xs"
-        />
-        <StatusPill
-          identity={
-            connector.active
-              ? { label: "Active", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30", pulse: true }
-              : { label: "Inactive", text: "text-slate", bg: "bg-slate/10", border: "border-slate/30" }
-          }
-          size="xs"
-        />
-        {connector.tool_count != null ? (
-          <span className="rounded border border-border bg-muted/30 px-2 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
-            {connector.tool_count} tools
-          </span>
-        ) : null}
-      </div>
+          {connector.is_directory && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-cyan/20 bg-cyan/8 px-1.5 py-0.5 text-[10px] font-medium text-cyan">
+              <FolderOpen className="size-2.5" />
+              Directory
+            </span>
+          )}
+          {connector.tool_count != null && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-pink/20 bg-pink/8 px-1.5 py-0.5 text-[10px] font-medium text-pink">
+              <Wrench className="size-2.5" />
+              {connector.tool_count} tool{connector.tool_count !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
 
-      <div className="mt-auto flex items-center gap-2 border-t border-border pt-4">
-        <Button size="sm" variant="outline" asChild>
-          <Link to="/connectors/$id" params={{ id: connector.id }}>
-            Open <ArrowRight className="size-3.5" />
-          </Link>
-        </Button>
-        {!connector.is_directory ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="ml-auto text-red hover:text-red"
-            onClick={() => remove.mutate()}
-            disabled={remove.isPending}
-          >
-            {remove.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-          </Button>
-        ) : null}
+        {/* Footer */}
+        <div className="mt-3.5 flex items-center border-t border-border/40 pt-3.5">
+          <span className="text-[10px] text-muted-foreground/40 italic">
+            {connector.name}
+          </span>
+          {!connector.is_directory && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.confirm(`Delete connector "${connector.name}"?`)) {
+                  remove.mutate();
+                }
+              }}
+              className="pointer-events-auto ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium text-red/50 opacity-0 transition hover:bg-red/10 hover:text-red group-hover:opacity-100"
+            >
+              {remove.isPending ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+            </button>
+          )}
+        </div>
       </div>
-    </GlassPanel>
+    </div>
   );
 }
 
@@ -230,61 +266,140 @@ function ConnectorsIndexPage() {
     return Array.from(set);
   }, [query.data]);
 
+  const totalConnectors = (query.data?.items ?? []).length;
+  const activeCount = (query.data?.items ?? []).filter((c) => c.active).length;
+
   return (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-5 border-b border-border pb-6">
+    <div className="px-6 py-8">
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="technical-label mb-2">Infrastructure / Registry</p>
-          <h1 className="font-display text-2xl font-bold text-foreground">Connectors</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Mistral Connectors — MCP servers registered with Mistral, which holds their
-            credentials and runs their tools. Distinct from the MCP Servers registry; the two
-            share no state.
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Connector <span className="text-gradient-brand">Registry</span>
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Manage MCP connectors registered with Mistral.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="size-3.5" /> New Connector
-        </Button>
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+        >
+          <Plus className="size-4" />
+          New Connector
+        </button>
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-3 border-b border-border pb-5">
-        <div className="relative min-w-64 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search connectors…"
+      {/* ── Stats Bar ── */}
+      {totalConnectors > 0 && (
+        <div className="mt-5 flex items-center gap-4 rounded-xl border border-border/40 bg-surface/30 px-4 py-2.5 backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <div className="grid size-6 place-items-center rounded-md bg-primary/10 text-primary">
+              <Plug className="size-3" />
+            </div>
+            <span className="text-xs font-medium text-foreground">{totalConnectors}</span>
+            <span className="text-[10px] text-muted-foreground/60">connectors</span>
+          </div>
+          <div className="h-4 w-px bg-border/40" />
+          <div className="flex items-center gap-2">
+            <div className="grid size-6 place-items-center rounded-md bg-emerald/10 text-emerald">
+              <Shield className="size-3" />
+            </div>
+            <span className="text-xs font-medium text-foreground">{activeCount}</span>
+            <span className="text-[10px] text-muted-foreground/60">active</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Filters ── */}
+      <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-border/40 bg-surface/20 px-4 py-3 backdrop-blur-sm">
+        <div className="relative max-w-sm flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            placeholder="Search connectors…"
+            className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
-        {visibilities.length > 1 ? (
+        {visibilities.length > 1 && (
           <div className="flex flex-wrap gap-1.5">
-            <Button size="sm" variant={visibility === "all" ? "secondary" : "outline"} onClick={() => setVisibility("all")}>
+            <button
+              type="button"
+              onClick={() => setVisibility("all")}
+              className={cn(
+                "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                visibility === "all"
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border/60 bg-background-elevated text-muted-foreground hover:border-primary/20 hover:text-foreground",
+              )}
+            >
               All
-            </Button>
+            </button>
             {visibilities.map((v) => (
-              <Button
+              <button
                 key={v}
-                size="sm"
-                variant={visibility === v ? "secondary" : "outline"}
+                type="button"
                 onClick={() => setVisibility(v)}
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                  visibility === v
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border/60 bg-background-elevated text-muted-foreground hover:border-primary/20 hover:text-foreground",
+                )}
               >
                 {visibilityLabel(v)}
-              </Button>
+              </button>
             ))}
           </div>
-        ) : null}
+        )}
+
+        {totalConnectors > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
+            {filtered.length} of {totalConnectors} connector{totalConnectors !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
-      <div className="mt-6">
+      {/* ── Grid ── */}
+      <div className="mt-8">
         {query.isLoading ? (
           <CardGridSkeleton />
         ) : query.isError ? (
           <ErrorState error={query.error} title="Could not load connectors." onRetry={() => query.refetch()} />
         ) : filtered.length === 0 ? (
-          <EmptyState icon={<Plug className="size-6" />} title="No connectors found." />
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 py-20 text-center">
+            <div className="relative mb-5">
+              <div
+                className="absolute -inset-8 rounded-full opacity-15 blur-2xl"
+                style={{ background: "var(--gradient-brand)" }}
+              />
+              <div className="relative grid size-14 place-items-center rounded-2xl border border-border/60 glass">
+                <Plug className="size-6 text-primary" />
+              </div>
+            </div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              No connectors found
+            </h2>
+            <p className="mt-1.5 max-w-sm text-xs text-muted-foreground">
+              {search || visibility !== "all"
+                ? "Try adjusting your filters or search query."
+                : "Register your first connector to get started."}
+            </p>
+            {!search && visibility === "all" && (
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+              >
+                <Plus className="size-4" />
+                New Connector
+              </button>
+            )}
+          </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filtered.map((c) => (
               <ConnectorCard key={c.id} connector={c} />
             ))}
@@ -292,23 +407,23 @@ function ConnectorsIndexPage() {
         )}
       </div>
 
+      {/* ── Pagination ── */}
       {query.data?.next_cursor || pageStack.length > 1 ? (
-        <div className="mt-6 flex items-center justify-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
+        <div className="mt-8 flex items-center justify-center gap-3">
+          <button
+            type="button"
             disabled={pageStack.length <= 1}
             onClick={() => {
               const next = pageStack.slice(0, -1);
               setPageStack(next);
               setCursor(next[next.length - 1]);
             }}
+            className="rounded-xl border border-border/60 bg-surface/30 px-4 py-2 text-xs font-medium text-muted-foreground backdrop-blur-sm transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground disabled:opacity-40"
           >
             Previous
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
+          </button>
+          <button
+            type="button"
             disabled={!query.data?.next_cursor}
             onClick={() => {
               const nc = query.data?.next_cursor ?? undefined;
@@ -316,9 +431,10 @@ function ConnectorsIndexPage() {
               setPageStack((s) => [...s, nc]);
               setCursor(nc);
             }}
+            className="rounded-xl border border-border/60 bg-surface/30 px-4 py-2 text-xs font-medium text-muted-foreground backdrop-blur-sm transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground disabled:opacity-40"
           >
             Next
-          </Button>
+          </button>
         </div>
       ) : null}
 

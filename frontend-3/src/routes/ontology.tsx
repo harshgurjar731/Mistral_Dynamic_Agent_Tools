@@ -7,6 +7,10 @@ import { VocabularyTab } from "@/components/ontology/VocabularyTab";
 import { AnnotationsTab } from "@/components/ontology/AnnotationsTab";
 import { KnowledgeTab } from "@/components/ontology/KnowledgeTab";
 import { ScopeTab } from "@/components/ontology/ScopeTab";
+import { RagTab } from "@/components/ontology/RagTab";
+import { RetrievalTab } from "@/components/ontology/RetrievalTab";
+import { QueryTab } from "@/components/ontology/QueryTab";
+import { RulesTab } from "@/components/ontology/RulesTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorState } from "@/components/ui/ErrorState";
 
@@ -64,6 +68,10 @@ function OntologyPage() {
       <Tabs defaultValue="overview">
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="libraries">Libraries (Graph RAG)</TabsTrigger>
+          <TabsTrigger value="retrieval">Retrieval Bench</TabsTrigger>
+          <TabsTrigger value="query">Cypher Console</TabsTrigger>
+          <TabsTrigger value="rules">Governance Rules</TabsTrigger>
           <TabsTrigger value="vocabulary">Vocabulary</TabsTrigger>
           <TabsTrigger value="annotations">Annotations</TabsTrigger>
           <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
@@ -72,6 +80,18 @@ function OntologyPage() {
 
         <TabsContent value="overview" className="mt-4">
           <OverviewTab />
+        </TabsContent>
+        <TabsContent value="libraries" className="mt-4">
+          <RagTab />
+        </TabsContent>
+        <TabsContent value="retrieval" className="mt-4">
+          <RetrievalTab />
+        </TabsContent>
+        <TabsContent value="query" className="mt-4">
+          <QueryTab />
+        </TabsContent>
+        <TabsContent value="rules" className="mt-4">
+          <RulesTab />
         </TabsContent>
         <TabsContent value="vocabulary" className="mt-4">
           <VocabularyTab />

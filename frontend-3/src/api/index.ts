@@ -109,13 +109,20 @@ export async function uploadImage(file: File): Promise<UploadResult> {
 /* ── Tools ──────────────────────────────────────────────────────────── */
 export const toolsApi = {
   list: () => get<Tool[]>("/api/tools"),
+  get: (id: string | number) => get<Tool>(`/api/tools/${id}`),
   pending: () => get<{ tools: Tool[]; count: number }>("/api/tools/pending"),
-  synthesize: (task: string) => post<unknown>("/api/tools/synthesize", { task }),
+  synthesize: (task: string, purpose: "tool" | "activity" = "tool") =>
+    post<{ status?: string; tool_name?: string; message?: string }>("/api/tools/synthesize", { task, purpose }),
   approve: (id: string | number) => post<unknown>(`/api/tools/${id}/approve`),
   reject: (id: string | number) => post<unknown>(`/api/tools/${id}/reject`),
-  update: (id: string | number, body: { source_code: string; description: string }) =>
-    put<unknown>(`/api/tools/${id}`, body),
+  update: (
+    id: string | number,
+    body: { source_code?: string; description?: string; purpose?: string },
+  ) => put<unknown>(`/api/tools/${id}`, body),
   remove: (id: string | number) => del<unknown>(`/api/tools/${id}`),
+  delete: (id: string | number) => del<unknown>(`/api/tools/${id}`),
+  execute: (name: string, args: Record<string, unknown> = {}) =>
+    post<unknown>(`/api/tools/execute/${name}`, { arguments: args }),
   byHash: (hash: string) => get<Tool>(`/api/tools/by-hash/${hash}`),
   publishMcp: (id: string | number, serverName: string) =>
     post<unknown>(`/api/tools/${id}/publish-mcp`, { server_name: serverName }),
@@ -263,8 +270,12 @@ export const ontologyApi = {
       limit: 500,
       ...params,
     }),
+  /** Backend wraps the map: `{ subject_type, annotations: { [subjectId]: AnnotationMap } }`. */
   annotationsBulk: (body: { subject_type: string; subject_ids: string[] }) =>
-    post<Record<string, AnnotationMap>>("/api/ontology/annotations/bulk", body),
+    post<{ subject_type: string; annotations: Record<string, AnnotationMap> }>(
+      "/api/ontology/annotations/bulk",
+      body,
+    ).then((res) => res.annotations ?? {}),
   annotationsFor: (subjectType: string, subjectId: string) =>
     get<AnnotationMap | { annotations: AnnotationMap }>(
       `/api/ontology/annotations/${subjectType}/${subjectId}`,
@@ -347,6 +358,22 @@ export const ontologyApi = {
       unchanged: number;
       failed: number;
     }>("/api/ontology/knowledge/attach-tool"),
+  rules: (status?: string) =>
+    get<{ rules: any[]; count: number }>("/api/ontology/rules", status ? { status } : {}),
+  createRule: (body: unknown) => post<any>("/api/ontology/rules", body),
+  updateRule: (id: string, body: unknown) =>
+    patch<any>(`/api/ontology/rules/${encodeURIComponent(id)}`, body),
+  approveRule: (id: string) =>
+    post<any>(`/api/ontology/rules/${encodeURIComponent(id)}/approve`),
+  deleteRule: (id: string) => del<unknown>(`/api/ontology/rules/${encodeURIComponent(id)}`),
+  ruleExceptions: (ruleId: string) =>
+    get<{ exceptions: any[]; count: number }>(
+      `/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`,
+    ),
+  addRuleException: (ruleId: string, body: unknown) =>
+    post<any>(`/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`, body),
+  deleteRuleException: (exceptionId: string | number) =>
+    del<unknown>(`/api/ontology/rules/exceptions/${exceptionId}`),
 };
 
 
@@ -372,7 +399,22 @@ export const workflowsApi = {
   script: (name: string) => get<ScriptResult>(`/api/workflows/${name}/script`),
   publish: (name: string) => post<Record<string, unknown>>(`/api/workflows/${name}/publish`),
   register: (name: string) => post<Record<string, unknown>>(`/api/workflows/${name}/register`),
+  exportToMistral: (name: string) =>
+    post<{ success?: boolean; file_path?: string; error?: string }>(
+      `/api/workflows/${name}/export`,
+      {},
+    ),
   exportLegacy: (name: string) => post<unknown>(`/api/workflows/${name}/export`),
+  getDeploymentManifest: (name: string) =>
+    get<any>(`/api/workflows/${name}/deployment/manifest`),
+  deploymentPackageUrl: (name: string) => `/api/workflows/${name}/deployment/package`,
+  uploadImage: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/uploads/image", { method: "POST", body: form });
+    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+    return unwrapJson(await res.json());
+  },
   catalog: () => get<BuilderCatalog>("/api/workflows/builder/catalog"),
   archive: (name: string) => put<unknown>(`/api/workflows/${name}/archive`),
   unarchive: (name: string) => put<unknown>(`/api/workflows/${name}/unarchive`),
@@ -508,6 +550,49 @@ export const ragApi = {
     get<{ traces: TimelineTrace[] }>("/api/rag/timeline", { limit: 25, ...params }),
   timeline: (traceId: string) =>
     get<{ trace_id: string; events: TimelineEvent[] }>(`/api/rag/timeline/${traceId}`),
+  proposeOntology: (libraryId: string, body?: unknown) =>
+    post<{ draft: unknown; summary?: string }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/propose`,
+      body ?? {},
+    ),
+  approveOntology: (libraryId: string, body?: unknown) =>
+    post<{ status: string; applied?: boolean }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/approve`,
+      body ?? {},
+    ),
+  deleteOntologyDraft: (libraryId: string) =>
+    del<unknown>(`/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology/draft`),
+  getOntology: (libraryId: string) =>
+    get<unknown>(`/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology`),
+  updateOntology: (libraryId: string, body: unknown) =>
+    post<unknown>(`/api/rag/libraries/${encodeURIComponent(libraryId)}/ontology`, body),
+  getDomains: (libraryId: string) =>
+    get<{ library_id: string; domains: string[] }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains`,
+    ),
+  setDomains: (libraryId: string, domains: string[]) =>
+    put<unknown>(`/api/rag/libraries/${encodeURIComponent(libraryId)}/domains`, { domains }),
+  classifyDomains: (libraryId: string) =>
+    post<{ domains: string[]; reasoning?: string }>(
+      `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains/classify`,
+    ),
+  getUnifiedGraph: (params?: Record<string, unknown>) =>
+    get<any>("/api/rag/graph/unified", params),
+  syncTaxonomy: () =>
+    post<{ status: string; concepts_synced?: number }>("/api/rag/graph/sync-taxonomy"),
+  queryCypher: (query: string, params?: Record<string, unknown>, limit = 100) =>
+    post<{
+      columns: string[];
+      rows: Record<string, unknown>[];
+      nodes?: any[];
+      edges?: any[];
+      execution_time_ms?: number;
+      count?: number;
+    }>("/api/rag/graph/query", { query, params, limit }),
+  syncAgents: () =>
+    post<{ status: string; synced?: number }>("/api/rag/agents/sync"),
+  timelineStreamUrl: (traceId: string) =>
+    `/api/rag/timeline/${encodeURIComponent(traceId)}/stream`,
 };
 
 function unwrapJson<T>(data: T): T {

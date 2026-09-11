@@ -99,6 +99,24 @@ async def get_tool_by_hash(hash: str):
     return await tool_resolver.get_tool_by_content_hash(hash)
 
 
+@router.get("/tools/{tool_id}")
+async def get_tool(tool_id: str):
+    """Single tool (dynamic, native, built-in, or pending) for the tool/activity detail pages."""
+    from fastapi import HTTPException
+
+    for tool in await list_all_tools():
+        if str(tool.get("id")) == tool_id:
+            return tool
+
+    pending = await tool_resolver.get_pending_tools()
+    pending_tools = pending if isinstance(pending, list) else (pending or {}).get("tools", [])
+    for tool in pending_tools:
+        if str(tool.get("id")) == tool_id:
+            return tool
+
+    raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found.")
+
+
 # ── Synthesis ──────────────────────────────────────────────────────────────
 
 @router.post("/tools/synthesize")

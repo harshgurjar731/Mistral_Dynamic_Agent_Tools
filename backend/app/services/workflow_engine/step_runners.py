@@ -415,10 +415,26 @@ def _as_data(value, lenient: bool = False):
     return value
 
 
+_SCHEMA_ECHO_KEYS = {"type", "description", "value"}
+
+
 def _unwrap(value):
-    """Strip the ``{"status": "success", "data": ...}`` envelope tools return."""
+    """Strip the envelopes tools wrap their data in.
+
+    ``{"status": "success", "data": ...}`` is the standard tool envelope.
+    ``{"type": "string", "description": ..., "value": ...}`` is a synthesized
+    tool echoing its output *schema* around the value — validate_input_safety
+    returns its pass-through text that way — so the data is the ``value``.
+    """
     if isinstance(value, dict) and value.get("status") == "success" and "data" in value:
         return value["data"]
+    if (
+        isinstance(value, dict)
+        and "value" in value
+        and isinstance(value.get("type"), str)
+        and set(value) <= _SCHEMA_ECHO_KEYS
+    ):
+        return value["value"]
     return value
 
 
@@ -487,6 +503,14 @@ def _coerce(value, expected: str | None):
     if expected in ("object", "array"):
         return _unwrap(_as_data(value, lenient=True))
     if expected == "string":
+        # A gate or pass-through step returns its text as one named field —
+        # {"validated_claim_input": "..."} — and the next step references the
+        # whole output. Hand the text through: a JSON dump of the wrapper left
+        # the next tool looking for its fields under a key it had never heard of.
+        if isinstance(value, dict) and len(value) == 1:
+            inner = _unwrap(next(iter(value.values())))
+            if isinstance(inner, str):
+                return inner
         if isinstance(value, (dict, list)):
             return json.dumps(value)
         return value if isinstance(value, str) else str(value)

@@ -47,8 +47,11 @@ export function Sidebar({
     [sessions],
   );
 
-  const isActive = (to: string) =>
+  const matches = (to: string) =>
     to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
+  // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
+  const activeTo = NAV_ITEMS.filter((i) => matches(i.to)).sort((a, b) => b.to.length - a.to.length)[0]?.to;
+  const isActive = (to: string) => to === activeTo;
 
   const showLabels = !collapsed;
 

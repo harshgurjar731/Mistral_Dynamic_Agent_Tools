@@ -1,6 +1,34 @@
 /* Shared models — mirror the backend Pydantic models. Copied from the spec. */
 
 /* ── Agents ─────────────────────────────────────────────────────────── */
+export interface GuardrailCategoryThresholds {
+  sexual?: number | null;
+  hate_and_discrimination?: number | null;
+  violence_and_threats?: number | null;
+  dangerous?: number | null;
+  criminal?: number | null;
+  dangerous_and_criminal_content?: number | null;
+  selfharm?: number | null;
+  health?: number | null;
+  financial?: number | null;
+  law?: number | null;
+  pii?: number | null;
+  jailbreaking?: number | null;
+}
+
+export interface GuardrailModerationConfig {
+  model_name?: string | null;
+  custom_category_thresholds?: GuardrailCategoryThresholds | null;
+  ignore_other_categories?: boolean;
+  action?: "none" | "block" | null;
+}
+
+export interface GuardrailConfig {
+  block_on_error?: boolean;
+  moderation_llm_v1?: GuardrailModerationConfig | null;
+  moderation_llm_v2?: GuardrailModerationConfig | null;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -20,6 +48,7 @@ export interface Agent {
   frequency_penalty?: number | null;
   presence_penalty?: number | null;
   document_library_ids?: string[];
+  guardrails?: GuardrailConfig | null;
 }
 
 export interface PaginatedAgents {
@@ -162,6 +191,8 @@ export interface Tool {
   mcp_published?: boolean;
   mcp_server_name?: string | null;
   created_at?: string;
+  purpose?: string;
+  kind?: string;
 }
 
 /* ── Executions ─────────────────────────────────────────────────────── */

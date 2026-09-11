@@ -7,6 +7,7 @@ import type { StepFlowEdge, StepFlowNode } from "./types";
 export function stepsToGraph(
   definition: Pick<WorkflowDefinition, "steps" | "entry_step" | "ui_layout">,
   issues: ValidationIssue[] = [],
+  direction: "LR" | "TB" = "LR",
 ): { nodes: StepFlowNode[]; edges: StepFlowEdge[] } {
   const layout = definition.ui_layout ?? {};
   const hasLayout = Object.keys(layout).length > 0;
@@ -38,7 +39,7 @@ export function stepsToGraph(
     })),
   );
 
-  if (!hasLayout) nodes = layoutGraph(nodes, edges, "LR");
+  if (!hasLayout) nodes = layoutGraph(nodes, edges, direction);
 
   return { nodes, edges };
 }

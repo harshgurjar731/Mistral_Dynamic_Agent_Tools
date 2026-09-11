@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Library as LibraryIcon, Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { errorMessage, librariesApi, QK } from "@/api";
+import type { Library } from "@/types";
 import { PageHeader, StatTile } from "@/components/shared/PageHeader";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { DocumentsPanel, LibraryList } from "@/components/libraries/LibraryPanels";
@@ -46,6 +47,10 @@ function LibrariesPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
+  const [renamingLib, setRenamingLib] = useState<Library | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameDesc, setRenameDesc] = useState("");
+
   const libs = useQuery({ queryKey: QK.libraries(), queryFn: librariesApi.list });
 
   const create = useMutation({
@@ -57,6 +62,17 @@ function LibrariesPage() {
       setDescription("");
       qc.invalidateQueries({ queryKey: QK.libraries() });
       if (lib?.id) setSelectedId(lib.id);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const rename = useMutation({
+    mutationFn: () =>
+      librariesApi.update(renamingLib!.id, { name: renameName, description: renameDesc }),
+    onSuccess: () => {
+      toast.success("Library updated.");
+      setRenamingLib(null);
+      qc.invalidateQueries({ queryKey: QK.libraries() });
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -86,6 +102,12 @@ function LibrariesPage() {
   );
 
   const totalDocs = (libs.data ?? []).reduce((n, l) => n + (l.document_count ?? 0), 0);
+
+  const startRename = (lib: Library) => {
+    setRenamingLib(lib);
+    setRenameName(lib.name);
+    setRenameDesc(lib.description || "");
+  };
 
   return (
     <div className="space-y-6 px-6 py-8">
@@ -148,14 +170,19 @@ function LibrariesPage() {
                 onSelect={setSelectedId}
                 onDelete={(id) => remove.mutate(id)}
                 deletingId={remove.isPending ? (remove.variables ?? null) : null}
+                onRename={startRename}
               />
             )}
           </div>
         </GlassPanel>
 
-        <DocumentsPanel library={selected} />
+        <DocumentsPanel
+          library={selected}
+          onRenameLibrary={() => selected && startRename(selected)}
+        />
       </div>
 
+      {/* New library dialog */}
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent>
           <DialogHeader>
@@ -191,6 +218,50 @@ function LibrariesPage() {
                 <LibraryIcon className="size-4" />
               )}
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename library dialog */}
+      <Dialog open={Boolean(renamingLib)} onOpenChange={(open) => !open && setRenamingLib(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Library</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="eyebrow mb-1.5 block">Name</label>
+              <Input
+                value={renameName}
+                placeholder="Library name"
+                onChange={(e) => setRenameName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="eyebrow mb-1.5 block">Description</label>
+              <Textarea
+                rows={3}
+                value={renameDesc}
+                placeholder="Description"
+                onChange={(e) => setRenameDesc(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenamingLib(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => rename.mutate()}
+              disabled={!renameName.trim() || rename.isPending}
+            >
+              {rename.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <LibraryIcon className="size-4" />
+              )}
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

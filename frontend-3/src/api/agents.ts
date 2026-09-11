@@ -10,6 +10,13 @@ export interface AgentCreate {
   tools?: unknown[];
   document_library_ids?: string[];
   connectors?: Agent["connectors"];
+  temperature?: number | null;
+  top_p?: number | null;
+  max_tokens?: number | null;
+  random_seed?: number | null;
+  frequency_penalty?: number | null;
+  presence_penalty?: number | null;
+  guardrails?: Agent["guardrails"];
 }
 
 export type AgentPatch = Partial<
@@ -29,6 +36,7 @@ export type AgentPatch = Partial<
     | "tools"
     | "document_library_ids"
     | "connectors"
+    | "guardrails"
   >
 >;
 

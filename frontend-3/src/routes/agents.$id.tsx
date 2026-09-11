@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plug, Save, Settings2, Trash2, Wrench, X } from "lucide-react";
+import { ArrowLeft, Bot, Globe, MessageSquare, Plug, Save, Settings2, Sparkles, Trash2, Wrench, X } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -21,6 +21,7 @@ import { AttachmentControl } from "@/components/chat/AttachmentChip";
 import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
 import { TierSelector } from "@/components/chat/TierSelector";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
+import { GuardrailEditor } from "@/components/agents/GuardrailEditor";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
@@ -28,7 +29,7 @@ import { Slider } from "@/components/ui/slider";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import type { ChatMessagePayload } from "@/api";
-import type { Concept, ConnectorRef, Message, UploadResult } from "@/types";
+import type { Concept, ConnectorRef, GuardrailConfig, Message, UploadResult } from "@/types";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -75,6 +76,7 @@ interface ConfigForm {
   toolNames: string[];
   connectorIds: string[];
   libraryIds: string[];
+  guardrails: GuardrailConfig | null;
 }
 
 function AgentsIdPage() {
@@ -116,7 +118,8 @@ function AgentsIdPage() {
   const currentDomains = annotationMap?.serves_domain ?? [];
 
   const [form, setForm] = useState<ConfigForm | null>(null);
-  const [configOpen, setConfigOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   useEffect(() => {
     if (!agentQuery.data) return;
@@ -136,6 +139,7 @@ function AgentsIdPage() {
       toolNames: (a.tools ?? []).map(toolName).filter(Boolean),
       connectorIds: (a.connectors ?? []).map((c) => c.connector_id),
       libraryIds: a.document_library_ids ?? [],
+      guardrails: a.guardrails ?? null,
     });
   }, [agentQuery.data]);
 
@@ -205,6 +209,10 @@ function AgentsIdPage() {
       patch.document_library_ids = form.libraryIds;
     }
 
+    if (JSON.stringify(form.guardrails) !== JSON.stringify(a.guardrails ?? null)) {
+      patch.guardrails = form.guardrails;
+    }
+
     if (Object.keys(patch).length === 0) {
       toast.info("No changes to save");
       return;
@@ -248,7 +256,10 @@ function AgentsIdPage() {
     const sid = createSession("agent", id);
     void navigate({ search: { session: sid } });
   };
-  const handleSelectSession = (sid: string) => void navigate({ search: { session: sid } });
+  const handleSelectSession = (sid: string) => {
+    void navigate({ search: { session: sid } });
+    setSessionsOpen(false);
+  };
   const handleDeleteSession = (sid: string) => {
     removeSession(sid);
     if (sid === sessionId) {
@@ -368,94 +379,161 @@ function AgentsIdPage() {
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div className="min-w-0">
-          <Link
-            to="/agents"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="size-3" />
-            Agent Studio
-          </Link>
-          <h1 className="mt-1 truncate text-lg font-semibold tracking-tight text-foreground">
-            {agent.name}
-          </h1>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {!agent.protected ? (
-            <button
-              type="button"
-              onClick={() => window.confirm(`Delete agent "${agent.name}"?`) && deleteMutation.mutate()}
-              disabled={deleteMutation.isPending}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-red/25 px-3 py-1.5 text-xs font-medium text-red transition hover:bg-red/10 disabled:opacity-50"
-            >
-              <Trash2 className="size-3.5" />
-              Delete
-            </button>
-          ) : null}
+      {/* ── Top Bar ── */}
+      <header className="relative z-30 flex items-center gap-3 border-b border-border px-5 py-3">
+        {/* Back + Sessions dropdown */}
+        <Link
+          to="/agents"
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+        >
+          <ArrowLeft className="size-3" />
+          Back
+        </Link>
+
+        <div className="h-5 w-px bg-border/60" />
+
+        <div className="relative">
           <button
             type="button"
-            onClick={() => setConfigOpen((o) => !o)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border glass px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-surface-hover"
+            onClick={() => setSessionsOpen((o) => !o)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition",
+              sessionsOpen
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border/60 text-muted-foreground hover:border-border hover:bg-surface-hover hover:text-foreground",
+            )}
           >
-            <Settings2 className="size-3.5" />
-            Configuration
+            <MessageSquare className="size-3.5" />
+            Sessions
+            {agentSessions.length > 0 && (
+              <span className="rounded bg-surface-elevated px-1 py-0.5 text-[10px] tabular-nums leading-none">
+                {agentSessions.length}
+              </span>
+            )}
           </button>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-64 shrink-0 border-r border-border md:flex">
           <ChatSessionSidebar
             sessions={agentSessions}
             activeId={sessionId ?? null}
             onSelect={handleSelectSession}
             onCreate={handleCreateSession}
             onDelete={handleDeleteSession}
-            className="w-full"
+            open={sessionsOpen}
+            onClose={() => setSessionsOpen(false)}
           />
-        </aside>
+        </div>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="custom-scrollbar flex min-w-0 flex-1 flex-col overflow-y-auto px-6 py-6">
-            {!activeSession || activeSession.messages.length === 0 ? (
-              <EmptyState
-                className="my-auto"
-                title="Start a conversation"
-                description={`Send a message to chat with ${agent.name}.`}
-              />
-            ) : (
-              <MessageList messages={activeSession.messages} />
+        <div className="h-5 w-px bg-border/60" />
+
+        {/* Title + badges */}
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">
+            {agent.name}
+          </h1>
+        </div>
+
+        {/* Model + classification badges (playground-style) */}
+        <div className="hidden items-center gap-2 sm:flex">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue/20 bg-blue/8 px-2 py-1 text-[10px] font-medium text-blue">
+            <Sparkles className="size-3" />
+            {agent.model}
+          </span>
+          {currentDomains.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-indigo/20 bg-indigo/8 px-2 py-1 text-[10px] font-medium text-indigo">
+              <Globe className="size-3" />
+              {currentDomains.length} domain{currentDomains.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Right actions */}
+        <div className="flex items-center gap-2">
+          {!agent.protected && (
+            <button
+              type="button"
+              onClick={() => window.confirm(`Delete agent "${agent.name}"?`) && deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red/20 px-2.5 py-1.5 text-xs font-medium text-red/80 transition hover:border-red/40 hover:bg-red/10 hover:text-red disabled:opacity-50"
+            >
+              <Trash2 className="size-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setConfigOpen((o) => !o)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition",
+              configOpen
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border/60 text-muted-foreground hover:border-border hover:bg-surface-hover hover:text-foreground",
             )}
-            <div ref={bottomRef} />
+          >
+            <Settings2 className="size-3.5" />
+            <span className="hidden sm:inline">Config</span>
+          </button>
+        </div>
+      </header>
+
+      {/* ── Content Row ── */}
+      <div className="flex min-h-0 flex-1">
+        {/* Chat Area */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="custom-scrollbar flex-1 overflow-y-auto">
+            {!activeSession || activeSession.messages.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center px-6 pb-16">
+                <div className="relative mb-6">
+                  <div
+                    className="absolute -inset-8 rounded-full opacity-15 blur-2xl"
+                    style={{ background: "var(--gradient-brand)" }}
+                  />
+                  <div className="relative grid size-14 place-items-center rounded-2xl border border-border/60 glass">
+                    <Bot className="size-6 text-primary" />
+                  </div>
+                </div>
+                <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                  Chat with{" "}
+                  <span className="text-gradient-brand">{agent.name}</span>
+                </h2>
+                <p className="mt-2 max-w-sm text-center text-sm leading-relaxed text-muted-foreground">
+                  Send a message below to start. Open Config to adjust parameters.
+                </p>
+              </div>
+            ) : (
+              <div className="mx-auto w-full max-w-3xl px-6 py-6">
+                <MessageList messages={activeSession.messages} />
+                <div ref={bottomRef} />
+              </div>
+            )}
           </div>
-          <div className="border-t border-border px-6 py-4">
-            <Composer
-              value={input}
-              onChange={setInput}
-              onSubmit={submit}
-              onStop={() => {
-                stopRef.current?.();
-                setIsProcessing(false);
-              }}
-              isProcessing={isProcessing}
-              placeholder={`Message ${agent.name}…`}
-              leading={
-                <AttachmentControl
-                  attachment={attachment}
-                  onAttach={setAttachment}
-                  onClear={() => setAttachment(null)}
-                  uploading={uploading}
-                  setUploading={setUploading}
-                  disabled={isProcessing}
-                />
-              }
-            />
+          <div className="border-t border-border bg-background/80 px-4 py-3 backdrop-blur-md sm:px-6">
+            <div className="mx-auto max-w-3xl">
+              <Composer
+                value={input}
+                onChange={setInput}
+                onSubmit={submit}
+                onStop={() => {
+                  stopRef.current?.();
+                  setIsProcessing(false);
+                }}
+                isProcessing={isProcessing}
+                placeholder={`Message ${agent.name}…`}
+                leading={
+                  <AttachmentControl
+                    attachment={attachment}
+                    onAttach={setAttachment}
+                    onClear={() => setAttachment(null)}
+                    uploading={uploading}
+                    setUploading={setUploading}
+                    disabled={isProcessing}
+                  />
+                }
+              />
+            </div>
           </div>
         </div>
 
         {configOpen ? (
-          <aside className="hidden w-96 shrink-0 overflow-y-auto border-l border-border custom-scrollbar lg:block">
+          <aside className="hidden w-96 shrink-0 overflow-y-auto border-l border-border bg-background/40 backdrop-blur-md custom-scrollbar lg:block">
             <div className="space-y-4 p-5">
               <GlassPanel tone="raised">
                 <GlassPanelHeader
@@ -745,6 +823,11 @@ function AgentsIdPage() {
                   </select>
                 </div>
               </GlassPanel>
+
+              <GuardrailEditor
+                value={form.guardrails}
+                onChange={(g) => setForm({ ...form, guardrails: g })}
+              />
             </div>
           </aside>
         ) : null}
@@ -756,7 +839,7 @@ function AgentsIdPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
       {children}
     </div>
   );

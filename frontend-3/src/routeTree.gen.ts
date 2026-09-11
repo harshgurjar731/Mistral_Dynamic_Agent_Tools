@@ -10,13 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ConversationsRouteImport } from './routes/conversations'
-import { Route as ExecutionsRouteImport } from './routes/executions'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as LibrariesRouteImport } from './routes/libraries'
 import { Route as OntologyRouteImport } from './routes/ontology'
 import { Route as PlaygroundRouteImport } from './routes/playground'
-import { Route as ToolsRouteImport } from './routes/tools'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
@@ -24,12 +21,15 @@ import { Route as ConnectorsIdRouteImport } from './routes/connectors.$id'
 import { Route as McpIndexRouteImport } from './routes/mcp.index'
 import { Route as McpServerNameRouteImport } from './routes/mcp.$serverName'
 import { Route as RemoteServersIdRouteImport } from './routes/remote-servers.$id'
+import { Route as ToolsIndexRouteImport } from './routes/tools.index'
+import { Route as ToolsIdRouteImport } from './routes/tools.$id'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
 import { Route as WorkflowsArchivedRouteImport } from './routes/workflows.archived'
-import { Route as WorkflowsExecutionsRouteImport } from './routes/workflows.executions'
 import { Route as WorkflowsWorkflowNameIndexRouteImport } from './routes/workflows.$workflowName.index'
 import { Route as WorkflowsWorkflowNameEditRouteImport } from './routes/workflows.$workflowName.edit'
 import { Route as WorkflowsWorkflowNameExecuteRouteImport } from './routes/workflows.$workflowName.execute'
+import { Route as WorkflowsActivitiesIndexRouteImport } from './routes/workflows.activities.index'
+import { Route as WorkflowsActivitiesIdRouteImport } from './routes/workflows.activities.$id'
 import { Route as WorkflowsNewIndexRouteImport } from './routes/workflows.new.index'
 import { Route as WorkflowsNewAiRouteImport } from './routes/workflows.new.ai'
 import { Route as WorkflowsNewVisualRouteImport } from './routes/workflows.new.visual'
@@ -37,16 +37,6 @@ import { Route as WorkflowsNewVisualRouteImport } from './routes/workflows.new.v
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConversationsRoute = ConversationsRouteImport.update({
-  id: '/conversations',
-  path: '/conversations',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExecutionsRoute = ExecutionsRouteImport.update({
-  id: '/executions',
-  path: '/executions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HealthRoute = HealthRouteImport.update({
@@ -67,11 +57,6 @@ const OntologyRoute = OntologyRouteImport.update({
 const PlaygroundRoute = PlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ToolsRoute = ToolsRouteImport.update({
-  id: '/tools',
-  path: '/tools',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
@@ -109,6 +94,16 @@ const RemoteServersIdRoute = RemoteServersIdRouteImport.update({
   path: '/remote-servers/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ToolsIndexRoute = ToolsIndexRouteImport.update({
+  id: '/tools/',
+  path: '/tools/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ToolsIdRoute = ToolsIdRouteImport.update({
+  id: '/tools/$id',
+  path: '/tools/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
   id: '/workflows/',
   path: '/workflows/',
@@ -117,11 +112,6 @@ const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
 const WorkflowsArchivedRoute = WorkflowsArchivedRouteImport.update({
   id: '/workflows/archived',
   path: '/workflows/archived',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WorkflowsExecutionsRoute = WorkflowsExecutionsRouteImport.update({
-  id: '/workflows/executions',
-  path: '/workflows/executions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WorkflowsWorkflowNameIndexRoute =
@@ -142,6 +132,17 @@ const WorkflowsWorkflowNameExecuteRoute =
     path: '/workflows/$workflowName/execute',
     getParentRoute: () => rootRouteImport,
   } as any)
+const WorkflowsActivitiesIndexRoute =
+  WorkflowsActivitiesIndexRouteImport.update({
+    id: '/workflows/activities/',
+    path: '/workflows/activities/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const WorkflowsActivitiesIdRoute = WorkflowsActivitiesIdRouteImport.update({
+  id: '/workflows/activities/$id',
+  path: '/workflows/activities/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkflowsNewIndexRoute = WorkflowsNewIndexRouteImport.update({
   id: '/workflows/new/',
   path: '/workflows/new/',
@@ -160,188 +161,188 @@ const WorkflowsNewVisualRoute = WorkflowsNewVisualRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/conversations': typeof ConversationsRoute
-  '/executions': typeof ExecutionsRoute
   '/health': typeof HealthRoute
   '/libraries': typeof LibrariesRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
-  '/tools': typeof ToolsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
-  '/workflows/executions': typeof WorkflowsExecutionsRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
+  '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/conversations': typeof ConversationsRoute
-  '/executions': typeof ExecutionsRoute
   '/health': typeof HealthRoute
   '/libraries': typeof LibrariesRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
-  '/tools': typeof ToolsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
-  '/workflows/executions': typeof WorkflowsExecutionsRoute
   '/agents': typeof AgentsIndexRoute
   '/connectors': typeof ConnectorsIndexRoute
   '/mcp': typeof McpIndexRoute
+  '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameIndexRoute
+  '/workflows/activities': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new': typeof WorkflowsNewIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/conversations': typeof ConversationsRoute
-  '/executions': typeof ExecutionsRoute
   '/health': typeof HealthRoute
   '/libraries': typeof LibrariesRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
-  '/tools': typeof ToolsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
-  '/workflows/executions': typeof WorkflowsExecutionsRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
+  '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/conversations'
-    | '/executions'
     | '/health'
     | '/libraries'
     | '/ontology'
     | '/playground'
-    | '/tools'
     | '/agents/$id'
     | '/connectors/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/tools/$id'
     | '/workflows/archived'
-    | '/workflows/executions'
     | '/agents/'
     | '/connectors/'
     | '/mcp/'
+    | '/tools/'
     | '/workflows/'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
     | '/workflows/$workflowName/'
+    | '/workflows/activities/'
     | '/workflows/new/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/conversations'
-    | '/executions'
     | '/health'
     | '/libraries'
     | '/ontology'
     | '/playground'
-    | '/tools'
     | '/agents/$id'
     | '/connectors/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/tools/$id'
     | '/workflows/archived'
-    | '/workflows/executions'
     | '/agents'
     | '/connectors'
     | '/mcp'
+    | '/tools'
     | '/workflows'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
     | '/workflows/$workflowName'
+    | '/workflows/activities'
     | '/workflows/new'
   id:
     | '__root__'
     | '/'
-    | '/conversations'
-    | '/executions'
     | '/health'
     | '/libraries'
     | '/ontology'
     | '/playground'
-    | '/tools'
     | '/agents/$id'
     | '/connectors/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/tools/$id'
     | '/workflows/archived'
-    | '/workflows/executions'
     | '/agents/'
     | '/connectors/'
     | '/mcp/'
+    | '/tools/'
     | '/workflows/'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
     | '/workflows/$workflowName/'
+    | '/workflows/activities/'
     | '/workflows/new/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ConversationsRoute: typeof ConversationsRoute
-  ExecutionsRoute: typeof ExecutionsRoute
   HealthRoute: typeof HealthRoute
   LibrariesRoute: typeof LibrariesRoute
   OntologyRoute: typeof OntologyRoute
   PlaygroundRoute: typeof PlaygroundRoute
-  ToolsRoute: typeof ToolsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
   McpServerNameRoute: typeof McpServerNameRoute
   RemoteServersIdRoute: typeof RemoteServersIdRoute
+  ToolsIdRoute: typeof ToolsIdRoute
   WorkflowsArchivedRoute: typeof WorkflowsArchivedRoute
-  WorkflowsExecutionsRoute: typeof WorkflowsExecutionsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ConnectorsIndexRoute: typeof ConnectorsIndexRoute
   McpIndexRoute: typeof McpIndexRoute
+  ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
   WorkflowsWorkflowNameEditRoute: typeof WorkflowsWorkflowNameEditRoute
   WorkflowsWorkflowNameExecuteRoute: typeof WorkflowsWorkflowNameExecuteRoute
+  WorkflowsActivitiesIdRoute: typeof WorkflowsActivitiesIdRoute
   WorkflowsNewAiRoute: typeof WorkflowsNewAiRoute
   WorkflowsNewVisualRoute: typeof WorkflowsNewVisualRoute
   WorkflowsWorkflowNameIndexRoute: typeof WorkflowsWorkflowNameIndexRoute
+  WorkflowsActivitiesIndexRoute: typeof WorkflowsActivitiesIndexRoute
   WorkflowsNewIndexRoute: typeof WorkflowsNewIndexRoute
 }
 
@@ -352,20 +353,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/conversations': {
-      id: '/conversations'
-      path: '/conversations'
-      fullPath: '/conversations'
-      preLoaderRoute: typeof ConversationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/executions': {
-      id: '/executions'
-      path: '/executions'
-      fullPath: '/executions'
-      preLoaderRoute: typeof ExecutionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/health': {
@@ -394,13 +381,6 @@ declare module '@tanstack/react-router' {
       path: '/playground'
       fullPath: '/playground'
       preLoaderRoute: typeof PlaygroundRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tools': {
-      id: '/tools'
-      path: '/tools'
-      fullPath: '/tools'
-      preLoaderRoute: typeof ToolsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents/': {
@@ -452,6 +432,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RemoteServersIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tools/': {
+      id: '/tools/'
+      path: '/tools'
+      fullPath: '/tools/'
+      preLoaderRoute: typeof ToolsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tools/$id': {
+      id: '/tools/$id'
+      path: '/tools/$id'
+      fullPath: '/tools/$id'
+      preLoaderRoute: typeof ToolsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/workflows/': {
       id: '/workflows/'
       path: '/workflows'
@@ -464,13 +458,6 @@ declare module '@tanstack/react-router' {
       path: '/workflows/archived'
       fullPath: '/workflows/archived'
       preLoaderRoute: typeof WorkflowsArchivedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workflows/executions': {
-      id: '/workflows/executions'
-      path: '/workflows/executions'
-      fullPath: '/workflows/executions'
-      preLoaderRoute: typeof WorkflowsExecutionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/workflows/$workflowName/': {
@@ -492,6 +479,20 @@ declare module '@tanstack/react-router' {
       path: '/workflows/$workflowName/execute'
       fullPath: '/workflows/$workflowName/execute'
       preLoaderRoute: typeof WorkflowsWorkflowNameExecuteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflows/activities/': {
+      id: '/workflows/activities/'
+      path: '/workflows/activities'
+      fullPath: '/workflows/activities/'
+      preLoaderRoute: typeof WorkflowsActivitiesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflows/activities/$id': {
+      id: '/workflows/activities/$id'
+      path: '/workflows/activities/$id'
+      fullPath: '/workflows/activities/$id'
+      preLoaderRoute: typeof WorkflowsActivitiesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/workflows/new/': {
@@ -520,28 +521,28 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ConversationsRoute: ConversationsRoute,
-  ExecutionsRoute: ExecutionsRoute,
   HealthRoute: HealthRoute,
   LibrariesRoute: LibrariesRoute,
   OntologyRoute: OntologyRoute,
   PlaygroundRoute: PlaygroundRoute,
-  ToolsRoute: ToolsRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
   McpServerNameRoute: McpServerNameRoute,
   RemoteServersIdRoute: RemoteServersIdRoute,
+  ToolsIdRoute: ToolsIdRoute,
   WorkflowsArchivedRoute: WorkflowsArchivedRoute,
-  WorkflowsExecutionsRoute: WorkflowsExecutionsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ConnectorsIndexRoute: ConnectorsIndexRoute,
   McpIndexRoute: McpIndexRoute,
+  ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
   WorkflowsWorkflowNameEditRoute: WorkflowsWorkflowNameEditRoute,
   WorkflowsWorkflowNameExecuteRoute: WorkflowsWorkflowNameExecuteRoute,
+  WorkflowsActivitiesIdRoute: WorkflowsActivitiesIdRoute,
   WorkflowsNewAiRoute: WorkflowsNewAiRoute,
   WorkflowsNewVisualRoute: WorkflowsNewVisualRoute,
   WorkflowsWorkflowNameIndexRoute: WorkflowsWorkflowNameIndexRoute,
+  WorkflowsActivitiesIndexRoute: WorkflowsActivitiesIndexRoute,
   WorkflowsNewIndexRoute: WorkflowsNewIndexRoute,
 }
 export const routeTree = rootRouteImport

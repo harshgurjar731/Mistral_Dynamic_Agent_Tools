@@ -4,13 +4,12 @@ import {
   Cpu,
   GitBranch,
   Library,
-  MessageSquare,
   Network,
   Plug,
-  Radio,
   Server,
   Terminal,
   Wrench,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,15 +20,14 @@ export interface NavItem {
   expandable?: "playground" | "agents";
 }
 
-/** Order matters — matches the spec's navigation table. */
+/** Order matches frontend navigation */
 export const NAV_ITEMS: NavItem[] = [
   { label: "Orchestrator", to: "/", icon: BotMessageSquare },
   { label: "Playground", to: "/playground", icon: Terminal, expandable: "playground" },
   { label: "Agents", to: "/agents", icon: Cpu, expandable: "agents" },
   { label: "Tools", to: "/tools", icon: Wrench },
   { label: "Workflows", to: "/workflows", icon: GitBranch },
-  { label: "Executions", to: "/executions", icon: Radio },
-  { label: "Conversations", to: "/conversations", icon: MessageSquare },
+  { label: "Activities", to: "/workflows/activities", icon: Zap },
   { label: "Connectors", to: "/connectors", icon: Plug },
   { label: "Ontology", to: "/ontology", icon: Network },
   { label: "MCP Servers", to: "/mcp", icon: Server },

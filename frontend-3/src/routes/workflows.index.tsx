@@ -3,11 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Archive, GitBranch, Plus, RefreshCw, Search } from "lucide-react";
-import { errorMessage, QK, workflowsApi } from "@/api";
-import type { WorkflowDefinition } from "@/types";
+import { errorMessage, QK, workflowsApi, ontologyApi } from "@/api";
+import type { WorkflowDefinition, Concept } from "@/types";
 import { PageHeader, StatTile } from "@/components/shared/PageHeader";
 import { WorkflowCard } from "@/components/workflows/WorkflowCard";
 import { WorkflowHistoryPanel } from "@/components/workflows/HistoryPanel";
+import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
+import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClassificationModal";
+import { WorkflowExecutionModal } from "@/components/workflows/WorkflowExecutionModal";
+import { DomainFilterDropdown } from "@/components/ontology/DomainFilterDropdown";
+import { buildDomainTree, expandedMatchSet, intersects } from "@/components/ontology/domainTree";
 import { GlassPanel } from "@/components/glass/GlassPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,11 +46,32 @@ function WorkflowsIndexPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("All");
   const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [packageFor, setPackageFor] = useState<string | null>(null);
+  const [classifyFor, setClassifyFor] = useState<string | null>(null);
+  const [executeFor, setExecuteFor] = useState<string | null>(null);
+  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: QK.workflows(),
     queryFn: workflowsApi.list,
   });
+
+  const domainConceptsQuery = useQuery({
+    queryKey: QK.ontologyConcepts("domain"),
+    queryFn: () => ontologyApi.concepts("domain"),
+  });
+
+  const domainConcepts: Concept[] = useMemo(() => {
+    const d = domainConceptsQuery.data;
+    if (Array.isArray(d)) return d;
+    return d?.concepts ?? [];
+  }, [domainConceptsQuery.data]);
+
+  const tree = useMemo(() => buildDomainTree(domainConcepts), [domainConcepts]);
+  const matchSet = useMemo(
+    () => expandedMatchSet(tree, selectedDomains),
+    [tree, selectedDomains],
+  );
 
   const publish = useMutation({
     mutationFn: (name: string) => workflowsApi.publish(name),
@@ -90,12 +116,17 @@ function WorkflowsIndexPage() {
         if (filter === "Unpublished edits") return Boolean(w.has_unpublished_changes);
         return true;
       })
+      .filter((w) => {
+        if (selectedDomains.size === 0) return true;
+        const wfDomains = (w as unknown as Record<string, unknown>)["domains"] as string[] | undefined;
+        return intersects(wfDomains, matchSet);
+      })
       .filter(
         (w) =>
           !q || w.name.toLowerCase().includes(q) || (w.description ?? "").toLowerCase().includes(q),
       )
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [all, filter, search]);
+  }, [all, filter, search, selectedDomains, matchSet]);
 
   const busy = publish.isPending ? publish.variables : archive.isPending ? archive.variables : null;
 
@@ -142,6 +173,11 @@ function WorkflowsIndexPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <DomainFilterDropdown
+          concepts={domainConcepts}
+          selected={selectedDomains}
+          onChange={setSelectedDomains}
+        />
         <div className="flex flex-wrap items-center gap-1.5">
           {FILTERS.map((f) => (
             <Button
@@ -189,6 +225,9 @@ function WorkflowsIndexPage() {
               onPublish={(n) => publish.mutate(n)}
               onArchive={(n) => archive.mutate(n)}
               onHistory={(n) => setHistoryFor(n)}
+              onPackage={(n) => setPackageFor(n)}
+              onClassify={(n) => setClassifyFor(n)}
+              onExecuteModal={(n) => setExecuteFor(n)}
             />
           ))}
         </div>
@@ -199,6 +238,30 @@ function WorkflowsIndexPage() {
         open={historyFor !== null}
         onOpenChange={(v) => !v && setHistoryFor(null)}
       />
+
+      {packageFor && (
+        <DeployPackageModal
+          workflowName={packageFor}
+          open={packageFor !== null}
+          onOpenChange={(v) => !v && setPackageFor(null)}
+        />
+      )}
+
+      {classifyFor && (
+        <WorkflowClassificationModal
+          workflowName={classifyFor}
+          open={classifyFor !== null}
+          onOpenChange={(v) => !v && setClassifyFor(null)}
+        />
+      )}
+
+      {executeFor && (
+        <WorkflowExecutionModal
+          workflowName={executeFor}
+          open={executeFor !== null}
+          onOpenChange={(v) => !v && setExecuteFor(null)}
+        />
+      )}
     </div>
   );
 }

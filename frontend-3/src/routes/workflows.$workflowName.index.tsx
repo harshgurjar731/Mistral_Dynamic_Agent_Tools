@@ -2,7 +2,21 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, History, Loader2, Pencil, Play, RefreshCw, Rocket } from "lucide-react";
+import {
+  ArrowLeft,
+  Columns,
+  Download,
+  History,
+  Loader2,
+  Map,
+  Package,
+  Pencil,
+  Play,
+  RefreshCw,
+  Rocket,
+  Rows,
+  Tag,
+} from "lucide-react";
 import { errorMessage, executionsApi, QK, workflowsApi } from "@/api";
 import { PageHeader, StatTile } from "@/components/shared/PageHeader";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
@@ -13,6 +27,8 @@ import { CodeBlock } from "@/components/shared/CodeBlock";
 import { DeployBadge, SourceBadge } from "@/components/workflows/WorkflowCard";
 import { WorkflowHistoryPanel } from "@/components/workflows/HistoryPanel";
 import { IssueList, ValidationSummary } from "@/components/workflows/ValidationPanel";
+import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
+import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClassificationModal";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -43,6 +59,10 @@ function WorkflowDetailPage() {
   const { workflowName } = Route.useParams();
   const qc = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [classifyOpen, setClassifyOpen] = useState(false);
+  const [direction, setDirection] = useState<"LR" | "TB">("LR");
+  const [showMinimap, setShowMinimap] = useState(true);
 
   const wf = useQuery({
     queryKey: QK.workflow(workflowName),
@@ -85,12 +105,22 @@ function WorkflowDetailPage() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  const exportMutation = useMutation({
+    mutationFn: () => workflowsApi.exportToMistral(workflowName),
+    onSuccess: (res) => {
+      toast.success(
+        res.file_path ? `Workflow exported to ${res.file_path}` : (res.error ?? "Workflow exported"),
+      );
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
   const graph = useMemo(
     () =>
       definition
-        ? stepsToGraph(definition, validation.data?.issues ?? [])
+        ? stepsToGraph(definition, validation.data?.issues ?? [], direction)
         : { nodes: [], edges: [] },
-    [definition, validation.data],
+    [definition, validation.data, direction],
   );
 
   if (wf.isLoading) {
@@ -139,6 +169,36 @@ function WorkflowDetailPage() {
             </Button>
             <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
               <History className="size-3.5" /> History
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+              title="Export to Mistral workflow format"
+            >
+              {exportMutation.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeployOpen(true)}
+              title="Package workflow for deployment"
+            >
+              <Package className="size-3.5" /> Package
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setClassifyOpen(true)}
+              title="Classify workflow domain"
+            >
+              <Tag className="size-3.5" /> Classify
             </Button>
             {!remoteOnly ? (
               <>
@@ -224,8 +284,43 @@ function WorkflowDetailPage() {
                 nodes={graph.nodes}
                 edges={graph.edges}
                 readOnly
+                showMinimap={showMinimap}
                 className="h-[540px] w-full"
-                overlay={<GraphLegend />}
+                overlay={
+                  <>
+                    <GraphLegend />
+                    <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-border bg-background-elevated/90 p-1 backdrop-blur-sm shadow-sm">
+                      <Button
+                        size="sm"
+                        variant={direction === "LR" ? "secondary" : "ghost"}
+                        onClick={() => setDirection("LR")}
+                        title="Horizontal layout (Left to Right)"
+                        className="h-7 text-xs"
+                      >
+                        <Columns className="size-3" /> LR
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={direction === "TB" ? "secondary" : "ghost"}
+                        onClick={() => setDirection("TB")}
+                        title="Vertical layout (Top to Bottom)"
+                        className="h-7 text-xs"
+                      >
+                        <Rows className="size-3" /> TB
+                      </Button>
+                      <div className="h-3 w-px bg-border mx-0.5" />
+                      <Button
+                        size="sm"
+                        variant={showMinimap ? "secondary" : "ghost"}
+                        onClick={() => setShowMinimap(!showMinimap)}
+                        title="Toggle minimap"
+                        className="h-7 text-xs"
+                      >
+                        <Map className="size-3" /> Minimap
+                      </Button>
+                    </div>
+                  </>
+                }
               />
             </GlassPanel>
           </TabsContent>
@@ -325,7 +420,9 @@ function WorkflowDetailPage() {
           description={runs.data ? `${runs.data.count} shown` : undefined}
           actions={
             <Button size="sm" variant="ghost" asChild>
-              <Link to="/workflows/executions">All executions</Link>
+              <Link to="/workflows/$workflowName/execute" params={{ workflowName }}>
+                New run
+              </Link>
             </Button>
           }
         />
@@ -366,6 +463,20 @@ function WorkflowDetailPage() {
         open={historyOpen}
         onOpenChange={setHistoryOpen}
       />
+      {definition && (
+        <>
+          <DeployPackageModal
+            open={deployOpen}
+            onOpenChange={setDeployOpen}
+            workflowName={workflowName}
+          />
+          <WorkflowClassificationModal
+            open={classifyOpen}
+            onOpenChange={setClassifyOpen}
+            workflowName={workflowName}
+          />
+        </>
+      )}
     </div>
   );
 }

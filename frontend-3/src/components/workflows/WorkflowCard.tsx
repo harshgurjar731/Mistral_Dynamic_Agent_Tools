@@ -8,6 +8,8 @@ import {
   Play,
   Rocket,
   Sparkles,
+  Tag,
+  Package,
   Wrench,
 } from "lucide-react";
 import type { WorkflowDefinition } from "@/types";
@@ -60,6 +62,9 @@ export function WorkflowCard({
   onUnarchive,
   onPublish,
   onHistory,
+  onPackage,
+  onClassify,
+  onExecuteModal,
   busy,
 }: {
   workflow: WorkflowDefinition;
@@ -67,6 +72,9 @@ export function WorkflowCard({
   onUnarchive?: (name: string) => void;
   onPublish?: (name: string) => void;
   onHistory?: (name: string) => void;
+  onPackage?: (name: string) => void;
+  onClassify?: (name: string) => void;
+  onExecuteModal?: (name: string) => void;
   busy?: string | null;
 }) {
   /** A remote-only workflow arrives with no steps — it can be run but not edited. */
@@ -106,11 +114,17 @@ export function WorkflowCard({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" asChild>
-          <Link to="/workflows/$workflowName/execute" params={{ workflowName: workflow.name }}>
+        {onExecuteModal ? (
+          <Button size="sm" onClick={() => onExecuteModal(workflow.name)} className="gap-1.5">
             <Play className="size-3.5" /> Run
-          </Link>
-        </Button>
+          </Button>
+        ) : (
+          <Button size="sm" asChild>
+            <Link to="/workflows/$workflowName/execute" params={{ workflowName: workflow.name }}>
+              <Play className="size-3.5" /> Run
+            </Link>
+          </Button>
+        )}
         {!remoteOnly ? (
           <Button size="sm" variant="outline" asChild>
             <Link to="/workflows/$workflowName/edit" params={{ workflowName: workflow.name }}>
@@ -127,6 +141,16 @@ export function WorkflowCard({
           >
             <Rocket className="size-3.5" />
             {workflow.has_unpublished_changes || !workflow.is_deployed ? "Publish" : "Republish"}
+          </Button>
+        ) : null}
+        {onPackage ? (
+          <Button size="sm" variant="outline" onClick={() => onPackage(workflow.name)}>
+            <Package className="size-3.5" /> Package
+          </Button>
+        ) : null}
+        {onClassify ? (
+          <Button size="sm" variant="outline" onClick={() => onClassify(workflow.name)}>
+            <Tag className="size-3.5" /> Classify
           </Button>
         ) : null}
         {onHistory ? (

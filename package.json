@@ -1,0 +1,12 @@
+{
+  "name": "mistral-dynamic-agent-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mistral Dynamic Agent Tools Workspace",
+  "scripts": {
+    "dev": "npm --prefix frontend-3 run dev",
+    "build": "npm --prefix frontend-3 run build",
+    "preview": "npm --prefix frontend-3 run preview",
+    "dev:legacy": "npm --prefix frontend run dev"
+  }
+}

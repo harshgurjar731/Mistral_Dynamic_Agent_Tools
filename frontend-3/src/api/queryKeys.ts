@@ -12,6 +12,7 @@ export const QK = {
   executions: () => ["workflow-executions"] as const,
   execution: (id: string) => ["workflow-execution", id] as const,
   tools: () => ["tools"] as const,
+  tool: (id: string | number) => ["tools", String(id)] as const,
   pendingTools: () => ["tools", "pending"] as const,
   ontology: () => ["ontology"] as const,
   ontologyTiers: () => ["ontology", "tiers"] as const,
@@ -46,4 +47,6 @@ export const QK = {
   ragTimelines: (params: Record<string, unknown>) => ["rag", "timeline", params] as const,
   ragTimeline: (id: string) => ["rag", "timeline", id] as const,
   ragOptimizer: () => ["rag", "optimizer"] as const,
+  workflowDeploymentManifest: (name: string) => ["workflow-deployment-manifest", name] as const,
+  ragUnifiedGraph: (params: Record<string, unknown> = {}) => ["rag", "graph", "unified", params] as const,
 };
