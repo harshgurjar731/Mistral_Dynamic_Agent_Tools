@@ -9,8 +9,10 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { CHAT_MODELS } from "@/lib/models";
+import { rulesApi } from "@/api";
 import type { AgentCreate } from "@/api/agents";
-import type { GuardrailConfig } from "@/types";
+import type { GuardrailConfig, RuleRef } from "@/types";
+import { RuleSelector } from "@/components/rules/RuleSelector";
 import { GuardrailEditor } from "./GuardrailEditor";
 
 const TIERS = [
@@ -38,8 +40,10 @@ export function CreateAgentModal({
   const [temperature, setTemperature] = useState<number | null>(0.7);
   const [top_p, setTopP] = useState<number | null>(1.0);
   const [guardrails, setGuardrails] = useState<GuardrailConfig | null>(null);
+  const [rules, setRules] = useState<RuleRef[]>([]);
 
   const reset = () => {
+    setRules([]);
     setName("");
     setDescription("");
     setModel("mistral-large-latest");
@@ -62,7 +66,7 @@ export function CreateAgentModal({
         <DialogHeader>
           <DialogTitle>Create New Agent</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="custom-scrollbar -mx-1 max-h-[70vh] space-y-3 overflow-y-auto px-1">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Name</label>
             <input
@@ -163,6 +167,38 @@ export function CreateAgentModal({
             </h4>
             <GuardrailEditor value={guardrails} onChange={setGuardrails} />
           </div>
+
+          <div className="rounded-xl border border-border bg-background/50 p-3">
+            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Rules
+            </h4>
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Always-on rules apply to every agent. Add optional rules, or let the AI suggest the
+              ones that fit what this agent does.
+            </p>
+            <RuleSelector
+              scope="agent"
+              value={rules}
+              onChange={setRules}
+              suggestHint={
+                name.trim() && instructions.trim()
+                  ? undefined
+                  : "Add a name and instructions first"
+              }
+              onSuggest={async () =>
+                (
+                  await rulesApi.suggest({
+                    scope: "agent",
+                    name,
+                    description,
+                    instructions,
+                    tier,
+                    model,
+                  })
+                ).selected
+              }
+            />
+          </div>
         </div>
         <DialogFooter>
           <button
@@ -185,6 +221,7 @@ export function CreateAgentModal({
                 temperature: temperature ?? 0.7,
                 top_p: top_p ?? 1.0,
                 guardrails: guardrails || undefined,
+                rules,
               })
             }
             className="rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"

@@ -101,24 +101,41 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
     # Auto-create a new agent with this name
     logger.info("Agent '%s' not found on server — auto-creating…", agent_id)
     try:
-        agent_obj = client.beta.agents.create(
-            model="mistral-large-latest",
-            name=agent_id,
-            instructions=(
-                f"You are '{agent_id}', a specialist workflow agent. "
-                "Analyze the input carefully and provide a thorough, structured response. "
-                "If the task involves JSON output, return valid JSON. "
-                "Always provide a complete response — never return empty."
-            ),
-            description=f"Auto-created workflow agent: {agent_id}",
+        instructions = (
+            f"You are '{agent_id}', a specialist workflow agent. "
+            "Analyze the input carefully and provide a thorough, structured response. "
+            "If the task involves JSON output, return valid JSON. "
+            "Always provide a complete response — never return empty."
+        )
+
+        # Always-on agent rules apply to stand-in agents too — the same
+        # creation gate every other path uses (see app.rules.apply).
+        from app.rules import apply as rules_apply
+        from app.services.agent_service import build_guardrails
+
+        prepared = rules_apply.prepare_agent(
+            model="mistral-large-latest", instructions=instructions,
+            tool_keys=[], connector_ids=[], guardrails=[], mode="pipeline",
+        )
+        create_kwargs: dict[str, Any] = {
+            "model": prepared.model,
+            "name": agent_id,
+            "instructions": instructions,
+            "description": f"Auto-created workflow agent: {agent_id}",
             # No retrieval tools. This agent was invented from a step name, so
             # nothing is known about what it should search — and knowledge-graph
             # access is a deliberate choice, not a default. Turn it on from the
             # agent's own page once its job is clear.
-            tools=[],
-        )
+            "tools": [],
+        }
+        guardrails = build_guardrails(prepared.guardrails) if prepared.guardrails else []
+        if guardrails:
+            create_kwargs["guardrails"] = guardrails
+
+        agent_obj = client.beta.agents.create(**create_kwargs)
         real_id = agent_obj.id
         _agent_name_to_id_cache[agent_id] = real_id
+        rules_apply.finish_agent(real_id, prepared, [], default_source="ai")
 
         # Classify the stand-in too. It is created by name from a workflow step,
         # so the step's own name is the only signal available — thin, but it
@@ -681,6 +698,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
     # Set inside the agent branch below; reset in the finally so a leaked scope
     # can never make the *next* step search the wrong industry.
     agent_token = None
+    # Same reasoning for the agent's rules: a later step must never inherit
+    # this agent's rules in the tool gate.
+    rules_token = None
 
     try:
         from app.dependencies import get_mistral_client
@@ -719,7 +739,6 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             if conv_id:
                 base_kwargs["conversation_id"] = conv_id
 
-            MAX_TOOL_ROUNDS = 10
             result_text = ""
             content = ""
 
@@ -729,6 +748,19 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             from app.services import tool_registry
 
             agent_token = tool_registry.CURRENT_AGENT.set(resolved_id)
+
+            # Rules: the step agent's own agent rules (the tool router enforces
+            # them on every call it makes), plus the workflow's step rules.
+            from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
+
+            wf_rules_ctx = rules_runtime.current_workflow()
+            wf_rules = wf_rules_ctx.rules if wf_rules_ctx else []
+            agent_rules = await asyncio.to_thread(rules_store.rules_for_agent, resolved_id)
+            agent_rules_ctx, rules_token = rules_runtime.activate(agent_rules, "agent", resolved_id)
+            MAX_TOOL_ROUNDS = rules_engine.tool_round_limit(
+                agent_rules, rules_engine.agent_step_tool_limit(wf_rules, 10)
+            )
+            hit_tool_limit = False
 
             for round_num in range(MAX_TOOL_ROUNDS):
                 # The Mistral client here is the synchronous one, and a single
@@ -845,6 +877,7 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
                 # If this was the last allowed round, use whatever content we got
                 if round_num == MAX_TOOL_ROUNDS - 1:
+                    hit_tool_limit = True
                     result_text = content or f"Step '{step.id}' completed after {MAX_TOOL_ROUNDS} tool rounds."
                     logger.warning("Step '%s' — hit MAX_TOOL_ROUNDS cap", step.id)
 
@@ -852,6 +885,24 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             if not result_text or not result_text.strip():
                 result_text = f"Step '{step.id}' completed (agent {agent_id} produced no text output)."
                 logger.warning("Step '%s' — agent returned empty content after tool loop", step.id)
+
+            # Rule outcomes for this step: the agent's own tool budget and
+            # answer rules, then the workflow's result redaction — applied
+            # before later steps can read the result.
+            rules_runtime.record(
+                rules_engine.tool_limit_outcomes(agent_rules, round_num + 1, hit_tool_limit),
+                scope="agent", subject_id=resolved_id, ctx=agent_rules_ctx,
+            )
+            result_text, answer_outcomes, refusal = rules_engine.check_answer(result_text, agent_rules)
+            rules_runtime.record(answer_outcomes, scope="agent", subject_id=resolved_id, ctx=agent_rules_ctx)
+            if refusal:
+                raise ValueError(refusal)
+            if wf_rules_ctx:
+                result_text, redaction_outcomes = rules_engine.redact_step_result(result_text, wf_rules)
+                rules_runtime.record(
+                    redaction_outcomes, scope="workflow",
+                    subject_id=wf_rules_ctx.subject_id, ctx=wf_rules_ctx,
+                )
 
             # Try to parse structured JSON from the agent response so
             # downstream steps can reference individual fields as variables.
@@ -965,6 +1016,10 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             from app.services import tool_registry
 
             tool_registry.CURRENT_AGENT.reset(agent_token)
+        if rules_token is not None:
+            from app.rules import runtime as rules_runtime
+
+            rules_runtime.reset(rules_token)
 
 
 
@@ -1235,39 +1290,23 @@ async def run_transform_step(step: WorkflowStep, variables: dict) -> StepResult:
         return StepResult(step_id=step.id, status="failed", error=str(e), duration_ms=duration)
 
 
-def _report_egress_policy(step: WorkflowStep, connector_id: str, tool_name: str) -> None:
-    """Log — but do not block — a restricted-data call to a third-party connector.
+def _check_connector_rules(step: WorkflowStep, connector_id: str) -> None:
+    """Apply the running workflow's connector rules to one connector step.
 
-    Deliberately report-only. A runtime block fails a workflow that already
-    passed validation, mid-execution, after the upstream steps have been paid
-    for; that is a worse outcome than the leak it prevents in most cases, and
-    the annotations driving it are still partly inferred. The publish-time
-    check in ``ontology.constraints`` is the gate that should stop this.
-
-    Read the WARNING lines this produces before anyone turns it into a block.
+    Replaces the old report-only egress logger. Whether a violation stops the
+    step or is only recorded is now the rule's own "When violated" setting on
+    the Rules page ("Sensitive data stays internal", "Blocked connectors"),
+    rather than a fixed choice made here. Raises to fail the step on a block.
     """
-    try:
-        from app.ontology import store as ontology_store
-        from app.ontology.vocab import RESTRICTED_DATA_CLASSES, Predicate, SubjectType
+    from app.rules import engine as rules_engine, runtime as rules_runtime
 
-        annotations = ontology_store.annotations_for(
-            SubjectType.CONNECTOR.value, connector_id
-        )
-        if not annotations.get(Predicate.EGRESSES_TO.value):
-            return
-
-        declared = (step.config or {}).get("data_classes") or []
-        restricted = [
-            c for c in declared if str(c).rsplit(".", 1)[-1] in RESTRICTED_DATA_CLASSES
-        ]
-        if restricted:
-            logger.warning(
-                "EGRESS POLICY (report-only): step '%s' sends %s to connector '%s' "
-                "(tool '%s'), which egresses to a third party.",
-                step.id, ", ".join(restricted), connector_id, tool_name,
-            )
-    except Exception as e:
-        logger.debug("Egress policy check skipped for step '%s': %s", step.id, e)
+    wf = rules_runtime.current_workflow()
+    if not wf or not wf.rules:
+        return
+    outcomes, refusal = rules_engine.check_connector_step(step, connector_id, wf.rules)
+    rules_runtime.record(outcomes, scope="workflow", subject_id=wf.subject_id, ctx=wf)
+    if refusal:
+        raise ValueError(refusal)
 
 
 def resolve_connector_arguments(step: WorkflowStep, variables: dict) -> dict:
@@ -1318,7 +1357,7 @@ async def run_connector_step(step: WorkflowStep, variables: dict) -> StepResult:
         # {{variables}} behave identically across both step kinds.
         arguments = resolve_connector_arguments(step, variables)
 
-        _report_egress_policy(step, connector_id, tool_name)
+        _check_connector_rules(step, connector_id)
 
         logger.info(
             "Step '%s' — calling connector '%s' tool '%s'", step.id, connector_id, tool_name

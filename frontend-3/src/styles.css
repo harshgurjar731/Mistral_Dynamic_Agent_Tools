@@ -340,3 +340,54 @@
   width: 8px;
   height: 8px;
 }
+
+/* ── Ontology graph canvas ─────────────────────────────────────────────
+   The custom node draws its own border, focus ring and background, so the
+   React Flow defaults are cleared out from under it. */
+.ontology-canvas .react-flow__node {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  font-size: inherit;
+  cursor: pointer;
+}
+.ontology-canvas .react-flow__node.selected,
+.ontology-canvas .react-flow__node:focus,
+.ontology-canvas .react-flow__node:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.ontology-canvas .react-flow__handle {
+  background: transparent;
+  border: 0;
+}
+.ontology-canvas .react-flow__controls {
+  overflow: hidden;
+  box-shadow: var(--shadow-panel);
+}
+.ontology-canvas .react-flow__controls-button {
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  transition: color 150ms ease, background 150ms ease;
+}
+.ontology-canvas .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+.ontology-canvas .react-flow__controls-button:hover {
+  background: var(--surface-elevated);
+  color: var(--foreground);
+}
+.ontology-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.ontology-canvas .react-flow__minimap {
+  background: oklch(0.13 0 0 / 0.72);
+  box-shadow: var(--shadow-panel);
+}
+.ontology-canvas .react-flow__edge-text {
+  font-family: var(--font-mono);
+}

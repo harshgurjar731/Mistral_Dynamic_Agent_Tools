@@ -54,6 +54,13 @@ class GuardrailConfigRequest(BaseModel):
     moderation_llm_v2: Optional[GuardrailModerationConfigRequest] = None
 
 
+class AgentRuleRef(BaseModel):
+    """An optional agent rule selected at creation, and who chose it."""
+    rule_id: str
+    source: str = "user"      # ai | user
+    reason: str = ""
+
+
 class CreateAgentRequest(BaseModel):
     name: str
     model: str = "mistral-large-latest"
@@ -70,6 +77,9 @@ class CreateAgentRequest(BaseModel):
     # At most one entry in practice — the array shape mirrors the Mistral API,
     # which allows several, but nothing scopes multiple entries differently.
     guardrails: Optional[List[GuardrailConfigRequest]] = None
+    # Optional agent rules chosen in the create form. Always-on rules apply
+    # without being listed.
+    rules: Optional[List[AgentRuleRef]] = None
 
 
 class UpdateAgentRequest(BaseModel):

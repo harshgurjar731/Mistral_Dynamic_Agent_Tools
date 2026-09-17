@@ -230,6 +230,11 @@ class AgentSpec:
     # GuardrailConfigLayer
     guardrails: Optional[GuardrailSpec] = None
 
+    # AgentRuleSelectionLayer — optional agent rules chosen for this agent,
+    # as ``[{rule_id, name, reason, source}]``. Always-on rules are not listed;
+    # they apply to every agent regardless.
+    rules: Optional[list[dict]] = None
+
     # InstructionAuthoringLayer
     agent_instructions: Optional[str] = None
 
@@ -269,6 +274,7 @@ class AgentSpec:
             # instructions — the platform enforces this outside the model.
             "guardrails": self.guardrails.as_request() if self.guardrails else None,
             "guardrail_spec": self.guardrails,
+            "rules": list(self.rules or []),
             "rationale": dict(self.rationale),
         }
 

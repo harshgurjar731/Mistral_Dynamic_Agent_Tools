@@ -1,13 +1,23 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { LayerManifestEntry, LayerRuntime } from "@/components/pipeline/PipelineTimeline";
+import type { PlannerStep } from "@/components/workflows/PlannerCards";
 
 export interface PlannerRun {
   id: string;
   goal: string;
-  workflowName?: string | null;
+  workflowName?: string | null | undefined;
   status: "completed" | "failed" | "cancelled";
   createdAt: number;
-  detail?: string;
+  detail?: string | undefined;
+  /**
+   * The layer chain the run executed, where each layer ended up, and the
+   * decision payloads — kept so a past run reopens through the same timeline
+   * that watched it. Absent on runs recorded before the layer timeline.
+   */
+  manifest?: LayerManifestEntry[] | undefined;
+  runtime?: Record<string, LayerRuntime> | undefined;
+  steps?: PlannerStep[] | undefined;
 }
 
 interface PlannerHistoryState {

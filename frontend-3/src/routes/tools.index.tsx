@@ -55,7 +55,11 @@ function ToolsPage() {
   });
 
   const filterTool = (t: { name: string; description?: string; purpose?: string }) => {
-    if (search && !t.name.toLowerCase().includes(search.toLowerCase()) && !(t.description ?? "").toLowerCase().includes(search.toLowerCase())) {
+    if (
+      search &&
+      !t.name.toLowerCase().includes(search.toLowerCase()) &&
+      !(t.description ?? "").toLowerCase().includes(search.toLowerCase())
+    ) {
       return false;
     }
     if (purposeFilter === "tool" && (t.purpose ?? "tool") !== "tool") return false;
@@ -104,7 +108,9 @@ function ToolsPage() {
             <div className="grid size-6 place-items-center rounded-md bg-amber/10 text-amber">
               <Inbox className="size-3" />
             </div>
-            <span className="text-xs font-medium text-foreground">{(pendingQuery.data?.tools ?? []).length}</span>
+            <span className="text-xs font-medium text-foreground">
+              {(pendingQuery.data?.tools ?? []).length}
+            </span>
             <span className="text-[10px] text-muted-foreground/60">pending review</span>
           </div>
         </div>
@@ -143,9 +149,7 @@ function ToolsPage() {
         <Tabs defaultValue="active">
           <TabsList>
             <TabsTrigger value="active">Active Tools ({activeTools.length})</TabsTrigger>
-            <TabsTrigger value="pending">
-              Pending Review ({pendingTools.length})
-            </TabsTrigger>
+            <TabsTrigger value="pending">Pending Review ({pendingTools.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="active" className="mt-4">
@@ -185,7 +189,9 @@ function ToolsPage() {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {activeTools.map((tool) => <ToolCard key={tool.id} tool={tool} />)}
+                {activeTools.map((tool) => (
+                  <ToolCard key={tool.id} tool={tool} />
+                ))}
               </div>
             )}
           </TabsContent>
@@ -242,7 +248,11 @@ function ToolsPage() {
               onClick={() => synthesize.mutate()}
               className="gap-2"
             >
-              {synthesize.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {synthesize.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
               {synthesize.isPending ? "Synthesizing…" : "Synthesize"}
             </Button>
           </DialogFooter>

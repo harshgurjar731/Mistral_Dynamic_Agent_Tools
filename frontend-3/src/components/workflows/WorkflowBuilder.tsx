@@ -26,7 +26,8 @@ import {
   Undo2,
   Wrench,
 } from "lucide-react";
-import { errorMessage, QK, workflowsApi } from "@/api";
+import { errorMessage, QK, rulesApi, workflowsApi } from "@/api";
+import { RuleSelector } from "@/components/rules/RuleSelector";
 import type {
   BuilderCatalog,
   CatalogAgent,
@@ -1003,6 +1004,29 @@ function WorkflowSettings({
             value={definition.description ?? ""}
             onChange={(e) => update((d) => ({ ...d, description: e.target.value }))}
             className="text-xs"
+          />
+        </div>
+
+        <div>
+          <label className="eyebrow mb-1.5 block">Rules</label>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            Checked when the workflow is saved and published, and while it runs.
+          </p>
+          <RuleSelector
+            scope="workflow"
+            value={definition.rules ?? []}
+            onChange={(rules) => update((d) => ({ ...d, rules }))}
+            suggestHint={definition.steps.length ? undefined : "Add steps first"}
+            onSuggest={async () =>
+              (
+                await rulesApi.suggest({
+                  scope: "workflow",
+                  name: definition.name,
+                  description: definition.description ?? "",
+                  definition,
+                })
+              ).selected
+            }
           />
         </div>
 

@@ -231,19 +231,23 @@ async def update_workflow(workflow_name: str, request: UpdateWorkflowRequest):
 
 # ── Builder support ───────────────────────────────────────────────────────────
 
-async def _validate_with_ontology(definition) -> ValidationResponse:
-    """Structural validation plus the ontology constraints.
+async def _validate_with_rules(definition, *, record: bool = False) -> ValidationResponse:
+    """Structural validation plus the workflow rules (see ``app.rules``).
 
-    The two are separate because they need different things: structural rules
-    read only the definition, while ontology rules need live inventory to know
-    what each agent can actually reach. Inventory failures degrade to the
-    structural result rather than failing the request — a validator that goes
-    down when the Connectors API hiccups would block saving.
+    The two are separate because they need different things: structural checks
+    read only the definition, while rules need live inventory to know what each
+    agent can actually reach. Inventory failures degrade to the structural
+    result rather than failing the request — a validator that goes down when
+    the Connectors API hiccups would block saving.
+
+    ``record`` stores each rule's outcome as a rule event. Only publish sets it:
+    live validation runs on every builder keystroke, and recording those would
+    bury the history people actually want to read.
     """
     result = validate_workflow(definition)
 
     try:
-        from app.ontology import constraints
+        from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
         from app.services import agent_service, connector_service
 
         client = get_mistral_client()
@@ -262,7 +266,13 @@ async def _validate_with_ontology(definition) -> ValidationResponse:
             if not isinstance(connectors_resp, Exception) else {}
         )
 
-        extra = constraints.check(definition, agents_by_id, connectors_by_id)
+        rules = rules_store.effective_rules("workflow", [r.rule_id for r in definition.rules])
+        extra = rules_engine.check_workflow(definition, agents_by_id, connectors_by_id, rules)
+        if record:
+            rules_runtime.record(
+                rules_engine.workflow_validation_outcomes(rules, extra),
+                scope="workflow", subject_id=definition.name,
+            )
         if extra:
             issues = [*result.issues, *extra]
             return ValidationResponse(
@@ -272,7 +282,7 @@ async def _validate_with_ontology(definition) -> ValidationResponse:
                 warning_count=sum(1 for i in issues if i.severity == "warning"),
             )
     except Exception as e:
-        logger.warning("Ontology validation skipped: %s", e)
+        logger.warning("Workflow rules skipped: %s", e)
 
     return result
 
@@ -284,7 +294,7 @@ async def validate_workflow_endpoint(request: ValidateWorkflowRequest):
     Used for live feedback in the visual builder, so it always returns 200 —
     the issue list is the payload, not an error condition.
     """
-    return await _validate_with_ontology(request.definition)
+    return await _validate_with_rules(request.definition)
 
 
 @router.post("/workflows/script/preview", response_model=ScriptResponse)
@@ -357,10 +367,10 @@ async def publish_workflow(workflow_name: str):
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
 
-    # Publishing is the gate that matters — a capability gap or an egress
-    # violation must not reach a deployed worker, even if it was saved as a
-    # draft while the annotations were still incomplete.
-    result = await _validate_with_ontology(workflow)
+    # Publishing is the gate that matters — a workflow rule set to "block"
+    # must not reach a deployed worker, even if it was saved as a draft while
+    # it was still being built.
+    result = await _validate_with_rules(workflow, record=True)
     if not result.valid:
         raise HTTPException(
             status_code=422,

@@ -124,6 +124,25 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         agent_spec.document_library_ids or []
                     ) + [new_library]
                 config = agent_spec.to_config()
+
+                # The same creation gate the chat pipeline uses, in pipeline
+                # mode — see app.rules.apply.
+                from app.rules import apply as rules_apply
+
+                prepared = rules_apply.prepare_agent(
+                    model=config["model"],
+                    instructions=config["agent_instructions"],
+                    tool_keys=config["tools"],
+                    connector_ids=config["connectors"],
+                    guardrails=[config["guardrails"]] if config.get("guardrails") else [],
+                    selection=config.get("rules") or [],
+                    mode="pipeline",
+                )
+                config["model"] = prepared.model
+                config["tools"] = prepared.tool_keys
+                config["connectors"] = prepared.connector_ids
+                config["guardrails"] = prepared.guardrails or None
+
                 async with semaphore:
                     tool_definitions = get_tools(
                         with_rag_tools(
@@ -158,9 +177,8 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                     # The platform's moderation guardrail, built by the same
                     # helper the agents API uses. Never written into the
                     # instructions — it is enforced outside the model.
-                    guardrail_request = config.get("guardrails")
-                    if guardrail_request:
-                        guardrails = build_guardrails([guardrail_request])
+                    if config.get("guardrails"):
+                        guardrails = build_guardrails(config["guardrails"])
                         if guardrails:
                             create_kwargs["guardrails"] = guardrails
 
@@ -185,7 +203,11 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                     )
 
                     agent_spec.agent_id = agent_obj.id
+                    rule_summary = rules_apply.finish_agent(
+                        agent_obj.id, prepared, config.get("rules") or [], default_source="ai"
+                    )
                     return {
+                        "rules_applied": rule_summary,
                         "capability_id": cap.id,
                         "agent_id": agent_obj.id,
                         "agent_name": config["agent_name"],

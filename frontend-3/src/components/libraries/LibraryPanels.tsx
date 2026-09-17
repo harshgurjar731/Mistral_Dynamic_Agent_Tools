@@ -41,91 +41,9 @@ function getFileIcon(filename: string) {
   const sheetExts = ["xlsx", "xls", "csv", "ods", "numbers"];
   if (imgExts.includes(ext)) return <ImageIcon className="size-3.5 shrink-0 text-emerald-400" />;
   if (codeExts.includes(ext)) return <FileCode className="size-3.5 shrink-0 text-amber-400" />;
-  if (sheetExts.includes(ext)) return <FileSpreadsheet className="size-3.5 shrink-0 text-green-400" />;
+  if (sheetExts.includes(ext))
+    return <FileSpreadsheet className="size-3.5 shrink-0 text-green-400" />;
   return <FileText className="size-3.5 shrink-0 text-cyan" />;
-}
-
-export function LibraryList({
-  libraries,
-  selectedId,
-  onSelect,
-  onDelete,
-  deletingId,
-  onRename,
-}: {
-  libraries: Library[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
-  deletingId: string | null;
-  onRename?: (lib: Library) => void;
-}) {
-  if (libraries.length === 0) {
-    return (
-      <EmptyState
-        title="No libraries yet."
-        description="A library is a document set an agent can be pointed at for retrieval."
-      />
-    );
-  }
-  return (
-    <ul className="space-y-2">
-      {libraries.map((lib) => (
-        <li key={lib.id}>
-          <div
-            className={cn(
-              "flex items-center gap-2 rounded-lg border px-3 py-2.5 transition",
-              selectedId === lib.id
-                ? "border-primary/50 bg-primary/10"
-                : "border-border bg-background-elevated/60 hover:border-border-strong hover:bg-surface-hover",
-            )}
-          >
-            <button
-              type="button"
-              onClick={() => onSelect(lib.id)}
-              className="min-w-0 flex-1 text-left"
-            >
-              <p className="truncate text-sm font-medium text-foreground">{lib.name}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {lib.description || "No description"}
-              </p>
-              <div className="mt-1 flex items-center gap-2">
-                <span className="technical-label">{lib.document_count ?? 0} docs</span>
-                <span className="technical-label">{formatRelative(lib.created_at)}</span>
-              </div>
-            </button>
-            <div className="flex items-center gap-1">
-              {onRename && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="size-7 p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => onRename(lib)}
-                  title="Rename library"
-                >
-                  <Edit2 className="size-3" />
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                className="size-7 p-0 text-muted-foreground hover:text-red"
-                disabled={deletingId === lib.id}
-                onClick={() => onDelete(lib.id)}
-                title="Delete library"
-              >
-                {deletingId === lib.id ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="size-3.5" />
-                )}
-              </Button>
-            </div>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 export function DocumentsPanel({

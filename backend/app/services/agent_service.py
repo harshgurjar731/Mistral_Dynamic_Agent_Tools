@@ -104,6 +104,75 @@ def _current_attachments(agent_id: str) -> dict:
     }
 
 
+#: Public name for the rules routes, which re-apply creation rules to a live agent.
+current_attachments = _current_attachments
+
+
+def _tool_key(tool) -> str:
+    """A tool entry's key, whether it arrived as a key, a {name} or a full spec."""
+    if isinstance(tool, str):
+        return tool
+    if isinstance(tool, dict):
+        return (
+            tool.get("name")
+            or (tool.get("function") or {}).get("name")
+            or tool.get("type")
+            or ""
+        )
+    return ""
+
+
+def _keep_tools(tools: list, keep_keys: list[str]) -> list:
+    """Filter a tool list to the surviving keys, preserving each entry's shape."""
+    keep = set(keep_keys)
+    return [t for t in tools or [] if _tool_key(t) in keep]
+
+
+def _apply_update_rules(agent_id: str, agent, data: dict) -> dict:
+    """Re-run creation-time rules on an edit, so edits cannot bypass them.
+
+    Blocks refuse the edit (422). Fixes rewrite the edit's own values — e.g. a
+    blocked tool the edit tried to add is dropped.
+    """
+    from app.rules import apply as rules_apply, runtime as rules_runtime, store as rules_store
+
+    try:
+        raw = _http_client.get(f"/v1/agents/{agent_id}").json()
+    except Exception:
+        raw = {}
+    current = _current_attachments(agent_id)
+
+    tools = data["tools"] if "tools" in data else current["tools"]
+    connectors = data["connectors"] if "connectors" in data else current["connectors"]
+    guardrails = data["guardrails"] if "guardrails" in data else (raw.get("guardrails") or [])
+    tool_keys = [_tool_key(t) for t in tools or [] if _tool_key(t)]
+    connector_ids = [
+        (c.get("connector_id") if isinstance(c, dict) else c) for c in connectors or []
+    ]
+
+    prepared = rules_apply.prepare_agent(
+        model=data.get("model") or getattr(agent, "model", "") or "",
+        instructions=data["instructions"] if "instructions" in data else (raw.get("instructions") or ""),
+        tool_keys=tool_keys,
+        connector_ids=[c for c in connector_ids if c],
+        guardrails=guardrails,
+        selection=[a["rule_id"] for a in rules_store.agent_assignments(agent_id)],
+        mode="manual",
+    )
+    rules_runtime.record(prepared.outcomes, scope="agent", subject_id=agent_id)
+    if prepared.blocked:
+        raise MistralAPIError(f"Blocked by rules — {prepared.block_message()}", status_code=422)
+
+    data = dict(data)
+    if prepared.tool_keys != tool_keys:
+        data["tools"] = _keep_tools(tools, prepared.tool_keys)
+    if prepared.connector_ids != [c for c in connector_ids if c]:
+        data["connectors"] = prepared.filter_connector_refs(connectors)
+    if prepared.guardrails != [g for g in (guardrails or []) if g]:
+        data["guardrails"] = prepared.guardrails
+    return data
+
+
 _V1_THRESHOLD_FIELDS = {
     "sexual", "hate_and_discrimination", "violence_and_threats",
     "dangerous_and_criminal_content", "selfharm", "health", "financial", "law", "pii",
@@ -483,12 +552,37 @@ async def create_agent(client: Mistral, data: dict) -> dict:
         # Tools, libraries and connectors all live in the same `tools` array —
         # connectors are entries of type "connector", not a separate field — so
         # they are resolved together and assigned once.
+        from app.rules import apply as rules_apply
         from app.services.tool_registry import get_tools
 
         tool_keys = data.get("tools") or []
         doc_lib_ids = data.get("document_library_ids")
         if not tool_keys and doc_lib_ids:
             tool_keys = ["document_library"]
+
+        # The creation gate. Manual mode: a violated block rule refuses the
+        # create with the rule's own message; fix rules correct the config.
+        rule_selection = data.get("rules") or []
+        connector_refs = data.get("connectors") or []
+        prepared = rules_apply.prepare_agent(
+            model=data["model"],
+            instructions=create_kwargs["instructions"],
+            tool_keys=[_tool_key(t) for t in tool_keys if _tool_key(t)],
+            connector_ids=[
+                (c.get("connector_id") if isinstance(c, dict) else c) for c in connector_refs
+            ],
+            guardrails=data.get("guardrails") or [],
+            selection=rule_selection,
+            mode="manual",
+        )
+        if prepared.blocked:
+            raise MistralAPIError(f"Blocked by rules — {prepared.block_message()}", status_code=422)
+        tool_keys = _keep_tools(tool_keys, prepared.tool_keys)
+        data = {
+            **data,
+            "connectors": prepared.filter_connector_refs(connector_refs) or None,
+            "guardrails": prepared.guardrails or None,
+        }
 
         # The grounded-knowledge tool is opt-in per agent — see rag_tools. The
         # document library is separate and follows the ids the caller supplied.
@@ -512,6 +606,7 @@ async def create_agent(client: Mistral, data: dict) -> dict:
 
         agent = await asyncio.to_thread(partial(client.beta.agents.create, **create_kwargs))
         record_agent_annotations(agent.id, data, source="user")
+        rule_outcomes = rules_apply.finish_agent(agent.id, prepared, rule_selection, default_source="user")
 
         # A hand-made agent has no planner goal to infer a domain from, and the
         # lexical heuristics only fire on words that literally appear. When the
@@ -528,16 +623,31 @@ async def create_agent(client: Mistral, data: dict) -> dict:
                 instructions=data.get("instructions") or "",
             )
 
-        return {"id": agent.id, "name": getattr(agent, "name", None), "model": getattr(agent, "model", None)}
+        return {
+            "id": agent.id,
+            "name": getattr(agent, "name", None),
+            "model": getattr(agent, "model", None),
+            "rule_outcomes": rule_outcomes,
+        }
+    except MistralAPIError:
+        raise
     except Exception as e:
         logger.error(f"Failed to create agent: {e}")
         raise MistralAPIError(f"Failed to create agent: {str(e)}")
 
 
-async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
-    """Update an agent."""
+async def update_agent(client: Mistral, agent_id: str, data: dict, skip_rules: bool = False) -> dict:
+    """Update an agent.
+
+    ``skip_rules`` is for the rules routes, which have just applied the rules
+    themselves and are writing the corrected result.
+    """
     try:
         agent = await asyncio.to_thread(client.beta.agents.get, agent_id=agent_id)
+        if not skip_rules and any(
+            k in data for k in ("model", "instructions", "tools", "connectors", "guardrails")
+        ):
+            data = await asyncio.to_thread(_apply_update_rules, agent_id, agent, data)
         update_kwargs = {"agent_id": agent_id}
         if "name" in data:
             update_kwargs["name"] = data["name"]
@@ -627,6 +737,8 @@ async def update_agent(client: Mistral, agent_id: str, data: dict) -> dict:
         if annotatable:
             record_agent_annotations(agent_id, annotatable, source="user")
         return {"id": agent.id, "name": getattr(agent, "name", None)}
+    except MistralAPIError:
+        raise
     except Exception as e:
         if "not found" in str(e).lower():
             raise AgentNotFoundError(agent_id)

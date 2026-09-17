@@ -430,6 +430,17 @@ async def execute_tool(tool_name: str, arguments: dict) -> str:
     2. Dynamic tool → proxy to Docker Tool Service
     3. MCP tool → proxy via Docker Tool Service to MCP server
     """
+    # Rules in force for the running agent (read-only database, blocked
+    # tools). A refusal is returned as the tool's result, so the model can
+    # explain it instead of the turn failing. Every tool call from chat and
+    # from workflow agent steps passes through here, which is why the gate
+    # lives here rather than in each caller.
+    from app.rules import runtime as rules_runtime
+
+    refusal = rules_runtime.guard_tool_call(tool_name, arguments)
+    if refusal:
+        return refusal
+
     # Tier 1: Native tools. Executors may be sync or async — the graph tool
     # drives model calls and a Bolt hop, which must not block the event loop.
     if tool_name in NATIVE_EXECUTORS:

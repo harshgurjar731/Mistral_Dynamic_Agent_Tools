@@ -143,10 +143,27 @@ async def create_conversational_agent(
         except Exception:
             pass  # Some SDK versions may not support this kwarg directly
 
+        # Always-on agent rules apply to gateway agents too — the same creation
+        # gate every other path uses. Its trigger tool is a custom function
+        # spec, not a registry key, so only model and moderation rules bite.
+        from app.rules import apply as rules_apply
+        from app.services.agent_service import build_guardrails
+
+        prepared = rules_apply.prepare_agent(
+            model=create_kwargs["model"], instructions=system_prompt,
+            tool_keys=[], connector_ids=[], guardrails=[], mode="pipeline",
+        )
+        create_kwargs["model"] = prepared.model
+        if prepared.guardrails:
+            guardrails = build_guardrails(prepared.guardrails)
+            if guardrails:
+                create_kwargs["guardrails"] = guardrails
+
         agent_obj = await asyncio.to_thread(
             partial(client.beta.agents.create, **create_kwargs)
         )
         agent_id = agent_obj.id
+        rules_apply.finish_agent(agent_id, prepared, [], default_source="ai")
 
         # A gateway fronts one workflow, so the workflow's name is the best
         # domain signal available — better than the generic gateway

@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Markdown } from "@/components/chat/Markdown";
 import { formatDuration } from "@/lib/status";
+import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
 import { cn } from "@/lib/utils";
 
 interface StepResult {
@@ -274,32 +275,19 @@ export function WorkflowExecutionModal({
 
           {/* Step results timeline if available */}
           {executionData?.step_results && executionData.step_results.length > 0 && (
-            <div className="rounded-xl border border-border bg-background-elevated/40 p-3 space-y-1.5">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+            <div className="rounded-xl border border-border bg-background-elevated/40 p-3">
+              <p className="mb-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Step Execution Timeline
               </p>
-              <div className="space-y-1">
-                {executionData.step_results.map((st) => (
-                  <div
-                    key={st.step_id}
-                    className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded bg-surface-hover/60"
-                  >
-                    <div className="flex items-center gap-2">
-                      {st.status === "COMPLETED" ? (
-                        <CheckCircle2 className="size-3.5 text-emerald" />
-                      ) : (
-                        <AlertCircle className="size-3.5 text-red" />
-                      )}
-                      <span className="font-mono text-foreground">{st.step_id}</span>
-                    </div>
-                    {st.duration_ms && (
-                      <span className="text-[11px] text-muted-foreground font-mono">
-                        {formatDuration(st.duration_ms)}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <ExecutionStepTimeline
+                steps={executionData.step_results.map((st) => ({
+                  id: st.step_id,
+                  name: st.step_id,
+                  status: st.status,
+                  duration_ms: st.duration_ms ?? null,
+                  error: st.error ?? null,
+                }))}
+              />
             </div>
           )}
 

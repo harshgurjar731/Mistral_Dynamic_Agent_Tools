@@ -48,12 +48,18 @@ class InstructionAuthoringLayer(AgentDecisionLayer):
             INSTRUCTION_AUTHORING_USER_PROMPT,
         )
 
+        from app.rules import engine as rules_engine, store as rules_store
+
         spec = ctx.agent_spec
         caps = describe_capabilities(ctx)
+        rules = rules_store.effective_rules(
+            "agent", [r["rule_id"] for r in spec.rules or []]
+        )
 
         return (
             INSTRUCTION_AUTHORING_SYSTEM_PROMPT,
             INSTRUCTION_AUTHORING_USER_PROMPT.format(
+                rules=rules_engine.summary_lines(rules) or "None.",
                 requirements=_requirements_block(ctx),
                 agent_name=spec.agent_name or "Assistant",
                 tier=spec.tier or "domain",

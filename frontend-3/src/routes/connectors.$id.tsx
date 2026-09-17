@@ -48,7 +48,10 @@ export const Route = createFileRoute("/connectors/$id")({
 const SCOPES: ConnectorScope[] = ["user", "workspace", "organization"];
 
 function ToolsSection({ id }: { id: string }) {
-  const query = useQuery({ queryKey: QK.connectorTools(id), queryFn: () => connectorsApi.tools(id) });
+  const query = useQuery({
+    queryKey: QK.connectorTools(id),
+    queryFn: () => connectorsApi.tools(id),
+  });
   const [testTool, setTestTool] = useState<ConnectorTool | null>(null);
   const [args, setArgs] = useState("{}");
   const [credName, setCredName] = useState("");
@@ -74,12 +77,16 @@ function ToolsSection({ id }: { id: string }) {
   if (query.isLoading) return <DetailSkeleton />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   const tools = query.data?.tools ?? [];
-  if (tools.length === 0) return <EmptyState icon={<Plug className="size-6" />} title="No tools exposed." />;
+  if (tools.length === 0)
+    return <EmptyState icon={<Plug className="size-6" />} title="No tools exposed." />;
 
   return (
     <div className="space-y-3">
       {tools.map((tool) => (
-        <div key={tool.name} className="rounded-xl border border-border bg-background-elevated/50 p-3">
+        <div
+          key={tool.name}
+          className="rounded-xl border border-border bg-background-elevated/50 p-3"
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">{tool.name}</p>
@@ -152,7 +159,10 @@ function ToolsSection({ id }: { id: string }) {
 }
 
 function AuthenticationSection({ id }: { id: string }) {
-  const query = useQuery({ queryKey: [...QK.connector(id), "auth"], queryFn: () => connectorsApi.authentication(id) });
+  const query = useQuery({
+    queryKey: [...QK.connector(id), "auth"],
+    queryFn: () => connectorsApi.authentication(id),
+  });
   const [authUrl, setAuthUrl] = useState<string | null>(null);
 
   const fetchAuthUrl = useMutation({
@@ -173,8 +183,17 @@ function AuthenticationSection({ id }: { id: string }) {
       ) : (
         <CodeBlock code={JSON.stringify(query.data, null, 2)} language="json" />
       )}
-      <Button size="sm" variant="outline" onClick={() => fetchAuthUrl.mutate()} disabled={fetchAuthUrl.isPending}>
-        {fetchAuthUrl.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => fetchAuthUrl.mutate()}
+        disabled={fetchAuthUrl.isPending}
+      >
+        {fetchAuthUrl.isPending ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <ExternalLink className="size-3.5" />
+        )}
         Get auth URL
       </Button>
       <p className="text-xs text-muted-foreground">
@@ -210,7 +229,11 @@ function CredentialsSection({ id }: { id: string }) {
 
   const create = useMutation({
     mutationFn: () =>
-      connectorsApi.createCredentials(id, { name, credentials: { bearer_token: token }, is_default: isDefault }, scope),
+      connectorsApi.createCredentials(
+        id,
+        { name, credentials: { bearer_token: token }, is_default: isDefault },
+        scope,
+      ),
     onSuccess: () => {
       toast.success("Credentials saved.");
       setName("");
@@ -282,7 +305,10 @@ function CredentialsSection({ id }: { id: string }) {
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : items.length === 0 ? (
-        <EmptyState icon={<KeyRound className="size-6" />} title={`No credentials at ${scope} scope.`} />
+        <EmptyState
+          icon={<KeyRound className="size-6" />}
+          title={`No credentials at ${scope} scope.`}
+        />
       ) : (
         <ul className="space-y-2">
           {items.map((cred) => (
@@ -294,7 +320,12 @@ function CredentialsSection({ id }: { id: string }) {
                 <p className="text-sm text-foreground">{cred.name}</p>
                 {cred.is_default ? (
                   <StatusPill
-                    identity={{ label: "Default", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30" }}
+                    identity={{
+                      label: "Default",
+                      text: "text-emerald",
+                      bg: "bg-emerald/10",
+                      border: "border-emerald/30",
+                    }}
                     size="xs"
                   />
                 ) : null}
@@ -324,12 +355,22 @@ function ActivationSection({ id }: { id: string }) {
   const [exclude, setExclude] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const includeList = include.split(",").map((s) => s.trim()).filter(Boolean);
-  const excludeList = exclude.split(",").map((s) => s.trim()).filter(Boolean);
+  const includeList = include
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const excludeList = exclude
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   const setActivation = useMutation({
     mutationFn: () =>
-      connectorsApi.setActivation(id, { active, include: includeList, exclude: excludeList }, scope),
+      connectorsApi.setActivation(
+        id,
+        { active, include: includeList, exclude: excludeList },
+        scope,
+      ),
     onSuccess: () => {
       toast.success(`Activation updated for ${scope} scope.`);
       setConfirmOpen(false);
@@ -408,7 +449,11 @@ function ActivationSection({ id }: { id: string }) {
             <Button size="sm" variant="ghost" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button size="sm" onClick={() => setActivation.mutate()} disabled={setActivation.isPending}>
+            <Button
+              size="sm"
+              onClick={() => setActivation.mutate()}
+              disabled={setActivation.isPending}
+            >
               {setActivation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
               Confirm
             </Button>
@@ -434,7 +479,11 @@ function ConnectorsIdPage() {
       {query.isLoading ? (
         <DetailSkeleton />
       ) : query.isError ? (
-        <ErrorState error={query.error} title="Connector not found." onRetry={() => query.refetch()} />
+        <ErrorState
+          error={query.error}
+          title="Connector not found."
+          onRetry={() => query.refetch()}
+        />
       ) : !query.data ? (
         <EmptyState icon={<Plug className="size-6" />} title="Connector not found." />
       ) : (
@@ -447,14 +496,20 @@ function ConnectorsIdPage() {
           </div>
 
           <GlassPanel>
-            <GlassPanelHeader title="Tools" description="Invoke connector tools and inspect results." />
+            <GlassPanelHeader
+              title="Tools"
+              description="Invoke connector tools and inspect results."
+            />
             <div className="p-4">
               <ToolsSection id={id} />
             </div>
           </GlassPanel>
 
           <GlassPanel>
-            <GlassPanelHeader title="Authentication" description="Supported auth methods and OAuth flow." />
+            <GlassPanelHeader
+              title="Authentication"
+              description="Supported auth methods and OAuth flow."
+            />
             <div className="p-4">
               <AuthenticationSection id={id} />
             </div>
@@ -468,7 +523,10 @@ function ConnectorsIdPage() {
           </GlassPanel>
 
           <GlassPanel>
-            <GlassPanelHeader title="Activation" description="Enable or disable this connector and its tools." />
+            <GlassPanelHeader
+              title="Activation"
+              description="Enable or disable this connector and its tools."
+            />
             <div className="p-4">
               <ActivationSection id={id} />
             </div>

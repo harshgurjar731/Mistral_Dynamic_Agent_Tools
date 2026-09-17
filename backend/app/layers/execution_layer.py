@@ -158,8 +158,47 @@ def _is_guardrail_stream_refusal(exc: Exception) -> bool:
     return any(marker in text for marker in _GUARDRAIL_STREAM_MARKERS)
 
 
+#: conversation id → agent id. A follow-up turn arrives with only a
+#: conversation id, and the rules that apply belong to that conversation's
+#: agent. Filled when a conversation starts; after a restart the agent is
+#: looked up once from the conversation itself.
+_CONVERSATION_AGENTS: dict[str, str] = {}
+_CONVERSATION_AGENTS_MAX = 5000
+
+#: Where the running turn's RuleContext is kept on the pipeline context.
+_RULES_KEY = "_rule_context"
+_TOOL_STATS_KEY = "_tool_stats"
+
+
+def _remember_conversation(conversation_id: Optional[str], agent_id: Optional[str]) -> None:
+    if not conversation_id or not agent_id:
+        return
+    if len(_CONVERSATION_AGENTS) >= _CONVERSATION_AGENTS_MAX:
+        _CONVERSATION_AGENTS.pop(next(iter(_CONVERSATION_AGENTS)))
+    _CONVERSATION_AGENTS[conversation_id] = agent_id
+
+
+async def _agent_for_conversation(client, conversation_id: Optional[str]) -> Optional[str]:
+    if not conversation_id:
+        return None
+    known = _CONVERSATION_AGENTS.get(conversation_id)
+    if known:
+        return known
+    try:
+        conv = await asyncio.to_thread(
+            partial(client.beta.conversations.get, conversation_id=conversation_id)
+        )
+        agent_id = getattr(conv, "agent_id", None)
+        _remember_conversation(conversation_id, agent_id)
+        return agent_id
+    except Exception as e:
+        logger.debug("Could not resolve the agent of conversation %s: %s", conversation_id, e)
+        return None
+
+
 async def _process_tool_calls_parallel(
-    client, conv_result, conversation_id: str, max_rounds: int = 5
+    client, conv_result, conversation_id: str, max_rounds: int = 5,
+    stats: Optional[dict] = None,
 ):
     """Loop to process tool calls — executes all calls in a round concurrently.
 
@@ -197,6 +236,8 @@ async def _process_tool_calls_parallel(
         if not tool_calls:
             break
 
+        if stats is not None:
+            stats["rounds"] = stats.get("rounds", 0) + 1
         logger.info("Agent requested %d tool call(s) — executing concurrently", len(tool_calls))
 
         # ── PARALLEL: execute all tool calls in this round concurrently ──
@@ -211,6 +252,18 @@ async def _process_tool_calls_parallel(
                 inputs=tool_results,
             )
         )
+
+    # Still asking for tools after the last allowed round: the budget ended the
+    # loop, not the agent. Reported by the tool-call-limit rule.
+    if stats is not None:
+        outputs = (
+            getattr(current_result, "outputs", None)
+            or getattr(current_result, "entries", None)
+            or []
+        )
+        last = list(outputs)[-1] if outputs else None
+        last_type = last.get("type") if isinstance(last, dict) else getattr(last, "type", None)
+        stats["hit_limit"] = last_type == "function.call"
 
     return current_result
 
@@ -229,29 +282,141 @@ class ExecutionLayer(Layer):
     detail = "Holds the conversation and executes any tools the agent calls."
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
+        from app.rules import runtime as rules_runtime
+
         # Determine which agent to use
         agent_id = ctx.agent_id or ctx.created_agent_id
         client = ctx.client
 
-        if ctx.stream:
-            await self._handle_stream(ctx, client, agent_id)
-        else:
-            await self._handle_json(ctx, client, agent_id)
+        rule_ctx, rules_token = await self._activate_rules(ctx, client, agent_id)
+        try:
+            if self._screen_message(ctx, rule_ctx):
+                if ctx.stream:
+                    await self._handle_stream(ctx, client, agent_id)
+                else:
+                    await self._handle_json(ctx, client, agent_id)
+                self._finish_rules(ctx, rule_ctx)
+        finally:
+            rules_runtime.reset(rules_token)
 
         return await next(ctx)
+
+    # ── Rules ───────────────────────────────────────────────────────────
+
+    async def _activate_rules(self, ctx: PipelineContext, client, agent_id: str | None):
+        """Load the running agent's rules and make them visible to the tool gate."""
+        from app.rules import runtime as rules_runtime, store as rules_store
+
+        subject = agent_id or await _agent_for_conversation(client, ctx.conversation_id)
+        try:
+            if ctx.created_agent_id and ctx.metadata.get("agent_rules") is not None:
+                # Just resolved by AgentAssemblyLayer for this very agent.
+                rules = ctx.metadata["agent_rules"]
+            elif subject:
+                rules = await asyncio.to_thread(rules_store.rules_for_agent, subject)
+            else:
+                # Agent unknown: always-on rules still apply.
+                rules = rules_store.effective_rules("agent")
+        except Exception as e:
+            logger.warning("Agent rules unavailable, continuing without them: %s", e)
+            rules = []
+
+        rule_ctx, token = rules_runtime.activate(rules, "agent", subject or "unknown", ctx.conversation_id)
+        ctx.metadata[_RULES_KEY] = rule_ctx
+        return rule_ctx, token
+
+    def _max_rounds(self, ctx: PipelineContext) -> int:
+        """The guardrail envelope's round budget, lowered by a tool-call-limit rule."""
+        from app.layers.agent.assembly_layer import MAX_TOOL_ROUNDS_KEY
+        from app.rules import engine as rules_engine
+
+        base = ctx.metadata.get(MAX_TOOL_ROUNDS_KEY, 5)
+        rule_ctx = ctx.metadata.get(_RULES_KEY)
+        return rules_engine.tool_round_limit(rule_ctx.rules, base) if rule_ctx else base
+
+    def _screen_message(self, ctx: PipelineContext, rule_ctx) -> bool:
+        """Screen the user's message. False when a rule refused it.
+
+        A refused message is answered with the refusal itself rather than an
+        error, so the user sees why in the conversation, not in a toast.
+        """
+        from app.rules import engine as rules_engine, runtime as rules_runtime
+
+        if not rule_ctx.rules:
+            return True
+        outcomes, refusal = rules_engine.check_message(ctx.query, rule_ctx.rules)
+        rules_runtime.record(
+            outcomes, scope="agent", subject_id=rule_ctx.subject_id,
+            conversation_id=ctx.conversation_id, ctx=rule_ctx,
+        )
+        if not refusal:
+            return True
+
+        summary = rules_runtime.summarise(rule_ctx.outcomes)
+        agent_config = ctx.agent_config or {}
+        ctx.response_text = refusal
+        ctx.result = {
+            "response": refusal,
+            "conversation_id": ctx.conversation_id,
+            "agent_id": ctx.created_agent_id or ctx.agent_id,
+            "agent_name": agent_config.get("agent_name"),
+            "blocked_by_rule": True,
+            "rule_outcomes": summary,
+        }
+        if ctx.stream:
+            ctx.emit("text_chunk", refusal)
+            ctx.emit("rule_outcomes", json.dumps(summary))
+            ctx.emit("done", json.dumps({
+                "agent_id": ctx.created_agent_id or ctx.agent_id,
+                "agent_name": agent_config.get("agent_name"),
+            }))
+        return False
+
+    def _apply_answer_rules(self, ctx: PipelineContext, text: str) -> str:
+        """Check (and possibly redact or cut) the answer before anyone sees it."""
+        from app.rules import engine as rules_engine, runtime as rules_runtime
+
+        rule_ctx = ctx.metadata.get(_RULES_KEY)
+        if not rule_ctx or not rules_engine.answer_rules(rule_ctx.rules):
+            return text
+        checked, outcomes, refusal = rules_engine.check_answer(text or "", rule_ctx.rules)
+        rules_runtime.record(
+            outcomes, scope="agent", subject_id=rule_ctx.subject_id,
+            conversation_id=ctx.conversation_id, ctx=rule_ctx,
+        )
+        return refusal or checked
+
+    def _finish_rules(self, ctx: PipelineContext, rule_ctx) -> None:
+        """Record the tool budget's outcome and publish the turn's rule results."""
+        from app.rules import engine as rules_engine, runtime as rules_runtime
+
+        if not rule_ctx.rules:
+            return
+        stats = ctx.metadata.get(_TOOL_STATS_KEY) or {}
+        rules_runtime.record(
+            rules_engine.tool_limit_outcomes(
+                rule_ctx.rules, stats.get("rounds", 0), bool(stats.get("hit_limit"))
+            ),
+            scope="agent", subject_id=rule_ctx.subject_id,
+            conversation_id=ctx.conversation_id, ctx=rule_ctx,
+        )
+        summary = rules_runtime.summarise(rule_ctx.outcomes)
+        ctx.emit("rule_outcomes", json.dumps(summary))
+        if isinstance(ctx.result, dict) and ctx.result:
+            ctx.result["rule_outcomes"] = summary
 
     # ── JSON mode ───────────────────────────────────────────────────────
 
     async def _handle_json(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
         # Scope any industry-knowledge lookup to this agent's own domain.
         from app.services import tool_registry
-        from app.layers.agent.assembly_layer import MAX_TOOL_ROUNDS_KEY
         tool_registry.CURRENT_AGENT.set(agent_id or ctx.agent_id)
 
         # Set by GuardrailConfigLayer for a freshly designed agent. A follow-up
         # or a pre-selected agent has no envelope in this context, so the
-        # engine default applies.
-        max_rounds = ctx.metadata.get(MAX_TOOL_ROUNDS_KEY, 5)
+        # engine default applies — unless a tool-call-limit rule lowers it.
+        max_rounds = self._max_rounds(ctx)
+        stats = ctx.metadata.setdefault(_TOOL_STATS_KEY, {})
 
         inputs = _build_user_inputs(ctx.query, ctx.image)
 
@@ -265,9 +430,9 @@ class ExecutionLayer(Layer):
                 )
             )
             result = await _process_tool_calls_parallel(
-                client, result, ctx.conversation_id, max_rounds
+                client, result, ctx.conversation_id, max_rounds, stats
             )
-            ctx.response_text = _extract_response(result)
+            ctx.response_text = self._apply_answer_rules(ctx, _extract_response(result))
             ctx.result = {
                 "response": ctx.response_text,
                 "conversation_id": ctx.conversation_id,
@@ -292,11 +457,12 @@ class ExecutionLayer(Layer):
             getattr(conv_result, "conversation_id", None)
             or getattr(conv_result, "id", None)
         )
+        _remember_conversation(conversation_id, agent_id)
         conv_result = await _process_tool_calls_parallel(
-            client, conv_result, conversation_id, max_rounds
+            client, conv_result, conversation_id, max_rounds, stats
         )
-        ctx.response_text = _extract_response(conv_result)
         ctx.conversation_id = conversation_id
+        ctx.response_text = self._apply_answer_rules(ctx, _extract_response(conv_result))
 
         agent_config = ctx.agent_config or {}
         ctx.result = {
@@ -314,18 +480,22 @@ class ExecutionLayer(Layer):
     # ── Streaming mode ──────────────────────────────────────────────────
 
     async def _deliver_without_streaming(
-        self, ctx: PipelineContext, client, agent_id: str | None
+        self, ctx: PipelineContext, client, agent_id: str | None, reason: str = "guardrails",
     ) -> None:
         """Answer through the non-streaming path, emitting SSE as if streamed.
 
-        Used when the agent carries guardrails. The whole reply arrives at once
-        instead of token by token — the tool loop, the conversation id and the
-        final payload are otherwise identical, because this reuses the JSON
-        path rather than reimplementing it.
+        Used when the agent carries guardrails, or answer rules (redaction,
+        JSON, length) that must see the whole answer before anyone does. The
+        whole reply arrives at once instead of token by token — the tool loop,
+        the conversation id and the final payload are otherwise identical,
+        because this reuses the JSON path rather than reimplementing it.
         """
         ctx.emit(
             "status",
-            "Guardrails are active on this agent, so the answer arrives complete "
+            "Answer rules are active on this agent, so the answer is checked and "
+            "arrives complete rather than word by word."
+            if reason == "rules"
+            else "Guardrails are active on this agent, so the answer arrives complete "
             "rather than word by word.",
         )
         await self._handle_json(ctx, client, agent_id)
@@ -346,6 +516,15 @@ class ExecutionLayer(Layer):
         }))
 
     async def _handle_stream(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
+        from app.rules import engine as rules_engine
+
+        # Answer rules have to see the whole answer before the user does, and
+        # a streamed answer is already on screen by the time it is complete.
+        rule_ctx = ctx.metadata.get(_RULES_KEY)
+        if rule_ctx and rules_engine.answer_rules(rule_ctx.rules):
+            await self._deliver_without_streaming(ctx, client, agent_id, reason="rules")
+            return
+
         # Known up front for an agent this run just created: no point spending a
         # round trip to be told no.
         spec_guardrails = ctx.agent_spec.guardrails if ctx.agent_spec else None
@@ -375,6 +554,8 @@ class ExecutionLayer(Layer):
 
             async for evt_type, data in _consume_stream_and_tools(
                 client, client.beta.conversations.append_stream,
+                _max_depth=self._max_rounds(ctx),
+                _stats=ctx.metadata.setdefault(_TOOL_STATS_KEY, {}),
                 conversation_id=ctx.conversation_id, inputs=inputs,
             ):
                 if evt_type != "conversation_id":
@@ -392,6 +573,8 @@ class ExecutionLayer(Layer):
             conversation_id_out = None
             async for evt_type, data in _consume_stream_and_tools(
                 client, client.beta.conversations.start_stream,
+                _max_depth=self._max_rounds(ctx),
+                _stats=ctx.metadata.setdefault(_TOOL_STATS_KEY, {}),
                 agent_id=ctx.agent_id, inputs=inputs,
             ):
                 if evt_type == "conversation_id":
@@ -400,6 +583,7 @@ class ExecutionLayer(Layer):
                     ctx.emit(evt_type, data)
 
             if conversation_id_out:
+                _remember_conversation(conversation_id_out, ctx.agent_id)
                 ctx.emit("conversation_id", conversation_id_out)
             ctx.emit("done", "done")
             return
@@ -415,6 +599,8 @@ class ExecutionLayer(Layer):
         conversation_id_out = None
         async for evt_type, data in _consume_stream_and_tools(
             client, client.beta.conversations.start_stream,
+            _max_depth=self._max_rounds(ctx),
+            _stats=ctx.metadata.setdefault(_TOOL_STATS_KEY, {}),
             agent_id=agent_id, inputs=inputs,
         ):
             if evt_type == "conversation_id":
@@ -423,6 +609,7 @@ class ExecutionLayer(Layer):
                 ctx.emit(evt_type, data)
 
         ctx.conversation_id = conversation_id_out
+        _remember_conversation(conversation_id_out, agent_id)
 
         agent_config = ctx.agent_config or {}
         if conversation_id_out:
@@ -435,8 +622,21 @@ class ExecutionLayer(Layer):
 
 # ── Streaming tool-call consumer ────────────────────────────────────────────
 
-async def _consume_stream_and_tools(client, stream_method, **stream_kwargs) -> AsyncGenerator[tuple[str, str], None]:
-    """Consume a Mistral stream, handle tool calls with parallel execution."""
+async def _consume_stream_and_tools(
+    client, stream_method, *,
+    _depth: int = 0,
+    _max_depth: int = 5,
+    _stats: Optional[dict] = None,
+    **stream_kwargs,
+) -> AsyncGenerator[tuple[str, str], None]:
+    """Consume a Mistral stream, handle tool calls with parallel execution.
+
+    Each round of tool calls recurses once. ``_max_depth`` bounds that the
+    same way ``max_rounds`` bounds the non-streaming loop: at the limit the
+    model is told the budget is spent and gets one last turn to answer, and
+    anything it asks for after that is not executed. Before this bound the
+    recursion had none, so a confused agent could call tools indefinitely.
+    """
     from app.services.tool_registry import execute_tool
 
     tool_calls_buffer = {}
@@ -499,7 +699,22 @@ async def _consume_stream_and_tools(client, stream_method, **stream_kwargs) -> A
     logger.info("Stream ended. Accumulated %d tool calls.", len(tool_calls_buffer))
 
     if tool_calls_buffer and conversation_id_out:
-        yield ("status", "Executing tools…")
+        if _depth > _max_depth:
+            # The model was already told the budget is spent and asked again.
+            logger.warning("Tool call limit (%d rounds) reached — not executing more tools", _max_depth)
+            if _stats is not None:
+                _stats["hit_limit"] = True
+            return
+
+        over_budget = _depth >= _max_depth
+        if over_budget:
+            if _stats is not None:
+                _stats["hit_limit"] = True
+            yield ("status", "Tool call limit reached — finishing the answer…")
+        else:
+            if _stats is not None:
+                _stats["rounds"] = _stats.get("rounds", 0) + 1
+            yield ("status", "Executing tools…")
 
         # ── PARALLEL: execute all accumulated tool calls concurrently ──
         async def _exec_one(tc: dict) -> dict:
@@ -507,8 +722,14 @@ async def _consume_stream_and_tools(client, stream_method, **stream_kwargs) -> A
             args_str = tc["arguments"]
             tc_id = tc["id"]
             try:
-                args = json.loads(args_str) if args_str else {}
-                result_str = await execute_tool(func_name, args)
+                if over_budget:
+                    result_str = (
+                        "Tool call limit reached — do not call more tools. "
+                        "Answer now with what you have."
+                    )
+                else:
+                    args = json.loads(args_str) if args_str else {}
+                    result_str = await execute_tool(func_name, args)
             except Exception as e:
                 logger.error("Error executing stream tool: %s", e)
                 result_str = f"Error: {e}"
@@ -527,6 +748,9 @@ async def _consume_stream_and_tools(client, stream_method, **stream_kwargs) -> A
         async for event_type, evt_data in _consume_stream_and_tools(
             client,
             client.beta.conversations.append_stream,
+            _depth=_depth + 1,
+            _max_depth=_max_depth,
+            _stats=_stats,
             conversation_id=conversation_id_out,
             inputs=tool_results,
         ):

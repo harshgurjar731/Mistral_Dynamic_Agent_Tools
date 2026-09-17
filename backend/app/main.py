@@ -66,7 +66,19 @@ async def lifespan(app: FastAPI):
     import app.remote_server_model  # noqa: F401 — register model with Base
     import app.ontology.models       # noqa: F401 — register ontology tables with Base
     import app.rag.models            # noqa: F401 — register graph-RAG tables with Base
+    import app.rules.models          # noqa: F401 — register rules tables with Base
     create_tables()
+
+    # The recommended starter rules. Insert-if-missing, so edits made on the
+    # Rules page survive a restart.
+    try:
+        from app.rules import seed as rules_seed, store as rules_store
+
+        added = rules_seed.load_seed()
+        pruned = rules_store.prune_events()
+        logger.info("✅ Rules ready: %d recommended rule(s) added, %d old event(s) pruned", added, pruned)
+    except Exception as e:
+        logger.warning("⚠️ Rules seed skipped: %s", e)
 
     # Additive column migrations for tables that predate a field.
     from app.ontology import knowledge as ontology_knowledge
@@ -335,6 +347,9 @@ app.include_router(remote_servers.router, prefix=settings.API_PREFIX)
 app.include_router(connectors.router, prefix=settings.API_PREFIX)
 app.include_router(ontology.router, prefix=settings.API_PREFIX)
 app.include_router(rag.router, prefix=settings.API_PREFIX)
+
+from app.routes import rules as rules_routes  # noqa: E402
+app.include_router(rules_routes.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

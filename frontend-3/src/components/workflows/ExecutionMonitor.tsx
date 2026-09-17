@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { executionStatusIdentity, LIVE_STATE_IDENTITY, formatDuration, formatTimestamp } from "@/lib/status";
 import { Markdown } from "@/components/chat/Markdown";
 import { useExecutionStream } from "./useExecutionStream";
+import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
 import { cn } from "@/lib/utils";
 
 const TABS = ["steps", "result", "logs", "events", "trace", "history", "control"] as const;
@@ -76,7 +77,14 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
           </TabsList>
           <div className="mt-3 flex-1 overflow-auto custom-scrollbar">
             <TabsContent value="steps" className="h-full">
-              <StepsTab steps={steps} />
+              <ExecutionStepTimeline
+                steps={steps}
+                emptyHint={
+                  phase === "live" || phase === "connecting"
+                    ? "Waiting for the first step to report…"
+                    : "This run reported no step-level progress."
+                }
+              />
             </TabsContent>
             <TabsContent value="result" className="h-full">
               <ResultTab detail={detail} error={error} />
@@ -100,47 +108,6 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
         </Tabs>
       </div>
     </GlassPanel>
-  );
-}
-
-function StepsTab({ steps }: { steps: import("@/types").ExecutionStep[] }) {
-  if (steps.length === 0) return <EmptyState title="No steps yet" description="Waiting for the first step to start." />;
-  const groups = new Map<string, typeof steps>();
-  for (const s of steps) {
-    const key = s.parallel_group ?? "";
-    groups.set(key, [...(groups.get(key) ?? []), s]);
-  }
-  return (
-    <ol className="space-y-3">
-      {Array.from(groups.entries()).map(([group, list]) => (
-        <li key={group || "solo"}>
-          {group ? <p className="eyebrow mb-1.5">Parallel · {group}</p> : null}
-          <div className="space-y-2">
-            {list.map((s) => {
-              const identity = executionStatusIdentity(s.status);
-              return (
-                <div key={s.id} className="rounded-xl border border-border bg-background-elevated/60 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-foreground">{s.name || s.id}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-muted-foreground">{formatDuration(s.duration_ms)}</span>
-                      <StatusPill identity={identity} size="xs" />
-                    </div>
-                  </div>
-                  {s.input_preview ? (
-                    <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">in: {s.input_preview}</p>
-                  ) : null}
-                  {s.output_preview ? (
-                    <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">out: {s.output_preview}</p>
-                  ) : null}
-                  {s.error ? <p className="mt-1 text-[11px] text-red">{s.error}</p> : null}
-                </div>
-              );
-            })}
-          </div>
-        </li>
-      ))}
-    </ol>
   );
 }
 

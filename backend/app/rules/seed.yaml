@@ -1,0 +1,139 @@
+# Recommended starter rules.
+#
+# Inserted once, if missing — never overwritten, because every one of these is
+# editable on the Rules page and a person's edits must survive a restart.
+# "Restore default" on the Rules page resets a rule to the values below.
+#
+# always_on: true   applies to every agent / workflow of that scope
+# always_on: false  the orchestrator (or a person) attaches it where relevant
+
+rules:
+  # ── Agent rules ───────────────────────────────────────────────────────────
+  - id: agent.read_only_database
+    type: database_read_only
+    name: Read-only database
+    enforcement: block
+    always_on: true
+
+  - id: agent.prompt_injection_screen
+    type: blocked_phrases
+    name: Prompt-injection screen
+    description: Refuses messages that try to override the agent's instructions.
+    enforcement: block
+    always_on: true
+    params:
+      check_on: message
+      phrases:
+        - ignore previous instructions
+        - ignore all previous instructions
+        - disregard your instructions
+        - reveal your system prompt
+        - you are now in developer mode
+
+  - id: agent.approved_models
+    type: approved_models
+    name: Approved models
+    enforcement: block
+    always_on: true
+    params:
+      models: [mistral-large-latest, mistral-medium-latest, mistral-small-latest]
+
+  - id: agent.instruction_quality
+    type: instruction_quality
+    name: Instruction quality
+    enforcement: warn
+    always_on: true
+    params:
+      min_chars: 200
+
+  - id: agent.harmful_content_filter
+    type: content_moderation
+    name: Harmful content filter
+    enforcement: fix
+    always_on: false
+    params:
+      strictness: balanced
+      categories: [jailbreaking, dangerous, criminal, selfharm, hate_and_discrimination, violence_and_threats]
+
+  - id: agent.personal_data_redaction
+    type: pii_redaction
+    name: Personal data redaction
+    enforcement: fix
+    always_on: false
+    params:
+      types: [email, phone, card]
+
+  - id: agent.tool_call_limit
+    type: tool_call_limit
+    name: Tool call limit
+    enforcement: block
+    always_on: false
+    params:
+      max_rounds: 5
+
+  - id: agent.json_answers
+    type: json_answers
+    name: JSON answers
+    description: For agents whose answers are read by another program.
+    enforcement: warn
+    always_on: false
+    enabled: false
+
+  # ── Workflow rules ────────────────────────────────────────────────────────
+  - id: workflow.capability_coverage
+    type: capability_coverage
+    name: Capability coverage
+    enforcement: warn
+    always_on: true
+
+  - id: workflow.sensitive_data_internal
+    type: sensitive_data_internal
+    name: Sensitive data stays internal
+    enforcement: block
+    always_on: true
+    params:
+      data_classes: [pii, financial]
+
+  - id: workflow.screen_input_first
+    type: screen_input_first
+    name: Screen input first
+    enforcement: warn
+    always_on: true
+    params:
+      required_tier: foundation
+
+  - id: workflow.documents_match_domain
+    type: documents_match_domain
+    name: Documents match the domain
+    enforcement: warn
+    always_on: true
+
+  - id: workflow.step_limit
+    type: step_limit
+    name: Step limit
+    enforcement: block
+    always_on: true
+    params:
+      max_steps: 30
+
+  - id: workflow.agent_step_tool_limit
+    type: agent_step_tool_limit
+    name: Tool calls per agent step
+    enforcement: block
+    always_on: true
+    params:
+      max_rounds: 10
+
+  - id: workflow.input_screening
+    type: input_screening
+    name: Input screening
+    enforcement: block
+    always_on: false
+
+  - id: workflow.result_redaction
+    type: result_redaction
+    name: Redact personal data in results
+    enforcement: fix
+    always_on: false
+    params:
+      types: [email, phone, card]

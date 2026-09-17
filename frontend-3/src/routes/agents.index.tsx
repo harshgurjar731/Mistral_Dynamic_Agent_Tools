@@ -140,7 +140,9 @@ function AgentsIndexPage() {
             <div className="grid size-6 place-items-center rounded-md bg-amber/10 text-amber">
               <Layers className="size-3" />
             </div>
-            <span className="text-xs font-medium text-foreground">{totalAgents - classifiedCount}</span>
+            <span className="text-xs font-medium text-foreground">
+              {totalAgents - classifiedCount}
+            </span>
             <span className="text-[10px] text-muted-foreground/60">unclassified</span>
           </div>
         </div>

@@ -137,7 +137,10 @@ function PlaygroundPage() {
         m.imageBase64 && m.imageMime
           ? [
               { type: "text", text: m.content },
-              { type: "image_url", image_url: { url: `data:${m.imageMime};base64,${m.imageBase64}` } },
+              {
+                type: "image_url",
+                image_url: { url: `data:${m.imageMime};base64,${m.imageBase64}` },
+              },
             ]
           : m.content,
     }));
@@ -268,14 +271,17 @@ function PlaygroundPage() {
                   </div>
                 </div>
                 <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                  Start a{" "}
-                  <span className="text-gradient-brand">conversation.</span>
+                  Start a <span className="text-gradient-brand">conversation.</span>
                 </h2>
                 <p className="mt-2 max-w-sm text-center text-sm leading-relaxed text-muted-foreground">
                   Send a message below to begin. Use Settings to adjust model and parameters.
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  {["Explain quantum computing", "Write a Python sort function", "Translate to French"].map((hint) => (
+                  {[
+                    "Explain quantum computing",
+                    "Write a Python sort function",
+                    "Translate to French",
+                  ].map((hint) => (
                     <button
                       key={hint}
                       type="button"

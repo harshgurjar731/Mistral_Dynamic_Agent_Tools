@@ -1,5 +1,5 @@
 import { del, get, patch, post } from "./client";
-import type { Agent, PaginatedAgents } from "@/types";
+import type { Agent, PaginatedAgents, RuleRef } from "@/types";
 
 export interface AgentCreate {
   name: string;
@@ -17,6 +17,8 @@ export interface AgentCreate {
   frequency_penalty?: number | null;
   presence_penalty?: number | null;
   guardrails?: Agent["guardrails"];
+  /** Optional agent rules; always-on rules apply without being listed. */
+  rules?: RuleRef[];
 }
 
 export type AgentPatch = Partial<

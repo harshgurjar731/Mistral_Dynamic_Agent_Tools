@@ -61,7 +61,8 @@ function ConnectorCard({ connector }: { connector: Connector }) {
       <div
         className="pointer-events-none absolute -inset-px rounded-2xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
         style={{
-          background: "linear-gradient(135deg, oklch(0.65 0.18 200 / 0.06), oklch(0.71 0.14 220 / 0.04), transparent 70%)",
+          background:
+            "linear-gradient(135deg, oklch(0.65 0.18 200 / 0.06), oklch(0.71 0.14 220 / 0.04), transparent 70%)",
         }}
       />
 
@@ -101,8 +102,19 @@ function ConnectorCard({ connector }: { connector: Connector }) {
               <StatusPill
                 identity={
                   connector.active
-                    ? { label: "Active", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30", pulse: true }
-                    : { label: "Inactive", text: "text-slate", bg: "bg-slate/10", border: "border-slate/30" }
+                    ? {
+                        label: "Active",
+                        text: "text-emerald",
+                        bg: "bg-emerald/10",
+                        border: "border-emerald/30",
+                        pulse: true,
+                      }
+                    : {
+                        label: "Inactive",
+                        text: "text-slate",
+                        bg: "bg-slate/10",
+                        border: "border-slate/30",
+                      }
                 }
                 size="xs"
               />
@@ -125,8 +137,18 @@ function ConnectorCard({ connector }: { connector: Connector }) {
           <StatusPill
             identity={
               connector.is_authenticated
-                ? { label: "Authenticated", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30" }
-                : { label: "Not authenticated", text: "text-amber", bg: "bg-amber/10", border: "border-amber/30" }
+                ? {
+                    label: "Authenticated",
+                    text: "text-emerald",
+                    bg: "bg-emerald/10",
+                    border: "border-emerald/30",
+                  }
+                : {
+                    label: "Not authenticated",
+                    text: "text-amber",
+                    bg: "bg-amber/10",
+                    border: "border-amber/30",
+                  }
             }
             size="xs"
           />
@@ -146,9 +168,7 @@ function ConnectorCard({ connector }: { connector: Connector }) {
 
         {/* Footer */}
         <div className="mt-3.5 flex items-center border-t border-border/40 pt-3.5">
-          <span className="text-[10px] text-muted-foreground/40 italic">
-            {connector.name}
-          </span>
+          <span className="text-[10px] text-muted-foreground/40 italic">{connector.name}</span>
           {!connector.is_directory && (
             <button
               type="button"
@@ -161,7 +181,11 @@ function ConnectorCard({ connector }: { connector: Connector }) {
               }}
               className="pointer-events-auto ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium text-red/50 opacity-0 transition hover:bg-red/10 hover:text-red group-hover:opacity-100"
             >
-              {remove.isPending ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+              {remove.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Trash2 className="size-3" />
+              )}
             </button>
           )}
         </div>
@@ -170,7 +194,13 @@ function ConnectorCard({ connector }: { connector: Connector }) {
   );
 }
 
-function CreateConnectorDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+function CreateConnectorDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -204,7 +234,11 @@ function CreateConnectorDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <DialogTitle>New Connector</DialogTitle>
         </DialogHeader>
         <div className="space-y-2">
-          <Input placeholder="name (e.g. github_app)" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            placeholder="name (e.g. github_app)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
           <Textarea
             placeholder="Read and write GitHub issues and pull requests."
             value={description}
@@ -367,7 +401,11 @@ function ConnectorsIndexPage() {
         {query.isLoading ? (
           <CardGridSkeleton />
         ) : query.isError ? (
-          <ErrorState error={query.error} title="Could not load connectors." onRetry={() => query.refetch()} />
+          <ErrorState
+            error={query.error}
+            title="Could not load connectors."
+            onRetry={() => query.refetch()}
+          />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 py-20 text-center">
             <div className="relative mb-5">

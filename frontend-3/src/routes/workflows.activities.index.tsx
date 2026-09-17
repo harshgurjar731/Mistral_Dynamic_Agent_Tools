@@ -2,13 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  Zap,
-  Inbox,
-  Search,
-  Sparkles,
-  Loader2,
-} from "lucide-react";
+import { Zap, Inbox, Search, Sparkles, Loader2 } from "lucide-react";
 import { toolsApi, QK, errorMessage } from "@/api";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -77,9 +71,7 @@ function ActivityGalleryPage() {
     const q = search.trim().toLowerCase();
     if (!q) return activeActivities;
     return activeActivities.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (t.description ?? "").toLowerCase().includes(q),
+      (t) => t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
     );
   }, [activeActivities, search]);
 
@@ -87,14 +79,12 @@ function ActivityGalleryPage() {
     const q = search.trim().toLowerCase();
     if (!q) return pendingActivities;
     return pendingActivities.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (t.description ?? "").toLowerCase().includes(q),
+      (t) => t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
     );
   }, [pendingActivities, search]);
 
   const synthesizeMut = useMutation({
-    mutationFn: () => toolsApi.synthesize(task.trim()),
+    mutationFn: () => toolsApi.synthesize(task.trim(), "activity"),
     onSuccess: () => {
       toast.success("Activity synthesized and sent to Pending Review.");
       setTask("");
@@ -126,14 +116,14 @@ function ActivityGalleryPage() {
       </div>
 
       <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "active" | "pending")} className="w-fit">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "active" | "pending")}
+          className="w-fit"
+        >
           <TabsList>
-            <TabsTrigger value="active">
-              Active Activities ({activeActivities.length})
-            </TabsTrigger>
-            <TabsTrigger value="pending">
-              Pending Review ({pendingActivities.length})
-            </TabsTrigger>
+            <TabsTrigger value="active">Active Activities ({activeActivities.length})</TabsTrigger>
+            <TabsTrigger value="pending">Pending Review ({pendingActivities.length})</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -194,7 +184,8 @@ function ActivityGalleryPage() {
               <Sparkles className="size-4 text-pink-400" /> Synthesize Activity
             </DialogTitle>
             <DialogDescription>
-              Describe what the activity should do. Codestral will generate Python code and parameters.
+              Describe what the activity should do. Codestral will generate Python code and
+              parameters.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -215,7 +206,11 @@ function ActivityGalleryPage() {
               onClick={() => synthesizeMut.mutate()}
               className="gap-2"
             >
-              {synthesizeMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {synthesizeMut.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
               Synthesize
             </Button>
           </DialogFooter>

@@ -77,6 +77,26 @@ class CapabilityGapLayer(Layer):
                 return await next(ctx)
 
             tool_name = data.get("tool_name", "unknown")
+
+            # "Reviewed tools only" has to be checked here rather than on the
+            # agent: synthesis happens before any agent exists to attach a rule
+            # to, which is why that rule only takes effect when always on.
+            from app.rules import store as rules_store
+
+            review_rule = next(
+                (r for r in rules_store.always_on_rules("agent") if r["type"] == "reviewed_tools_only"),
+                None,
+            )
+            if review_rule:
+                logger.info("Synthesis of '%s' skipped by rule '%s'", tool_name, review_rule["id"])
+                ctx.emit(
+                    "status",
+                    f"Rule '{review_rule['name']}': not generating '{tool_name}' — "
+                    f"building the agent from existing tools.",
+                )
+                ctx.synthesis_result = False
+                return await next(ctx)
+
             ctx.emit("status", f"Synthesising capability: {tool_name}…")
 
             synthesis_result = await tool_resolver.trigger_synthesis(

@@ -14,13 +14,12 @@ the thing that makes a workflow runnable.
 import json
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from typing import Iterable
 
 from sqlalchemy import text
 
 from app.database import SessionLocal
-from app.ontology.models import Annotation, Concept, ConceptScheme, OntologyRule, RuleException
+from app.ontology.models import Annotation, Concept, ConceptScheme
 from app.ontology.vocab import Predicate, Scheme, SubjectType
 
 logger = logging.getLogger(__name__)
@@ -817,263 +816,24 @@ def all_annotations() -> list[dict]:
     return search_annotations(limit=100_000)
 
 
-# ── Rules ──────────────────────────────────────────────────────────────────
-#
-# Same shape as the vocabulary CRUD above: read functions degrade to empty,
-# write functions raise VocabularyError with a message meant for a user. Rules
-# follow the LibraryOntology draft/approved/superseded lifecycle (see
-# rag/models.py) — a draft has zero effect until approved, which is what makes
-# editing a live governance rule safe to preview.
-
-
-def _rule_dict(rule: OntologyRule) -> dict:
-    return {
-        "id": rule.id,
-        "kind": rule.kind,
-        "label": rule.label,
-        "params": json.loads(rule.params) if rule.params else {},
-        "severity": rule.severity,
-        "message_template": rule.message_template or "",
-        "status": rule.status,
-        "source": rule.source,
-    }
-
-
-def list_rules(status: str | None = None) -> list[dict]:
-    with _session() as db:
-        if db is None:
-            return []
-        q = db.query(OntologyRule)
-        if status:
-            q = q.filter(OntologyRule.status == status)
-        return [_rule_dict(r) for r in q.order_by(OntologyRule.id).all()]
-
-
-def get_rule(rule_id: str) -> dict | None:
-    with _session() as db:
-        if db is None:
-            return None
-        rule = db.query(OntologyRule).filter(OntologyRule.id == rule_id).first()
-        return _rule_dict(rule) if rule else None
-
-
-def upsert_rule(
-    rule_id: str,
-    kind: str,
-    label: str,
-    params: dict | None = None,
-    severity: str = "warning",
-    message_template: str | None = None,
-    status: str = "draft",
-    source: str = "user",
-) -> dict:
-    """Create a rule, or overwrite one with the same id.
-
-    Overwrite rather than reject-on-exists: the seed loader re-runs this on
-    every boot for the shipped rules, and a hand-edited row with the same id
-    is how a user intentionally replaces a seed rule.
-    """
-    rule_id = (rule_id or "").strip()
-    if not rule_id:
-        raise VocabularyError("A rule id is required.")
-    if not kind:
-        raise VocabularyError("A rule kind is required.")
-
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        rule = db.query(OntologyRule).filter(OntologyRule.id == rule_id).first()
-        payload = dict(
-            kind=kind,
-            label=label or rule_id,
-            params=json.dumps(params or {}),
-            severity=severity,
-            message_template=message_template,
-            status=status,
-            source=source,
-        )
-        if rule:
-            for key, value in payload.items():
-                setattr(rule, key, value)
-        else:
-            db.add(OntologyRule(id=rule_id, **payload))
-        if status == "approved":
-            db.query(OntologyRule).filter(OntologyRule.id == rule_id).update(
-                {"approved_at": datetime.now(timezone.utc)}
-            )
-        db.commit()
-
-    return get_rule(rule_id) or {}
-
-
-def update_rule(
-    rule_id: str,
-    label: str | None = None,
-    params: dict | None = None,
-    severity: str | None = None,
-    message_template: str | None = None,
-) -> dict:
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        rule = db.query(OntologyRule).filter(OntologyRule.id == rule_id).first()
-        if not rule:
-            raise VocabularyError(f"Rule '{rule_id}' not found.")
-        if label is not None:
-            rule.label = label
-        if params is not None:
-            rule.params = json.dumps(params)
-        if severity is not None:
-            rule.severity = severity
-        if message_template is not None:
-            rule.message_template = message_template
-        db.commit()
-    return get_rule(rule_id) or {}
-
-
-def approve_rule(rule_id: str) -> dict:
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        rule = db.query(OntologyRule).filter(OntologyRule.id == rule_id).first()
-        if not rule:
-            raise VocabularyError(f"Rule '{rule_id}' not found.")
-        rule.status = "approved"
-        rule.approved_at = datetime.now(timezone.utc)
-        db.commit()
-    logger.info("Approved ontology rule '%s'", rule_id)
-    return get_rule(rule_id) or {}
-
-
-def delete_rule(rule_id: str) -> dict:
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        rule = db.query(OntologyRule).filter(OntologyRule.id == rule_id).first()
-        if not rule:
-            raise VocabularyError(f"Rule '{rule_id}' not found.")
-        removed_exceptions = (
-            db.query(RuleException)
-            .filter(RuleException.rule_id == rule_id)
-            .delete(synchronize_session=False)
-        )
-        db.delete(rule)
-        db.commit()
-    return {"deleted": rule_id, "exceptions_removed": removed_exceptions}
-
-
-# ── Rule exceptions ────────────────────────────────────────────────────────
-
-
-def _exception_dict(exc: RuleException) -> dict:
-    return {
-        "id": exc.id,
-        "rule_id": exc.rule_id,
-        "subject_type": exc.subject_type,
-        "subject_id": exc.subject_id,
-        "reason": exc.reason,
-        "granted_by": exc.granted_by,
-        "expires_at": exc.expires_at.isoformat() if exc.expires_at else None,
-    }
-
-
-def list_exceptions(rule_id: str | None = None) -> list[dict]:
-    with _session() as db:
-        if db is None:
-            return []
-        q = db.query(RuleException)
-        if rule_id:
-            q = q.filter(RuleException.rule_id == rule_id)
-        return [_exception_dict(e) for e in q.order_by(RuleException.id.desc()).all()]
-
-
-def add_exception(
-    rule_id: str,
-    subject_type: str,
-    subject_id: str,
-    reason: str,
-    granted_by: str,
-    expires_at: datetime | None = None,
-) -> dict:
-    if not (reason or "").strip():
-        raise VocabularyError("An exception needs a reason — it is the derogation's justification.")
-    if not (granted_by or "").strip():
-        raise VocabularyError("An exception needs who granted it, for the audit trail.")
-
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        if not db.query(OntologyRule).filter(OntologyRule.id == rule_id).first():
-            raise VocabularyError(f"Rule '{rule_id}' does not exist.")
-        exc = RuleException(
-            rule_id=rule_id, subject_type=subject_type, subject_id=subject_id,
-            reason=reason.strip(), granted_by=granted_by.strip(), expires_at=expires_at,
-        )
-        db.add(exc)
-        db.commit()
-        db.refresh(exc)
-        return _exception_dict(exc)
-
-
-def remove_exception(exception_id: int) -> dict:
-    with _session() as db:
-        if db is None:
-            raise VocabularyError("The ontology database is unavailable.")
-        removed = (
-            db.query(RuleException)
-            .filter(RuleException.id == exception_id)
-            .delete(synchronize_session=False)
-        )
-        db.commit()
-    return {"removed": removed}
-
-
-def live_exceptions() -> set[tuple[str, str, str]]:
-    """``(rule_id, subject_type, subject_id)`` for every exception in force.
-
-    Loaded as one set rather than queried per-finding — validation checks a
-    handful of resources per workflow, and one query beats N.
-    """
-    now = datetime.now(timezone.utc)
-    with _session() as db:
-        if db is None:
-            return set()
-        rows = (
-            db.query(RuleException.rule_id, RuleException.subject_type, RuleException.subject_id)
-            .filter((RuleException.expires_at.is_(None)) | (RuleException.expires_at > now))
-            .all()
-        )
-    return {(r[0], r[1], r[2]) for r in rows}
-
-
 __all__ = [
     "Predicate",
     "Scheme",
     "SubjectType",
     "VocabularyError",
     "add_annotation",
-    "add_exception",
     "all_annotations",
     "annotate",
-    "approve_rule",
     "concept_usage",
     "create_concept",
     "create_scheme",
     "delete_concept",
-    "delete_rule",
     "delete_scheme",
     "delete_subject_annotations",
-    "get_rule",
-    "list_exceptions",
-    "list_rules",
-    "live_exceptions",
     "remove_annotation",
-    "remove_exception",
     "search_annotations",
     "update_concept",
-    "update_rule",
     "update_scheme",
-    "upsert_rule",
     "annotations_for",
     "annotations_for_many",
     "counts",

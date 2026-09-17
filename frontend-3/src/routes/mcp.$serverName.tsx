@@ -2,8 +2,10 @@ import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Play, Wrench } from "lucide-react";
+import { Activity, ArrowLeft, Loader2, Play, Server, Wrench } from "lucide-react";
 import { mcpApi, QK, errorMessage } from "@/api";
+import { healthState, serverList } from "@/components/mcp/servers";
+import { HealthBadge } from "@/components/shared/ReachabilityBadge";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -54,10 +56,16 @@ function McpServernamePage() {
   });
   const tools = toolList(toolsQuery.data);
 
+  const serversQuery = useQuery({ queryKey: QK.mcpServers(), queryFn: () => mcpApi.servers() });
+  const server = serverList(serversQuery.data).find((s) => s.name === serverName) ?? null;
+
   const [selected, setSelected] = useState<string>("");
   const [args, setArgs] = useState("{}");
   const [result, setResult] = useState<unknown>(null);
-  const selectedTool = useMemo(() => tools.find((t) => t.name === selected) ?? null, [tools, selected]);
+  const selectedTool = useMemo(
+    () => tools.find((t) => t.name === selected) ?? null,
+    [tools, selected],
+  );
 
   const execute = useMutation({
     mutationFn: () => {
@@ -75,21 +83,42 @@ function McpServernamePage() {
 
   return (
     <div className="px-6 py-8">
-      <Button size="sm" variant="ghost" asChild className="mb-4">
-        <Link to="/mcp" search={{ tab: "mcp" }}>
-          <ArrowLeft className="size-3.5" /> Back to MCP
-        </Link>
-      </Button>
-
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{serverName}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Execute MCP tools with custom arguments and inspect results.
-      </p>
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-4">
+          <Link
+            to="/mcp"
+            search={{ tab: "mcp" }}
+            aria-label="Back to MCP"
+            className="mt-1 grid size-9 shrink-0 place-items-center rounded-xl border border-border/60 bg-surface/30 text-muted-foreground transition hover:border-primary/30 hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl border border-border/60 bg-background-elevated text-muted-foreground">
+              <Server className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">
+                  {serverName}
+                </h1>
+                {server ? <HealthBadge state={healthState(server)} /> : null}
+              </div>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                {server?.description ||
+                  "Execute MCP tools with custom arguments and inspect results."}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <Tabs defaultValue="tools" className="mt-6">
         <TabsList>
           <TabsTrigger value="tools">Tools</TabsTrigger>
           <TabsTrigger value="playground">Test Playground</TabsTrigger>
+          <TabsTrigger value="health">Health</TabsTrigger>
         </TabsList>
 
         <TabsContent value="tools" className="mt-4">
@@ -126,9 +155,18 @@ function McpServernamePage() {
             <EmptyState icon={<Wrench className="size-6" />} title="No tools discovered" />
           ) : (
             <GlassPanel>
-              <GlassPanelHeader title="Test Playground" description="Invoke a tool with custom arguments." />
+              <GlassPanelHeader
+                title="Test Playground"
+                description="Invoke a tool with custom arguments."
+              />
               <div className="space-y-3 p-4">
-                <Select value={selected} onValueChange={(v) => { setSelected(v); setResult(null); }}>
+                <Select
+                  value={selected}
+                  onValueChange={(v) => {
+                    setSelected(v);
+                    setResult(null);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select Tool" />
                   </SelectTrigger>
@@ -145,7 +183,11 @@ function McpServernamePage() {
                   <div>
                     <p className="eyebrow mb-1.5">Input Schema</p>
                     <CodeBlock
-                      code={JSON.stringify(selectedTool.input_schema ?? selectedTool.parameters ?? {}, null, 2)}
+                      code={JSON.stringify(
+                        selectedTool.input_schema ?? selectedTool.parameters ?? {},
+                        null,
+                        2,
+                      )}
                       language="json"
                     />
                   </div>
@@ -159,8 +201,16 @@ function McpServernamePage() {
                   placeholder="Arguments (JSON)"
                 />
 
-                <Button size="sm" onClick={() => execute.mutate()} disabled={!selected || execute.isPending}>
-                  {execute.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                <Button
+                  size="sm"
+                  onClick={() => execute.mutate()}
+                  disabled={!selected || execute.isPending}
+                >
+                  {execute.isPending ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Play className="size-3.5" />
+                  )}
                   Execute
                 </Button>
 
@@ -170,6 +220,26 @@ function McpServernamePage() {
                     <CodeBlock code={JSON.stringify(result, null, 2)} language="json" />
                   </div>
                 ) : null}
+              </div>
+            </GlassPanel>
+          )}
+        </TabsContent>
+
+        <TabsContent value="health" className="mt-4">
+          {serversQuery.isLoading ? (
+            <DetailSkeleton />
+          ) : serversQuery.isError ? (
+            <ErrorState error={serversQuery.error} onRetry={() => serversQuery.refetch()} />
+          ) : !server ? (
+            <EmptyState icon={<Activity className="size-6" />} title="Server not in the registry" />
+          ) : (
+            <GlassPanel>
+              <GlassPanelHeader
+                title="Server health info"
+                description="The registry record for this server, exactly as the backend reports it."
+              />
+              <div className="p-4">
+                <CodeBlock code={JSON.stringify(server, null, 2)} language="json" />
               </div>
             </GlassPanel>
           )}

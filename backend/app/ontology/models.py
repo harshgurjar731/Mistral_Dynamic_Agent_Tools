@@ -1,13 +1,14 @@
 """
 Ontology tables — SKOS-lite.
 
-Five tables are enough for everything the platform needs:
+Three tables are enough for everything the platform needs:
 
 * ``ontology_schemes``     — one row per vocabulary (domain, capability, …)
 * ``ontology_concepts``    — the terms, each optionally pointing at a parent
 * ``ontology_annotations`` — (subject, predicate, concept) triples
-* ``ontology_rules``       — the governance checks, as data instead of code
-* ``ontology_rule_exceptions`` — approved, provenance-tracked derogations
+
+Governance rules used to live here too; they are now their own feature in
+``app.rules``. The old ``ontology_rules`` tables are left in place, unused.
 
 Concept ids are readable dotted paths (``domain.lending.mortgage``) rather than
 surrogate keys. They end up in prompts and log lines, and a human reading
@@ -135,63 +136,4 @@ class Annotation(Base):
         # "every subject with this concept".
         Index("ix_annotation_subject", "subject_type", "subject_id"),
         Index("ix_annotation_lookup", "predicate", "concept_id"),
-    )
-
-
-class OntologyRule(Base):
-    """A governance check, as data instead of a Python function.
-
-    ``kind`` selects a fixed evaluator in ``ontology/rules.py``; ``params`` (a
-    JSON object) configures it. This is deliberately not a generic condition
-    language — the reasoning patterns the evaluators need (reachability,
-    accumulation over a DAG, tier lookup) are already written; a rule row picks
-    one and tunes it, which is what lets a rule change without a deploy without
-    also requiring a rule *language* to maintain.
-
-    Follows the same draft → approved → superseded lifecycle as
-    ``rag.models.LibraryOntology``: a draft has zero effect on validation,
-    which is what makes editing a live governance rule safe to preview.
-    """
-
-    __tablename__ = "ontology_rules"
-
-    id = Column(String, primary_key=True)              # e.g. "capability_gap.default"
-    kind = Column(String, nullable=False, index=True)   # capability_gap | egress | guardrail |
-                                                         # library_domain | cardinality | derives_annotation
-    label = Column(String, nullable=False)
-    # JSON object, shape depends on `kind` — see ontology/rules.py's evaluators.
-    params = Column(Text, nullable=False, default="{}")
-    # Default/fallback severity. capability_gap overrides this dynamically per
-    # annotation provenance, same as it always has; other kinds use it as-is.
-    severity = Column(String, nullable=False, default="warning")
-    message_template = Column(Text, nullable=True)
-    status = Column(String, nullable=False, default="draft", index=True)  # draft | approved | superseded
-    source = Column(String, nullable=False, default="seed")               # seed | user
-    created_at = Column(DateTime, server_default=func.now())
-    approved_at = Column(DateTime, nullable=True)
-
-
-class RuleException(Base):
-    """An approved derogation: one rule does not apply to one subject.
-
-    This is the exceptions/derogations gap a plain taxonomy cannot express —
-    "restricted, except for this specific case, for this specific reason".
-    ``reason`` and ``granted_by`` are required rather than optional because an
-    exception without either is indistinguishable from the rule silently not
-    firing, which is the one failure mode a governance layer cannot have.
-    """
-
-    __tablename__ = "ontology_rule_exceptions"
-
-    id = Column(Integer, primary_key=True)
-    rule_id = Column(String, ForeignKey("ontology_rules.id"), nullable=False, index=True)
-    subject_type = Column(String, nullable=False)
-    subject_id = Column(String, nullable=False)
-    reason = Column(Text, nullable=False)
-    granted_by = Column(String, nullable=False)
-    expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-
-    __table_args__ = (
-        Index("ix_exception_lookup", "rule_id", "subject_type", "subject_id"),
     )

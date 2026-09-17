@@ -1,12 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
+  Activity,
   ArrowLeft,
   Columns,
   Download,
+  FileCode,
   History,
+  ListOrdered,
   Loader2,
   Map,
   Package,
@@ -15,11 +18,12 @@ import {
   RefreshCw,
   Rocket,
   Rows,
+  ShieldCheck,
   Tag,
+  type LucideIcon,
 } from "lucide-react";
 import { errorMessage, executionsApi, QK, workflowsApi } from "@/api";
-import { PageHeader, StatTile } from "@/components/shared/PageHeader";
-import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
+import { WorkflowRulesPanel } from "@/components/rules/WorkflowRulesPanel";
 import { GraphCanvas } from "@/components/graph/GraphCanvas";
 import { GraphLegend } from "@/components/graph/Legend";
 import { stepsToGraph } from "@/components/graph/fromDefinition";
@@ -36,6 +40,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { DetailSkeleton, TableSkeleton } from "@/components/ui/Skeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { executionStatusIdentity, formatDuration, formatTimestamp } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/workflows/$workflowName/")({
   head: ({ params }) => ({
@@ -54,6 +59,45 @@ export const Route = createFileRoute("/workflows/$workflowName/")({
   }),
   component: WorkflowDetailPage,
 });
+
+/* Surfaces follow the orchestrator landing page: soft rounded glass, uppercase section labels. */
+const panel = "rounded-2xl border border-border/50 bg-surface/40 backdrop-blur-sm";
+
+const secondaryButton =
+  "inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground disabled:opacity-50";
+
+const tabTrigger =
+  "rounded-lg px-3 text-xs data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none";
+
+function Section({
+  icon: Icon,
+  title,
+  description,
+  actions,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className={panel}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-5 py-3.5">
+        <Icon className="size-3.5 text-primary" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </span>
+        {description ? (
+          <span className="text-[11px] text-muted-foreground/60">· {description}</span>
+        ) : null}
+        {actions ? <div className="ml-auto flex items-center gap-2">{actions}</div> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 function WorkflowDetailPage() {
   const { workflowName } = Route.useParams();
@@ -85,11 +129,6 @@ function WorkflowDetailPage() {
     retry: false,
   });
 
-  const metrics = useQuery({
-    queryKey: [...QK.workflow(workflowName), "metrics"],
-    queryFn: () => workflowsApi.metrics(workflowName),
-  });
-
   const runs = useQuery({
     queryKey: [...QK.workflow(workflowName), "executions"],
     queryFn: () => executionsApi.list({ workflow_identifier: workflowName, page_size: 8 }),
@@ -109,7 +148,9 @@ function WorkflowDetailPage() {
     mutationFn: () => workflowsApi.exportToMistral(workflowName),
     onSuccess: (res) => {
       toast.success(
-        res.file_path ? `Workflow exported to ${res.file_path}` : (res.error ?? "Workflow exported"),
+        res.file_path
+          ? `Workflow exported to ${res.file_path}`
+          : (res.error ?? "Workflow exported"),
       );
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -145,132 +186,120 @@ function WorkflowDetailPage() {
     );
   }
 
-  const m = metrics.data;
-  const metricsUnavailable = m?.available === false;
-
   return (
     <div className="space-y-6 px-6 py-8">
-      <PageHeader
-        eyebrow="Workflow"
-        title={
-          <span className="flex flex-wrap items-center gap-2.5">
-            <span className="break-all">{definition.name}</span>
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <Link
+            to="/workflows"
+            className="-ml-2 mb-3 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+          >
+            <ArrowLeft className="size-3" />
+            All workflows
+          </Link>
+          <h1 className="text-2xl font-semibold tracking-tight break-all sm:text-3xl">
+            <span className="text-gradient-brand">{definition.name}</span>
+          </h1>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             <SourceBadge source={definition.source} />
             <DeployBadge workflow={definition} />
-          </span>
-        }
-        description={definition.description || "No description."}
-        actions={
-          <>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/workflows">
-                <ArrowLeft className="size-3.5" /> All
+          </div>
+          <p className="mt-2.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {definition.description || "No description."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={secondaryButton} onClick={() => setHistoryOpen(true)}>
+            <History className="size-3.5" /> History
+          </button>
+          <button
+            type="button"
+            className={secondaryButton}
+            onClick={() => exportMutation.mutate()}
+            disabled={exportMutation.isPending}
+            title="Export to Mistral workflow format"
+          >
+            {exportMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            Export
+          </button>
+          <button
+            type="button"
+            className={secondaryButton}
+            onClick={() => setDeployOpen(true)}
+            title="Package workflow for deployment"
+          >
+            <Package className="size-3.5" /> Package
+          </button>
+          <button
+            type="button"
+            className={secondaryButton}
+            onClick={() => setClassifyOpen(true)}
+            title="Classify workflow domain"
+          >
+            <Tag className="size-3.5" /> Classify
+          </button>
+          {!remoteOnly ? (
+            <>
+              <Link
+                to="/workflows/$workflowName/edit"
+                params={{ workflowName }}
+                className={secondaryButton}
+              >
+                <Pencil className="size-3.5" /> Edit
               </Link>
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}>
-              <History className="size-3.5" /> History
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => exportMutation.mutate()}
-              disabled={exportMutation.isPending}
-              title="Export to Mistral workflow format"
-            >
-              {exportMutation.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Download className="size-3.5" />
-              )}
-              Export
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDeployOpen(true)}
-              title="Package workflow for deployment"
-            >
-              <Package className="size-3.5" /> Package
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setClassifyOpen(true)}
-              title="Classify workflow domain"
-            >
-              <Tag className="size-3.5" /> Classify
-            </Button>
-            {!remoteOnly ? (
-              <>
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/workflows/$workflowName/edit" params={{ workflowName }}>
-                    <Pencil className="size-3.5" /> Edit
-                  </Link>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => publish.mutate()}
-                  disabled={publish.isPending}
-                >
-                  {publish.isPending ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Rocket className="size-3.5" />
-                  )}
-                  {definition.has_unpublished_changes || !definition.is_deployed
-                    ? "Publish"
-                    : "Republish"}
-                </Button>
-              </>
-            ) : null}
-            <Button size="sm" asChild>
-              <Link to="/workflows/$workflowName/execute" params={{ workflowName }}>
-                <Play className="size-3.5" /> Run
-              </Link>
-            </Button>
-          </>
-        }
-      />
-
-      <div
-        className="grid grid-cols-2 gap-3 sm:grid-cols-5"
-        title={metricsUnavailable ? (m?.detail ?? "") : ""}
-      >
-        <StatTile label="Steps" value={remoteOnly ? "—" : definition.steps.length} />
-        <StatTile label="Runs" value={metricsUnavailable ? "—" : (m?.execution_count ?? "—")} />
-        <StatTile
-          label="Succeeded"
-          value={metricsUnavailable ? "—" : (m?.success_count ?? "—")}
-          tone="emerald"
-        />
-        <StatTile
-          label="Failed"
-          value={metricsUnavailable ? "—" : (m?.error_count ?? "—")}
-          tone="red"
-        />
-        <StatTile
-          label="Avg latency"
-          value={metricsUnavailable ? "—" : formatDuration(m?.average_latency_ms ?? null)}
-          tone="blue"
-        />
+              <button
+                type="button"
+                className={secondaryButton}
+                onClick={() => publish.mutate()}
+                disabled={publish.isPending}
+              >
+                {publish.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Rocket className="size-3.5" />
+                )}
+                {definition.has_unpublished_changes || !definition.is_deployed
+                  ? "Publish"
+                  : "Republish"}
+              </button>
+            </>
+          ) : null}
+          <Link
+            to="/workflows/$workflowName/execute"
+            params={{ workflowName }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Play className="size-3.5" /> Run
+          </Link>
+        </div>
       </div>
 
       {remoteOnly ? (
-        <GlassPanel className="border-amber/25 bg-amber/5 p-4">
+        <div className="rounded-2xl border border-amber/20 bg-amber/5 p-4">
           <p className="text-sm font-semibold text-foreground">Registered remotely</p>
           <p className="mt-1 text-xs text-muted-foreground">
             This workflow exists on the Mistral server but has no local definition, so there is no
             graph, script or validation to show. It can still be run and monitored.
           </p>
-        </GlassPanel>
+        </div>
       ) : (
         <Tabs defaultValue="graph">
-          <TabsList>
-            <TabsTrigger value="graph">Graph</TabsTrigger>
-            <TabsTrigger value="steps">Steps</TabsTrigger>
-            <TabsTrigger value="script">Compiled module</TabsTrigger>
-            <TabsTrigger value="issues">
+          <TabsList className="h-10 rounded-xl border border-border/50 bg-surface/40 p-1 backdrop-blur-sm">
+            <TabsTrigger value="graph" className={tabTrigger}>
+              Graph
+            </TabsTrigger>
+            <TabsTrigger value="steps" className={tabTrigger}>
+              Steps
+            </TabsTrigger>
+            <TabsTrigger value="script" className={tabTrigger}>
+              Compiled module
+            </TabsTrigger>
+            <TabsTrigger value="issues" className={tabTrigger}>
               Validation
               {validation.data && validation.data.issues.length > 0
                 ? ` (${validation.data.issues.length})`
@@ -279,7 +308,7 @@ function WorkflowDetailPage() {
           </TabsList>
 
           <TabsContent value="graph" className="mt-4">
-            <GlassPanel className="overflow-hidden">
+            <div className={cn(panel, "overflow-hidden")}>
               <GraphCanvas
                 nodes={graph.nodes}
                 edges={graph.edges}
@@ -322,16 +351,16 @@ function WorkflowDetailPage() {
                   </>
                 }
               />
-            </GlassPanel>
+            </div>
           </TabsContent>
 
           <TabsContent value="steps" className="mt-4">
-            <GlassPanel>
-              <GlassPanelHeader
-                title="Steps"
-                description={`Entry point: ${definition.entry_step || "—"}`}
-              />
-              <div className="divide-y divide-border">
+            <Section
+              icon={ListOrdered}
+              title="Steps"
+              description={`Entry point: ${definition.entry_step || "—"}`}
+            >
+              <div className="divide-y divide-border/40">
                 {definition.steps.map((s) => (
                   <div key={s.id} className="px-5 py-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -352,7 +381,9 @@ function WorkflowDetailPage() {
                       ) : null}
                     </div>
                     {s.description ? (
-                      <p className="mt-1 text-xs text-muted-foreground">{s.description}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {s.description}
+                      </p>
                     ) : null}
                     {s.next_steps.length > 0 ? (
                       <p className="mt-1 font-mono text-[10px] text-muted-foreground">
@@ -362,24 +393,24 @@ function WorkflowDetailPage() {
                   </div>
                 ))}
               </div>
-            </GlassPanel>
+            </Section>
           </TabsContent>
 
           <TabsContent value="script" className="mt-4">
-            <GlassPanel>
-              <GlassPanelHeader
-                title="Compiled module"
-                description={
-                  script.data
-                    ? `${script.data.line_count} lines${script.data.stale ? " · stale — republish to refresh" : ""}`
-                    : "Generated from the definition"
-                }
-                actions={
-                  <Button size="sm" variant="ghost" onClick={() => script.refetch()}>
-                    <RefreshCw className="size-3.5" />
-                  </Button>
-                }
-              />
+            <Section
+              icon={FileCode}
+              title="Compiled module"
+              description={
+                script.data
+                  ? `${script.data.line_count} lines${script.data.stale ? " · stale — republish to refresh" : ""}`
+                  : "Generated from the definition"
+              }
+              actions={
+                <Button size="sm" variant="ghost" onClick={() => script.refetch()}>
+                  <RefreshCw className="size-3.5" />
+                </Button>
+              }
+            >
               <div className="p-4">
                 {script.isLoading ? (
                   <TableSkeleton rows={6} />
@@ -394,38 +425,49 @@ function WorkflowDetailPage() {
                   <EmptyState title="No compiled module yet." />
                 )}
               </div>
-            </GlassPanel>
+            </Section>
           </TabsContent>
 
           <TabsContent value="issues" className="mt-4">
-            <GlassPanel>
-              <GlassPanelHeader
-                title="Validation"
-                description="Errors block publishing; warnings do not."
-                actions={
-                  <ValidationSummary result={validation.data} pending={validation.isFetching} />
-                }
-              />
+            <Section
+              icon={ShieldCheck}
+              title="Validation"
+              description="Errors block publishing; warnings do not."
+              actions={
+                <ValidationSummary result={validation.data} pending={validation.isFetching} />
+              }
+            >
               <div className="p-4">
                 <IssueList issues={validation.data?.issues ?? []} />
               </div>
-            </GlassPanel>
+            </Section>
+            <div className="mt-4">
+              <Section
+                icon={ShieldCheck}
+                title="Rules"
+                description="Checked on save and publish, and while the workflow runs."
+              >
+                <WorkflowRulesPanel workflowName={workflowName} />
+              </Section>
+            </div>
           </TabsContent>
         </Tabs>
       )}
 
-      <GlassPanel>
-        <GlassPanelHeader
-          title="Recent runs"
-          description={runs.data ? `${runs.data.count} shown` : undefined}
-          actions={
-            <Button size="sm" variant="ghost" asChild>
-              <Link to="/workflows/$workflowName/execute" params={{ workflowName }}>
-                New run
-              </Link>
-            </Button>
-          }
-        />
+      <Section
+        icon={Activity}
+        title="Recent runs"
+        description={runs.data ? `${runs.data.count} shown` : undefined}
+        actions={
+          <Link
+            to="/workflows/$workflowName/execute"
+            params={{ workflowName }}
+            className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary transition hover:bg-primary/10"
+          >
+            New run
+          </Link>
+        }
+      >
         <div className="p-4">
           {runs.isLoading ? (
             <TableSkeleton rows={4} />
@@ -438,7 +480,7 @@ function WorkflowDetailPage() {
               {runs.data?.executions.map((e) => (
                 <li
                   key={e.execution_id}
-                  className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background-elevated/60 px-3 py-2"
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-border/50 bg-surface/30 px-3 py-2 transition hover:border-primary/30"
                 >
                   <Link
                     to="/workflows/$workflowName/execute"
@@ -456,7 +498,7 @@ function WorkflowDetailPage() {
             </ul>
           )}
         </div>
-      </GlassPanel>
+      </Section>
 
       <WorkflowHistoryPanel
         workflowName={workflowName}

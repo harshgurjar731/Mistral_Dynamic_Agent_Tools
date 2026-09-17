@@ -1,6 +1,14 @@
 # Competency questions — the rule layer's acceptance test
 
-The rule layer (`ontology/rules.py`) is only as good as its answers to these.
+> **Moved.** Governance rules are no longer part of the ontology. They are
+> their own feature in `app/rules/` (Rules page in the frontend), with separate
+> agent and workflow rules. The workflow checks below — capability coverage,
+> data egress, entry screening, library/domain match — live on as workflow rule
+> types in `app/rules/engine.py`. The `cardinality` and `derives_annotation`
+> kinds, and the draft/approve and exception lifecycle, were dropped in that
+> move; the questions about them are kept for the record.
+
+The rule layer (formerly `ontology/rules.py`) is only as good as its answers to these.
 Each maps to one test case in `tests/test_ontology_rules.py`. A question the
 rule layer cannot answer is a gap, not a hypothetical — add a rule kind or a
 rule row before checking the box.

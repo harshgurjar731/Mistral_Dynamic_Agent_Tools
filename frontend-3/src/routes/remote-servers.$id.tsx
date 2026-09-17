@@ -104,7 +104,11 @@ function RemoteServerDetailPage() {
       {query.isLoading ? (
         <DetailSkeleton />
       ) : query.isError ? (
-        <ErrorState error={query.error} title="Remote Server not found." onRetry={() => query.refetch()} />
+        <ErrorState
+          error={query.error}
+          title="Remote Server not found."
+          onRetry={() => query.refetch()}
+        />
       ) : !query.data ? (
         <EmptyState
           icon={<Server className="size-6" />}
@@ -125,8 +129,16 @@ function RemoteServerDetailPage() {
               actions={<ReachabilityBadge state={reach} />}
             />
             <div className="space-y-2 p-4">
-              <Input placeholder="Server Name" value={name} onChange={(e) => setName(e.target.value)} />
-              <Input placeholder="Server URL" value={url} onChange={(e) => setUrl(e.target.value)} />
+              <Input
+                placeholder="Server Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <Input
+                placeholder="Server URL"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
               <Textarea
                 placeholder="Description"
                 value={description}
@@ -137,12 +149,21 @@ function RemoteServerDetailPage() {
                 <p className="text-xs text-red">Server is unreachable.</p>
               ) : null}
               <div className="flex justify-end gap-2">
-                <Button size="sm" variant="outline" onClick={() => check.mutate()} disabled={check.isPending}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => check.mutate()}
+                  disabled={check.isPending}
+                >
                   {check.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
                   Check reachability
                 </Button>
                 <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
-                  {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                  {save.isPending ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Save className="size-3.5" />
+                  )}
                   Save
                 </Button>
               </div>
@@ -157,7 +178,10 @@ function RemoteServerDetailPage() {
               ) : (
                 <ul className="space-y-2">
                   {query.data.tools.map((t) => (
-                    <li key={t.id} className="rounded-xl border border-border bg-background-elevated/50 p-3 text-sm text-foreground">
+                    <li
+                      key={t.id}
+                      className="rounded-xl border border-border bg-background-elevated/50 p-3 text-sm text-foreground"
+                    >
                       {t.name}
                     </li>
                   ))}
@@ -167,7 +191,10 @@ function RemoteServerDetailPage() {
           </GlassPanel>
 
           <GlassPanel>
-            <GlassPanelHeader title="Push a Tool" description="Send source code from the tool registry to this server." />
+            <GlassPanelHeader
+              title="Push a Tool"
+              description="Send source code from the tool registry to this server."
+            />
             <div className="space-y-3 p-4">
               <Select value={toolId} onValueChange={setToolId}>
                 <SelectTrigger>
@@ -182,14 +209,20 @@ function RemoteServerDetailPage() {
                 </SelectContent>
               </Select>
               <Button size="sm" onClick={() => send.mutate()} disabled={!toolId || send.isPending}>
-                {send.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                {send.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Send className="size-3.5" />
+                )}
                 Send to Remote Server
               </Button>
 
               {sendResponse ? (
                 <div>
                   <p className="eyebrow mb-1.5">
-                    {(sendResponse as { status?: string })?.status === "error" ? "Send failed" : "Send result"}
+                    {(sendResponse as { status?: string })?.status === "error"
+                      ? "Send failed"
+                      : "Send result"}
                   </p>
                   <CodeBlock code={JSON.stringify(sendResponse, null, 2)} language="json" />
                 </div>

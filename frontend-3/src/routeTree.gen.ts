@@ -18,9 +18,13 @@ import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
 import { Route as ConnectorsIdRouteImport } from './routes/connectors.$id'
+import { Route as LibrariesIndexRouteImport } from './routes/libraries.index'
+import { Route as LibrariesIdRouteImport } from './routes/libraries.$id'
 import { Route as McpIndexRouteImport } from './routes/mcp.index'
 import { Route as McpServerNameRouteImport } from './routes/mcp.$serverName'
 import { Route as RemoteServersIdRouteImport } from './routes/remote-servers.$id'
+import { Route as RulesIndexRouteImport } from './routes/rules.index'
+import { Route as RulesIdRouteImport } from './routes/rules.$id'
 import { Route as ToolsIndexRouteImport } from './routes/tools.index'
 import { Route as ToolsIdRouteImport } from './routes/tools.$id'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
@@ -79,6 +83,16 @@ const ConnectorsIdRoute = ConnectorsIdRouteImport.update({
   path: '/connectors/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibrariesIndexRoute = LibrariesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LibrariesRoute,
+} as any)
+const LibrariesIdRoute = LibrariesIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => LibrariesRoute,
+} as any)
 const McpIndexRoute = McpIndexRouteImport.update({
   id: '/mcp/',
   path: '/mcp/',
@@ -92,6 +106,16 @@ const McpServerNameRoute = McpServerNameRouteImport.update({
 const RemoteServersIdRoute = RemoteServersIdRouteImport.update({
   id: '/remote-servers/$id',
   path: '/remote-servers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RulesIndexRoute = RulesIndexRouteImport.update({
+  id: '/rules/',
+  path: '/rules/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RulesIdRoute = RulesIdRouteImport.update({
+  id: '/rules/$id',
+  path: '/rules/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ToolsIndexRoute = ToolsIndexRouteImport.update({
@@ -162,18 +186,22 @@ const WorkflowsNewVisualRoute = WorkflowsNewVisualRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/libraries': typeof LibrariesRoute
+  '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/libraries/$id': typeof LibrariesIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
+  '/libraries/': typeof LibrariesIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -188,18 +216,21 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/libraries': typeof LibrariesRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/libraries/$id': typeof LibrariesIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
   '/agents': typeof AgentsIndexRoute
   '/connectors': typeof ConnectorsIndexRoute
+  '/libraries': typeof LibrariesIndexRoute
   '/mcp': typeof McpIndexRoute
+  '/rules': typeof RulesIndexRoute
   '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -215,18 +246,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/libraries': typeof LibrariesRoute
+  '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/libraries/$id': typeof LibrariesIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
+  '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
+  '/libraries/': typeof LibrariesIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -248,13 +283,17 @@ export interface FileRouteTypes {
     | '/playground'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/libraries/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
     | '/agents/'
     | '/connectors/'
+    | '/libraries/'
     | '/mcp/'
+    | '/rules/'
     | '/tools/'
     | '/workflows/'
     | '/workflows/$workflowName/edit'
@@ -269,18 +308,21 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/health'
-    | '/libraries'
     | '/ontology'
     | '/playground'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/libraries/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
     | '/agents'
     | '/connectors'
+    | '/libraries'
     | '/mcp'
+    | '/rules'
     | '/tools'
     | '/workflows'
     | '/workflows/$workflowName/edit'
@@ -300,13 +342,17 @@ export interface FileRouteTypes {
     | '/playground'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/libraries/$id'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
+    | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
     | '/agents/'
     | '/connectors/'
+    | '/libraries/'
     | '/mcp/'
+    | '/rules/'
     | '/tools/'
     | '/workflows/'
     | '/workflows/$workflowName/edit'
@@ -322,18 +368,20 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
-  LibrariesRoute: typeof LibrariesRoute
+  LibrariesRoute: typeof LibrariesRouteWithChildren
   OntologyRoute: typeof OntologyRoute
   PlaygroundRoute: typeof PlaygroundRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
   McpServerNameRoute: typeof McpServerNameRoute
   RemoteServersIdRoute: typeof RemoteServersIdRoute
+  RulesIdRoute: typeof RulesIdRoute
   ToolsIdRoute: typeof ToolsIdRoute
   WorkflowsArchivedRoute: typeof WorkflowsArchivedRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ConnectorsIndexRoute: typeof ConnectorsIndexRoute
   McpIndexRoute: typeof McpIndexRoute
+  RulesIndexRoute: typeof RulesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
   WorkflowsWorkflowNameEditRoute: typeof WorkflowsWorkflowNameEditRoute
@@ -411,6 +459,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectorsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/libraries/': {
+      id: '/libraries/'
+      path: '/'
+      fullPath: '/libraries/'
+      preLoaderRoute: typeof LibrariesIndexRouteImport
+      parentRoute: typeof LibrariesRoute
+    }
+    '/libraries/$id': {
+      id: '/libraries/$id'
+      path: '/$id'
+      fullPath: '/libraries/$id'
+      preLoaderRoute: typeof LibrariesIdRouteImport
+      parentRoute: typeof LibrariesRoute
+    }
     '/mcp/': {
       id: '/mcp/'
       path: '/mcp'
@@ -430,6 +492,20 @@ declare module '@tanstack/react-router' {
       path: '/remote-servers/$id'
       fullPath: '/remote-servers/$id'
       preLoaderRoute: typeof RemoteServersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rules/': {
+      id: '/rules/'
+      path: '/rules'
+      fullPath: '/rules/'
+      preLoaderRoute: typeof RulesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rules/$id': {
+      id: '/rules/$id'
+      path: '/rules/$id'
+      fullPath: '/rules/$id'
+      preLoaderRoute: typeof RulesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/tools/': {
@@ -519,21 +595,37 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface LibrariesRouteChildren {
+  LibrariesIdRoute: typeof LibrariesIdRoute
+  LibrariesIndexRoute: typeof LibrariesIndexRoute
+}
+
+const LibrariesRouteChildren: LibrariesRouteChildren = {
+  LibrariesIdRoute: LibrariesIdRoute,
+  LibrariesIndexRoute: LibrariesIndexRoute,
+}
+
+const LibrariesRouteWithChildren = LibrariesRoute._addFileChildren(
+  LibrariesRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
-  LibrariesRoute: LibrariesRoute,
+  LibrariesRoute: LibrariesRouteWithChildren,
   OntologyRoute: OntologyRoute,
   PlaygroundRoute: PlaygroundRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
   McpServerNameRoute: McpServerNameRoute,
   RemoteServersIdRoute: RemoteServersIdRoute,
+  RulesIdRoute: RulesIdRoute,
   ToolsIdRoute: ToolsIdRoute,
   WorkflowsArchivedRoute: WorkflowsArchivedRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ConnectorsIndexRoute: ConnectorsIndexRoute,
   McpIndexRoute: McpIndexRoute,
+  RulesIndexRoute: RulesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
   WorkflowsWorkflowNameEditRoute: WorkflowsWorkflowNameEditRoute,

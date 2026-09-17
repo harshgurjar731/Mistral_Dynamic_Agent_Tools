@@ -73,6 +73,37 @@ class WorkflowValidationLayer(WorkflowStepLayer):
         spec.definition = definition
         result = validate_workflow(definition)
 
+        # Workflow rules — always-on ones plus those WorkflowRuleSelectionLayer
+        # chose. A rule set to "block" produces an error, which the blocking
+        # logic below turns into "saved but not registered".
+        try:
+            from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
+
+            rules = rules_store.effective_rules("workflow", [r.rule_id for r in definition.rules])
+            agents_by_id = {
+                a["agent_id"]: {
+                    "name": a.get("agent_name"),
+                    "tools": a.get("tools") or [],
+                    "connectors": a.get("connectors") or [],
+                }
+                for a in spec.provisioned_agents if a.get("agent_id")
+            }
+            rule_issues = rules_engine.check_workflow(definition, agents_by_id, {}, rules)
+            rules_runtime.record(
+                rules_engine.workflow_validation_outcomes(rules, rule_issues),
+                scope="workflow", subject_id=definition.name,
+            )
+            if rule_issues:
+                issues = [*result.issues, *rule_issues]
+                result = result.model_copy(update={
+                    "issues": issues,
+                    "valid": not any(i.severity == "error" for i in issues),
+                    "error_count": sum(1 for i in issues if i.severity == "error"),
+                    "warning_count": sum(1 for i in issues if i.severity == "warning"),
+                })
+        except Exception as e:
+            logger.warning("Workflow rules skipped during planning: %s", e)
+
         blocking = [
             i for i in result.issues
             if i.severity == "error" or i.code in _PLANNER_BLOCKING

@@ -19,6 +19,7 @@ Chain, as assembled in ``app.layers``:
     ──────────────────────────────
     LibraryProvisioningLayer     create the library it needs, if none exists   (no LLM)
     GuardrailConfigLayer         what moderation does this configuration warrant
+    AgentRuleSelectionLayer      which of the optional agent rules apply
     InstructionAuthoringLayer    how should this agent think
     AgentAssemblyLayer           create it                             (no LLM)
 """
@@ -37,8 +38,10 @@ from app.layers.agent.instruction_layer import InstructionAuthoringLayer
 from app.layers.agent.inventory_layer import AgentInventoryLayer
 from app.layers.agent.library_provisioning_layer import LibraryProvisioningLayer
 from app.layers.agent.requirement_layer import RequirementAnalysisLayer
+from app.layers.agent.rule_selection_layer import AgentRuleSelectionLayer
 
 __all__ = [
+    "AgentRuleSelectionLayer",
     "RequirementAnalysisLayer",
     "CapabilityGapLayer",
     "AgentInventoryLayer",

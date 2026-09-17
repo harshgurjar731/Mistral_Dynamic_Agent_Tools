@@ -93,6 +93,25 @@ class AgentAssemblyLayer(Layer):
             ctx.set_error("Agent instructions were never authored — cannot create agent")
             return await next(ctx)
 
+        # The creation gate, in pipeline mode: rules the orchestrator's design
+        # broke are corrected rather than failing a run the user never set up
+        # rules for (see app.rules.apply). Applied before the tool definitions
+        # are built, so a stripped tool never reaches the create call.
+        from app.rules import apply as rules_apply
+
+        prepared = rules_apply.prepare_agent(
+            model=config["model"],
+            instructions=instructions,
+            tool_keys=config["tools"],
+            connector_ids=config["connectors"],
+            guardrails=[config["guardrails"]] if config.get("guardrails") else [],
+            selection=config.get("rules") or [],
+            mode="pipeline",
+        )
+        config["model"] = prepared.model
+        config["tools"] = prepared.tool_keys
+        config["connectors"] = prepared.connector_ids
+
         dynamic_tools = with_rag_tools(
             config["tools"],
             config["document_library_ids"],
@@ -124,9 +143,10 @@ class AgentAssemblyLayer(Layer):
         # agents API uses so the two cannot drift. Never rendered into the
         # instructions: moderation runs outside the model, which is the whole
         # reason it holds when the model is talked around.
-        guardrail_request = config.get("guardrails")
-        if guardrail_request:
-            guardrails = build_guardrails([guardrail_request])
+        # ``prepared.guardrails`` is the decided guardrail with any rule-driven
+        # moderation merged in (stricter wins).
+        if prepared.guardrails:
+            guardrails = build_guardrails(prepared.guardrails)
             if guardrails:
                 create_kwargs["guardrails"] = guardrails
 
@@ -142,6 +162,18 @@ class AgentAssemblyLayer(Layer):
         ctx.created_agent_id = agent.id
         spec.agent_id = agent.id
         logger.info("Dynamic agent created: %s (%s)", agent.id, config["agent_name"])
+
+        rule_summary = rules_apply.finish_agent(
+            agent.id, prepared, config.get("rules") or [], default_source="ai"
+        )
+        # ExecutionLayer reads this to know the agent carries answer rules
+        # before its first turn, without a second lookup.
+        ctx.metadata["agent_rules"] = prepared.rules
+        ctx.emit("rules_applied", json.dumps({
+            "scope": "agent",
+            "agent_id": agent.id,
+            "outcomes": rule_summary,
+        }))
 
         # Classify it now. A dynamic agent is often deleted again by the cleanup
         # layer, but not always — when it survives it is indistinguishable from

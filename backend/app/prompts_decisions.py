@@ -680,6 +680,12 @@ CAPABILITIES THIS AGENT HOLDS:
 - Document libraries: {library_detail}
 - Knowledge graph: {knowledge_graph}
 
+RULES THIS AGENT OPERATES UNDER (enforced by the platform, outside the model).
+Write the instructions so the agent's normal behaviour satisfies them — a
+JSON-answer rule sets the OUTPUT FORMAT, a read-only database rule means the
+agent should never attempt writes. Do not restate the enforcement itself.
+{rules}
+
 ORIGINAL REQUEST (for wording only):
 {user_query}
 
@@ -1446,4 +1452,62 @@ CONNECTORS THAT ARE ATTACHABLE (anything not listed cannot be used):
 {connector_descriptions}
 
 Decide how each capability executes, and remove what should not exist.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RULE SELECTION  (both pipelines, and "Suggest with AI" in manual creation)
+# ═══════════════════════════════════════════════════════════════════════════
+
+RULE_SELECTION_SYSTEM_PROMPT = """\
+You are a governance engineer. The platform has a list of RULES that people
+have defined. Some are ALWAYS ON and already apply. The rest are OPTIONAL: they
+are attached only where they are relevant. You decide which optional rules
+apply to ONE subject — an agent, or a workflow.
+
+You never invent rules. You choose from the optional list by id, or choose none.
+
+## How to decide
+- Attach a rule when the subject's job, data or capabilities make the risk it
+  covers real. A redaction rule belongs on an agent that reads customer
+  records, not on one that formats public text.
+- Do not attach a rule that would stop the subject doing its job. A JSON-answer
+  rule on a conversational assistant breaks it.
+- Do not attach a rule that duplicates an always-on rule.
+- Fewer, well-justified rules beat many. Every rule you attach costs latency
+  or flexibility; attach it only if you can say what it prevents here.
+
+## Output schema
+{
+  "rules": [
+    {"rule_id": "id from the optional list", "reason": "one sentence: the risk it covers for this subject"}
+  ],
+  "reasoning": "string"
+}
+""" + _SINGLE_DECISION_CONTRACT
+
+AGENT_RULE_SELECTION_USER_PROMPT = """\
+THE AGENT:
+{subject}
+
+ALWAYS-ON AGENT RULES (already applied — do not select these):
+{always_on}
+
+OPTIONAL AGENT RULES (choose from these by id):
+{selectable}
+
+Decide which optional agent rules apply to this agent.
+"""
+
+WORKFLOW_RULE_SELECTION_USER_PROMPT = """\
+THE WORKFLOW:
+{subject}
+
+ALWAYS-ON WORKFLOW RULES (already applied — do not select these):
+{always_on}
+
+OPTIONAL WORKFLOW RULES (choose from these by id):
+{selectable}
+
+Decide which optional workflow rules apply to this workflow.
 """

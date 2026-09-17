@@ -1,23 +1,39 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, History, Sparkles, Square, Trash2 } from "lucide-react";
-import { createSSEStream, parseEventData } from "@/api/sse";
-import { QK } from "@/api";
-import { usePlannerHistory } from "@/stores/plannerHistory";
-import { PageHeader } from "@/components/shared/PageHeader";
-import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import {
-  ArtifactList,
-  PlannerPhases,
-  type PlannerArtifact,
-  type PlannerPhase,
-} from "@/components/workflows/PlannerStream";
+  ArrowLeft,
+  ArrowRight,
+  GitBranch,
+  History,
+  Loader2,
+  Sparkles,
+  Square,
+  Zap,
+} from "lucide-react";
+import { createSSEStream, parseEventData } from "@/api/sse";
+import { QK, workflowsApi } from "@/api";
+import type { WorkflowDefinition } from "@/types";
+import { usePlannerHistory, type PlannerRun } from "@/stores/plannerHistory";
+import {
+  LegacyPlannerTimeline,
+  PLANNER_CARD_EVENTS,
+  PLANNER_CARD_OWNER,
+  plannerLayerCards,
+  plannerLayerRaw,
+  type PlannerStep,
+  type PlannerStepType,
+} from "@/components/workflows/PlannerCards";
+import {
+  PlannerHistorySheet,
+  type PlannerHistoryEntry,
+} from "@/components/workflows/PlannerHistorySheet";
+import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
+import { usePipelineRun } from "@/components/pipeline/usePipelineRun";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { formatRelative } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/workflows/new/ai")({
   head: () => ({
@@ -43,12 +59,78 @@ const EXAMPLES = [
   "Triage an inbound support ticket, gather account context and draft a reply for review",
 ];
 
-interface WorkflowReady {
-  workflow_name: string;
-  description?: string;
-  step_count?: number;
-  entry_step?: string;
-  agents?: string[];
+const isErrorStep = (s: PlannerStep) => s.type === "error" || s.type === "fatal_error";
+
+/**
+ * A minimal timeline reconstructed from a saved workflow definition, for
+ * workflows this browser never watched being planned. The planner's own
+ * decomposition is not recoverable — dependency edges and stated purposes are
+ * not persisted — so this shows what the steps became, not what was asked for.
+ * A "tool"-type step is a standalone activity, never an agent capability.
+ */
+function historyFromWorkflow(wf: WorkflowDefinition): PlannerHistoryEntry {
+  const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  const wfSteps = wf.steps ?? [];
+  const agentSteps = wfSteps.filter((s) => s.type === "agent");
+  const activitySteps = wfSteps.filter((s) => s.type === "tool");
+  const agentName = (s: (typeof wfSteps)[number]) =>
+    text(s.config["agent_name"]) ?? text(s.config["agent_id"]) ?? s.id;
+
+  const steps: PlannerStep[] = [
+    {
+      id: `${wf.name}-capabilities`,
+      type: "capabilities",
+      content: {
+        description: wf.description ?? "",
+        capabilities: wfSteps.map((s) => ({
+          id: s.id,
+          name: text(s.config["agent_name"]) ?? text(s.config["tool_name"]) ?? s.id,
+          purpose: s.description ?? "",
+          tier: s.tier ?? undefined,
+          kind:
+            s.type === "tool" ? "activity" : String(s.type) === "connector" ? "connector" : "agent",
+          parallelisable: Boolean(s.parallel_group),
+        })),
+      },
+    },
+    ...activitySteps.map((s) => ({
+      id: `${wf.name}-activity-${s.id}`,
+      type: "activity_new" as const,
+      content: { tool_name: text(s.config["tool_name"]) ?? s.id, status: "existing" },
+    })),
+    ...agentSteps.map((s) => ({
+      id: `${wf.name}-agent-${s.id}`,
+      type: "agent_exists" as const,
+      content: {
+        agent_name: agentName(s),
+        model: text(s.config["model"]) ?? "",
+        tools: Array.isArray(s.config["tools"]) ? s.config["tools"] : [],
+        tier: s.tier ?? undefined,
+      },
+    })),
+    {
+      id: `${wf.name}-ready`,
+      type: "workflow_ready",
+      content: {
+        workflow_name: wf.name,
+        description: wf.description ?? "",
+        step_count: wfSteps.length,
+        agents: agentSteps.map(agentName),
+        entry_step: wf.entry_step,
+        dag: { steps: wfSteps },
+      },
+    },
+  ];
+
+  return {
+    id: `backend-${wf.name}`,
+    goal: wf.description || `Build the "${wf.name}" workflow`,
+    workflowName: wf.name,
+    status: "completed",
+    createdAt: 0,
+    steps,
+    fromBackend: true,
+  };
 }
 
 function AiPlannerPage() {
@@ -60,375 +142,357 @@ function AiPlannerPage() {
 
   const [goal, setGoal] = useState("");
   const [running, setRunning] = useState(false);
-  const [phases, setPhases] = useState<PlannerPhase[]>([]);
-  const [artifacts, setArtifacts] = useState<PlannerArtifact[]>([]);
-  const [requirements, setRequirements] = useState<string | null>(null);
-  const [ready, setReady] = useState<WorkflowReady | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [steps, setSteps] = useState<PlannerStep[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const { run, reset, restore, handleEvent, settle, failRunning } = usePipelineRun();
 
   const stopRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  /** The goal of the run in flight — the textarea is cleared on submit. */
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** The goal of the run on screen — the textarea keeps changing as the user types. */
   const goalRef = useRef("");
+  /** Set when a run finishes so the save effect records it exactly once. */
+  const pendingSaveRef = useRef<PlannerRun["status"] | null>(null);
+
+  // Saved workflows fill in history for plans this browser never watched.
+  const { data: savedWorkflows, isLoading: loadingWorkflows } = useQuery({
+    queryKey: QK.workflows(),
+    queryFn: workflowsApi.list,
+    enabled: historyOpen,
+  });
+
+  const history = useMemo<PlannerHistoryEntry[]>(() => {
+    const known = new Set(runs.map((r) => r.workflowName).filter(Boolean));
+    const synthetic = (savedWorkflows?.workflows ?? [])
+      .filter((wf) => !wf.archived && wf.name && !known.has(wf.name))
+      .map(historyFromWorkflow);
+    return [...runs, ...synthetic];
+  }, [runs, savedWorkflows]);
 
   useEffect(() => () => stopRef.current?.(), []);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [phases, ready]);
+  }, [steps, run]);
 
-  const pushPhase = useCallback((label: string, state: PlannerPhase["state"] = "active") => {
-    setPhases((prev) => [
-      ...prev.map((p) => (p.state === "active" ? { ...p, state: "completed" as const } : p)),
-      { id: `${prev.length}-${label.slice(0, 32)}`, label, state },
-    ]);
-  }, []);
+  // Grow the goal box with its content, up to a cap.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 180), 320)}px`;
+  }, [goal]);
 
-  const settle = useCallback(() => {
-    setPhases((prev) =>
-      prev.map((p) => (p.state === "active" ? { ...p, state: "completed" as const } : p)),
-    );
-  }, []);
+  const workflowName = useMemo(() => {
+    const step = steps.find((s) => s.type === "workflow_ready");
+    return step ? ((step.content as { workflow_name?: string }).workflow_name ?? null) : null;
+  }, [steps]);
+  const hasFailure = useMemo(() => steps.some(isErrorStep), [steps]);
+  const layerCards = useMemo(() => plannerLayerCards(steps), [steps]);
+  const layerRaw = useMemo(() => plannerLayerRaw(steps), [steps]);
+  // A live run leaves only errors outside the chain; a run replayed without a
+  // manifest renders all its steps as plain rows.
+  const unowned = useMemo(
+    () => (run.manifest.length > 0 ? steps.filter((s) => !PLANNER_CARD_OWNER[s.type]) : steps),
+    [steps, run.manifest.length],
+  );
 
-  const addArtifact = useCallback((a: Omit<PlannerArtifact, "id">) => {
-    setArtifacts((prev) =>
-      prev.some((x) => x.kind === a.kind && x.name === a.name)
-        ? prev
-        : [...prev, { ...a, id: `${a.kind}-${a.name}-${prev.length}` }],
-    );
+  // Record a finished run once React has flushed its last layer events.
+  useEffect(() => {
+    const status = pendingSaveRef.current;
+    if (running || !status) return;
+    pendingSaveRef.current = null;
+    const failed = steps.find(isErrorStep);
+    addRun({
+      goal: goalRef.current,
+      status: failed ? "failed" : status,
+      detail: failed ? String(failed.content) : undefined,
+      workflowName,
+      manifest: run.manifest,
+      runtime: run.runtime,
+      steps,
+    });
+  }, [running, steps, run, workflowName, addRun]);
+
+  const addStep = useCallback((type: PlannerStepType, content: unknown) => {
+    setSteps((prev) => [...prev, { id: `${prev.length}-${type}`, type, content }]);
   }, []);
 
   const stop = useCallback(() => {
     stopRef.current?.();
     stopRef.current = null;
+    pendingSaveRef.current = "cancelled";
     setRunning(false);
     settle();
   }, [settle]);
 
-  const submit = useCallback(() => {
-    const value = goal.trim();
-    if (!value || running) return;
+  const submit = useCallback(
+    (override?: string) => {
+      const value = (override ?? goal).trim();
+      if (!value || running) return;
 
-    goalRef.current = value;
-    setGoal("");
-    setPhases([]);
-    setArtifacts([]);
-    setRequirements(null);
-    setReady(null);
-    setFailure(null);
-    setRunning(true);
-
-    let readySnapshot: WorkflowReady | null = null;
-
-    const fail = (message: string) => {
-      setFailure(message);
-      setPhases((prev) => [
-        ...prev.map((p) => (p.state === "active" ? { ...p, state: "completed" as const } : p)),
-        { id: `err-${prev.length}`, label: message, state: "error" },
-      ]);
-      setRunning(false);
-      addRun({
-        goal: goalRef.current,
-        status: "failed",
-        detail: message,
-        workflowName: readySnapshot?.workflow_name ?? null,
-      });
       stopRef.current?.();
-      stopRef.current = null;
-    };
+      goalRef.current = value;
+      setSteps([]);
+      setActiveRunId(null);
+      setRunning(true);
+      reset();
 
-    stopRef.current = createSSEStream("/api/workflows/plan", {
-      method: "POST",
-      body: { goal: value },
-      onEvent: (event) => {
-        switch (event.type) {
-          case "status":
-            pushPhase(String(parseEventData<string>(event)));
-            break;
-          case "requirements": {
-            const r = parseEventData<{
-              tools_needed?: string[];
-              agents_needed?: string[];
-              description?: string;
-            }>(event);
-            if (typeof r === "string") break;
-            setRequirements(r.description ?? null);
-            break;
-          }
-          case "tool_exists":
-          case "tool_new": {
-            const t = parseEventData<{ tool_name?: string; status?: string }>(event);
-            if (typeof t === "string" || !t.tool_name) break;
-            addArtifact({
-              kind: "tool",
-              name: t.tool_name,
-              reused: event.type === "tool_exists",
-              ...(t.status ? { detail: t.status } : {}),
-            });
-            break;
-          }
-          case "agent_exists":
-          case "agent_new": {
-            const a = parseEventData<{ agent_name?: string; name?: string; tier?: string }>(event);
-            if (typeof a === "string") break;
-            const name = a.agent_name ?? a.name;
-            if (!name) break;
-            addArtifact({
-              kind: "agent",
-              name,
-              reused: event.type === "agent_exists",
-              ...(a.tier ? { detail: a.tier } : {}),
-            });
-            break;
-          }
-          case "workflow_ready": {
-            const w = parseEventData<WorkflowReady>(event);
-            if (typeof w === "string") break;
-            readySnapshot = w;
-            setReady(w);
-            break;
-          }
-          case "compiled": {
-            const c = parseEventData<{ error?: string }>(event);
-            if (typeof c !== "string" && c.error) {
-              pushPhase(`Compilation warning: ${c.error}`, "error");
-            }
-            break;
-          }
-          case "registered": {
-            const r = parseEventData<{ error?: string }>(event);
-            if (typeof r !== "string" && r.error) {
-              pushPhase(r.error, "error");
-            }
-            break;
-          }
-          case "error":
-            fail(String(parseEventData<string>(event)));
-            break;
-          case "fatal_error": {
-            const f = parseEventData<{ error?: string }>(event);
-            fail(typeof f === "string" ? f : (f.error ?? "Planning failed"));
-            break;
-          }
-          case "done": {
-            const d = parseEventData<{ workflow_name?: string }>(event);
-            const name =
-              typeof d === "string" ? readySnapshot?.workflow_name : (d.workflow_name ?? null);
-            settle();
-            setRunning(false);
-            qc.invalidateQueries({ queryKey: QK.workflows() });
-            addRun({
-              goal: goalRef.current,
-              status: "completed",
-              workflowName: name ?? readySnapshot?.workflow_name ?? null,
-            });
-            toast.success(name ? `Workflow "${name}" is ready.` : "Workflow planned.");
-            break;
-          }
-          default:
-            break;
-        }
-      },
-      onDone: () => setRunning(false),
-      onError: (err) => fail(err instanceof Error ? err.message : "Planning stream failed"),
-    });
-  }, [addArtifact, addRun, goal, pushPhase, qc, running, settle]);
+      stopRef.current = createSSEStream("/api/workflows/plan", {
+        method: "POST",
+        body: { goal: value },
+        onEvent: (event) => {
+          // `pipeline`, `layer` and `status` drive the chain itself.
+          if (handleEvent(event.type, event.data)) return;
 
-  const started = phases.length > 0 || ready !== null;
+          if (PLANNER_CARD_EVENTS.has(event.type)) {
+            const parsed = parseEventData<unknown>(event);
+            if (typeof parsed !== "string") addStep(event.type as PlannerStepType, parsed);
+            return;
+          }
+
+          switch (event.type) {
+            case "error":
+              addStep("error", event.data);
+              failRunning(event.data);
+              break;
+            case "fatal_error": {
+              const f = parseEventData<{ error?: string }>(event);
+              addStep("fatal_error", typeof f === "string" ? f : (f.error ?? "Planning failed"));
+              failRunning("This step could not be completed.");
+              break;
+            }
+            case "done": {
+              const d = parseEventData<{ workflow_name?: string }>(event);
+              const name = typeof d === "string" ? null : (d.workflow_name ?? null);
+              qc.invalidateQueries({ queryKey: QK.workflows() });
+              toast.success(name ? `Workflow "${name}" is ready.` : "Workflow planned.");
+              break;
+            }
+            default:
+              break;
+          }
+        },
+        onDone: () => {
+          pendingSaveRef.current = "completed";
+          setRunning(false);
+          settle();
+        },
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : "Planning stream failed";
+          addStep("error", message);
+          failRunning(message);
+          pendingSaveRef.current = "failed";
+          setRunning(false);
+        },
+      });
+    },
+    [addStep, failRunning, goal, handleEvent, qc, reset, running, settle],
+  );
+
+  const openHistoryEntry = (entry: PlannerHistoryEntry) => {
+    if (running) return;
+    setActiveRunId(entry.id);
+    setGoal(entry.goal);
+    goalRef.current = entry.goal;
+    setSteps(entry.steps ?? []);
+    // Entries without a manifest fall back to plain rows below the chain.
+    restore(entry.manifest, entry.runtime);
+    setHistoryOpen(false);
+  };
+
+  const started = running || run.started || steps.length > 0 || activeRunId !== null;
+  const bareReplay = activeRunId !== null && !run.started && steps.length === 0;
 
   return (
-    <div className="space-y-6 px-6 py-8">
-      <PageHeader
-        eyebrow="Planner"
-        title="Plan a workflow"
-        description="One sentence in, a compiled and registered DAG out. Each phase streams live so you can see which tools were reused and which agents were created."
-        actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/workflows/new">
-              <ArrowLeft className="size-3.5" /> Back
-            </Link>
-          </Button>
-        }
-      />
+    <div className="relative mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-3xl flex-col px-5 py-6">
+      {/* ── Hero / goal ── */}
+      <motion.div
+        layout
+        className={cn("w-full transition-all duration-500", started ? "mb-10" : "mt-[10vh]")}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <Link
+            to="/workflows/new"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" /> Back
+          </Link>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground"
+          >
+            <History className="size-3.5" />
+            View History{runs.length > 0 ? ` (${runs.length})` : ""}
+          </button>
+        </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-        <div className="min-w-0 space-y-5">
-          <GlassPanel tone="raised" className="p-5">
-            <p className="eyebrow mb-2">Goal</p>
-            <Textarea
-              rows={3}
-              value={goal}
-              disabled={running}
-              placeholder="Describe the outcome you want, in one or two sentences…"
-              onChange={(e) => setGoal(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
-              }}
-              className="resize-none"
+        <div className="mb-8 text-center">
+          <div className="relative mx-auto mb-6 w-fit">
+            <div
+              className="absolute -inset-10 rounded-full opacity-20 blur-3xl"
+              style={{ background: "var(--gradient-brand)" }}
             />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button onClick={submit} disabled={running || goal.trim().length === 0}>
-                <Sparkles className="size-4" /> {running ? "Planning…" : "Plan workflow"}
-              </Button>
+            <div className="relative grid size-16 place-items-center rounded-2xl border border-border/60 glass">
+              <GitBranch className="size-7 text-primary" />
+            </div>
+          </div>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            What <span className="text-gradient-brand">workflow</span> do you want to build?
+          </h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Describe your goal — agents, tools, and the entire pipeline will be assembled
+            automatically.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-border/60 p-2 shadow-2xl glass transition focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20">
+          <textarea
+            ref={textareaRef}
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="e.g. Build a multi-step insurance claim processing pipeline that validates claims, queries the database, checks weather, and generates a report…"
+            rows={6}
+            disabled={running}
+            className="custom-scrollbar min-h-[180px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 p-2">
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Sparkles className="size-3.5 text-primary" />
+              <span className="hidden sm:inline">Enter to plan · Shift + Enter for a new line</span>
+            </span>
+            <div className="flex items-center gap-2">
               {running ? (
                 <Button variant="outline" onClick={stop}>
                   <Square className="size-3.5" /> Stop
                 </Button>
               ) : null}
-              <span className="technical-label ml-auto">cmd / ctrl + enter</span>
+              <button
+                type="button"
+                onClick={() => submit()}
+                disabled={!goal.trim() || running}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-brand px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 disabled:opacity-50"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Planning…
+                  </>
+                ) : (
+                  <>
+                    Plan Workflow <ArrowRight className="size-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {!started ? (
+          <div className="mt-6 grid gap-2 sm:grid-cols-3">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setGoal(ex)}
+                className="rounded-xl border border-border/60 px-3 py-2.5 text-left text-xs leading-relaxed text-muted-foreground transition hover:border-primary/40 hover:bg-surface-hover hover:text-foreground"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </motion.div>
+
+      {/* ── Timeline ── */}
+      {started ? (
+        <div className="space-y-5 pb-24">
+          <div className="rounded-2xl border border-border/50 bg-surface/40 p-5 backdrop-blur-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <Zap className="size-3.5 text-primary" />
+              <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                {activeRunId && !running ? "Planning Timeline" : "Planning Pipeline"}
+              </span>
+              {running ? (
+                <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+                  Planning
+                </span>
+              ) : null}
             </div>
 
-            {!started ? (
-              <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
-                {EXAMPLES.map((ex) => (
-                  <button
-                    key={ex}
-                    type="button"
-                    onClick={() => setGoal(ex)}
-                    className="rounded-lg border border-border glass px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
-                  >
-                    {ex}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </GlassPanel>
-
-          {requirements ? (
-            <GlassPanel className="p-4">
-              <p className="eyebrow mb-1.5">What the planner understood</p>
-              <p className="text-sm text-foreground">{requirements}</p>
-            </GlassPanel>
-          ) : null}
-
-          {started ? (
-            <GlassPanel>
-              <GlassPanelHeader
-                title="Pipeline"
-                description="Analyse → tools → agents → DAG → compile → register"
-              />
-              <div className="p-5">
-                <PlannerPhases phases={phases} />
-                {running && phases.length === 0 ? (
-                  <div className="shimmer h-16 rounded-lg border border-border" />
-                ) : null}
-              </div>
-            </GlassPanel>
-          ) : null}
-
-          {failure ? (
-            <GlassPanel className="border-red/25 bg-red/5 p-4">
-              <p className="text-sm font-semibold text-foreground">Planning failed</p>
-              <p className="mt-1 text-xs break-words text-muted-foreground">{failure}</p>
-            </GlassPanel>
-          ) : null}
-
-          {ready ? (
-            <GlassPanel tone="raised" className="p-5">
-              <p className="eyebrow mb-1.5">Workflow saved</p>
-              <h2 className="font-display text-base font-bold text-foreground">
-                {ready.workflow_name}
-              </h2>
-              {ready.description ? (
-                <p className="mt-2 text-sm text-muted-foreground">{ready.description}</p>
+            <div className="space-y-5">
+              {run.manifest.length > 0 ? (
+                <PipelineTimeline
+                  manifest={run.manifest}
+                  runtime={run.runtime}
+                  activeNote={run.activeNote}
+                  cards={layerCards}
+                  raw={layerRaw}
+                />
+              ) : running ? (
+                <div className="shimmer h-16 rounded-xl border border-border/50" />
               ) : null}
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                {ready.step_count ? (
-                  <span className="technical-label">{ready.step_count} steps</span>
-                ) : null}
-                {ready.entry_step ? (
-                  <span className="technical-label">entry · {ready.entry_step}</span>
-                ) : null}
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button
-                  onClick={() =>
-                    navigate({
-                      to: "/workflows/$workflowName",
-                      params: { workflowName: ready.workflow_name },
-                    })
-                  }
-                >
-                  Open workflow <ArrowRight className="size-4" />
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link
-                    to="/workflows/$workflowName/execute"
-                    params={{ workflowName: ready.workflow_name }}
-                  >
-                    Run it
-                  </Link>
-                </Button>
-              </div>
-            </GlassPanel>
+
+              <LegacyPlannerTimeline
+                steps={unowned}
+                onRestart={() => submit(goalRef.current)}
+                restartDisabled={running}
+              />
+
+              {bareReplay ? (
+                <p className="text-xs text-muted-foreground">
+                  This run was recorded before timelines were kept, so only its outcome is
+                  available.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {/* ── Final CTA ── */}
+          {workflowName && !running && !hasFailure ? (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex flex-wrap gap-3"
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  navigate({
+                    to: "/workflows/$workflowName",
+                    params: { workflowName },
+                  })
+                }
+                className="inline-flex min-w-[160px] flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-brand py-4 text-base font-semibold text-primary-foreground shadow-xl transition hover:opacity-90"
+              >
+                <GitBranch className="size-5" /> View Workflow DAG
+              </button>
+              <Button variant="outline" asChild className="h-auto rounded-xl px-5 py-4">
+                <Link to="/workflows">Manage Workflows</Link>
+              </Button>
+            </motion.div>
           ) : null}
 
           <div ref={bottomRef} />
         </div>
+      ) : null}
 
-        <div className="space-y-5">
-          <GlassPanel>
-            <GlassPanelHeader title="Resources" description="Reused or created for this run" />
-            <div className="p-4">
-              <ArtifactList artifacts={artifacts} />
-            </div>
-          </GlassPanel>
-
-          <GlassPanel>
-            <GlassPanelHeader
-              title="Recent runs"
-              description="Kept in this browser only"
-              actions={
-                runs.length > 0 ? (
-                  <Button size="sm" variant="ghost" onClick={clearRuns}>
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                ) : undefined
-              }
-            />
-            <div className="p-4">
-              {runs.length === 0 ? (
-                <EmptyState
-                  icon={<History className="size-5" />}
-                  title="No planner runs yet."
-                  className="py-8"
-                />
-              ) : (
-                <ul className="space-y-2">
-                  {runs.map((r) => (
-                    <li
-                      key={r.id}
-                      className="rounded-lg border border-border bg-background-elevated/60 p-2.5"
-                    >
-                      <p className="line-clamp-2 text-xs text-foreground">{r.goal}</p>
-                      <div className="mt-1.5 flex items-center justify-between gap-2">
-                        <span
-                          className={
-                            r.status === "completed"
-                              ? "font-mono text-[9px] font-bold text-emerald uppercase"
-                              : "font-mono text-[9px] font-bold text-red uppercase"
-                          }
-                        >
-                          {r.status}
-                        </span>
-                        <span className="technical-label">{formatRelative(r.createdAt)}</span>
-                      </div>
-                      {r.workflowName ? (
-                        <Link
-                          to="/workflows/$workflowName"
-                          params={{ workflowName: r.workflowName }}
-                          className="mt-1 block truncate font-mono text-[10px] text-primary hover:underline"
-                        >
-                          {r.workflowName}
-                        </Link>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </GlassPanel>
-        </div>
-      </div>
+      <PlannerHistorySheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        history={history}
+        activeId={activeRunId}
+        isLoading={loadingWorkflows && historyOpen}
+        onSelect={openHistoryEntry}
+        onClear={clearRuns}
+      />
     </div>
   );
 }

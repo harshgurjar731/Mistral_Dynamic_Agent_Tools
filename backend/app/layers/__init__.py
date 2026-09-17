@@ -23,6 +23,7 @@ from app.core.pipeline import Pipeline
 from app.layers.agent import (
     AgentAssemblyLayer,
     AgentInventoryLayer,
+    AgentRuleSelectionLayer,
     CapabilityGapLayer,
     ConnectorSelectionLayer,
     GuardrailConfigLayer,
@@ -46,10 +47,12 @@ from app.layers.workflow import (
     GoalDecompositionLayer,
     ResourceInventoryLayer,
     StepTopologyLayer,
+    WorkflowAgentRulesLayer,
     WorkflowCompilationLayer,
     WorkflowGuardrailLayer,
     WorkflowPersistenceLayer,
     WorkflowRegistrationLayer,
+    WorkflowRuleSelectionLayer,
     WorkflowValidationLayer,
 )
 
@@ -69,6 +72,8 @@ from app.layers.workflow import (
 #     around exists before anything validates against it.
 #   GuardrailConfigLayer runs after them because the moderation an agent
 #     warrants depends on what it can actually do.
+#   AgentRuleSelectionLayer runs after it for the same reason, and before the
+#     instructions so they can be written for the rules the agent will follow.
 #   InstructionAuthoringLayer runs last of the design layers because the
 #     instructions are where every prior decision is expressed to the model.
 
@@ -91,6 +96,7 @@ chat_pipeline.add(ParallelGroup(
 ))
 chat_pipeline.add(LibraryProvisioningLayer())
 chat_pipeline.add(GuardrailConfigLayer())
+chat_pipeline.add(AgentRuleSelectionLayer())
 chat_pipeline.add(InstructionAuthoringLayer())
 chat_pipeline.add(AgentAssemblyLayer())
 chat_pipeline.add(ExecutionLayer())
@@ -109,10 +115,12 @@ workflow_pipeline.add(ExecutionModeLayer())
 workflow_pipeline.add(CapabilityReuseLayer())
 workflow_pipeline.add(ActivityGapLayer())
 workflow_pipeline.add(AgentDesignLayer())
+workflow_pipeline.add(WorkflowAgentRulesLayer())
 workflow_pipeline.add(AgentProvisioningLayer())
 workflow_pipeline.add(StepTopologyLayer())
 workflow_pipeline.add(DataFlowLayer())
 workflow_pipeline.add(WorkflowGuardrailLayer())
+workflow_pipeline.add(WorkflowRuleSelectionLayer())
 workflow_pipeline.add(WorkflowValidationLayer())
 workflow_pipeline.add(WorkflowPersistenceLayer())
 workflow_pipeline.add(WorkflowCompilationLayer())

@@ -1,6 +1,7 @@
 import { Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/chat/Markdown";
+import { RuleOutcomeRow } from "@/components/rules/RuleOutcomeRow";
 import type { Message } from "@/types";
 
 export function MessageList({ messages }: { messages: Message[] }) {
@@ -48,6 +49,9 @@ function MessageBubble({ message }: { message: Message }) {
             <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
             <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
           </span>
+        ) : null}
+        {!isUser && message.ruleOutcomes?.length ? (
+          <RuleOutcomeRow outcomes={message.ruleOutcomes} />
         ) : null}
       </div>
     </div>

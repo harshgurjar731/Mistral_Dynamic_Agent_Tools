@@ -42,6 +42,7 @@ import type {
 export { api, errorMessage, errorDetails, unwrap } from "./client";
 export { QK } from "./queryKeys";
 export { agentsApi } from "./agents";
+export { rulesApi } from "./rules";
 
 /* ── Health ─────────────────────────────────────────────────────────── */
 export const healthApi = {
@@ -358,22 +359,7 @@ export const ontologyApi = {
       unchanged: number;
       failed: number;
     }>("/api/ontology/knowledge/attach-tool"),
-  rules: (status?: string) =>
-    get<{ rules: any[]; count: number }>("/api/ontology/rules", status ? { status } : {}),
-  createRule: (body: unknown) => post<any>("/api/ontology/rules", body),
-  updateRule: (id: string, body: unknown) =>
-    patch<any>(`/api/ontology/rules/${encodeURIComponent(id)}`, body),
-  approveRule: (id: string) =>
-    post<any>(`/api/ontology/rules/${encodeURIComponent(id)}/approve`),
-  deleteRule: (id: string) => del<unknown>(`/api/ontology/rules/${encodeURIComponent(id)}`),
-  ruleExceptions: (ruleId: string) =>
-    get<{ exceptions: any[]; count: number }>(
-      `/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`,
-    ),
-  addRuleException: (ruleId: string, body: unknown) =>
-    post<any>(`/api/ontology/rules/${encodeURIComponent(ruleId)}/exceptions`, body),
-  deleteRuleException: (exceptionId: string | number) =>
-    del<unknown>(`/api/ontology/rules/exceptions/${exceptionId}`),
+  // Governance rules moved out of the ontology — see `rulesApi`.
 };
 
 

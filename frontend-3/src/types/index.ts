@@ -101,6 +101,8 @@ export interface WorkflowDefinition {
   ui_layout: Record<string, NodeLayout>;
   published_hash?: string | null;
   has_unpublished_changes?: boolean;
+  /** Optional workflow rules selected for this workflow; always-on rules apply regardless. */
+  rules?: RuleRef[];
 }
 
 /* ── Validation ─────────────────────────────────────────────────────── */
@@ -725,6 +727,8 @@ export interface Message {
   imageUrl?: string | undefined;
   imageBase64?: string | undefined;
   imageMime?: string | undefined;
+  /** What each agent rule decided on this turn (assistant messages only). */
+  ruleOutcomes?: RuleOutcome[] | undefined;
 }
 export interface ChatSession {
   id: string;
@@ -758,4 +762,124 @@ export interface AgentConfigEvent {
 export interface OrchestrateDoneEvent {
   agent_id: string;
   agent_name?: string;
+}
+
+/* ── Rules ──────────────────────────────────────────────────────────── */
+export type RuleScope = "agent" | "workflow";
+export type RuleEnforcement = "block" | "warn" | "fix";
+export type RuleOutcomeKind = "passed" | "blocked" | "warned" | "fixed" | "applied";
+export type RuleAppliedBy = "always" | "ai" | "user";
+
+export interface RuleParamField {
+  key: string;
+  label: string;
+  kind: "tags" | "multiselect" | "number" | "select" | "checkboxes" | "toggle";
+  default?: unknown;
+  help?: string;
+  options: { value: string; label: string }[];
+  /** Live inventory the options come from, when not fixed. */
+  options_source?: "tools" | "connectors" | "models" | null;
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface RuleType {
+  key: string;
+  scope: RuleScope;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+  checkpoints: string[];
+  checkpoint_labels: string[];
+  enforcements: RuleEnforcement[];
+  default_enforcement: RuleEnforcement;
+  /** Sentence template with {param} placeholders. */
+  summary: string;
+  params: RuleParamField[];
+  enforcement_help: Partial<Record<RuleEnforcement, string>>;
+}
+
+export interface RuleUsage {
+  agents: number;
+  passed?: number;
+  blocked?: number;
+  warned?: number;
+  fixed?: number;
+  applied?: number;
+}
+
+export interface Rule {
+  id: string;
+  scope: RuleScope;
+  type: string;
+  name: string;
+  description: string;
+  params: Record<string, unknown>;
+  enforcement: RuleEnforcement;
+  always_on: boolean;
+  enabled: boolean;
+  source: "recommended" | "user";
+  summary: string;
+  category: string;
+  icon: string;
+  checkpoints: string[];
+  updated_at?: string | null;
+  usage?: RuleUsage;
+}
+
+export interface RuleRef {
+  rule_id: string;
+  source?: "ai" | "user";
+  reason?: string;
+}
+
+export interface RuleSuggestion extends RuleRef {
+  name?: string;
+}
+
+export interface AgentRuleEntry extends Rule {
+  applied_by: RuleAppliedBy;
+  reason: string;
+}
+
+export interface RuleEvent {
+  id: number;
+  rule_id: string;
+  rule_name: string;
+  scope: RuleScope;
+  subject_id: string;
+  checkpoint: string;
+  outcome: RuleOutcomeKind;
+  message: string;
+  detail?: unknown;
+  conversation_id?: string | null;
+  execution_id?: string | null;
+  step_id?: string | null;
+  created_at?: string | null;
+}
+
+/** One rule's result for one turn, as streamed in the `rule_outcomes` event. */
+export interface RuleOutcome {
+  rule_id: string;
+  name: string;
+  outcome: RuleOutcomeKind;
+  message: string;
+  checkpoint?: string;
+}
+
+export interface AgentRuleActivity {
+  rule: AgentRuleEntry;
+  counts: Record<RuleOutcomeKind, number>;
+  last: RuleEvent | null;
+  recent: RuleEvent[];
+}
+
+/** `rules_selected` / `workflow_rules_selected` SSE payload. */
+export interface RulesSelectedEvent {
+  scope: RuleScope;
+  selected: RuleSuggestion[];
+  always_on: { rule_id: string; name: string; summary: string }[];
+  reasoning: string;
+  decided: boolean;
 }

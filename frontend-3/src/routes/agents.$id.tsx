@@ -1,17 +1,23 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Globe, MessageSquare, Plug, Save, Settings2, Sparkles, Trash2, Wrench, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  Globe,
+  MessageSquare,
+  Plug,
+  Save,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
-import {
-  agentsApi,
-  connectorsApi,
-  librariesApi,
-  ontologyApi,
-  QK,
-  toolsApi,
-} from "@/api";
+import { agentsApi, connectorsApi, librariesApi, ontologyApi, QK, rulesApi, toolsApi } from "@/api";
 import { errorMessage } from "@/api/client";
 import type { AgentPatch } from "@/api/agents";
 import { createSSEStream, parseEventData } from "@/api/sse";
@@ -22,6 +28,8 @@ import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
 import { TierSelector } from "@/components/chat/TierSelector";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { GuardrailEditor } from "@/components/agents/GuardrailEditor";
+import { RuleActivityList } from "@/components/rules/RuleActivityList";
+import { RuleSelector } from "@/components/rules/RuleSelector";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
@@ -29,7 +37,15 @@ import { Slider } from "@/components/ui/slider";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import type { ChatMessagePayload } from "@/api";
-import type { Concept, ConnectorRef, GuardrailConfig, Message, UploadResult } from "@/types";
+import type {
+  Concept,
+  ConnectorRef,
+  GuardrailConfig,
+  Message,
+  RuleOutcome,
+  RuleRef,
+  UploadResult,
+} from "@/types";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -119,7 +135,36 @@ function AgentsIdPage() {
 
   const [form, setForm] = useState<ConfigForm | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+
+  /* ── rules ───────────────────────────────────────────────────────── */
+  const agentRulesQuery = useQuery({
+    queryKey: QK.agentRules(id),
+    queryFn: () => rulesApi.agentRules(id),
+  });
+  const activityQuery = useQuery({
+    queryKey: QK.agentRuleActivity(id),
+    queryFn: () => rulesApi.agentActivity(id),
+  });
+  // The optional rules as saved; always-on rules are not part of the selection.
+  const savedRuleSelection = useMemo<RuleRef[]>(
+    () =>
+      (agentRulesQuery.data?.rules ?? [])
+        .filter((r) => r.applied_by !== "always")
+        .map((r) => ({
+          rule_id: r.id,
+          source: r.applied_by === "ai" ? "ai" : "user",
+          reason: r.reason,
+        })),
+    [agentRulesQuery.data],
+  );
+  const [ruleSelection, setRuleSelection] = useState<RuleRef[] | null>(null);
+  useEffect(() => setRuleSelection(savedRuleSelection), [savedRuleSelection]);
+  const ruleCount = agentRulesQuery.data?.rules.length ?? 0;
+  const recentBlock = (activityQuery.data?.recent_blocks ?? []).some(
+    (e) => e.created_at && Date.now() - Date.parse(`${e.created_at}Z`) < 86_400_000,
+  );
 
   useEffect(() => {
     if (!agentQuery.data) return;
@@ -163,6 +208,27 @@ function AgentsIdPage() {
     onError: (err) => toast.error(errorMessage(err)),
   });
 
+  const rulesMutation = useMutation({
+    mutationFn: (rules: RuleRef[]) => rulesApi.setAgentRules(id, rules),
+    onSuccess: (res) => {
+      const fixed = res.outcomes.filter((o) => o.outcome === "fixed" || o.outcome === "applied");
+      const blocked = res.outcomes.filter((o) => o.outcome === "blocked");
+      toast.success(
+        fixed.length
+          ? `Rules updated — applied to the agent: ${fixed.map((o) => o.name).join(", ")}`
+          : "Rules updated",
+      );
+      if (blocked.length) {
+        toast.warning(blocked.map((o) => `${o.name}: ${o.message}`).join(" "));
+      }
+      void qc.invalidateQueries({ queryKey: QK.agentRules(id) });
+      void qc.invalidateQueries({ queryKey: QK.agentRuleActivity(id) });
+      void qc.invalidateQueries({ queryKey: QK.agent(id) });
+      void qc.invalidateQueries({ queryKey: ["rules", "list"] });
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+
   const setDomainsMutation = useMutation({
     mutationFn: (conceptIds: string[]) =>
       ontologyApi.setAnnotations({
@@ -200,7 +266,10 @@ function AgentsIdPage() {
     if (form.toolNames.slice().sort().join(",") !== originalToolNames) {
       patch.tools = form.toolNames.map((n) => ({ name: n }));
     }
-    const originalConnectorIds = (a.connectors ?? []).map((c) => c.connector_id).sort().join(",");
+    const originalConnectorIds = (a.connectors ?? [])
+      .map((c) => c.connector_id)
+      .sort()
+      .join(",");
     if (form.connectorIds.slice().sort().join(",") !== originalConnectorIds) {
       patch.connectors = form.connectorIds.map((cid) => ({ connector_id: cid }) as ConnectorRef);
     }
@@ -213,11 +282,21 @@ function AgentsIdPage() {
       patch.guardrails = form.guardrails;
     }
 
-    if (Object.keys(patch).length === 0) {
+    const ids = (refs: RuleRef[]) => JSON.stringify(refs.map((r) => r.rule_id).sort());
+    const rulesChanged = ruleSelection !== null && ids(ruleSelection) !== ids(savedRuleSelection);
+
+    if (Object.keys(patch).length === 0 && !rulesChanged) {
       toast.info("No changes to save");
       return;
     }
-    patchMutation.mutate(patch);
+    // Sequential: both write the agent, and the rules step re-applies fix
+    // rules to whatever the configuration save just wrote.
+    void (async () => {
+      if (Object.keys(patch).length) await patchMutation.mutateAsync(patch);
+      if (rulesChanged && ruleSelection) await rulesMutation.mutateAsync(ruleSelection);
+    })().catch(() => {
+      /* each mutation already reported its own error */
+    });
   };
 
   /* ── chat ────────────────────────────────────────────────────────── */
@@ -318,6 +397,14 @@ function AgentsIdPage() {
           case "conversation_id":
             setConversationId(activeSid, String(parseEventData<string>(event)));
             break;
+          case "rule_outcomes": {
+            // What every rule on this agent decided for this turn.
+            const outcomes = parseEventData<RuleOutcome[]>(event);
+            if (Array.isArray(outcomes)) {
+              updateMessage(activeSid, assistantId, { ruleOutcomes: outcomes });
+            }
+            break;
+          }
           case "error":
             toast.error(String(parseEventData<string>(event)));
             setIsProcessing(false);
@@ -329,6 +416,7 @@ function AgentsIdPage() {
       onDone: () => {
         updateMessage(activeSid, assistantId, { streaming: false });
         setIsProcessing(false);
+        void qc.invalidateQueries({ queryKey: QK.agentRuleActivity(id) });
       },
       onError: (err) => {
         toast.error(err instanceof Error ? err.message : "Stream failed");
@@ -348,7 +436,8 @@ function AgentsIdPage() {
   }
   if (agentQuery.isError || !agentQuery.data || !form) {
     const notFound =
-      (agentQuery.error as { response?: { status?: number } } | undefined)?.response?.status === 404;
+      (agentQuery.error as { response?: { status?: number } } | undefined)?.response?.status ===
+      404;
     return (
       <div className="px-6 py-8">
         {notFound ? (
@@ -450,7 +539,9 @@ function AgentsIdPage() {
           {!agent.protected && (
             <button
               type="button"
-              onClick={() => window.confirm(`Delete agent "${agent.name}"?`) && deleteMutation.mutate()}
+              onClick={() =>
+                window.confirm(`Delete agent "${agent.name}"?`) && deleteMutation.mutate()
+              }
               disabled={deleteMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-lg border border-red/20 px-2.5 py-1.5 text-xs font-medium text-red/80 transition hover:border-red/40 hover:bg-red/10 hover:text-red disabled:opacity-50"
             >
@@ -460,7 +551,37 @@ function AgentsIdPage() {
           )}
           <button
             type="button"
-            onClick={() => setConfigOpen((o) => !o)}
+            onClick={() => {
+              setActivityOpen((o) => !o);
+              setConfigOpen(false);
+            }}
+            title="What each rule on this agent has decided"
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition",
+              activityOpen
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border/60 text-muted-foreground hover:border-border hover:bg-surface-hover hover:text-foreground",
+            )}
+          >
+            <span className="relative">
+              <ShieldCheck className="size-3.5" />
+              {recentBlock ? (
+                <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-red" />
+              ) : null}
+            </span>
+            <span className="hidden sm:inline">Rules</span>
+            {ruleCount > 0 && (
+              <span className="rounded bg-surface-elevated px-1 py-0.5 text-[10px] tabular-nums leading-none">
+                {ruleCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setConfigOpen((o) => !o);
+              setActivityOpen(false);
+            }}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition",
               configOpen
@@ -491,8 +612,7 @@ function AgentsIdPage() {
                   </div>
                 </div>
                 <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                  Chat with{" "}
-                  <span className="text-gradient-brand">{agent.name}</span>
+                  Chat with <span className="text-gradient-brand">{agent.name}</span>
                 </h2>
                 <p className="mt-2 max-w-sm text-center text-sm leading-relaxed text-muted-foreground">
                   Send a message below to start. Open Config to adjust parameters.
@@ -582,7 +702,10 @@ function AgentsIdPage() {
                   </Field>
                   <Field label="Tier">
                     <div className="mt-1">
-                      <TierSelector value={form.tier} onChange={(tier) => setForm({ ...form, tier })} />
+                      <TierSelector
+                        value={form.tier}
+                        onChange={(tier) => setForm({ ...form, tier })}
+                      />
                     </div>
                   </Field>
                   <Field label="Domain">
@@ -828,6 +951,60 @@ function AgentsIdPage() {
                 value={form.guardrails}
                 onChange={(g) => setForm({ ...form, guardrails: g })}
               />
+
+              <GlassPanel tone="raised">
+                <GlassPanelHeader
+                  title="Rules"
+                  description="Always-on rules apply automatically. Optional ones added here save with the rest of the configuration."
+                />
+                <div className="p-5">
+                  <RuleSelector
+                    scope="agent"
+                    value={ruleSelection ?? savedRuleSelection}
+                    onChange={setRuleSelection}
+                    onSuggest={async () =>
+                      (
+                        await rulesApi.suggest({
+                          scope: "agent",
+                          name: form.name,
+                          description: form.description,
+                          instructions: form.instructions,
+                          tier: form.tier,
+                          model: form.model,
+                          tools: form.toolNames,
+                          connectors: form.connectorIds,
+                        })
+                      ).selected
+                    }
+                  />
+                </div>
+              </GlassPanel>
+            </div>
+          </aside>
+        ) : null}
+
+        {activityOpen ? (
+          <aside className="hidden w-96 shrink-0 overflow-y-auto border-l border-border bg-background/40 backdrop-blur-md custom-scrollbar lg:block">
+            <div className="space-y-4 p-5">
+              <GlassPanel tone="raised">
+                <GlassPanelHeader
+                  title="Rule activity"
+                  description="Every rule on this agent, and what it has decided."
+                  actions={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActivityOpen(false);
+                        setConfigOpen(true);
+                      }}
+                      className="rounded-lg border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+                    >
+                      Edit rules
+                    </button>
+                  }
+                />
+                <RuleActivityList agentId={id} />
+              </GlassPanel>
             </div>
           </aside>
         ) : null}
@@ -839,7 +1016,9 @@ function AgentsIdPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
+      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
       {children}
     </div>
   );

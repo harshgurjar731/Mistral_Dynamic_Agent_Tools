@@ -22,10 +22,7 @@ export const Route = createFileRoute("/health")({
 function Dot({ healthy }: { healthy: boolean }) {
   return (
     <span
-      className={cn(
-        "size-2.5 rounded-full",
-        healthy ? "animate-pulse bg-emerald" : "bg-red",
-      )}
+      className={cn("size-2.5 rounded-full", healthy ? "animate-pulse bg-emerald" : "bg-red")}
     />
   );
 }

@@ -49,4 +49,10 @@ export const QK = {
   ragOptimizer: () => ["rag", "optimizer"] as const,
   workflowDeploymentManifest: (name: string) => ["workflow-deployment-manifest", name] as const,
   ragUnifiedGraph: (params: Record<string, unknown> = {}) => ["rag", "graph", "unified", params] as const,
+  rules: (scope = "all") => ["rules", "list", scope] as const,
+  ruleTypes: () => ["rules", "types"] as const,
+  agentRules: (id: string) => ["rules", "agent", id] as const,
+  agentRuleActivity: (id: string) => ["rules", "agent", id, "activity"] as const,
+  workflowRules: (name: string) => ["rules", "workflow", name] as const,
+  ruleEvents: (params: Record<string, unknown>) => ["rules", "events", params] as const,
 };

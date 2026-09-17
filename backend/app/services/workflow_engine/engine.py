@@ -258,9 +258,28 @@ async def execute_workflow(
 
     current_step_id = workflow.entry_step
     visited: set[str] = set()
-    max_steps = 50  # safety cap
+
+    # Workflow rules: always-on plus those selected for this workflow. Held in
+    # a context var so the step runners — and the tool router beneath them —
+    # see them without every signature having to carry them.
+    from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
+
+    wf_rules = rules_store.effective_rules("workflow", [r.rule_id for r in workflow.rules])
+    wf_ctx, wf_token = rules_runtime.activate_workflow(wf_rules, workflow_name)
+    # 50 is the engine's own safety cap; a step-limit rule can only lower it.
+    max_steps = rules_engine.step_limit(wf_rules, 50)
 
     try:
+        outcomes, refusal = rules_engine.check_workflow_input(input_vars, wf_rules)
+        rules_runtime.record(outcomes, scope="workflow", subject_id=workflow_name, ctx=wf_ctx)
+        if refusal:
+            run.status = WorkflowStatus.FAILED
+            run.result = {"error": refusal, "blocked_by_rule": True}
+            run.end_time = datetime.now(timezone.utc)
+            _execution_store[exec_id] = run
+            logger.info("Workflow '%s' refused before its first step: %s", workflow_name, refusal)
+            return run
+
         while current_step_id and len(visited) < max_steps:
             # Honour a cancel/terminate between steps. Checked here rather than
             # inside run_step so a stop can never leave a half-applied step.
@@ -430,6 +449,26 @@ async def execute_workflow(
                 else:
                     current_step_id = None
 
+        # Stopped by a step-limit rule rather than by reaching the end. Without
+        # such a rule, hitting the engine's own cap keeps its old behaviour.
+        limit_rules = [r for r in wf_rules if r["type"] == "step_limit"]
+        if current_step_id and len(visited) >= max_steps and limit_rules:
+            message = f"Blocked by rule '{limit_rules[0]['name']}': stopped after {max_steps} steps."
+            rules_runtime.record(
+                [
+                    {"rule_id": r["id"], "rule_name": r["name"], "checkpoint": "run_start",
+                     "outcome": "blocked", "message": f"Stopped after {max_steps} steps.", "detail": None}
+                    for r in limit_rules
+                ],
+                scope="workflow", subject_id=workflow_name, ctx=wf_ctx,
+            )
+            run.status = WorkflowStatus.FAILED
+            run.result = {"error": message, "stopped_at": current_step_id, "blocked_by_rule": True}
+            run.end_time = datetime.now(timezone.utc)
+            _execution_store[exec_id] = run
+            logger.warning("Workflow '%s' %s", workflow_name, message)
+            return run
+
         run.status = WorkflowStatus.COMPLETED
         run.end_time = datetime.now(timezone.utc)
 
@@ -450,5 +489,6 @@ async def execute_workflow(
         # Stop attributing this task's logging to the run. Without the reset a
         # long-lived task could keep writing into a finished execution's buffer.
         execution_logs.CURRENT_EXECUTION.reset(exec_token)
+        rules_runtime.reset_workflow(wf_token)
 
     return run

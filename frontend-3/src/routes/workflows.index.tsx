@@ -2,10 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Archive, GitBranch, Plus, RefreshCw, Search } from "lucide-react";
+import { Archive, GitBranch, Plus, RefreshCw, Search, X } from "lucide-react";
 import { errorMessage, QK, workflowsApi, ontologyApi } from "@/api";
-import type { WorkflowDefinition, Concept } from "@/types";
-import { PageHeader, StatTile } from "@/components/shared/PageHeader";
+import type { AnnotationMap, Concept, WorkflowDefinition } from "@/types";
+import { extractDomains } from "@/components/agents/AgentCard";
 import { WorkflowCard } from "@/components/workflows/WorkflowCard";
 import { WorkflowHistoryPanel } from "@/components/workflows/HistoryPanel";
 import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
@@ -13,12 +13,9 @@ import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClas
 import { WorkflowExecutionModal } from "@/components/workflows/WorkflowExecutionModal";
 import { DomainFilterDropdown } from "@/components/ontology/DomainFilterDropdown";
 import { buildDomainTree, expandedMatchSet, intersects } from "@/components/ontology/domainTree";
-import { GlassPanel } from "@/components/glass/GlassPanel";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/workflows/")({
   head: () => ({
@@ -40,6 +37,9 @@ export const Route = createFileRoute("/workflows/")({
 
 const FILTERS = ["All", "Published", "Draft", "Unpublished edits"] as const;
 type Filter = (typeof FILTERS)[number];
+
+const secondaryButton =
+  "inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground disabled:opacity-50";
 
 function WorkflowsIndexPage() {
   const qc = useQueryClient();
@@ -67,11 +67,13 @@ function WorkflowsIndexPage() {
     return d?.concepts ?? [];
   }, [domainConceptsQuery.data]);
 
-  const tree = useMemo(() => buildDomainTree(domainConcepts), [domainConcepts]);
-  const matchSet = useMemo(
-    () => expandedMatchSet(tree, selectedDomains),
-    [tree, selectedDomains],
+  const domainLabelById = useMemo(
+    () => new Map(domainConcepts.map((c) => [c.id, c.label])),
+    [domainConcepts],
   );
+
+  const tree = useMemo(() => buildDomainTree(domainConcepts), [domainConcepts]);
+  const matchSet = useMemo(() => expandedMatchSet(tree, selectedDomains), [tree, selectedDomains]);
 
   const publish = useMutation({
     mutationFn: (name: string) => workflowsApi.publish(name),
@@ -96,15 +98,23 @@ function WorkflowsIndexPage() {
     [data],
   );
 
-  const counts = useMemo(
-    () => ({
-      total: all.length,
-      published: all.filter((w) => w.is_deployed && !w.has_unpublished_changes).length,
-      draft: all.filter((w) => !w.is_deployed).length,
-      dirty: all.filter((w) => w.has_unpublished_changes).length,
-      archived: (data?.workflows ?? []).filter((w) => w.archived).length,
-    }),
-    [all, data],
+  const archivedCount = useMemo(
+    () => (data?.workflows ?? []).filter((w) => w.archived).length,
+    [data],
+  );
+
+  const names = useMemo(() => all.map((w) => w.name), [all]);
+
+  const annotationsQuery = useQuery({
+    // Keyed under ["ontology", "annotations"] so saving a classification refreshes the cards.
+    queryKey: ["ontology", "annotations", "bulk", "workflow", names],
+    queryFn: () => ontologyApi.annotationsBulk({ subject_type: "workflow", subject_ids: names }),
+    enabled: names.length > 0,
+  });
+
+  const annotationMap = useMemo(
+    () => (annotationsQuery.data ?? {}) as Record<string, AnnotationMap>,
+    [annotationsQuery.data],
   );
 
   const visible = useMemo(() => {
@@ -118,59 +128,64 @@ function WorkflowsIndexPage() {
       })
       .filter((w) => {
         if (selectedDomains.size === 0) return true;
-        const wfDomains = (w as unknown as Record<string, unknown>)["domains"] as string[] | undefined;
-        return intersects(wfDomains, matchSet);
+        return intersects(extractDomains(annotationMap[w.name]), matchSet);
       })
       .filter(
         (w) =>
           !q || w.name.toLowerCase().includes(q) || (w.description ?? "").toLowerCase().includes(q),
       )
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [all, filter, search, selectedDomains, matchSet]);
+  }, [all, filter, search, selectedDomains, matchSet, annotationMap]);
 
   const busy = publish.isPending ? publish.variables : archive.isPending ? archive.variables : null;
+  const filtersActive = Boolean(search.trim()) || filter !== "All" || selectedDomains.size > 0;
 
   return (
-    <div className="space-y-6 px-6 py-8">
-      <PageHeader
-        eyebrow="Orchestration"
-        title="Workflows"
-        description="Deterministic multi-step pipelines. Save keeps edits local; publish compiles the definition and registers it with the Mistral worker."
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={isFetching ? "size-3.5 animate-spin" : "size-3.5"} /> Refresh
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/workflows/archived">
-                <Archive className="size-3.5" /> Archived
-                {counts.archived ? ` (${counts.archived})` : ""}
-              </Link>
-            </Button>
-            <Button size="sm" asChild>
-              <Link to="/workflows/new">
-                <Plus className="size-3.5" /> New workflow
-              </Link>
-            </Button>
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Workflows" value={counts.total} />
-        <StatTile label="Published" value={counts.published} tone="emerald" />
-        <StatTile label="Drafts" value={counts.draft} tone="blue" />
-        <StatTile label="Unpublished edits" value={counts.dirty} tone="amber" />
+    <div className="px-6 py-8">
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            <span className="text-gradient-brand">Workflows</span>
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+            Deterministic multi-step pipelines. Save keeps edits local; publish compiles the
+            definition and registers it with the Mistral worker.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className={secondaryButton}
+          >
+            <RefreshCw className={cn("size-3.5", isFetching && "animate-spin")} />
+            Refresh
+          </button>
+          <Link to="/workflows/archived" className={secondaryButton}>
+            <Archive className="size-3.5" />
+            Archived{archivedCount ? ` (${archivedCount})` : ""}
+          </Link>
+          <Link
+            to="/workflows/new"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            New workflow
+          </Link>
+        </div>
       </div>
 
-      <GlassPanel className="flex flex-wrap items-center gap-2 p-3">
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search workflows…"
+      {/* ── Filters ── */}
+      <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-border/40 bg-surface/20 px-4 py-3 backdrop-blur-sm">
+        <div className="relative min-w-[220px] max-w-sm flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search workflows…"
+            className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
         <DomainFilterDropdown
@@ -178,60 +193,99 @@ function WorkflowsIndexPage() {
           selected={selectedDomains}
           onChange={setSelectedDomains}
         />
+        {selectedDomains.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelectedDomains(new Set())}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+          >
+            <X className="size-3" />
+            Clear ({selectedDomains.size})
+          </button>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           {FILTERS.map((f) => (
-            <Button
+            <button
               key={f}
-              size="sm"
-              variant={filter === f ? "default" : "outline"}
+              type="button"
               onClick={() => setFilter(f)}
+              className={cn(
+                "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                filter === f
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/60 text-muted-foreground hover:border-border hover:bg-surface-hover hover:text-foreground",
+              )}
             >
               {f}
-            </Button>
+            </button>
           ))}
         </div>
-      </GlassPanel>
 
-      {isLoading ? (
-        <CardGridSkeleton />
-      ) : isError ? (
-        <ErrorState error={error} onRetry={() => refetch()} />
-      ) : visible.length === 0 ? (
-        <EmptyState
-          icon={<GitBranch className="size-6" />}
-          title={all.length === 0 ? "No workflows yet." : "Nothing matches this view."}
-          description={
-            all.length === 0
-              ? "Describe a goal and let the planner build one, or assemble the DAG by hand."
-              : "Try a different filter or search term."
-          }
-          action={
-            all.length === 0 ? (
-              <Button size="sm" asChild>
-                <Link to="/workflows/new">
-                  <Plus className="size-3.5" /> New workflow
-                </Link>
-              </Button>
-            ) : undefined
-          }
-        />
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visible.map((w) => (
-            <WorkflowCard
-              key={w.name}
-              workflow={w}
-              busy={busy ?? null}
-              onPublish={(n) => publish.mutate(n)}
-              onArchive={(n) => archive.mutate(n)}
-              onHistory={(n) => setHistoryFor(n)}
-              onPackage={(n) => setPackageFor(n)}
-              onClassify={(n) => setClassifyFor(n)}
-              onExecuteModal={(n) => setExecuteFor(n)}
-            />
-          ))}
-        </div>
-      )}
+        {all.length > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
+            {visible.length} of {all.length} workflow{all.length !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      {/* ── Grid ── */}
+      <div className="mt-8">
+        {isLoading ? (
+          <CardGridSkeleton />
+        ) : isError ? (
+          <ErrorState error={error} onRetry={() => refetch()} />
+        ) : visible.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 py-20 text-center">
+            <div className="relative mb-5">
+              <div
+                className="absolute -inset-8 rounded-full opacity-15 blur-2xl"
+                style={{ background: "var(--gradient-brand)" }}
+              />
+              <div className="relative grid size-14 place-items-center rounded-2xl border border-border/60 glass">
+                <GitBranch className="size-6 text-primary" />
+              </div>
+            </div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              {all.length === 0 ? "No workflows yet" : "Nothing matches this view"}
+            </h2>
+            <p className="mt-1.5 max-w-sm text-xs text-muted-foreground">
+              {all.length === 0
+                ? "Describe a goal and let the planner build one, or assemble the DAG by hand."
+                : filtersActive
+                  ? "Try a different filter or search term."
+                  : "No active workflows."}
+            </p>
+            {all.length === 0 && (
+              <Link
+                to="/workflows/new"
+                className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+              >
+                <Plus className="size-4" />
+                New workflow
+              </Link>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visible.map((w) => (
+              <WorkflowCard
+                key={w.name}
+                workflow={w}
+                domains={extractDomains(annotationMap[w.name]).map(
+                  (id) => domainLabelById.get(id) ?? id,
+                )}
+                busy={busy ?? null}
+                onPublish={(n) => publish.mutate(n)}
+                onArchive={(n) => archive.mutate(n)}
+                onHistory={(n) => setHistoryFor(n)}
+                onPackage={(n) => setPackageFor(n)}
+                onClassify={(n) => setClassifyFor(n)}
+                onExecuteModal={(n) => setExecuteFor(n)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       <WorkflowHistoryPanel
         workflowName={historyFor}

@@ -62,6 +62,17 @@ class WorkflowStep(BaseModel):
     parallel_group: Optional[str] = None  # Steps sharing the same group ID run concurrently via asyncio.gather()
 
 
+class RuleRef(BaseModel):
+    """A workflow rule selected for one workflow (see ``app.rules``).
+
+    Always-on rules apply without being listed; this is the optional ones
+    somebody — the planner or a person in the builder — chose, and why.
+    """
+    rule_id: str
+    source: str = "user"      # ai | user
+    reason: str = ""
+
+
 class WorkflowDefinition(BaseModel):
     """Full workflow definition — a DAG of steps.
 
@@ -94,6 +105,11 @@ class WorkflowDefinition(BaseModel):
     # stored rather than a boolean flag so it cannot drift out of sync.
     published_hash: Optional[str] = None
 
+    # Optional workflow rules selected for this workflow. They change how it
+    # runs, so they are part of the semantic hash — but only when present, so
+    # adding the field did not mark every published workflow as edited.
+    rules: list[RuleRef] = Field(default_factory=list)
+
     def semantic_hash(self) -> str:
         """Stable hash of the fields that affect execution.
 
@@ -110,6 +126,8 @@ class WorkflowDefinition(BaseModel):
                 "entry_step", "input_schema", "variables",
             },
         )
+        if self.rules:
+            payload["rules"] = sorted(r.rule_id for r in self.rules)
         return sha256(
             json.dumps(payload, sort_keys=True, default=str).encode()
         ).hexdigest()

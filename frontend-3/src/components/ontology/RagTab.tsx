@@ -47,11 +47,14 @@ const STATUS_TONE: Record<string, { bg: string; text: string }> = {
   failed: { bg: "bg-red/15", text: "text-red" },
 };
 
+/** Statuses with ingestion still in flight — these show their timeline unprompted. */
+const LIVE = new Set(["indexing", "extracted", "extracting"]);
+
 export function RagTab() {
   const qc = useQueryClient();
   const [selectedLibrary, setSelectedLibrary] = useState<LibraryCard | null>(null);
   const [reviewDoc, setReviewDoc] = useState<RagDocument | null>(null);
-  const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
+  const [openTraces, setOpenTraces] = useState<Set<number>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: overview, isLoading: overviewLoading } = useQuery({
@@ -72,9 +75,8 @@ export function RagTab() {
       if (!selectedLibrary) throw new Error("No library selected");
       return ragApi.uploadDocument(selectedLibrary.id, file, "", true);
     },
-    onSuccess: (res: any) => {
+    onSuccess: () => {
       toast.success("Document uploaded; extraction initiated.");
-      if (res?.trace_id) setActiveTraceId(res.trace_id);
       qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
       qc.invalidateQueries({ queryKey: ["rag", "overview"] });
     },
@@ -83,6 +85,20 @@ export function RagTab() {
 
   const libraries = overview?.libraries ?? [];
   const documents = docsData?.documents ?? [];
+  const liveDocs = documents.filter((d) => LIVE.has(d.status) && d.trace_id);
+
+  const refreshDocuments = () => {
+    qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
+    qc.invalidateQueries({ queryKey: ["rag", "overview"] });
+  };
+
+  const toggleTrace = (id: number) =>
+    setOpenTraces((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <div className="space-y-4">
@@ -106,17 +122,6 @@ export function RagTab() {
           )}
         </div>
       </GlassPanel>
-
-      {/* Active Ingest Timeline if in flight */}
-      {activeTraceId && (
-        <IngestTimeline
-          traceId={activeTraceId}
-          onFinished={() => {
-            qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
-            qc.invalidateQueries({ queryKey: ["rag", "overview"] });
-          }}
-        />
-      )}
 
       {selectedLibrary ? (
         /* Library documents drilldown */
@@ -176,68 +181,94 @@ export function RagTab() {
                   description="Upload PDF, DOCX or TXT files to extract entities and relations into the graph."
                 />
               ) : (
-                <div className="divide-y divide-border rounded-lg border border-border">
-                  {documents.map((doc) => {
-                    const fallbackTone = { bg: "bg-muted/30", text: "text-muted-foreground" };
-                    const tone = STATUS_TONE[doc.status] ?? STATUS_TONE["uploaded"] ?? fallbackTone;
-                    const canReview = doc.status === "proposed" || doc.status === "graphed";
+                <div className="space-y-3">
+                  {/* Anything in flight shows its progress unprompted — that is
+                    the moment the detail is wanted. */}
+                  {liveDocs.map((doc) => (
+                    <IngestTimeline
+                      key={`live-${doc.id}-${doc.trace_id}`}
+                      traceId={doc.trace_id}
+                      filename={doc.filename}
+                      onFinished={refreshDocuments}
+                    />
+                  ))}
+                  <div className="divide-y divide-border rounded-lg border border-border">
+                    {documents.map((doc) => {
+                      const fallbackTone = { bg: "bg-muted/30", text: "text-muted-foreground" };
+                      const tone =
+                        STATUS_TONE[doc.status] ?? STATUS_TONE["uploaded"] ?? fallbackTone;
+                      const canReview = doc.status === "proposed" || doc.status === "graphed";
+                      const live = LIVE.has(doc.status);
+                      const traceOpen = openTraces.has(doc.id) && !live;
 
-                    return (
-                      <div
-                        key={doc.id}
-                        className="flex flex-wrap items-center justify-between gap-3 p-3 hover:bg-surface-hover/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <FileText className="size-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-foreground">
-                              {doc.filename}
-                            </p>
-                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                              <span>{doc.char_count?.toLocaleString()} chars</span>
-                              <span>·</span>
-                              <span>{doc.chunk_count} excerpts</span>
-                              {doc.trace_id && (
-                                <>
+                      return (
+                        <div key={doc.id}>
+                          <div className="flex flex-wrap items-center justify-between gap-3 p-3 hover:bg-surface-hover/50 transition-colors">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <FileText className="size-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-semibold text-foreground">
+                                  {doc.filename}
+                                </p>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                  <span>{doc.char_count?.toLocaleString()} chars</span>
                                   <span>·</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveTraceId(doc.trace_id)}
-                                    className="text-cyan hover:underline font-mono text-[10px]"
-                                  >
-                                    View timeline
-                                  </button>
-                                </>
+                                  <span>{doc.chunk_count} excerpts</span>
+                                  {doc.trace_id && !live && (
+                                    <>
+                                      <span>·</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleTrace(doc.id)}
+                                        aria-expanded={traceOpen}
+                                        className="flex items-center gap-0.5 font-mono text-[10px] text-cyan hover:underline"
+                                      >
+                                        <ChevronRight
+                                          className={cn(
+                                            "size-3 transition-transform",
+                                            traceOpen && "rotate-90",
+                                          )}
+                                        />
+                                        {traceOpen ? "Hide timeline" : "View timeline"}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase",
+                                  tone.bg,
+                                  tone.text,
+                                )}
+                              >
+                                {doc.status}
+                              </span>
+
+                              {canReview && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setReviewDoc(doc)}
+                                  className="h-7 text-xs flex items-center gap-1"
+                                >
+                                  <Sparkles className="size-3 text-cyan" /> Review Draft
+                                </Button>
                               )}
                             </div>
                           </div>
+                          {traceOpen && doc.trace_id ? (
+                            <div className="border-t border-border bg-background-elevated/30 p-3">
+                              <IngestTimeline traceId={doc.trace_id} filename={doc.filename} bare />
+                            </div>
+                          ) : null}
                         </div>
-
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              "rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase",
-                              tone.bg,
-                              tone.text,
-                            )}
-                          >
-                            {doc.status}
-                          </span>
-
-                          {canReview && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setReviewDoc(doc)}
-                              className="h-7 text-xs flex items-center gap-1"
-                            >
-                              <Sparkles className="size-3 text-cyan" /> Review Draft
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
