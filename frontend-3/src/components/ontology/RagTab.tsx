@@ -1,480 +1,288 @@
-import { useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  AlertTriangle,
-  ArrowLeft,
-  Check,
-  CheckCircle2,
-  ChevronRight,
-  Database,
-  FileText,
-  GitBranch,
-  Loader2,
-  Network,
-  Plus,
-  RefreshCw,
-  Sparkles,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react";
-import { errorMessage, ragApi } from "@/api";
-import type { DraftEntity, DraftRelation, ExtractionDraft, LibraryCard, RagDocument } from "@/types";
-import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
-import { Button } from "@/components/ui/button";
+import { useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, Database, Loader2, Search, Tags } from "lucide-react";
+import { ragApi } from "@/api";
+import type { LibraryCard } from "@/types";
 import { EmptyState } from "@/components/ui/EmptyState";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { IngestTimeline } from "./IngestTimeline";
-import { toast } from "sonner";
+import { CreatedAt } from "@/components/shared/CreatedAt";
+import { SortSelect } from "@/components/shared/SortSelect";
 import { cn } from "@/lib/utils";
+import { docCount, libraryState } from "./libraryMeta";
 
-const STATUS_TONE: Record<string, { bg: string; text: string }> = {
-  uploaded: { bg: "bg-muted/30", text: "text-muted-foreground" },
-  indexing: { bg: "bg-sky-500/15", text: "text-sky-300" },
-  extracted: { bg: "bg-cyan/10", text: "text-cyan" },
-  extracting: { bg: "bg-indigo/15", text: "text-indigo" },
-  proposed: { bg: "bg-amber/15", text: "text-amber" },
-  graphed: { bg: "bg-emerald/15", text: "text-emerald" },
-  unsupported: { bg: "bg-muted/20", text: "text-muted-foreground" },
-  failed: { bg: "bg-red/15", text: "text-red" },
-};
+type Filter = "all" | "in_use" | "graphed";
 
-/** Statuses with ingestion still in flight — these show their timeline unprompted. */
-const LIVE = new Set(["indexing", "extracted", "extracting"]);
+const FILTERS: Array<{ value: Filter; label: string; test: (l: LibraryCard) => boolean }> = [
+  { value: "all", label: "All", test: () => true },
+  { value: "in_use", label: "In use", test: (l) => docCount(l) > 0 },
+  { value: "graphed", label: "Graphed", test: (l) => l.entities > 0 },
+];
 
+const SORTS: Array<{
+  key: string;
+  label: string;
+  compare: (a: LibraryCard, b: LibraryCard) => number;
+}> = [
+  {
+    key: "graph",
+    label: "Most graphed",
+    compare: (a, b) => b.entities - a.entities || docCount(b) - docCount(a),
+  },
+  {
+    key: "newest",
+    label: "Newest first",
+    compare: (a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+  },
+  { key: "name", label: "Name A–Z", compare: (a, b) => a.name.localeCompare(b.name) },
+];
+
+/** Every library as a card; each opens its own page. */
 export function RagTab() {
-  const qc = useQueryClient();
-  const [selectedLibrary, setSelectedLibrary] = useState<LibraryCard | null>(null);
-  const [reviewDoc, setReviewDoc] = useState<RagDocument | null>(null);
-  const [openTraces, setOpenTraces] = useState<Set<number>>(new Set());
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [sort, setSort] = useState("graph");
 
-  const { data: overview, isLoading: overviewLoading } = useQuery({
+  const { data: overview, isLoading } = useQuery({
     queryKey: ["rag", "overview"],
     queryFn: ragApi.overview,
     refetchInterval: 15_000,
   });
 
-  const { data: docsData, isLoading: docsLoading } = useQuery({
-    queryKey: ["rag", "documents", selectedLibrary?.id],
-    queryFn: () => (selectedLibrary ? ragApi.documents(selectedLibrary.id) : null),
-    enabled: Boolean(selectedLibrary),
-    refetchInterval: 8_000,
-  });
+  const libraries = useMemo(() => overview?.libraries ?? [], [overview]);
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const test = FILTERS.find((f) => f.value === filter)!.test;
+    const compare = SORTS.find((s) => s.key === sort)?.compare ?? SORTS[0]!.compare;
+    return libraries
+      .filter(
+        (l) =>
+          test(l) &&
+          (!q ||
+            l.name.toLowerCase().includes(q) ||
+            (l.description ?? "").toLowerCase().includes(q)),
+      )
+      .sort((a, b) => compare(a, b) || a.name.localeCompare(b.name));
+  }, [libraries, search, filter, sort]);
 
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      if (!selectedLibrary) throw new Error("No library selected");
-      return ragApi.uploadDocument(selectedLibrary.id, file, "", true);
-    },
-    onSuccess: () => {
-      toast.success("Document uploaded; extraction initiated.");
-      qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
-      qc.invalidateQueries({ queryKey: ["rag", "overview"] });
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-
-  const libraries = overview?.libraries ?? [];
-  const documents = docsData?.documents ?? [];
-  const liveDocs = documents.filter((d) => LIVE.has(d.status) && d.trace_id);
-
-  const refreshDocuments = () => {
-    qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
-    qc.invalidateQueries({ queryKey: ["rag", "overview"] });
-  };
-
-  const toggleTrace = (id: number) =>
-    setOpenTraces((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const totals = overview?.totals ?? {};
+  const graphUp = overview?.graph?.available;
 
   return (
     <div className="space-y-4">
-      {/* Header bar */}
-      <GlassPanel className="p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* ── Totals ── */}
+      <div className="flex flex-wrap items-stretch gap-2">
+        {(
+          [
+            ["Libraries", libraries.length, "text-foreground"],
+            ["Documents graphed", totals["documents"] ?? 0, "text-emerald"],
+            ["Entities", totals["entities"] ?? 0, "text-cyan"],
+            ["Relations", totals["relations"] ?? 0, "text-purple"],
+          ] as const
+        ).map(([label, value, tone]) => (
+          <div
+            key={label}
+            className="min-w-[8rem] flex-1 rounded-xl border border-border/60 bg-background-elevated/60 px-4 py-3"
+          >
+            <p className={cn("font-display text-xl font-bold tabular-nums", tone)}>{value}</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase">{label}</p>
+          </div>
+        ))}
+        <div
+          className={cn(
+            "flex min-w-[12rem] flex-1 items-center gap-2.5 rounded-xl border px-4 py-3",
+            graphUp ? "border-emerald/30 bg-emerald/5" : "border-amber/30 bg-amber/5",
+          )}
+        >
+          <span
+            className={cn("size-2 rounded-full", graphUp ? "bg-emerald" : "animate-pulse bg-amber")}
+          />
           <div>
-            <span className="text-sm font-semibold text-foreground">
-              Graph RAG & Document Knowledge Pipeline
-            </span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Documents are indexed by Mistral for dense semantic retrieval, and structured
-              entities/relations are extracted and committed to Neo4j.
+            <p className={cn("text-xs font-semibold", graphUp ? "text-emerald" : "text-amber")}>
+              {overview ? (graphUp ? "Knowledge graph online" : "Knowledge graph offline") : "…"}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {graphUp ? "Neo4j is connected" : "Start it with docker compose up -d neo4j"}
             </p>
           </div>
-          {overview && (
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="font-mono tabular-nums">{overview.totals["entities"] ?? 0} entities</span>
-              <span className="font-mono tabular-nums">{overview.totals["relations"] ?? 0} relations</span>
-            </div>
-          )}
         </div>
-      </GlassPanel>
+      </div>
 
-      {selectedLibrary ? (
-        /* Library documents drilldown */
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
+      {/* ── Toolbar ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[14rem] flex-1 sm:max-w-sm">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Find a library…"
+            aria-label="Find a library"
+            className="h-9 w-full rounded-lg border border-border/60 bg-background-elevated pr-3 pl-9 text-xs text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+          />
+        </div>
+        <div className="inline-flex rounded-lg border border-border/60 bg-background-elevated p-0.5">
+          {FILTERS.map((f) => (
             <button
+              key={f.value}
               type="button"
-              onClick={() => setSelectedLibrary(null)}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="size-3.5" /> Back to all libraries
-            </button>
-            <div className="flex items-center gap-2">
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadMutation.mutate(file);
-                }}
-              />
-              <Button
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadMutation.isPending}
-                className="flex items-center gap-1.5"
-              >
-                {uploadMutation.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Upload className="size-3.5" />
-                )}
-                Upload Document
-              </Button>
-            </div>
-          </div>
-
-          <GlassPanel>
-            <GlassPanelHeader
-              title={selectedLibrary.name}
-              description={selectedLibrary.description || "Library document extraction & review"}
-              actions={
-                <span className="font-mono text-xs text-muted-foreground">
-                  {documents.length} documents
-                </span>
-              }
-            />
-            <div className="p-4">
-              {docsLoading ? (
-                <div className="py-8 text-center text-xs text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin mx-auto mb-2" /> Loading documents…
-                </div>
-              ) : documents.length === 0 ? (
-                <EmptyState
-                  title="No documents yet"
-                  description="Upload PDF, DOCX or TXT files to extract entities and relations into the graph."
-                />
-              ) : (
-                <div className="space-y-3">
-                  {/* Anything in flight shows its progress unprompted — that is
-                    the moment the detail is wanted. */}
-                  {liveDocs.map((doc) => (
-                    <IngestTimeline
-                      key={`live-${doc.id}-${doc.trace_id}`}
-                      traceId={doc.trace_id}
-                      filename={doc.filename}
-                      onFinished={refreshDocuments}
-                    />
-                  ))}
-                  <div className="divide-y divide-border rounded-lg border border-border">
-                    {documents.map((doc) => {
-                      const fallbackTone = { bg: "bg-muted/30", text: "text-muted-foreground" };
-                      const tone =
-                        STATUS_TONE[doc.status] ?? STATUS_TONE["uploaded"] ?? fallbackTone;
-                      const canReview = doc.status === "proposed" || doc.status === "graphed";
-                      const live = LIVE.has(doc.status);
-                      const traceOpen = openTraces.has(doc.id) && !live;
-
-                      return (
-                        <div key={doc.id}>
-                          <div className="flex flex-wrap items-center justify-between gap-3 p-3 hover:bg-surface-hover/50 transition-colors">
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <FileText className="size-4 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-semibold text-foreground">
-                                  {doc.filename}
-                                </p>
-                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                                  <span>{doc.char_count?.toLocaleString()} chars</span>
-                                  <span>·</span>
-                                  <span>{doc.chunk_count} excerpts</span>
-                                  {doc.trace_id && !live && (
-                                    <>
-                                      <span>·</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleTrace(doc.id)}
-                                        aria-expanded={traceOpen}
-                                        className="flex items-center gap-0.5 font-mono text-[10px] text-cyan hover:underline"
-                                      >
-                                        <ChevronRight
-                                          className={cn(
-                                            "size-3 transition-transform",
-                                            traceOpen && "rotate-90",
-                                          )}
-                                        />
-                                        {traceOpen ? "Hide timeline" : "View timeline"}
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={cn(
-                                  "rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase",
-                                  tone.bg,
-                                  tone.text,
-                                )}
-                              >
-                                {doc.status}
-                              </span>
-
-                              {canReview && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setReviewDoc(doc)}
-                                  className="h-7 text-xs flex items-center gap-1"
-                                >
-                                  <Sparkles className="size-3 text-cyan" /> Review Draft
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                          {traceOpen && doc.trace_id ? (
-                            <div className="border-t border-border bg-background-elevated/30 p-3">
-                              <IngestTimeline traceId={doc.trace_id} filename={doc.filename} bare />
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+              onClick={() => setFilter(f.value)}
+              aria-pressed={filter === f.value}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                filter === f.value
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
               )}
-            </div>
-          </GlassPanel>
+            >
+              {f.label}
+              <span className="ml-1.5 font-mono text-[10px] opacity-70 tabular-nums">
+                {libraries.filter(f.test).length}
+              </span>
+            </button>
+          ))}
         </div>
-      ) : (
-        /* Libraries gallery grid */
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {overviewLoading ? (
-            <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
-              <Loader2 className="size-5 animate-spin mx-auto mb-2" /> Loading libraries…
-            </div>
-          ) : libraries.length === 0 ? (
-            <div className="col-span-full">
-              <EmptyState
-                title="No libraries found"
-                description="Libraries group documents and seed domain knowledge."
-              />
-            </div>
-          ) : (
-            libraries.map((lib) => (
-              <GlassPanel
-                key={lib.id}
-                className="cursor-pointer p-4 transition-all hover:border-primary/50 hover:bg-surface-hover"
-                onClick={() => setSelectedLibrary(lib)}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Database className="size-4 text-cyan" />
-                    <span className="font-semibold text-xs text-foreground truncate">{lib.name}</span>
-                  </div>
-                  <span className="technical-label">{lib.document_count} docs</span>
-                </div>
-                {lib.description && (
-                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                    {lib.description}
-                  </p>
-                )}
-                <div className="mt-3 flex items-center justify-between border-t border-border pt-2 text-[11px] text-muted-foreground">
-                  <span>{lib.entities ?? 0} entities</span>
-                  <span>{lib.relations ?? 0} relations</span>
-                </div>
-              </GlassPanel>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Draft Review Modal */}
-      {reviewDoc && (
-        <DraftReviewModal
-          document={reviewDoc}
-          open={Boolean(reviewDoc)}
-          onOpenChange={(open) => !open && setReviewDoc(null)}
-          onCommitted={() => {
-            setReviewDoc(null);
-            qc.invalidateQueries({ queryKey: ["rag", "documents", selectedLibrary?.id] });
-            qc.invalidateQueries({ queryKey: ["rag", "overview"] });
-          }}
+        <SortSelect
+          value={sort}
+          onChange={setSort}
+          options={SORTS.map((s) => ({ key: s.key, label: s.label }))}
+          className="ml-auto"
         />
+      </div>
+
+      {/* ── Cards ── */}
+      {isLoading ? (
+        <div className="py-16 text-center text-xs text-muted-foreground">
+          <Loader2 className="mx-auto mb-2 size-5 animate-spin" /> Loading libraries…
+        </div>
+      ) : shown.length === 0 ? (
+        <EmptyState
+          icon={<Database className="size-5" />}
+          title={libraries.length ? "No library matches" : "No libraries yet"}
+          description={
+            libraries.length
+              ? "Try another search or filter."
+              : "Libraries group documents and seed domain knowledge."
+          }
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {shown.map((lib) => (
+            <LibraryTile key={lib.id} library={lib} />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function DraftReviewModal({
-  document,
-  open,
-  onOpenChange,
-  onCommitted,
-}: {
-  document: RagDocument;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCommitted: () => void;
-}) {
-  const qc = useQueryClient();
-
-  const { data: draftData, isLoading } = useQuery({
-    queryKey: ["rag", "draft", document.id],
-    queryFn: () => ragApi.draft(document.id),
-  });
-
-  const commitMutation = useMutation({
-    mutationFn: () => ragApi.commit(document.id),
-    onSuccess: (res) => {
-      toast.success(
-        `Committed ${res.entities} entities and ${res.relations} relations to Neo4j graph!`,
-      );
-      onCommitted();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-
-  const draft = draftData?.draft;
+function LibraryTile({ library: lib }: { library: LibraryCard }) {
+  const state = libraryState(lib);
+  const docs = docCount(lib);
+  const domains = lib.serves_domain ?? [];
+  const tracked = lib.tracked_documents || 0;
+  const bar = tracked
+    ? [
+        { w: lib.graphed_documents / tracked, cls: "bg-emerald" },
+        { w: lib.pending_documents / tracked, cls: "bg-amber" },
+        { w: lib.failed_documents / tracked, cls: "bg-red" },
+      ]
+    : [];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl border-border bg-background-elevated/95 backdrop-blur-xl">
-        <DialogHeader>
-          <div className="flex items-center gap-2">
-            <Sparkles className="size-4 text-cyan" />
-            <DialogTitle className="text-sm font-semibold text-foreground">
-              Review Extraction: {document.filename}
-            </DialogTitle>
-          </div>
-          <DialogDescription className="text-xs text-muted-foreground">
-            Review model-extracted entities and relationships before committing to the Neo4j knowledge graph.
-          </DialogDescription>
-        </DialogHeader>
+    <Link
+      to="/ontology/libraries/$libraryId"
+      params={{ libraryId: lib.id }}
+      className="group glass relative flex flex-col overflow-hidden rounded-2xl p-4 transition duration-200 hover:-translate-y-0.5 hover:border-cyan/40"
+    >
+      <span
+        className="pointer-events-none absolute -top-16 -right-16 size-40 rounded-full bg-cyan opacity-0 blur-2xl transition duration-300 group-hover:opacity-15"
+        aria-hidden
+      />
+      <div className="flex items-start justify-between gap-2">
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-cyan/30 bg-cyan/10 text-cyan">
+          <Database className="size-5" />
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-medium",
+            state.text,
+          )}
+        >
+          <span className={cn("size-1.5 rounded-full", state.dot)} />
+          {state.label}
+        </span>
+      </div>
 
-        {isLoading ? (
-          <div className="py-12 text-center text-xs text-muted-foreground">
-            <Loader2 className="size-4 animate-spin mx-auto mb-2" /> Loading proposed draft…
-          </div>
-        ) : !draft ? (
-          <EmptyState title="No extraction draft available" />
-        ) : (
-          <div className="custom-scrollbar max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-            {/* Entities */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-foreground">
-                  Proposed Entities ({draft.entities?.length ?? 0})
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                {draft.entities?.map((e, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-lg border border-border bg-background-elevated/50 p-2.5 text-xs"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-foreground">{e.name}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="technical-label">{e.type}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {(e.confidence * 100).toFixed(0)}% conf
-                        </span>
-                      </div>
-                    </div>
-                    {e.description && (
-                      <p className="mt-1 text-[11px] text-muted-foreground">{e.description}</p>
-                    )}
-                    {e.mentions?.[0]?.quote && (
-                      <p className="mt-1 rounded bg-muted/20 p-1.5 text-[10px] font-mono text-muted-foreground/80 italic">
-                        "{e.mentions[0].quote}"
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+      <h3
+        className="mt-3 line-clamp-2 text-sm font-semibold break-all text-foreground"
+        title={lib.name}
+      >
+        {lib.name}
+      </h3>
+      <p className="mt-1 line-clamp-2 min-h-[2rem] text-xs text-muted-foreground">
+        {lib.description || "No description."}
+      </p>
 
-            {/* Relations */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-foreground">
-                  Proposed Relations ({draft.relations?.length ?? 0})
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                {draft.relations?.map((r, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-lg border border-border bg-background-elevated/50 p-2.5 text-xs"
-                  >
-                    <div className="flex items-center gap-2 font-mono text-xs">
-                      <span className="font-semibold text-foreground">{r.source}</span>
-                      <span className="technical-label text-[9px] uppercase">{r.predicate}</span>
-                      <span className="font-semibold text-foreground">{r.target}</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        {(r.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    {r.evidence && (
-                      <p className="mt-1 rounded bg-muted/20 p-1.5 text-[10px] font-mono text-muted-foreground/80 italic">
-                        "{r.evidence}"
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+      {domains.length ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {domains.slice(0, 2).map((d) => (
+            <span
+              key={d}
+              className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-purple/30 bg-purple/10 px-2 py-0.5 font-mono text-[10px] text-purple"
+            >
+              <Tags className="size-2.5 shrink-0" />
+              {d}
+            </span>
+          ))}
+          {domains.length > 2 ? (
+            <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+              +{domains.length - 2}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
-        <DialogFooter className="gap-2 sm:justify-end">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => commitMutation.mutate()}
-            disabled={commitMutation.isPending || !draft}
-            className="flex items-center gap-1.5"
-          >
-            {commitMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <GitBranch className="size-3.5" />
-            )}
-            Commit to Knowledge Graph
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {/* Where this library's documents are in the pipeline. */}
+      <div
+        className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-muted/40"
+        title={
+          tracked
+            ? `${lib.graphed_documents} graphed · ${lib.pending_documents} pending · ${lib.failed_documents} failed`
+            : "Nothing ingested yet"
+        }
+      >
+        {bar.map((b, i) => (
+          <span key={i} className={b.cls} style={{ width: `${b.w * 100}%` }} />
+        ))}
+      </div>
+
+      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+        {(
+          [
+            ["Docs", docs],
+            ["Entities", lib.entities],
+            ["Relations", lib.relations],
+          ] as const
+        ).map(([label, value]) => (
+          <div key={label} className="rounded-lg bg-background/50 py-1.5">
+            <dd
+              className={cn(
+                "font-display text-sm font-bold tabular-nums",
+                value ? "text-foreground" : "text-muted-foreground/50",
+              )}
+            >
+              {value}
+            </dd>
+            <dt className="text-[9px] font-semibold text-muted-foreground uppercase">{label}</dt>
+          </div>
+        ))}
+      </dl>
+
+      <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3">
+        <CreatedAt value={lib.created_at} />
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan opacity-70 transition group-hover:opacity-100">
+          Open <ArrowRight className="size-3 transition group-hover:translate-x-0.5" />
+        </span>
+      </div>
+    </Link>
   );
 }

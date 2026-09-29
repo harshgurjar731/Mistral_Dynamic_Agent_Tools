@@ -12,6 +12,11 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
+import type { WorkflowDefinition } from "@/types";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/workflows/archived")({
   head: () => ({
@@ -27,6 +32,11 @@ export const Route = createFileRoute("/workflows/archived")({
   }),
   component: ArchivedWorkflowsPage,
 });
+
+const ARCHIVED_SORTS = standardSorts<WorkflowDefinition>(
+  (w) => w.name,
+  (w) => w.created_at,
+);
 
 function ArchivedWorkflowsPage() {
   const qc = useQueryClient();
@@ -46,13 +56,27 @@ function ArchivedWorkflowsPage() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  const [sort, setSort] = useSortKey("workflows-archived", "name_asc");
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (data?.workflows ?? [])
+    const rows = (data?.workflows ?? [])
       .filter((w) => w.archived)
-      .filter((w) => !q || w.name.toLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data, search]);
+      .filter((w) => !q || w.name.toLowerCase().includes(q));
+    return applySort(rows, ARCHIVED_SORTS, sort);
+  }, [data, search, sort]);
+
+  const selection = useBulkSelection(
+    visible,
+    (w) => w.name,
+    () => true,
+    (w) => w.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "workflow",
+    deleteOne: (name) => workflowsApi.remove(name),
+    invalidate: [QK.workflows()],
+    selection,
+  });
 
   return (
     <div className="space-y-6 px-6 py-8">
@@ -69,8 +93,8 @@ function ArchivedWorkflowsPage() {
         }
       />
 
-      <GlassPanel className="p-3">
-        <div className="relative">
+      <GlassPanel className="flex flex-wrap items-center gap-2 p-3">
+        <div className="relative min-w-[14rem] flex-1">
           <Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-8"
@@ -79,6 +103,7 @@ function ArchivedWorkflowsPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={ARCHIVED_SORTS} />
       </GlassPanel>
 
       {isLoading ? (
@@ -92,15 +117,26 @@ function ArchivedWorkflowsPage() {
           description="Archived workflows show up here so they can be restored later."
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visible.map((w) => (
-            <WorkflowCard
-              key={w.name}
-              workflow={w}
-              busy={unarchive.isPending ? unarchive.variables : null}
-              onUnarchive={(n) => unarchive.mutate(n)}
-            />
-          ))}
+        <div>
+          <BulkActionBar
+            className="mb-4"
+            selection={selection}
+            noun="workflow"
+            onDelete={bulkDelete.run}
+            deleting={bulkDelete.running}
+            warning="Deleted workflows cannot be restored. Only the workflows go — their agents, tools and activities are kept; their knowledge-graph links are removed."
+          />
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visible.map((w) => (
+              <SelectableItem key={w.name} selection={selection} id={w.name} label={w.name}>
+                <WorkflowCard
+                  workflow={w}
+                  busy={unarchive.isPending ? unarchive.variables : null}
+                  onUnarchive={(n) => unarchive.mutate(n)}
+                />
+              </SelectableItem>
+            ))}
+          </div>
         </div>
       )}
     </div>

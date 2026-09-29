@@ -17,6 +17,12 @@ services:
     env_file: ./.env
     environment:
       WORKFLOWS_DIR: /mistral_workflows
+      # .env's localhost URLs are for bootstrap_deploy.py on the host; inside
+      # this container localhost is the container itself, so reach the sibling
+      # services by compose name. Set BACKEND_TOOL_SERVICE_URL / BACKEND_NEO4J_URI
+      # in .env to point at external instances instead.
+      TOOL_SERVICE_URL: ${BACKEND_TOOL_SERVICE_URL:-http://tool-service:9000}
+      NEO4J_URI: ${BACKEND_NEO4J_URI:-bolt://neo4j:7687}
     volumes:
       - ./mistral_workflows:/mistral_workflows
     restart: unless-stopped

@@ -552,6 +552,7 @@ def delete_scheme(scheme_id: str, cascade: bool = False) -> dict:
         "deleted": scheme_id,
         "concepts_removed": len(concept_ids),
         "annotations_removed": removed_annotations,
+        "concept_ids": concept_ids,
     }
 
 
@@ -706,6 +707,7 @@ def delete_concept(concept_id: str, cascade: bool = False) -> dict:
         "deleted": concept_id,
         "concepts_removed": len(doomed),
         "annotations_removed": removed_annotations,
+        "concept_ids": sorted(doomed),
     }
 
 

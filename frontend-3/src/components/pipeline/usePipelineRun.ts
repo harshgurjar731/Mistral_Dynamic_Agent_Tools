@@ -6,6 +6,9 @@
  * owns that protocol so the agent screen and the workflow planner do not each
  * re-implement it, and a layer added on the backend appears in both timelines
  * without a frontend change.
+ *
+ * The protocol itself is also exported as pure functions, so a background run
+ * can rebuild the same state by replaying its event log.
  */
 import { useCallback, useState } from "react";
 import type { LayerManifestEntry, LayerRuntime, LayerState } from "./PipelineTimeline";
@@ -19,7 +22,12 @@ export interface PipelineRun {
   started: boolean;
 }
 
-const EMPTY: PipelineRun = { manifest: [], runtime: {}, activeNote: "", started: false };
+export const EMPTY_PIPELINE: PipelineRun = {
+  manifest: [],
+  runtime: {},
+  activeNote: "",
+  started: false,
+};
 
 interface LayerEvent {
   name: string;
@@ -38,10 +46,76 @@ function mapRunning(
   );
 }
 
-export function usePipelineRun() {
-  const [run, setRun] = useState<PipelineRun>(EMPTY);
+/**
+ * Apply one SSE frame. Returns null when the frame is not part of the pipeline
+ * protocol, so callers only handle their own payloads.
+ */
+export function applyPipelineEvent(
+  prev: PipelineRun,
+  type: string,
+  data: string,
+): PipelineRun | null {
+  if (type === "pipeline") {
+    try {
+      const parsed = JSON.parse(data) as { layers?: LayerManifestEntry[] };
+      return { manifest: parsed.layers ?? [], runtime: {}, activeNote: "", started: true };
+    } catch {
+      /* a malformed manifest just leaves the timeline empty */
+      return prev;
+    }
+  }
 
-  const reset = useCallback(() => setRun(EMPTY), []);
+  if (type === "layer") {
+    try {
+      const p = JSON.parse(data) as LayerEvent;
+      return {
+        ...prev,
+        // A new layer going active clears the previous one's sub-progress,
+        // so a stale note never sits under the wrong row.
+        activeNote: p.state === "active" ? "" : prev.activeNote,
+        runtime: {
+          ...prev.runtime,
+          [p.name]: {
+            state: p.state,
+            ms: p.ms,
+            // Keep an earlier summary if this update carries none.
+            summary: p.summary || prev.runtime[p.name]?.summary,
+            error: p.error,
+          },
+        },
+      };
+    } catch {
+      return prev;
+    }
+  }
+
+  if (type === "status") return { ...prev, activeNote: data };
+
+  return null;
+}
+
+/** Mark anything still running as finished. */
+export function settlePipeline(prev: PipelineRun): PipelineRun {
+  return {
+    ...prev,
+    activeNote: "",
+    runtime: mapRunning(prev.runtime, (v) => ({ ...v, state: "completed" })),
+  };
+}
+
+/** Mark anything still running as failed. */
+export function failPipeline(prev: PipelineRun, message: string): PipelineRun {
+  return {
+    ...prev,
+    activeNote: "",
+    runtime: mapRunning(prev.runtime, (v) => ({ ...v, state: "failed", error: message })),
+  };
+}
+
+export function usePipelineRun() {
+  const [run, setRun] = useState<PipelineRun>(EMPTY_PIPELINE);
+
+  const reset = useCallback(() => setRun(EMPTY_PIPELINE), []);
 
   /**
    * Feed one SSE frame. Returns true when the frame belonged to the pipeline
@@ -49,64 +123,16 @@ export function usePipelineRun() {
    * arrive in the same tick as the manifest, so updates are always functional.
    */
   const handleEvent = useCallback((type: string, data: string): boolean => {
-    if (type === "pipeline") {
-      try {
-        const parsed = JSON.parse(data) as { layers?: LayerManifestEntry[] };
-        setRun({ manifest: parsed.layers ?? [], runtime: {}, activeNote: "", started: true });
-      } catch {
-        /* a malformed manifest just leaves the timeline empty */
-      }
-      return true;
-    }
-
-    if (type === "layer") {
-      try {
-        const p = JSON.parse(data) as LayerEvent;
-        setRun((prev) => ({
-          ...prev,
-          // A new layer going active clears the previous one's sub-progress,
-          // so a stale note never sits under the wrong row.
-          activeNote: p.state === "active" ? "" : prev.activeNote,
-          runtime: {
-            ...prev.runtime,
-            [p.name]: {
-              state: p.state,
-              ms: p.ms,
-              // Keep an earlier summary if this update carries none.
-              summary: p.summary || prev.runtime[p.name]?.summary,
-              error: p.error,
-            },
-          },
-        }));
-      } catch {
-        /* ignore */
-      }
-      return true;
-    }
-
-    if (type === "status") {
-      setRun((prev) => ({ ...prev, activeNote: data }));
-      return true;
-    }
-
-    return false;
+    if (type !== "pipeline" && type !== "layer" && type !== "status") return false;
+    setRun((prev) => applyPipelineEvent(prev, type, data) ?? prev);
+    return true;
   }, []);
 
   /** Mark anything still running as finished, when the stream closes. */
-  const settle = useCallback(() => {
-    setRun((prev) => ({
-      ...prev,
-      activeNote: "",
-      runtime: mapRunning(prev.runtime, (v) => ({ ...v, state: "completed" })),
-    }));
-  }, []);
+  const settle = useCallback(() => setRun(settlePipeline), []);
 
   const failRunning = useCallback((message: string) => {
-    setRun((prev) => ({
-      ...prev,
-      activeNote: "",
-      runtime: mapRunning(prev.runtime, (v) => ({ ...v, state: "failed", error: message })),
-    }));
+    setRun((prev) => failPipeline(prev, message));
   }, []);
 
   /** Re-hydrate a finished run — used when replaying a history entry. */

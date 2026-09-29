@@ -21,7 +21,12 @@ export function CodeBlock({
       <SyntaxHighlighter
         language={language}
         style={oneDark}
-        customStyle={{ margin: 0, background: "transparent", fontSize: "0.78rem", padding: "0.9rem" }}
+        customStyle={{
+          margin: 0,
+          background: "transparent",
+          fontSize: "0.78rem",
+          padding: "0.9rem",
+        }}
         codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
       >
         {code || " "}

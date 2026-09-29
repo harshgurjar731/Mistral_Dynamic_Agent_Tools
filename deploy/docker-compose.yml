@@ -1,0 +1,118 @@
+# Full production stack for a single VM (e.g. Azure).
+#
+#   cd deploy
+#   cp .env.example .env        # then fill in MISTRAL_API_KEY etc.
+#   docker compose up -d --build
+#
+# Only the Caddy proxy is published (80/443). It serves the frontend and routes
+# /api, /uploads, /documents and the API's /health to the internal services,
+# exactly like the Vite dev proxy does locally — so the frontend code is the
+# same in both environments.
+#
+# Local development does NOT use this file. The root docker-compose.yml (Neo4j)
+# and tool-service/docker-compose.yml keep working as before.
+
+name: mistral-agent-tools
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend-3
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      args:
+        WITH_MISTRAL_WORKFLOWS: ${WITH_MISTRAL_WORKFLOWS:-true}
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      # Container-internal addresses; these override anything in .env.
+      TOOL_SERVICE_URL: http://tool-service:9000
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD in deploy/.env}
+      DATABASE_URL: sqlite:////srv/data/sql_app.db
+      MISTRAL_WORKFLOWS_DIR: ../mistral_workflows
+    volumes:
+      - backend-data:/srv/data
+      - backend-uploads:/srv/backend/uploads
+      # Compiled workflows stay in the repo checkout, same as local dev.
+      - ../mistral_workflows:/srv/mistral_workflows
+    depends_on:
+      tool-service:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  tool-service:
+    build:
+      context: ../tool-service
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      DATABASE_URL: sqlite:////app/db/tool_service.db
+      PUBLIC_DOCUMENTS_BASE_URL: ${PUBLIC_URL:-}/documents
+    volumes:
+      - tool-data:/app/dynamic_tools
+      - tool-db:/app/db
+      - tool-docs:/app/documents
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    # Browser/Bolt stay on the VM's loopback — reach them with an SSH tunnel:
+    #   ssh -L 7474:localhost:7474 -L 7687:localhost:7687 azureuser@<vm>
+    ports:
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in deploy/.env}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-512M}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-1G}
+      NEO4J_db_transaction_timeout: 60s
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  caddy-data:
+  caddy-config:
+  backend-data:
+  backend-uploads:
+  tool-data:
+  tool-db:
+  tool-docs:
+  neo4j-data:
+  neo4j-logs:

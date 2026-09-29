@@ -1,6 +1,8 @@
 export interface SSEEvent {
   type: string;
   data: string;
+  /** The frame's `id:` — set by streams that support resuming (background runs). */
+  id?: number | undefined;
 }
 
 /** Plain-string payload events — never JSON.parse these. */
@@ -69,11 +71,14 @@ export function createSSEStream(url: string, opts: StreamOptions): () => void {
     let buffer = "";
     let eventType = "message";
     let dataBuffer: string[] = [];
+    let eventId: number | undefined;
 
     for (;;) {
       const { done, value } = await reader.read();
       if (done) {
-        if (dataBuffer.length) opts.onEvent({ type: eventType, data: dataBuffer.join("\n") });
+        if (dataBuffer.length) {
+          opts.onEvent({ type: eventType, data: dataBuffer.join("\n"), id: eventId });
+        }
         opts.onDone?.();
         break;
       }
@@ -85,10 +90,14 @@ export function createSSEStream(url: string, opts: StreamOptions): () => void {
         const line = raw.replace(/\r$/, "");
         if (line === "") {
           if (dataBuffer.length) {
-            opts.onEvent({ type: eventType, data: dataBuffer.join("\n") });
+            opts.onEvent({ type: eventType, data: dataBuffer.join("\n"), id: eventId });
             dataBuffer = [];
           }
           eventType = "message";
+          eventId = undefined;
+        } else if (line.startsWith("id:")) {
+          const n = Number(line.slice(3).trim());
+          eventId = Number.isFinite(n) ? n : undefined;
         } else if (line.startsWith("event:")) {
           eventType = line.slice(6).trim();
         } else if (line.startsWith("data:")) {

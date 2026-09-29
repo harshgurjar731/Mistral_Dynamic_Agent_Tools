@@ -10,7 +10,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ToolRecord
 from app.schemas import ToolResponse, ToolListResponse, ApproveRejectResponse, ToolUpdateRequest, ToolImportRequest
-from app.services.synthesis_service import approve_tool, reject_tool, delete_tool, update_tool, import_tool
+from app.services.synthesis_service import (
+    activate_version,
+    approve_tool,
+    delete_tool,
+    import_tool,
+    reject_tool,
+    update_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +28,26 @@ class PublishMcpRequest(BaseModel):
     server_name: str
 
 
-def _record_to_response(record: ToolRecord) -> ToolResponse:
-    """Convert a ToolRecord to a ToolResponse."""
+def _loads(text):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def _record_to_response(record: ToolRecord, *, full: bool = True) -> ToolResponse:
+    """Convert a ToolRecord (one version) to a ToolResponse."""
     return ToolResponse(
         id=record.id,
         name=record.name,
         hash=record.hash,
         version=record.version,
+        version_no=record.version_no or 1,
+        is_active=bool(record.is_active),
         schema=json.loads(record.schema_json),
+        output_schema=_loads(record.output_schema_json),
         status=record.status,
         source_code=record.source_code,
         sandbox_output=record.sandbox_output,
@@ -36,15 +55,53 @@ def _record_to_response(record: ToolRecord) -> ToolResponse:
         mcp_published=record.mcp_published if record.mcp_published else False,
         mcp_server_name=record.mcp_server_name,
         purpose=record.purpose or "tool",
+        kind=record.kind or "pure",
+        side_effects=record.side_effects or "none",
+        review_required=bool(record.review_required),
+        spec=_loads(record.spec_json) if full else None,
+        report=_loads(record.report_json) if full else None,
     )
 
 
 @router.get("/tools", response_model=ToolListResponse)
-def list_tools(db: Session = Depends(get_db)):
-    """List all tools with schemas."""
-    records = db.query(ToolRecord).all()
+def list_tools(include_versions: bool = False, db: Session = Depends(get_db)):
+    """List tools: each tool's active version plus any version awaiting a decision.
+
+    Superseded versions are omitted unless ``include_versions`` is set — with
+    versioning, listing every row would show one tool many times over.
+    """
+    records = db.query(ToolRecord).order_by(ToolRecord.name, ToolRecord.version_no).all()
+    if not include_versions:
+        active_names = {r.name for r in records if r.is_active}
+        records = [
+            r for r in records
+            if r.is_active
+            or r.status == "pending_approval"
+            or (r.name not in active_names and r.status != "approved")
+        ]
     tools = [_record_to_response(r) for r in records]
     return ToolListResponse(tools=tools, count=len(tools))
+
+
+@router.get("/tools/{name}/versions", response_model=ToolListResponse)
+def list_versions(name: str, db: Session = Depends(get_db)):
+    """Every version of one tool, newest first."""
+    from app.synthesis import registry
+
+    records = registry.versions_of(db, name)
+    if not records:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    tools = [_record_to_response(r) for r in records]
+    return ToolListResponse(tools=tools, count=len(tools))
+
+
+@router.post("/tools/{tool_id}/activate", response_model=ApproveRejectResponse)
+def activate(tool_id: int, db: Session = Depends(get_db)):
+    """Make an approved version the active one (rollback / roll-forward)."""
+    result = activate_version(db, tool_id)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return ApproveRejectResponse(**result)
 
 
 @router.get("/tools/by-hash/{hash}")
@@ -109,7 +166,8 @@ def import_tool_endpoint(request: ToolImportRequest, db: Session = Depends(get_d
     sandbox run. Idempotent by content hash: importing the same tool twice is
     a no-op the second time.
     """
-    result = import_tool(db, request.name, request.schema, request.source_code, request.hash, request.version, request.purpose)
+    result = import_tool(db, request.name, request.schema, request.source_code, request.hash,
+                         request.version, request.purpose, version_no=request.version_no)
     if result["status"] == "error":
         raise HTTPException(status_code=400, detail=result["message"])
     return ApproveRejectResponse(**{k: result[k] for k in ("status", "message", "tool_name")})
@@ -181,3 +239,12 @@ async def publish_to_mcp(tool_id: int, request: PublishMcpRequest,
         "mcp_tools_count": len(tools),
     }
 
+
+
+@router.get("/tools/{tool_id:int}", response_model=ToolResponse)
+def get_tool(tool_id: int, db: Session = Depends(get_db)):
+    """One version by id — including superseded ones, for version history links."""
+    record = db.get(ToolRecord, tool_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return _record_to_response(record)

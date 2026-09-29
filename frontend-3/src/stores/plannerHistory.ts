@@ -5,6 +5,8 @@ import type { PlannerStep } from "@/components/workflows/PlannerCards";
 
 export interface PlannerRun {
   id: string;
+  /** The background run this entry records — keeps a run from being saved twice. */
+  runId?: string | undefined;
   goal: string;
   workflowName?: string | null | undefined;
   status: "completed" | "failed" | "cancelled";

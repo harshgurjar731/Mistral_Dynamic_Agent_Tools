@@ -37,7 +37,7 @@ class ExecutionModeLayer(WorkflowDecisionLayer):
 
     name = "execution_mode"
     label = "Choose how each step runs"
-    detail = "Decides agent vs function vs integration for each unit of work, and removes what is redundant."
+    detail = "Decides agent vs activity vs integration for each unit of work, and removes what is redundant."
     phase = "execution mode"
     status_message = "Deciding how each step should run…"
     timeout_ms = LONG_TIMEOUT_MS
@@ -98,17 +98,25 @@ class ExecutionModeLayer(WorkflowDecisionLayer):
             if mode not in _VALID_MODES:
                 mode = "agent"
 
-            # A connector that is not attachable cannot run. Routing the
-            # capability there would produce a step that fails at execution
-            # with a credential error, long after anyone remembers this choice.
-            if mode == "connector" and not (spec.inventory.get("connector_ids") or []):
+            # Connector mode must name a connector that is attachable here.
+            # Checking only that *some* connector exists let a call to a public
+            # API (an exchange-rate feed) through as a connector step with
+            # nothing bound, which failed at run time with "Connector step is
+            # missing 'connector_id'". Without a usable connector, the work is
+            # an HTTP activity: code that calls the API, built and verified by
+            # the tool service like any other activity.
+            connector_id = str(raw.get("connector_id") or "").strip()
+            attachable = set(spec.inventory.get("connector_ids") or [])
+            if mode == "connector" and connector_id not in attachable:
                 logger.info(
-                    "Capability '%s' routed to a connector, but none are attachable — using an agent",
-                    cap.id,
+                    "Capability '%s' routed to connector %r, which is not attachable — "
+                    "building it as an activity instead", cap.id, connector_id or None,
                 )
-                mode = "agent"
+                mode = "activity"
+                connector_id = ""
 
             cap.kind = mode
+            cap.connector_id = connector_id or None
             cap.mode_rationale = str(raw.get("rationale") or "")
             cap.agent_needs_tools = bool(raw.get("agent_needs_tools"))
 

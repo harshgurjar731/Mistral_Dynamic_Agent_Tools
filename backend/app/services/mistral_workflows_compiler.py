@@ -12,12 +12,44 @@ The generated file:
   - Supports parallel execution groups via asyncio.gather()
   - Declares a connector slot per referenced Mistral Connector, so connector
     calls resolve credentials through the platform instead of this backend
+
+Every user-authored value (names, descriptions, group ids, step ids) reaches
+the module through ``_lit`` / ``_doc`` / ``_comment``, and the finished module
+is syntax-checked before it is returned — so a quote, backslash or newline in
+a description can never produce a module the worker fails to import.
 """
 
 import json
 import re
-from datetime import timedelta
 from app.services.workflow_engine.models import WorkflowDefinition, StepType
+
+
+class WorkflowCompileError(ValueError):
+    """The generated module is not valid Python — it must not be written or registered."""
+
+
+# ── Literal helpers ─────────────────────────────────────────────────────────
+
+
+def _lit(value) -> str:
+    """A Python literal for a JSON-like value (str, list, None...)."""
+    return repr(value)
+
+
+def _doc(text) -> str:
+    """Text safe to place inside a triple-quoted docstring."""
+    one_line = " ".join(str(text).split())
+    return one_line.replace("\\", "\\\\").replace('"""', "'''").rstrip('"')
+
+
+def _comment(text) -> str:
+    """Text safe to place after a ``#``."""
+    return " ".join(str(text).split())
+
+
+def _fn_name(workflow_name: str, step_id: str) -> str:
+    """Activity function name for a step. Unchanged for already-valid step ids."""
+    return re.sub(r"\W", "_", f"run_{workflow_name}_{step_id}")
 
 
 # ── Connector slots ─────────────────────────────────────────────────────────
@@ -60,6 +92,8 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
 
     Supports both sequential steps and parallel groups. Steps sharing the
     same `parallel_group` value are executed concurrently via asyncio.gather().
+
+    Raises WorkflowCompileError if the generated module is not valid Python.
     """
     lines: list[str] = []
     connector_slots = _collect_connector_slots(workflow_def)
@@ -112,10 +146,10 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         for (name, credentials_name), var in connector_slots.items():
             if credentials_name:
                 lines.append(
-                    f"{var} = connector({json.dumps(name)}, credentials_name={json.dumps(credentials_name)})"
+                    f"{var} = connector({_lit(name)}, credentials_name={_lit(credentials_name)})"
                 )
             else:
-                lines.append(f"{var} = connector({json.dumps(name)})")
+                lines.append(f"{var} = connector({_lit(name)})")
         lines.append("")
 
     # ── Input model ──────────────────────────────────────────────────────────
@@ -128,15 +162,15 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
 
     # ── Activities (one per DAG step) ────────────────────────────────────────
     for step in workflow_def.steps:
-        step_json = json.dumps(step.model_dump())
+        fn = _fn_name(workflow_def.name, step.id)
         timeout_sec = 300  # 5 min default; condition/transform can be shorter
         if step.type in (StepType.CONDITION, StepType.TRANSFORM):
             timeout_sec = 30
 
-        # Use json.loads() at runtime so JSON null/true/false are correctly
-        # converted to Python None/True/False (embedding raw JSON as a Python
-        # dict literal would cause NameError on 'null').
-        step_json_repr = repr(step_json)  # safely quoted string for embedding
+        # The step travels as a JSON string parsed at runtime, so JSON
+        # null/true/false become Python None/True/False (a raw dict literal
+        # would raise NameError on 'null'). mode="json" keeps enums as values.
+        step_json_repr = _lit(json.dumps(step.model_dump(mode="json")))
 
         slot_var = connector_slots.get(_connector_slot_key(step)) if step.type == StepType.CONNECTOR else None
 
@@ -145,40 +179,40 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
             # injects the ToolCallClient through the activity signature, and
             # that client is what carries the caller's credentials. Only the
             # argument templating is shared with the local runner.
-            tool_name = (step.config or {}).get("tool_name", "")
+            tool_name = str((step.config or {}).get("tool_name", ""))
             lines += [
-                f"@workflows.activity(",
+                "@workflows.activity(",
                 f"    start_to_close_timeout=timedelta(seconds={timeout_sec}),",
-                f"    retry_policy_max_attempts=3,",
-                f")",
-                f"async def run_{workflow_def.name}_{step.id}(",
-                f"    variables: Dict[str, Any],",
+                "    retry_policy_max_attempts=3,",
+                ")",
+                f"async def {fn}(",
+                "    variables: Dict[str, Any],",
                 f"    _client: ToolCallClient = Depends({slot_var}),",
-                f") -> Any:",
-                f"    \"\"\"Activity for step: {step.id} (connector)\"\"\"",
+                ") -> Any:",
+                f"    \"\"\"Activity for step: {_doc(step.id)} (connector)\"\"\"",
                 f"    step_def = WorkflowStep.model_validate(json.loads({step_json_repr}))",
-                f"    arguments = resolve_connector_arguments(step_def, variables)",
-                f"    result = await _client.call_tool(",
-                f"        tool_name={json.dumps(tool_name)},",
-                f"        arguments=arguments,",
-                f"    )",
-                f"    return flatten_tool_result(result)",
+                "    arguments = resolve_connector_arguments(step_def, variables)",
+                "    result = await _client.call_tool(",
+                f"        tool_name={_lit(tool_name)},",
+                "        arguments=arguments,",
+                "    )",
+                "    return flatten_tool_result(result)",
                 "",
             ]
             continue
 
         lines += [
-            f"@workflows.activity(",
+            "@workflows.activity(",
             f"    start_to_close_timeout=timedelta(seconds={timeout_sec}),",
-            f"    retry_policy_max_attempts=3,",
-            f")",
-            f"async def run_{workflow_def.name}_{step.id}(variables: Dict[str, Any]) -> Any:",
-            f"    \"\"\"Activity for step: {step.id} ({step.type})\"\"\"",
+            "    retry_policy_max_attempts=3,",
+            ")",
+            f"async def {fn}(variables: Dict[str, Any]) -> Any:",
+            f"    \"\"\"Activity for step: {_doc(step.id)} ({step.type.value})\"\"\"",
             f"    step_def = WorkflowStep.model_validate(json.loads({step_json_repr}))",
-            f"    result = await run_step(step_def, variables)",
-            f"    if result.status == \"failed\":",
-            f"        raise Exception(result.error or \"Step {step.id} failed\")",
-            f"    return result.output",
+            "    result = await run_step(step_def, variables)",
+            "    if result.status == \"failed\":",
+            f"        raise Exception(result.error or {_lit(f'Step {step.id} failed')})",
+            "    return result.output",
             "",
         ]
 
@@ -188,19 +222,16 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         if step.parallel_group:
             parallel_groups.setdefault(step.parallel_group, []).append(step)
 
-    # Track which steps belong to a parallel group (to skip individual dispatch)
-    parallel_step_ids = {s.id for steps in parallel_groups.values() for s in steps}
-
     # ── Workflow class ────────────────────────────────────────────────────────
     class_name = _to_class_name(workflow_def.name)
     display_name = workflow_def.name.replace("_", " ").title()
-    description = (workflow_def.description or display_name).replace('"', "'")
+    description = workflow_def.description or display_name
 
     define_args = [
-        f"    name=\"{workflow_def.name}\",",
-        f"    workflow_display_name=\"{display_name}\",",
-        f"    workflow_description=\"{description}\",",
-        f"    execution_timeout=timedelta(hours=24),",
+        f"    name={_lit(workflow_def.name)},",
+        f"    workflow_display_name={_lit(display_name)},",
+        f"    workflow_description={_lit(description)},",
+        "    execution_timeout=timedelta(hours=24),",
     ]
     # on_behalf_of runs the workflow under the triggering user's identity, so a
     # connector resolves *their* credentials rather than the worker's. Only set
@@ -209,9 +240,9 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         define_args.append("    on_behalf_of=True,")
 
     lines += [
-        f"@workflows.workflow.define(",
+        "@workflows.workflow.define(",
         *define_args,
-        f")",
+        ")",
     ]
 
     if connector_slots:
@@ -219,7 +250,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
 
     lines += [
         f"class {class_name}:",
-        f"    \"\"\"Durable workflow: {description}\"\"\"",
+        f"    \"\"\"Durable workflow: {_doc(description)}\"\"\"",
         "",
         "    def __init__(self) -> None:",
         "        self._progress: List[str] = []",
@@ -246,11 +277,11 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "    # ── Entrypoint ──────────────────────────────────────────────────",
         "    @workflows.workflow.entrypoint",
         "    async def run(self, input: DynamicInput) -> Any:",
-        f"        \"\"\"Execute the {display_name} workflow DAG.\"\"\"",
+        f"        \"\"\"Execute the {_doc(display_name)} workflow DAG.\"\"\"",
         "        # Use workflow.now() for determinism-safe timestamps",
         "        started_at = workflow.now()",
         "        variables = dict(input.variables)",
-        f"        current_step: Optional[str] = \"{workflow_def.entry_step}\"",
+        f"        current_step: Optional[str] = {_lit(workflow_def.entry_step or None)}",
         "        visited: set = set()",
         "        outputs: Dict[str, Any] = {}",
         "",
@@ -259,104 +290,86 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "                break  # cycle guard",
         "            visited.add(current_step)",
         "",
+        # Every step branch below is an `elif`, so the chain is valid for any
+        # number of steps — including none.
+        "            if current_step is None:",
+        "                break",
     ]
 
     # ── Step dispatcher inside entrypoint ─────────────────────────────────────
-    # Track which parallel groups we've already emitted code for
     emitted_parallel_groups: set[str] = set()
 
-    for i, step in enumerate(workflow_def.steps):
-        # If this step is part of a parallel group, emit the entire group
-        # as a single asyncio.gather() block (only once per group)
+    for step in workflow_def.steps:
+        # A parallel group is emitted once, as a single asyncio.gather() block,
+        # matched by any of its members.
         if step.parallel_group and step.parallel_group in parallel_groups:
             if step.parallel_group in emitted_parallel_groups:
-                continue  # Already emitted this group
+                continue
             emitted_parallel_groups.add(step.parallel_group)
 
             group_id = step.parallel_group
             group_steps = parallel_groups[group_id]
-
-            # The dispatcher routes to the FIRST step in the group;
-            # all group steps are executed together
-            first_step_id = group_steps[0].id
-
-            prefix = "if" if i == 0 or not any(
-                s.parallel_group is None or s.parallel_group in emitted_parallel_groups
-                for s in workflow_def.steps[:i]
-            ) else "elif"
-
-            # Use first step ID as the entry trigger for the parallel group
-            # Also match any step in the group (in case routing lands on a different member)
-            conditions = [f"current_step == \"{s.id}\"" for s in group_steps]
-            condition_str = " or ".join(conditions)
+            condition_str = " or ".join(f"current_step == {_lit(gs.id)}" for gs in group_steps)
 
             lines += [
-                f"            {prefix} {condition_str}:",
-                f"                # ── Parallel group: {group_id} ──",
-                f"                self._progress.append(\"__parallel_{group_id}:start\")",
+                f"            elif {condition_str}:",
+                f"                # ── Parallel group: {_comment(group_id)} ──",
+                f"                self._progress.append({_lit(f'__parallel_{group_id}:start')})",
                 f"                # Fan-out: execute {len(group_steps)} steps concurrently",
-                f"                _parallel_results = await asyncio.gather(",
+                "                _parallel_results = await asyncio.gather(",
             ]
-
             for gs in group_steps:
                 lines.append(
-                    f"                    run_{workflow_def.name}_{gs.id}(dict(variables)),"
+                    f"                    {_fn_name(workflow_def.name, gs.id)}(dict(variables)),"
                 )
-
             lines += [
-                f"                )",
-                f"                # Fan-in: merge all parallel outputs",
-                f"                _parallel_names = {json.dumps([gs.id for gs in group_steps])}",
-                f"                for _pname, _presult in zip(_parallel_names, _parallel_results):",
-                f"                    outputs[_pname] = _presult",
-                f"                    variables[f\"step_{{_pname}}_output\"] = _presult",
-                f"                    if isinstance(_presult, dict):",
-                f"                        variables.update(_presult)",
-                f"                    self._progress.append(_pname)",
-                f"                self._last_result = _parallel_results[-1]",
+                "                )",
+                "                # Fan-in: merge all parallel outputs",
+                f"                _parallel_names = {_lit([gs.id for gs in group_steps])}",
+                "                for _pname, _presult in zip(_parallel_names, _parallel_results):",
+                "                    outputs[_pname] = _presult",
+                "                    variables[f\"step_{_pname}_output\"] = _presult",
+                "                    if isinstance(_presult, dict):",
+                "                        variables.update(_presult)",
+                "                    self._progress.append(_pname)",
+                "                self._last_result = _parallel_results[-1]",
                 "",
             ]
 
             # Advance to the shared join step
             if group_steps[0].next_steps:
-                lines.append(f"                current_step = \"{group_steps[0].next_steps[0]}\"")
+                lines.append(f"                current_step = {_lit(group_steps[0].next_steps[0])}")
             else:
                 lines.append("                current_step = None")
-
             lines.append("")
+            continue
 
-        else:
-            # ── Sequential step (unchanged from original) ─────────────────
-            # Determine the correct if/elif prefix
-            is_first_dispatch = (i == 0) and not emitted_parallel_groups
-            prefix = "if" if is_first_dispatch else "elif"
+        # ── Sequential step ──────────────────────────────────────────────────
+        lines += [
+            f"            elif current_step == {_lit(step.id)}:",
+            f"                self._progress.append({_lit(step.id)})",
+            f"                output = await {_fn_name(workflow_def.name, step.id)}(variables)",
+            f"                outputs[{_lit(step.id)}] = output",
+            "                self._last_result = output",
+            f"                variables[{_lit(f'step_{step.id}_output')}] = output",
+            "                if isinstance(output, dict):",
+            "                    variables.update(output)",
+            "",
+        ]
 
+        if step.type == StepType.CONDITION:
             lines += [
-                f"            {prefix} current_step == \"{step.id}\":",
-                f"                self._progress.append(\"{step.id}\")",
-                f"                output = await run_{workflow_def.name}_{step.id}(variables)",
-                f"                outputs[\"{step.id}\"] = output",
-                f"                self._last_result = output",
-                f"                variables[\"step_{step.id}_output\"] = output",
-                f"                if isinstance(output, dict):",
-                f"                    variables.update(output)",
-                "",
+                "                # Condition step: output contains {next_step: ...}",
+                "                if isinstance(output, dict) and \"next_step\" in output:",
+                "                    current_step = output[\"next_step\"]",
+                "                else:",
+                "                    current_step = None",
             ]
-
-            if step.type == StepType.CONDITION:
-                lines += [
-                    "                # Condition step: output contains {next_step: ...}",
-                    "                if isinstance(output, dict) and \"next_step\" in output:",
-                    "                    current_step = output[\"next_step\"]",
-                    "                else:",
-                    "                    current_step = None",
-                ]
-            elif step.next_steps:
-                lines.append(f"                current_step = \"{step.next_steps[0]}\"")
-            else:
-                lines.append("                current_step = None")
-
-            lines.append("")
+        elif step.next_steps:
+            lines.append(f"                current_step = {_lit(step.next_steps[0])}")
+        else:
+            lines.append("                current_step = None")
+        lines.append("")
 
     lines += [
         "            else:",
@@ -366,9 +379,25 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "",
     ]
 
-    return "\n".join(lines)
+    code = "\n".join(lines)
+    _assert_compiles(code, workflow_def.name)
+    return code
+
+
+def _assert_compiles(code: str, workflow_name: str) -> None:
+    """Refuse to hand out a module the worker could not import."""
+    try:
+        compile(code, f"workflow_{workflow_name}.py", "exec")
+    except SyntaxError as e:
+        raise WorkflowCompileError(
+            f"Generated module for '{workflow_name}' is not valid Python "
+            f"(line {e.lineno}: {e.msg})."
+        ) from e
 
 
 def _to_class_name(workflow_name: str) -> str:
-    """Convert snake_case workflow name to PascalCase class name."""
-    return "".join(word.capitalize() for word in workflow_name.split("_"))
+    """Convert snake_case workflow name to a PascalCase class name."""
+    name = "".join(word.capitalize() for word in re.split(r"[\W_]+", workflow_name) if word)
+    if not name or not name[0].isalpha():
+        name = f"Workflow{name}"
+    return name

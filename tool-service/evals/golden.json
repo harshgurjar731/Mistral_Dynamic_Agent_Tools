@@ -1,0 +1,239 @@
+[
+  {
+    "name": "apply_gst",
+    "purpose": "activity",
+    "description": "Apply GST at the given rate (default 18%) to a subtotal and return the GST amount and the grand total, each rounded to 2 decimals.",
+    "input_schema": {"type": "object", "properties": {
+      "subtotal": {"type": "number", "minimum": 0, "description": "Pre-tax amount"},
+      "rate": {"type": "number", "minimum": 0, "description": "Tax rate as a fraction, default 0.18"}},
+      "required": ["subtotal"]},
+    "output_schema": {"type": "object", "properties": {
+      "gst_amount": {"type": "number"}, "grand_total": {"type": "number"}},
+      "required": ["gst_amount", "grand_total"]},
+    "examples": [
+      {"input": {"subtotal": 100}, "output": {"gst_amount": 18.0, "grand_total": 118.0}},
+      {"input": {"subtotal": 250.5}, "output": {"gst_amount": 45.09, "grand_total": 295.59}, "note": "250.5 * 0.18 = 45.09"}
+    ]
+  },
+  {
+    "name": "calculate_line_totals",
+    "purpose": "activity",
+    "description": "Compute each invoice line's total as quantity times unit price (rounded to 2 decimals) and the invoice subtotal as the sum of line totals.",
+    "input_schema": {"type": "object", "properties": {
+      "line_items": {"type": "array", "description": "Invoice lines", "items": {"type": "object", "properties": {
+        "description": {"type": "string"}, "quantity": {"type": "number"}, "unit_price": {"type": "number"}},
+        "required": ["description", "quantity", "unit_price"]}}},
+      "required": ["line_items"]},
+    "output_schema": {"type": "object", "properties": {
+      "line_items": {"type": "array", "items": {"type": "object", "properties": {
+        "description": {"type": "string"}, "quantity": {"type": "number"}, "unit_price": {"type": "number"},
+        "line_total": {"type": "number"}}, "required": ["description", "quantity", "unit_price", "line_total"]}},
+      "subtotal": {"type": "number"}},
+      "required": ["line_items", "subtotal"]},
+    "examples": [
+      {"input": {"line_items": [{"description": "Widget", "quantity": 2, "unit_price": 10.5}, {"description": "Bolt", "quantity": 10, "unit_price": 0.25}]},
+       "output": {"line_items": [{"description": "Widget", "quantity": 2, "unit_price": 10.5, "line_total": 21.0}, {"description": "Bolt", "quantity": 10, "unit_price": 0.25, "line_total": 2.5}], "subtotal": 23.5}},
+      {"input": {"line_items": [{"description": "Service", "quantity": 1, "unit_price": 99.99}]},
+       "output": {"line_items": [{"description": "Service", "quantity": 1, "unit_price": 99.99, "line_total": 99.99}], "subtotal": 99.99}}
+    ]
+  },
+  {
+    "name": "validate_invoice_line_items",
+    "purpose": "activity",
+    "description": "Validate invoice lines. Each line needs a non-empty string description, a numeric quantity greater than 0 and a numeric unit_price of at least 0; each violated field of each line counts as one error. Returns whether all lines are valid, the error count, and one human-readable message per error.",
+    "input_schema": {"type": "object", "properties": {
+      "line_items": {"type": "array", "description": "Invoice lines to check", "items": {"type": "object"}}},
+      "required": ["line_items"]},
+    "output_schema": {"type": "object", "properties": {
+      "valid": {"type": "boolean"}, "error_count": {"type": "integer"},
+      "errors": {"type": "array", "items": {"type": "string"}}},
+      "required": ["valid", "error_count", "errors"]},
+    "examples": [
+      {"input": {"line_items": [{"description": "Widget", "quantity": 2, "unit_price": 10.5}]}, "output": {"valid": true, "error_count": 0}},
+      {"input": {"line_items": [{"description": "Widget", "quantity": -1, "unit_price": 10.5}, {"description": "Bolt", "quantity": 3}]}, "output": {"valid": false, "error_count": 2},
+       "note": "line 1 quantity is not > 0; line 2 has no unit_price"}
+    ]
+  },
+  {
+    "name": "calculate_loan_emi",
+    "purpose": "activity",
+    "description": "Compute the monthly instalment (EMI) of an amortising loan: EMI = P*r*(1+r)^n / ((1+r)^n - 1) with r the monthly rate (annual percent / 1200); when the rate is 0, EMI = P/n. EMI is rounded to 2 decimals, total_payment = round(EMI * n, 2) using the rounded EMI, total_interest = round(total_payment - principal, 2).",
+    "input_schema": {"type": "object", "properties": {
+      "principal": {"type": "number", "exclusiveMinimum": 0, "description": "Loan amount"},
+      "annual_rate_percent": {"type": "number", "minimum": 0, "description": "Annual interest rate in percent"},
+      "tenure_months": {"type": "integer", "minimum": 1, "description": "Number of monthly instalments"}},
+      "required": ["principal", "annual_rate_percent", "tenure_months"]},
+    "output_schema": {"type": "object", "properties": {
+      "emi": {"type": "number"}, "total_payment": {"type": "number"}, "total_interest": {"type": "number"}},
+      "required": ["emi", "total_payment", "total_interest"]},
+    "examples": [
+      {"input": {"principal": 100000, "annual_rate_percent": 12, "tenure_months": 12}, "output": {"emi": 8884.88, "total_payment": 106618.56, "total_interest": 6618.56}},
+      {"input": {"principal": 12000, "annual_rate_percent": 0, "tenure_months": 12}, "output": {"emi": 1000.0, "total_payment": 12000.0, "total_interest": 0.0}}
+    ]
+  },
+  {
+    "name": "debt_to_income_ratio",
+    "purpose": "activity",
+    "description": "Compute debt-to-income ratio as the sum of monthly debt payments divided by gross monthly income, as a percentage rounded to 2 decimals, and classify it: 'low' if <= 20, 'moderate' if <= 36, 'high' if <= 43, otherwise 'very_high' (classification uses the rounded ratio).",
+    "input_schema": {"type": "object", "properties": {
+      "monthly_debt_payments": {"type": "array", "items": {"type": "number"}, "description": "Monthly payments on each debt"},
+      "gross_monthly_income": {"type": "number", "exclusiveMinimum": 0, "description": "Gross monthly income"}},
+      "required": ["monthly_debt_payments", "gross_monthly_income"]},
+    "output_schema": {"type": "object", "properties": {
+      "ratio_percent": {"type": "number"}, "category": {"type": "string", "enum": ["low", "moderate", "high", "very_high"]}},
+      "required": ["ratio_percent", "category"]},
+    "examples": [
+      {"input": {"monthly_debt_payments": [500, 300], "gross_monthly_income": 5000}, "output": {"ratio_percent": 16.0, "category": "low"}},
+      {"input": {"monthly_debt_payments": [1200, 400, 350], "gross_monthly_income": 4500}, "output": {"ratio_percent": 43.33, "category": "very_high"}}
+    ]
+  },
+  {
+    "name": "days_between_dates",
+    "purpose": "activity",
+    "description": "Given two ISO dates (YYYY-MM-DD), return the number of calendar days from start to end (end minus start) and the number of business days, counting Monday-Friday dates d with start <= d < end.",
+    "input_schema": {"type": "object", "properties": {
+      "start_date": {"type": "string", "description": "ISO date, e.g. 2026-01-05"},
+      "end_date": {"type": "string", "description": "ISO date, e.g. 2026-01-12"}},
+      "required": ["start_date", "end_date"]},
+    "output_schema": {"type": "object", "properties": {
+      "days": {"type": "integer"}, "business_days": {"type": "integer"}},
+      "required": ["days", "business_days"]},
+    "examples": [
+      {"input": {"start_date": "2026-01-05", "end_date": "2026-01-12"}, "output": {"days": 7, "business_days": 5}},
+      {"input": {"start_date": "2026-02-27", "end_date": "2026-03-03"}, "output": {"days": 4, "business_days": 2}, "note": "Fri 27 Feb and Mon 2 Mar"}
+    ]
+  },
+  {
+    "name": "normalize_phone_number",
+    "purpose": "activity",
+    "description": "Normalise a phone number to E.164. Remove every character except digits and a leading '+'. A leading '+' is kept; a leading '00' becomes '+'; a single leading '0' is replaced by '+' followed by default_country_code; otherwise prefix '+' and default_country_code.",
+    "input_schema": {"type": "object", "properties": {
+      "phone": {"type": "string", "description": "Phone number as typed"},
+      "default_country_code": {"type": "string", "description": "Country calling code without '+', default '44'"}},
+      "required": ["phone"]},
+    "output_schema": {"type": "object", "properties": {"e164": {"type": "string"}}, "required": ["e164"]},
+    "examples": [
+      {"input": {"phone": "020 7946 0000"}, "output": {"e164": "+442079460000"}},
+      {"input": {"phone": "+1 (415) 555-0100"}, "output": {"e164": "+14155550100"}}
+    ]
+  },
+  {
+    "name": "calculate_claim_payout",
+    "purpose": "activity",
+    "description": "Insurance claim payout: payable_before_limit = max(claim_amount - deductible, 0) * (1 - coinsurance_percent/100), rounded to 2 decimals; payout = min(payable_before_limit, coverage_limit); capped is true when the limit reduced the payout.",
+    "input_schema": {"type": "object", "properties": {
+      "claim_amount": {"type": "number", "minimum": 0, "description": "Claimed loss"},
+      "deductible": {"type": "number", "minimum": 0, "description": "Policy deductible"},
+      "coverage_limit": {"type": "number", "minimum": 0, "description": "Maximum payable"},
+      "coinsurance_percent": {"type": "number", "minimum": 0, "maximum": 100, "description": "Share borne by the insured, percent"}},
+      "required": ["claim_amount", "deductible", "coverage_limit", "coinsurance_percent"]},
+    "output_schema": {"type": "object", "properties": {
+      "payable_before_limit": {"type": "number"}, "payout": {"type": "number"}, "capped": {"type": "boolean"}},
+      "required": ["payable_before_limit", "payout", "capped"]},
+    "examples": [
+      {"input": {"claim_amount": 10000, "deductible": 500, "coverage_limit": 50000, "coinsurance_percent": 20}, "output": {"payable_before_limit": 7600.0, "payout": 7600.0, "capped": false}},
+      {"input": {"claim_amount": 100000, "deductible": 1000, "coverage_limit": 50000, "coinsurance_percent": 10}, "output": {"payable_before_limit": 89100.0, "payout": 50000.0, "capped": true}}
+    ]
+  },
+  {
+    "name": "aggregate_expenses_by_category",
+    "purpose": "activity",
+    "description": "Sum expense amounts per category. Return one entry per category sorted by category name ascending, each total rounded to 2 decimals, and the grand total rounded to 2 decimals. An empty list gives no entries and a grand total of 0.",
+    "input_schema": {"type": "object", "properties": {
+      "records": {"type": "array", "description": "Expense records", "items": {"type": "object", "properties": {
+        "category": {"type": "string"}, "amount": {"type": "number"}}, "required": ["category", "amount"]}}},
+      "required": ["records"]},
+    "output_schema": {"type": "object", "properties": {
+      "totals": {"type": "array", "items": {"type": "object", "properties": {
+        "category": {"type": "string"}, "total": {"type": "number"}}, "required": ["category", "total"]}},
+      "grand_total": {"type": "number"}},
+      "required": ["totals", "grand_total"]},
+    "examples": [
+      {"input": {"records": [{"category": "travel", "amount": 120.5}, {"category": "meals", "amount": 30}, {"category": "travel", "amount": 79.5}]},
+       "output": {"totals": [{"category": "meals", "total": 30.0}, {"category": "travel", "total": 200.0}], "grand_total": 230.0}},
+      {"input": {"records": []}, "output": {"totals": [], "grand_total": 0.0}}
+    ]
+  },
+  {
+    "name": "mask_pii_in_text",
+    "purpose": "activity",
+    "description": "Mask personal data in text: replace every email address with '[EMAIL]' and every run of 9 or more consecutive digits with '[NUMBER]'. Return the masked text and how many of each were replaced.",
+    "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to mask"}}, "required": ["text"]},
+    "output_schema": {"type": "object", "properties": {
+      "masked_text": {"type": "string"}, "emails": {"type": "integer"}, "numbers": {"type": "integer"}},
+      "required": ["masked_text", "emails", "numbers"]},
+    "examples": [
+      {"input": {"text": "Contact jane.doe@example.com or 4155550100."}, "output": {"masked_text": "Contact [EMAIL] or [NUMBER].", "emails": 1, "numbers": 1}},
+      {"input": {"text": "No personal data here, order 12345."}, "output": {"masked_text": "No personal data here, order 12345.", "emails": 0, "numbers": 0}}
+    ]
+  },
+  {
+    "name": "word_statistics",
+    "purpose": "tool",
+    "description": "Count the words, characters and sentences in a piece of text, for an agent answering questions about a document's length.",
+    "parameters": {"text": {"type": "string", "description": "The text to analyse"}},
+    "required": ["text"],
+    "output_schema": {"type": "object", "properties": {
+      "words": {"type": "integer"}, "characters": {"type": "integer"}, "sentences": {"type": "integer"}},
+      "required": ["words", "characters", "sentences"]}
+  },
+  {
+    "name": "convert_length_units",
+    "purpose": "tool",
+    "description": "Convert a length between metric and imperial units (mm, cm, m, km, in, ft, yd, mi) and return the converted value.",
+    "parameters": {
+      "value": {"type": "number", "description": "The length to convert"},
+      "from_unit": {"type": "string", "enum": ["mm", "cm", "m", "km", "in", "ft", "yd", "mi"], "description": "Unit of value"},
+      "to_unit": {"type": "string", "enum": ["mm", "cm", "m", "km", "in", "ft", "yd", "mi"], "description": "Unit to convert to"}},
+    "required": ["value", "from_unit", "to_unit"],
+    "output_schema": {"type": "object", "properties": {"value": {"type": "number"}, "unit": {"type": "string"}}, "required": ["value", "unit"]}
+  },
+  {
+    "name": "summarize_numbers",
+    "purpose": "tool",
+    "description": "Summarise a list of numbers: count, mean, median, minimum, maximum and population standard deviation.",
+    "parameters": {"numbers": {"type": "array", "items": {"type": "number"}, "description": "The numbers to summarise"}},
+    "required": ["numbers"],
+    "output_schema": {"type": "object", "properties": {
+      "count": {"type": "integer"}, "mean": {"type": "number"}, "median": {"type": "number"},
+      "min": {"type": "number"}, "max": {"type": "number"}, "stdev": {"type": "number"}},
+      "required": ["count", "mean", "median", "min", "max", "stdev"]}
+  },
+  {
+    "name": "slugify_title",
+    "purpose": "tool",
+    "description": "Turn a title into a URL slug: lowercase ASCII, words joined by single hyphens, punctuation removed, accents stripped.",
+    "parameters": {"title": {"type": "string", "description": "The title to slugify"}},
+    "required": ["title"],
+    "output_schema": {"type": "object", "properties": {"slug": {"type": "string"}}, "required": ["slug"]}
+  },
+  {
+    "name": "get_exchange_rate",
+    "purpose": "tool",
+    "kind": "http",
+    "description": "Get the latest exchange rate between two currencies from the Frankfurter API (ECB reference rates).",
+    "api_details": "GET https://api.frankfurter.app/latest?from={base}&to={quote} — no authentication. Response JSON: {\"amount\": 1.0, \"base\": \"GBP\", \"date\": \"2026-01-15\", \"rates\": {\"EUR\": 1.17}}.",
+    "parameters": {
+      "base": {"type": "string", "description": "ISO currency code to convert from, e.g. GBP"},
+      "quote": {"type": "string", "description": "ISO currency code to convert to, e.g. EUR"}},
+    "required": ["base", "quote"],
+    "output_schema": {"type": "object", "properties": {
+      "base": {"type": "string"}, "quote": {"type": "string"}, "rate": {"type": "number"}, "date": {"type": "string"}},
+      "required": ["base", "quote", "rate", "date"]},
+    "http_fixtures": [{"status": 200, "json": {"amount": 1.0, "base": "GBP", "date": "2026-01-15", "rates": {"EUR": 1.17}}, "for_input": {"base": "GBP", "quote": "EUR"}}]
+  },
+  {
+    "name": "get_current_temperature",
+    "purpose": "tool",
+    "kind": "http",
+    "description": "Get the current air temperature in Celsius at a latitude/longitude from the Open-Meteo forecast API.",
+    "api_details": "GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m — no authentication. Response JSON includes {\"current\": {\"time\": \"2026-01-15T12:00\", \"temperature_2m\": 7.4}}.",
+    "parameters": {
+      "latitude": {"type": "number", "minimum": -90, "maximum": 90, "description": "Latitude in degrees"},
+      "longitude": {"type": "number", "minimum": -180, "maximum": 180, "description": "Longitude in degrees"}},
+    "required": ["latitude", "longitude"],
+    "output_schema": {"type": "object", "properties": {
+      "temperature_c": {"type": "number"}, "observed_at": {"type": "string"}},
+      "required": ["temperature_c", "observed_at"]}
+  }
+]

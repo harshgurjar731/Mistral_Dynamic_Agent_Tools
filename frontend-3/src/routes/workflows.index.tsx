@@ -7,6 +7,8 @@ import { errorMessage, QK, workflowsApi, ontologyApi } from "@/api";
 import type { AnnotationMap, Concept, WorkflowDefinition } from "@/types";
 import { extractDomains } from "@/components/agents/AgentCard";
 import { WorkflowCard } from "@/components/workflows/WorkflowCard";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { WorkflowHistoryPanel } from "@/components/workflows/HistoryPanel";
 import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
 import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClassificationModal";
@@ -16,6 +18,15 @@ import { buildDomainTree, expandedMatchSet, intersects } from "@/components/onto
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
 import { cn } from "@/lib/utils";
+import { SortSelect } from "@/components/shared/SortSelect";
+import {
+  applySort,
+  byDate,
+  byNumber,
+  standardSorts,
+  useSortKey,
+  type SortOption,
+} from "@/lib/sorting";
 
 export const Route = createFileRoute("/workflows/")({
   head: () => ({
@@ -40,6 +51,15 @@ type Filter = (typeof FILTERS)[number];
 
 const secondaryButton =
   "inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground disabled:opacity-50";
+
+const WORKFLOW_SORTS: SortOption<WorkflowDefinition>[] = [
+  ...standardSorts<WorkflowDefinition>(
+    (w) => w.name,
+    (w) => w.created_at,
+  ),
+  { key: "updated", label: "Recently updated", compare: byDate((w) => w.updated_at) },
+  { key: "steps", label: "Most steps", compare: byNumber((w) => w.steps?.length ?? 0) },
+];
 
 function WorkflowsIndexPage() {
   const qc = useQueryClient();
@@ -117,9 +137,10 @@ function WorkflowsIndexPage() {
     [annotationsQuery.data],
   );
 
+  const [sort, setSort] = useSortKey("workflows", "name_asc");
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return all
+    const rows = all
       .filter((w) => {
         if (filter === "Published") return w.is_deployed && !w.has_unpublished_changes;
         if (filter === "Draft") return !w.is_deployed;
@@ -133,9 +154,22 @@ function WorkflowsIndexPage() {
       .filter(
         (w) =>
           !q || w.name.toLowerCase().includes(q) || (w.description ?? "").toLowerCase().includes(q),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [all, filter, search, selectedDomains, matchSet, annotationMap]);
+      );
+    return applySort(rows, WORKFLOW_SORTS, sort);
+  }, [all, filter, search, selectedDomains, matchSet, annotationMap, sort]);
+
+  const selection = useBulkSelection(
+    visible,
+    (w) => w.name,
+    () => true,
+    (w) => w.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "workflow",
+    deleteOne: (name) => workflowsApi.remove(name),
+    invalidate: [QK.workflows()],
+    selection,
+  });
 
   const busy = publish.isPending ? publish.variables : archive.isPending ? archive.variables : null;
   const filtersActive = Boolean(search.trim()) || filter !== "All" || selectedDomains.size > 0;
@@ -188,6 +222,7 @@ function WorkflowsIndexPage() {
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={WORKFLOW_SORTS} />
         <DomainFilterDropdown
           concepts={domainConcepts}
           selected={selectedDomains}
@@ -266,24 +301,35 @@ function WorkflowsIndexPage() {
             )}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {visible.map((w) => (
-              <WorkflowCard
-                key={w.name}
-                workflow={w}
-                domains={extractDomains(annotationMap[w.name]).map(
-                  (id) => domainLabelById.get(id) ?? id,
-                )}
-                busy={busy ?? null}
-                onPublish={(n) => publish.mutate(n)}
-                onArchive={(n) => archive.mutate(n)}
-                onHistory={(n) => setHistoryFor(n)}
-                onPackage={(n) => setPackageFor(n)}
-                onClassify={(n) => setClassifyFor(n)}
-                onExecuteModal={(n) => setExecuteFor(n)}
-              />
-            ))}
-          </div>
+          <>
+            <BulkActionBar
+              className="mb-4"
+              selection={selection}
+              noun="workflow"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Only the workflows are deleted — their agents, tools and activities are kept. Definitions, compiled modules and knowledge-graph links are removed; workflows hosted on Mistral are archived there. To keep a workflow recoverable, archive it instead."
+            />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visible.map((w) => (
+                <SelectableItem key={w.name} selection={selection} id={w.name} label={w.name}>
+                  <WorkflowCard
+                    workflow={w}
+                    domains={extractDomains(annotationMap[w.name]).map(
+                      (id) => domainLabelById.get(id) ?? id,
+                    )}
+                    busy={busy ?? null}
+                    onPublish={(n) => publish.mutate(n)}
+                    onArchive={(n) => archive.mutate(n)}
+                    onHistory={(n) => setHistoryFor(n)}
+                    onPackage={(n) => setPackageFor(n)}
+                    onClassify={(n) => setClassifyFor(n)}
+                    onExecuteModal={(n) => setExecuteFor(n)}
+                  />
+                </SelectableItem>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

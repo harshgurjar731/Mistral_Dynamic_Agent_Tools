@@ -40,6 +40,10 @@ class RuleCreate(BaseModel):
     enforcement: Optional[str] = None
     always_on: bool = False
     enabled: bool = True
+    #: A category id; omit to keep the rule type's own.
+    category: Optional[str] = None
+    #: Agent ids or workflow names to limit the rule to.
+    targets: list[str] = Field(default_factory=list)
 
 
 class RuleUpdate(BaseModel):
@@ -49,6 +53,33 @@ class RuleUpdate(BaseModel):
     enforcement: Optional[str] = None
     always_on: Optional[bool] = None
     enabled: Optional[bool] = None
+    category: Optional[str] = None
+    targets: Optional[list[str]] = None
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    description: str = ""
+    color: str = "slate"
+    icon: str = "Tag"
+    #: agent | workflow | both
+    scope: str = "both"
+    #: Rule type keys offered under this category in "New rule".
+    rule_types: list[str] = Field(default_factory=list)
+    default_enforcement: Optional[str] = None
+    default_applies: Optional[str] = None
+
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+    scope: Optional[str] = None
+    rule_types: Optional[list[str]] = None
+    #: Send "" to clear back to the rule type's own default.
+    default_enforcement: Optional[str] = None
+    default_applies: Optional[str] = None
 
 
 class RuleRefBody(BaseModel):
@@ -104,7 +135,39 @@ async def create_rule(body: RuleCreate):
         store.create_rule,
         type=body.type, name=body.name, description=body.description, params=body.params,
         enforcement=body.enforcement, always_on=body.always_on, enabled=body.enabled,
+        category=body.category, targets=body.targets,
     )
+
+
+# ── Categories ─────────────────────────────────────────────────────────────
+#
+# Registered before /rules/{rule_id} routes so "categories" is never read as a
+# rule id.
+
+
+@router.get("/rules/categories")
+async def list_categories():
+    return {"categories": store.list_categories()}
+
+
+@router.post("/rules/categories", status_code=201)
+async def create_category(body: CategoryCreate):
+    return _guard(
+        store.create_category,
+        name=body.name, description=body.description, color=body.color, icon=body.icon,
+        scope=body.scope, rule_types=body.rule_types,
+        default_enforcement=body.default_enforcement, default_applies=body.default_applies,
+    )
+
+
+@router.patch("/rules/categories/{category_id}")
+async def update_category(category_id: str, body: CategoryUpdate):
+    return _guard(store.update_category, category_id, body.model_dump(exclude_none=True))
+
+
+@router.delete("/rules/categories/{category_id}")
+async def delete_category(category_id: str):
+    return _guard(store.delete_category, category_id)
 
 
 @router.patch("/rules/{rule_id}")
@@ -159,6 +222,7 @@ async def set_agent_rules(agent_id: str, body: AgentRulesBody, client=Depends(ge
             model=live.get("model") or "", instructions=live.get("instructions") or "",
             tool_keys=current["tools"], connector_ids=connector_ids,
             guardrails=live.get("guardrails") or [], selection=selection, mode="manual",
+            agent_id=agent_id,
         )
         outcomes = prepared.outcomes
 
@@ -201,10 +265,13 @@ async def get_workflow_rules(workflow_name: str):
     rules = [
         {
             **r,
-            "applied_by": "always" if r["always_on"] else (refs[r["id"]].source if r["id"] in refs else "user"),
+            "applied_by": "always" if r["always_on"] else (
+                refs[r["id"]].source if r["id"] in refs
+                else ("targeted" if workflow_name in r.get("targets", []) else "user")
+            ),
             "reason": refs[r["id"]].reason if r["id"] in refs else "",
         }
-        for r in store.effective_rules("workflow", refs.keys())
+        for r in store.effective_rules("workflow", refs.keys(), subject_id=workflow_name)
     ]
     return {
         "rules": rules,

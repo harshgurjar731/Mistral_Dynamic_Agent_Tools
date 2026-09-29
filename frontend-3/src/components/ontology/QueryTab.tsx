@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils";
+import { GraphCanvas, type GraphLayout, type SimpleEdge, type SimpleNode } from "./GraphCanvas";
+import { kindColor, kindLabel } from "./graphTones";
 
 const EXAMPLES = [
   { label: "Sample Nodes", query: "MATCH (n) RETURN n LIMIT 50" },
@@ -228,20 +230,106 @@ export function QueryTab() {
                 </table>
               </div>
             ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  Found {result.rows.length} records. Below is structured object representation:
-                </p>
-                <div className="custom-scrollbar max-h-[480px] overflow-auto rounded-lg border border-border bg-background-elevated/50 p-3">
-                  <pre className="font-mono text-[11px] text-foreground">
-                    {JSON.stringify(result.rows, null, 2)}
-                  </pre>
-                </div>
-              </div>
+              <ResultGraph nodes={result.nodes ?? []} edges={result.edges ?? []} />
             )}
           </div>
         </GlassPanel>
       )}
     </div>
+  );
+}
+
+interface CypherNode {
+  id: string;
+  label?: string;
+  type?: string;
+  labels?: string[];
+  degree?: number;
+}
+interface CypherEdge {
+  source: string;
+  target: string;
+  predicate?: string;
+}
+
+/** The nodes and relationships a query touched, on the same canvas as the ontology. */
+function ResultGraph({ nodes, edges }: { nodes: CypherNode[]; edges: CypherEdge[] }) {
+  const [layout, setLayout] = useState<GraphLayout>("network");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const kindOf = (n: CypherNode) => (n.labels?.[0] ?? n.type ?? "node").toLowerCase();
+  const simpleNodes = useMemo<SimpleNode[]>(
+    () =>
+      nodes.map((n) => ({
+        id: n.id,
+        label: n.label ?? n.id,
+        sublabel: n.labels?.join(" · ") ?? n.type ?? "",
+        color: kindColor(kindOf(n)),
+        group: kindOf(n),
+        weight: n.degree ?? 0,
+      })),
+    [nodes],
+  );
+  const simpleEdges = useMemo<SimpleEdge[]>(
+    () =>
+      edges.map((e, i) => ({
+        id: `${e.source}-${e.target}-${i}`,
+        source: e.source,
+        target: e.target,
+        label: e.predicate ?? "",
+      })),
+    [edges],
+  );
+  const kinds = useMemo(() => [...new Set(nodes.map(kindOf))], [nodes]);
+
+  if (nodes.length === 0) {
+    return (
+      <EmptyState
+        title="Nothing to draw"
+        description="This query returned values, not nodes or relationships. Switch to Table, or RETURN whole nodes (e.g. RETURN n, r, m)."
+      />
+    );
+  }
+
+  return (
+    <GraphCanvas
+      nodes={simpleNodes}
+      edges={simpleEdges}
+      layout={layout}
+      nodeStyle="dot"
+      selectedId={selectedId}
+      onNodeClick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
+      onPaneClick={() => setSelectedId(null)}
+      className="h-[min(70vh,44rem)]"
+      toolbar={
+        <div className="inline-flex rounded-lg border border-border/60 bg-background-elevated/90 p-0.5 backdrop-blur-md">
+          {(["network", "hierarchy"] as const).map((l) => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => setLayout(l)}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
+                layout === l
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      }
+      legend={
+        <div className="flex max-w-md flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/60 bg-background-elevated/90 px-2.5 py-1.5 backdrop-blur-md">
+          {kinds.map((k) => (
+            <span key={k} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="size-2 rounded-full" style={{ background: kindColor(k) }} />
+              {kindLabel(k)}
+            </span>
+          ))}
+        </div>
+      }
+    />
   );
 }

@@ -1,22 +1,22 @@
 """
-Synthesis — generating a verified tool from a schema.
+Synthesis — generating verified tools and activities from a specification.
 
-Replaces the single 200-line ``synthesize_tool`` function whose six stages
-shared a dozen locals and whose two retry loops reached back across three of
-them.
+    spec.py            SynthesisSpec v2, Verdict (with fault class), Candidate
+    policy.py          allowed/forbidden imports and builtins — prompt AND verifier
+    profiles/          tool vs activity: spec rules, tests, prompts, review, runtime
+    prompts/           prompt text per purpose, repair, test plan, oracle
+    testplan.py        cases paired with expectations (success / envelope / error)
+    sandbox.py         launches sandbox_runner.py in a limited subprocess
+    sandbox_runner.py  the fixed runner — structured per-case results
+    verifiers.py       the verification ladder V1–V6
+    layers/            the pipeline layers G1–G10
+    pipeline.py        the assembled pipeline
+    registry.py        atomic, versioned registration and loading
+    jobs.py            asynchronous jobs, in-flight de-duplication, progress
 
-    spec.py        typed carriers: CodeSpec, Candidate, Verdict
-    model.py       the model call — choice, timeouts, retries
-    testdata.py    plausible inputs built from the tool's own schema
-    verifiers.py   static analysis and sandbox execution
-    pipeline.py    the generate / verify / repair loop
-    registry.py    persistence and registration
-
-``app.services.synthesis_service`` remains the public entry point and is now a
-thin adapter over this package.
+Model calls go through ``app.llm`` by role; see ``app/llm/routes.py``.
 """
 
-from app.synthesis.pipeline import SynthesisFailed, synthesise
-from app.synthesis.spec import Candidate, CodeSpec, Verdict
+from app.synthesis.spec import Candidate, CodeSpec, SynthesisSpec, Verdict
 
-__all__ = ["synthesise", "SynthesisFailed", "CodeSpec", "Candidate", "Verdict"]
+__all__ = ["SynthesisSpec", "CodeSpec", "Candidate", "Verdict"]

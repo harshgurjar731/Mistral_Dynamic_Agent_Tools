@@ -31,6 +31,7 @@ import {
   Zap,
 } from "lucide-react";
 import { tierIdentity } from "@/lib/status";
+import { BLOCK, blockForMode, type BuildingBlock } from "@/lib/terminology";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -153,7 +154,15 @@ interface ReusePlanData {
 
 interface ActivityPlanData {
   note?: string;
-  reused?: Array<{ capability: string; capability_name?: string; tool_name: string }>;
+  reused?: Array<{
+    capability: string;
+    capability_name?: string;
+    tool_name: string;
+    /** Why this unit of work is an activity rather than an agent. */
+    why_activity?: string;
+    /** Why this existing activity covers it. */
+    reason?: string;
+  }>;
   built?: Array<{
     capability?: string;
     capability_name?: string;
@@ -162,17 +171,31 @@ interface ActivityPlanData {
     parameters?: string[];
     required?: string[];
     status?: string;
+    why_activity?: string;
+    /** Why nothing existing covered it. */
+    reason?: string;
   }>;
-  failed?: Array<{ tool_name: string; error?: string }>;
+  failed?: Array<{ capability?: string; tool_name: string; error?: string; why_activity?: string }>;
   reasoning?: string;
 }
 
+/** One agent tool and why the agent calls it itself. */
+interface ToolRationale {
+  tool: string;
+  why?: string;
+  description?: string;
+}
+
 interface AgentDesignedData {
+  capability?: string;
   agent_name?: string;
   tier?: string;
   model?: string;
   temperature?: number;
   tools?: string[];
+  tool_rationale?: ToolRationale[];
+  why_agent?: string;
+  agent_needs_tools?: boolean;
   output_contract?: string;
   instruction_chars?: number;
   guardrails?: GuardrailView | null;
@@ -181,11 +204,15 @@ interface AgentDesignedData {
 }
 
 interface AgentRecordData {
+  capability_id?: string;
   agent_name?: string;
   model?: string;
   tier?: string;
   tools?: string[];
+  tool_rationale?: ToolRationale[];
+  why_agent?: string;
   output_contract?: string;
+  reused?: boolean;
 }
 
 interface TopologyData {
@@ -247,26 +274,105 @@ interface RegisteredData {
 
 /* ── Shared bits ───────────────────────────────────────────────────────── */
 
-const KIND_STYLE: Record<Kind, { icon: typeof Cpu; text: string; chip: string; label: string }> = {
-  agent: {
-    icon: Cpu,
-    text: "text-indigo",
-    chip: "border-indigo/25 bg-indigo/10 text-indigo",
-    label: "Agent",
-  },
-  activity: {
-    icon: Zap,
-    text: "text-pink",
-    chip: "border-pink/25 bg-pink/10 text-pink",
-    label: "Function",
-  },
-  connector: {
-    icon: Server,
-    text: "text-emerald",
-    chip: "border-emerald/25 bg-emerald/10 text-emerald",
-    label: "Integration",
-  },
+const KIND_BLOCK: Record<Kind, BuildingBlock> = {
+  agent: "agent",
+  activity: "activity",
+  connector: "integration",
 };
+
+const KIND_STYLE: Record<
+  Kind,
+  { icon: typeof Cpu; text: string; chip: string; label: string; plural: string }
+> = {
+  agent: BLOCK.agent,
+  activity: BLOCK.activity,
+  connector: BLOCK.integration,
+};
+
+/** A labelled reason line — "Why an activity: …". */
+function Why({
+  label,
+  text,
+  className,
+}: {
+  label: string;
+  text?: string | undefined;
+  className?: string;
+}) {
+  if (!text) return null;
+  return (
+    <p className={cn("mt-1 text-[11px] leading-relaxed text-muted-foreground", className)}>
+      <span className="font-medium text-foreground/75">{label} </span>
+      {text}
+    </p>
+  );
+}
+
+/** The one-line definition shown at the top of an activity or agent-tool section. */
+function BlockDefinition({ block }: { block: BuildingBlock }) {
+  const meta = BLOCK[block];
+  const Icon = meta.icon;
+  return (
+    <div className={cn("mb-3 flex items-start gap-2 rounded-lg border px-3 py-2", meta.box)}>
+      <Icon className={cn("mt-0.5 size-3 shrink-0", meta.text)} />
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <span className={cn("font-semibold", meta.text)}>{meta.label}: </span>
+        {meta.definition} <span className="text-foreground/80">{meta.placement}</span>
+      </p>
+    </div>
+  );
+}
+
+/** The agent tools one agent carries, each with why it is the agent's to call. */
+function AgentToolList({
+  tools,
+  rationale,
+  title = "Agent tools",
+}: {
+  tools: string[];
+  rationale?: ToolRationale[] | undefined;
+  title?: string;
+}) {
+  const meta = BLOCK.agent_tool;
+  const byTool = new Map((rationale ?? []).map((r) => [r.tool, r]));
+  return (
+    <div className={cn("mt-3 rounded-lg border p-3", meta.box)}>
+      <p
+        className={cn(
+          "mb-1 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider uppercase",
+          meta.text,
+        )}
+      >
+        <Wrench className="size-3" /> {title} ({tools.length})
+        <span className="font-normal tracking-normal normal-case text-muted-foreground">
+          · attached to this agent, not steps in the graph
+        </span>
+      </p>
+      {tools.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          None — this agent reasons only over what the previous step hands it.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {tools.map((t) => {
+            const r = byTool.get(t);
+            return (
+              <div key={t}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip className={meta.chip}>{t}</Chip>
+                  {r?.description ? (
+                    <span className="text-[10px] text-muted-foreground">{r.description}</span>
+                  ) : null}
+                </div>
+                <Why label="Why an agent tool:" text={r?.why} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CardShell({
   icon,
@@ -335,7 +441,7 @@ function CapabilitiesCard({ data }: { data: CapabilitiesData }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-foreground">{c.name}</span>
-                  {style && c.kind ? <Chip className={style.chip}>{c.kind}</Chip> : null}
+                  {style && c.kind ? <Chip className={style.chip}>{style.label}</Chip> : null}
                   {c.tier ? (
                     <Chip className={cn(tierIdentity(c.tier).border, tierIdentity(c.tier).text)}>
                       {tierIdentity(c.tier).label}
@@ -364,13 +470,23 @@ function ExecutionModesCard({ data }: { data: ExecutionModesData }) {
   const pruned = data.pruned ?? [];
   return (
     <CardShell icon={<Split className="size-3" />} title="How each step runs">
+      <div className="mb-3 space-y-1">
+        {(Object.keys(KIND_STYLE) as Kind[]).map((mode) => {
+          const meta = BLOCK[KIND_BLOCK[mode]];
+          return (
+            <p key={mode} className="text-[11px] leading-relaxed text-muted-foreground">
+              <span className={cn("font-semibold", meta.text)}>{meta.label}</span> —{" "}
+              {meta.definition}
+            </p>
+          );
+        })}
+      </div>
       <div className="mb-4 flex flex-wrap gap-2 text-[11px]">
         {(Object.keys(KIND_STYLE) as Kind[]).map((mode) => {
           const n = counts[mode] ?? 0;
           return (
             <span key={mode} className={cn("rounded border px-2 py-0.5", KIND_STYLE[mode].chip)}>
-              {n} {KIND_STYLE[mode].label.toLowerCase()}
-              {n === 1 ? "" : "s"}
+              {n} {(n === 1 ? KIND_STYLE[mode].label : KIND_STYLE[mode].plural).toLowerCase()}
             </span>
           );
         })}
@@ -391,13 +507,20 @@ function ExecutionModesCard({ data }: { data: ExecutionModesData }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-foreground">{d.name}</span>
                   <Chip className={style.chip}>{style.label}</Chip>
-                  {d.mode === "agent" && !d.agent_needs_tools ? (
-                    <span className="text-[9px] tracking-wider text-muted-foreground uppercase">
-                      no tools
-                    </span>
+                  {d.mode === "agent" ? (
+                    d.agent_needs_tools ? (
+                      <Chip className={BLOCK.agent_tool.chip}>needs agent tools</Chip>
+                    ) : (
+                      <span className="text-[9px] tracking-wider text-muted-foreground uppercase">
+                        no agent tools
+                      </span>
+                    )
                   ) : null}
                 </div>
-                {d.rationale ? <p className="mt-0.5 text-muted-foreground">{d.rationale}</p> : null}
+                <Why
+                  label={`Why ${d.mode === "activity" ? "an activity" : d.mode === "connector" ? "an integration" : "an agent"}:`}
+                  text={d.rationale}
+                />
               </div>
             </div>
           );
@@ -482,11 +605,12 @@ function ReusePlanCard({ data }: { data: ReusePlanData }) {
   );
 }
 
-/** Tool and activity synthesis for the planner's deterministic steps. */
+/** The activities a workflow runs as steps: which were reused, which built, and why. */
 function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
   const reused = data.reused ?? [];
   const built = data.built ?? [];
   const failed = data.failed ?? [];
+  const meta = BLOCK.activity;
   if (data.note && reused.length === 0 && built.length === 0) {
     return (
       <CardShell>
@@ -496,31 +620,47 @@ function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
   }
   return (
     <CardShell
-      icon={<Zap className="size-3 text-pink" />}
-      title="Deterministic steps"
-      tone="border-pink/20 bg-pink/5"
+      icon={<Zap className={cn("size-3", meta.text)} />}
+      title={`Activities (${reused.length + built.length})`}
+      tone={meta.box}
     >
+      <BlockDefinition block="activity" />
+
       {reused.length > 0 ? (
         <div className="mb-4">
           <p className="mb-2 text-[10px] tracking-wider text-emerald/80 uppercase">
-            Already existed ({reused.length})
+            Reused existing activities ({reused.length})
           </p>
-          {reused.map((r) => (
-            <div key={r.capability} className="mb-1 flex items-center gap-2 text-[11px]">
-              <PackageCheck className="size-3 shrink-0 text-muted-foreground" />
-              <span className="font-mono text-foreground">{r.tool_name}</span>
-              {r.capability_name ? (
-                <span className="text-muted-foreground">for {r.capability_name}</span>
-              ) : null}
-            </div>
-          ))}
+          <div className="space-y-2">
+            {reused.map((r) => (
+              <div
+                key={r.capability}
+                className="rounded-lg border border-border bg-background-elevated/50 px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <PackageCheck className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="font-mono text-[11px] text-foreground">{r.tool_name}</span>
+                  {r.capability_name ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      step for {r.capability_name}
+                    </span>
+                  ) : null}
+                  <StatusBadge className="border-border bg-background-elevated text-muted-foreground">
+                    Reused activity
+                  </StatusBadge>
+                </div>
+                <Why label="Why an activity:" text={r.why_activity} />
+                <Why label="Why this one:" text={r.reason} />
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
 
       {built.length > 0 ? (
         <div>
-          <p className="mb-2 text-[10px] tracking-wider text-pink/80 uppercase">
-            Synthesised now ({built.length})
+          <p className={cn("mb-2 text-[10px] tracking-wider uppercase", meta.text)}>
+            New activities built ({built.length})
           </p>
           <div className="space-y-2">
             {built.map((b) => (
@@ -529,22 +669,22 @@ function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
                 className="rounded-lg border border-pink/20 bg-background-elevated/50 px-3 py-2"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <PackagePlus className="size-3 shrink-0 text-pink" />
+                  <PackagePlus className={cn("size-3 shrink-0", meta.text)} />
                   <span className="font-mono text-[11px] text-foreground">{b.tool_name}</span>
                   {b.capability_name ? (
                     <span className="text-[10px] text-muted-foreground">
-                      for {b.capability_name}
+                      step for {b.capability_name}
                     </span>
                   ) : null}
-                  {b.status ? (
-                    <StatusBadge className="border-emerald/25 bg-emerald/10 text-emerald">
-                      {b.status}
-                    </StatusBadge>
-                  ) : null}
+                  <StatusBadge className={meta.chip}>
+                    New activity{b.status === "approved" ? " · approved" : ""}
+                  </StatusBadge>
                 </div>
                 {b.description ? (
                   <p className="mt-1 text-[11px] text-muted-foreground">{b.description}</p>
                 ) : null}
+                <Why label="Why an activity:" text={b.why_activity} />
+                <Why label="Why a new one:" text={b.reason} />
                 {b.parameters?.length ? (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {b.parameters.map((pn) => (
@@ -567,7 +707,7 @@ function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
       {failed.length > 0 ? (
         <div className="mt-3 border-t border-border pt-3">
           <p className="mb-1.5 text-[10px] tracking-wider text-amber/80 uppercase">
-            Could not be built ({failed.length}) — these fall back to runtime synthesis
+            Activities that could not be built ({failed.length}) — built at run time instead
           </p>
           {failed.map((f, i) => (
             <p key={i} className="text-[11px] text-amber">
@@ -608,15 +748,8 @@ function AgentDesignedCard({ data }: { data: AgentDesignedData }) {
           <span className="text-foreground">{data.output_contract}</span>
         </p>
       ) : null}
-      {tools.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {tools.map((t) => (
-            <Chip key={t} className="border-pink/20 bg-pink/10 text-pink">
-              {t}
-            </Chip>
-          ))}
-        </div>
-      ) : null}
+      <Why label="Why an agent:" text={data.why_agent} className="mt-2" />
+      <AgentToolList tools={tools} rationale={data.tool_rationale} />
       {data.requested_library?.name ? (
         <p className="mt-2 text-[11px] text-cyan">
           Needs a document library that does not exist yet — “{data.requested_library.name}” will be
@@ -663,18 +796,18 @@ function AgentRecordCard({ data, reused }: { data: AgentRecordData; reused: bool
           {reused ? "Reused" : "Created"}
         </StatusBadge>
       </div>
-      {tools.length > 0 ? (
-        <div className="mt-3">
-          <p className="eyebrow mb-1.5">Equipped tools</p>
-          <div className="flex flex-wrap gap-1.5">
-            {tools.map((t) => (
-              <Chip key={t} className="border-pink/20 bg-pink/10 text-pink">
-                {t}
-              </Chip>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <Why label="Why an agent:" text={data.why_agent} className="mt-2" />
+      {reused ? (
+        tools.length > 0 ? (
+          <AgentToolList tools={tools} rationale={data.tool_rationale} />
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Reused as it is — keeps the agent tools it already has.
+          </p>
+        )
+      ) : (
+        <AgentToolList tools={tools} rationale={data.tool_rationale} title="Agent tools attached" />
+      )}
     </div>
   );
 }
@@ -690,11 +823,22 @@ function TopologyCard({ data }: { data: TopologyData }) {
             {st.id === data.entry_step ? (
               <Chip className="border-primary/25 bg-primary/10 text-primary">entry</Chip>
             ) : null}
-            {st.type ? (
-              <Chip className="border-border bg-background-elevated text-muted-foreground">
-                {st.type}
-              </Chip>
-            ) : null}
+            {st.type
+              ? (() => {
+                  const block = blockForMode(st.type);
+                  return (
+                    <Chip
+                      className={
+                        block
+                          ? BLOCK[block].chip
+                          : "border-border bg-background-elevated text-muted-foreground"
+                      }
+                    >
+                      {block ? BLOCK[block].label : st.type}
+                    </Chip>
+                  );
+                })()
+              : null}
             {st.parallel_group ? (
               <span className="text-[9px] tracking-wider text-amber/80 uppercase">
                 concurrent: {st.parallel_group}
@@ -854,27 +998,27 @@ function ToolRowCard({
 }) {
   const style = {
     exists: {
-      tone: "border-border bg-background-elevated/40",
-      icon: <PackageCheck className="size-3.5 text-muted-foreground" />,
+      tone: BLOCK.agent_tool.box,
+      icon: <Wrench className={cn("size-3.5", BLOCK.agent_tool.text)} />,
       badge: "border-border bg-background-elevated text-muted-foreground",
-      label: "Already exists",
+      label: "Existing agent tool",
     },
     new: {
-      tone: "border-emerald/25 bg-emerald/5",
-      icon: <PackagePlus className="size-3.5 text-emerald" />,
-      badge: "border-emerald/25 bg-emerald/10 text-emerald",
-      label: data.status === "approved" ? "Synthesised & approved" : (data.status ?? "new"),
+      tone: BLOCK.agent_tool.box,
+      icon: <PackagePlus className={cn("size-3.5", BLOCK.agent_tool.text)} />,
+      badge: BLOCK.agent_tool.chip,
+      label: data.status === "approved" ? "New agent tool · approved" : "New agent tool",
     },
     activity: {
-      tone: "border-pink/25 bg-pink/5",
-      icon: <Zap className="size-3.5 text-pink" />,
-      badge: "border-pink/25 bg-pink/10 text-pink",
+      tone: BLOCK.activity.box,
+      icon: <Zap className={cn("size-3.5", BLOCK.activity.text)} />,
+      badge: BLOCK.activity.chip,
       label:
         data.status === "existing"
-          ? "Standalone step"
+          ? "Activity step"
           : data.status === "approved"
-            ? "Synthesised & approved"
-            : (data.status ?? "Activity"),
+            ? "New activity · approved"
+            : "Activity",
     },
   }[variant];
   return (
@@ -915,8 +1059,8 @@ function WorkflowReadyCard({ data }: { data: WorkflowReadyData }) {
         {activityCount > 0 ? (
           <span className="flex items-center gap-1">
             <Zap className="size-3 text-pink" />
-            <strong className="text-foreground">{activityCount}</strong> activit
-            {activityCount === 1 ? "y" : "ies"}
+            <strong className="text-foreground">{activityCount}</strong>{" "}
+            {activityCount === 1 ? "activity step" : "activity steps"}
           </span>
         ) : null}
         {data.entry_step ? (
@@ -985,6 +1129,185 @@ function RegisteredCard({ data }: { data: RegisteredData }) {
   );
 }
 
+/* ── Activities vs agent tools, for the whole plan ─────────────────────── */
+
+interface LedgerActivity {
+  name: string;
+  capability: string | undefined;
+  status: "reused" | "new" | "failed";
+  whyActivity: string | undefined;
+  reason: string | undefined;
+}
+
+interface LedgerTool {
+  tool: string;
+  uses: Array<{ agent: string; why: string | undefined }>;
+}
+
+/**
+ * What the plan ended up with, split by kind. Reasons missing from older runs
+ * are recovered from the execution-mode decision for the same capability.
+ */
+function buildLedger(steps: PlannerStep[]): {
+  activities: LedgerActivity[];
+  tools: LedgerTool[];
+} {
+  const modeWhy = new Map<string, string>();
+  for (const st of steps) {
+    if (st.type !== "execution_modes") continue;
+    for (const d of (st.content as ExecutionModesData).decisions ?? []) {
+      if (d.rationale) modeWhy.set(d.id, d.rationale);
+    }
+  }
+  const why = (cap: string | undefined, own: string | undefined) =>
+    own || (cap ? modeWhy.get(cap) : undefined);
+
+  const activities: LedgerActivity[] = [];
+  const tools = new Map<string, LedgerTool>();
+  const addTool = (tool: string, agent: string, reason: string | undefined) => {
+    const entry = tools.get(tool) ?? { tool, uses: [] };
+    const existing = entry.uses.find((u) => u.agent === agent);
+    if (existing) existing.why = existing.why || reason;
+    else entry.uses.push({ agent, why: reason });
+    tools.set(tool, entry);
+  };
+
+  for (const st of steps) {
+    if (st.type === "activity_plan") {
+      const d = st.content as ActivityPlanData;
+      for (const r of d.reused ?? []) {
+        activities.push({
+          name: r.tool_name,
+          capability: r.capability_name ?? r.capability,
+          status: "reused",
+          whyActivity: why(r.capability, r.why_activity),
+          reason: r.reason,
+        });
+      }
+      for (const b of d.built ?? []) {
+        activities.push({
+          name: b.tool_name,
+          capability: b.capability_name ?? b.capability,
+          status: "new",
+          whyActivity: why(b.capability, b.why_activity),
+          reason: b.reason,
+        });
+      }
+      for (const f of d.failed ?? []) {
+        activities.push({
+          name: f.tool_name,
+          capability: f.capability,
+          status: "failed",
+          whyActivity: why(f.capability, f.why_activity),
+          reason: f.error,
+        });
+      }
+    } else if (
+      st.type === "agent_designed" ||
+      st.type === "agent_new" ||
+      st.type === "agent_exists"
+    ) {
+      const a = st.content as AgentDesignedData & AgentRecordData;
+      const agent = a.agent_name ?? "agent";
+      const reasons = new Map((a.tool_rationale ?? []).map((r) => [r.tool, r.why]));
+      for (const t of a.tools ?? []) addTool(t, agent, reasons.get(t));
+    }
+  }
+  return { activities, tools: [...tools.values()] };
+}
+
+function BuildLedgerCard({ steps }: { steps: PlannerStep[] }) {
+  const { activities, tools } = buildLedger(steps);
+  if (activities.length === 0 && tools.length === 0) return null;
+  const act = BLOCK.activity;
+  const tool = BLOCK.agent_tool;
+  const STATUS = {
+    reused: { label: "Reused", cls: "border-border bg-background-elevated text-muted-foreground" },
+    new: { label: "New", cls: act.chip },
+    failed: { label: "Not built", cls: "border-amber/25 bg-amber/10 text-amber" },
+  } as const;
+  return (
+    <CardShell
+      icon={<ListChecks className="size-3" />}
+      title="Activities vs agent tools in this workflow"
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className={cn("rounded-lg border p-3", act.box)}>
+          <p className={cn("flex items-center gap-1.5 text-[11px] font-semibold", act.text)}>
+            <Zap className="size-3" /> {act.plural} ({activities.length})
+          </p>
+          <p className="mt-0.5 mb-2.5 text-[10px] leading-relaxed text-muted-foreground">
+            {act.placement} {act.definition}
+          </p>
+          {activities.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              None — every step needs judgement, so each one is an agent.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {activities.map((a) => (
+                <div key={`${a.status}-${a.name}`}>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono text-[11px] text-foreground">{a.name}</span>
+                    <Chip className={STATUS[a.status].cls}>{STATUS[a.status].label}</Chip>
+                  </div>
+                  {a.capability ? (
+                    <p className="text-[10px] text-muted-foreground">step for {a.capability}</p>
+                  ) : null}
+                  <Why label="Why an activity:" text={a.whyActivity} />
+                  <Why
+                    label={
+                      a.status === "reused"
+                        ? "Why this one:"
+                        : a.status === "new"
+                          ? "Why a new one:"
+                          : "Error:"
+                    }
+                    text={a.reason}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className={cn("rounded-lg border p-3", tool.box)}>
+          <p className={cn("flex items-center gap-1.5 text-[11px] font-semibold", tool.text)}>
+            <Wrench className="size-3" /> {tool.plural} ({tools.length})
+          </p>
+          <p className="mt-0.5 mb-2.5 text-[10px] leading-relaxed text-muted-foreground">
+            {tool.placement} {tool.definition}
+          </p>
+          {tools.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              None — no agent in this workflow needs to call anything for itself.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {tools.map((t) => (
+                <div key={t.tool}>
+                  <span className="font-mono text-[11px] text-foreground">{t.tool}</span>
+                  {t.uses.map((u) => (
+                    <div key={u.agent} className="mt-0.5">
+                      <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <Cpu className="size-2.5 text-indigo" /> attached to {u.agent}
+                      </p>
+                      <Why label="Why an agent tool:" text={u.why} />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 border-t border-cyan/15 pt-2 text-[10px] leading-relaxed text-muted-foreground">
+            Planning attaches agent tools from the existing catalogue — it does not build new ones.
+          </p>
+        </div>
+      </div>
+    </CardShell>
+  );
+}
+
 /** The card for one payload. */
 export function renderPlannerCard(step: PlannerStep): ReactNode {
   const c = step.content;
@@ -1041,6 +1364,14 @@ export function plannerLayerCards(steps: PlannerStep[]): Record<string, ReactNod
     if (!owner) continue;
     (byLayer[owner] ??= []).push(<div key={step.id}>{renderPlannerCard(step)}</div>);
   }
+  const ready = steps.find((s) => s.type === "workflow_ready");
+  if (ready) {
+    (byLayer["workflow_persistence"] ??= []).push(
+      <div key="build-ledger">
+        <BuildLedgerCard steps={steps} />
+      </div>,
+    );
+  }
   return Object.fromEntries(
     Object.entries(byLayer).map(([layer, nodes]) => [
       layer,
@@ -1076,20 +1407,20 @@ type PlannerRow =
 
 const GROUP_META = {
   tool: {
-    label: "Tools",
-    caption: "attached to agents",
+    label: BLOCK.agent_tool.plural,
+    caption: "attached to agents — not steps in the graph",
     icon: Wrench,
-    dot: "border-indigo/40 bg-indigo/15 text-indigo",
-    text: "text-indigo",
-    box: "border-indigo/25 bg-indigo/5",
+    dot: "border-cyan/40 bg-cyan/15 text-cyan",
+    text: BLOCK.agent_tool.text,
+    box: BLOCK.agent_tool.box,
   },
   activity: {
-    label: "Activities",
-    caption: "standalone workflow steps",
+    label: BLOCK.activity.plural,
+    caption: "each one is its own step in the graph",
     icon: Zap,
     dot: "border-pink/40 bg-pink/15 text-pink",
-    text: "text-pink",
-    box: "border-pink/25 bg-pink/5",
+    text: BLOCK.activity.text,
+    box: BLOCK.activity.box,
   },
 } as const;
 

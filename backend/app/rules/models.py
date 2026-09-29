@@ -47,8 +47,33 @@ class Rule(Base):
     always_on = Column(Boolean, nullable=False, default=False)
     enabled = Column(Boolean, nullable=False, default=True)
     source = Column(String, nullable=False, default="user")   # recommended | user
+    #: A category id (built-in or a RuleCategory). NULL keeps the type's own.
+    category = Column(String, nullable=True)
+    #: JSON list of agent ids / workflow names this rule is limited to. Empty
+    #: or NULL means it is not targeted: always on, or left to the orchestrator.
+    targets = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class RuleCategory(Base):
+    """A category a person created to group their rules."""
+
+    __tablename__ = "rule_categories"
+
+    id = Column(String, primary_key=True)                     # slug
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    color = Column(String, nullable=False, default="slate")
+    icon = Column(String, nullable=False, default="Tag")
+    #: agent | workflow | both — which rules it offers.
+    scope = Column(String, nullable=True)
+    #: JSON list of rule type keys offered under this category when creating a rule.
+    rule_types = Column(Text, nullable=True)
+    #: Defaults for rules created from this category; NULL keeps the type's own.
+    default_enforcement = Column(String, nullable=True)   # block | warn | fix
+    default_applies = Column(String, nullable=True)       # always | ai
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class RuleAssignment(Base):

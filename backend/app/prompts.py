@@ -66,6 +66,20 @@ for a new use case. If the workflow needs input safety → use
 jailbreak_moderation_agent, not "mortgage_input_safety_agent". The tier-1
 agent handles all domains by design.
 
+Ontology placement: every tier-1 agent is classified under the `System` node
+(`domain.system`). System is a ROOT of the domain tree — a sibling of BFSI,
+Healthcare and the other industries, not a child of one. That is what "domain
+agnostic" means here, stated as a fact in the ontology rather than left as an
+absence.
+
+Two consequences you must plan on:
+  • System is in scope for EVERY goal. The foundation agents listed in the
+    inventory are available to you no matter which industry the goal narrowed
+    to, so "no suitable agent was in scope" is never a reason to create one.
+  • A tier-1 agent must never be annotated to an industry. If you find yourself
+    wanting a foundation agent that belongs to lending, you have mis-tiered the
+    capability — it is tier 2 or tier 3, so name it accordingly.
+
 ────────────────────────────────────────────────────────────────────────────
 TIER 2 — DOMAIN agents
 ────────────────────────────────────────────────────────────────────────────
@@ -1012,86 +1026,6 @@ its arguments at runtime. If no connector applies, do not emit connector steps.
 
 ## Requirements from analysis phase
 {requirements_json}
-"""
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. EXPLICIT TOOL SYNTHESIS — Generate a safe tool schema on demand
-# ═══════════════════════════════════════════════════════════════════════════
-
-EXPLICIT_SYNTHESIS_SYSTEM_PROMPT = """\
-You are a Tool Schema Designer. The user describes a tool they want (supplied in
-the user message). Your job is to produce a complete, safe, minimal JSON schema
-for it.
-
-## Security and safety — evaluate FIRST
-Before designing any tool, check the user's request against the blocklist below.
-If the requested tool violates any rule in the blocklist, output the blocked
-error JSON and stop. Do not design the tool.
-
-{tool_safety_blocklist}
-
-## Duplicate check
-If the requested tool duplicates the functionality of an existing tool
-(semantically, not just by name), output:
-{{
-  "error": "duplicate",
-  "existing_tool": "<name of the existing tool>",
-  "reason": "<one sentence: how the existing tool already covers this request>"
-}}
-
-## Output — raw JSON, no markdown
-{{
-  "schema_version": "2.0",
-  "tool_name": "verb_noun_snake_case",
-  "tool_description": "Sentence 1: what the tool does and when to use it. Sentence 2: what it returns and in what format.",
-  "api_details": "The REAL endpoint, auth, and query params required. If no external API, write 'No external API. This is a pure computation using standard library.'",
-  "expected_output_shape": "Describe the exact shape of the data field in the success dict. Example: 'A list of dicts with keys: id (int), name (str).'",
-  "parameters": {{
-    "type": "object",
-    "properties": {{
-      "param1": {{
-        "type": "string | integer | number | boolean | array | object",
-        "description": "Precise description. Include valid value ranges or examples where helpful."
-      }}
-    }}
-  }},
-  "required": ["param1"],
-  "idempotent": true,
-  "side_effects": "none | read-only | write | delete"
-}}
-
-## Design rules
-1. tool_name — snake_case, verb-first, no hyphens, max 40 characters.
-   Good: fetch_weather, query_user_profile, compute_loan_rate
-   Bad: weather, myTool, do-stuff
-2. tool_description — exactly 2 sentences as described above.
-3. api_details — Provide real endpoint paths or strictly mark as pure computation.
-4. expected_output_shape — Do NOT leave this blank. Provide exact keys.
-5. Each parameter must have "type" and "description". Use the most specific
-   type possible (integer not string for counts; boolean not string for flags).
-6. "required" — only parameters without which the tool cannot function.
-   Optional params must NOT appear in required[].
-7. One tool = one primary action. If the description implies multiple actions,
-   design for the primary action only and note any secondary actions as
-   out-of-scope in tool_description.
-8. idempotent — true if calling the tool multiple times with the same args
-   produces the same result with no additional side effects.
-9. side_effects — be honest. This helps the runtime decide retry behaviour.
-10. If the description is vague, infer the most conservative, specific
-    interpretation. Prefer read-only over write. Prefer narrow scope over broad.
-"""
-
-EXPLICIT_SYNTHESIS_SYSTEM_PROMPT = EXPLICIT_SYNTHESIS_SYSTEM_PROMPT.replace(
-    "{tool_safety_blocklist}", _TOOL_SAFETY_BLOCKLIST
-)
-
-EXPLICIT_SYNTHESIS_USER_PROMPT = """\
-## Existing tools in the system (check for duplicates before designing)
-{existing_tools}
-
-## Tool request
-{tool_request}
 """
 
 

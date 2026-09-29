@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Crosshair, Loader2, Sparkles } from "lucide-react";
@@ -11,56 +11,108 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { GraphCanvas, type SimpleEdge, type SimpleNode } from "./GraphCanvas";
+import { kindColor, kindLabel } from "./graphTones";
 
 /**
  * Two rehearsals of the same machinery the planner uses: what a goal narrows
  * the ontology down to, and how a resource description gets classified.
  */
 export function ScopeTab() {
+  const [submitted, setSubmitted] = useState("");
   return (
     <div className="grid gap-5 xl:grid-cols-2">
-      <ScopePanel />
+      <ScopePanel submitted={submitted} onSubmit={setSubmitted} />
       <ClassifyPanel />
+      {submitted ? <ScopedGraph goal={submitted} /> : null}
     </div>
   );
 }
 
-function ScopePanel() {
-  const [goal, setGoal] = useState("");
-  const [submitted, setSubmitted] = useState("");
+/** The scoped subgraph, full width under both panels so it has room to read. */
+function ScopedGraph({ goal }: { goal: string }) {
+  const graph = useQuery({
+    queryKey: QK.scopeGraph(goal),
+    queryFn: () => ontologyApi.scopeGraph(goal),
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const nodes = useMemo<SimpleNode[]>(
+    () =>
+      (graph.data?.nodes ?? []).map((n) => ({
+        id: n.id,
+        label: n.label,
+        sublabel: kindLabel(n.kind),
+        color: kindColor(n.kind),
+        group: n.kind,
+        weight: n.degree,
+      })),
+    [graph.data],
+  );
+  const edges = useMemo<SimpleEdge[]>(
+    () =>
+      (graph.data?.edges ?? []).map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: e.label,
+        dashed: e.reveal === "reverse",
+      })),
+    [graph.data],
+  );
+
+  return (
+    <GlassPanel className="xl:col-span-2">
+      <GlassPanelHeader
+        title="Scoped subgraph"
+        description={
+          graph.data?.scoped
+            ? `${nodes.length} nodes the planner would work within for this goal.`
+            : "The goal matched no domain, so the planner would see everything."
+        }
+      />
+      <div className="p-4">
+        {graph.isLoading ? (
+          <p className="technical-label">Drawing…</p>
+        ) : graph.isError ? (
+          <ErrorState error={graph.error} onRetry={() => graph.refetch()} />
+        ) : (
+          <GraphCanvas
+            nodes={nodes}
+            edges={edges}
+            layout="network"
+            nodeStyle="dot"
+            groupLabel={kindLabel}
+            selectedId={selectedId}
+            onNodeClick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
+            onPaneClick={() => setSelectedId(null)}
+            className="h-[32rem]"
+            empty={
+              <EmptyState
+                title="Nothing to draw."
+                description="No domain matched, so there is no narrower graph."
+              />
+            }
+          />
+        )}
+      </div>
+    </GlassPanel>
+  );
+}
+
+function ScopePanel({
+  submitted,
+  onSubmit,
+}: {
+  submitted: string;
+  onSubmit: (goal: string) => void;
+}) {
+  const [goal, setGoal] = useState(submitted);
 
   const scope = useQuery({
     queryKey: QK.scope(submitted),
     queryFn: () => ontologyApi.scope(submitted),
     enabled: submitted.length > 0,
   });
-
-  const graph = useQuery({
-    queryKey: QK.scopeGraph(submitted),
-    queryFn: () => ontologyApi.scopeGraph(submitted),
-    enabled: submitted.length > 0,
-  });
-
-  const nodes: SimpleNode[] = (graph.data?.nodes ?? []).map((n) => ({
-    id: n.id,
-    label: n.label,
-    sublabel: n.kind,
-    tone:
-      n.kind === "scheme"
-        ? "purple"
-        : n.kind === "concept"
-          ? "indigo"
-          : n.kind === "agent"
-            ? "emerald"
-            : "cyan",
-  }));
-  const edges: SimpleEdge[] = (graph.data?.edges ?? []).map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.label,
-    dashed: e.reveal === "reverse",
-  }));
 
   return (
     <GlassPanel>
@@ -72,7 +124,7 @@ function ScopePanel() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setSubmitted(goal.trim());
+            onSubmit(goal.trim());
           }}
           className="flex gap-2"
         >
@@ -138,13 +190,6 @@ function ScopePanel() {
                     </li>
                   ))}
                 </ul>
-              </div>
-            ) : null}
-
-            {nodes.length > 0 ? (
-              <div>
-                <p className="eyebrow mb-1.5">Scoped subgraph</p>
-                <GraphCanvas nodes={nodes} edges={edges} className="h-80" />
               </div>
             ) : null}
           </div>

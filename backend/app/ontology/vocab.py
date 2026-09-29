@@ -68,6 +68,33 @@ AGENT_TIERS: tuple[str, ...] = tuple(t.value for t in AgentTier)
 
 DEFAULT_TIER = AgentTier.DOMAIN
 
+#: Where foundation-tier agents are filed in the domain tree.
+#:
+#: A root concept, sibling to the industries rather than under one, because a
+#: jailbreak moderator is not "a bit of BFSI" — it is orthogonal to all of them.
+#: Foundation agents used to carry an empty domain list, which was true but
+#: unstorable: nothing could tell a deliberately domain-agnostic agent from one
+#: the backfill had never reached. Tagging them here makes that distinction a
+#: fact in the store, and makes the domain tree a complete partition of the
+#: inventory rather than a cover with a hole in it.
+#:
+#: It is a *classification* node, not a knowledge domain. `knowledge` strips it
+#: before scoping a search — see `knowledge.domains_for_agent`.
+SYSTEM_DOMAIN = "domain.system"
+
+
+def domains_for_tier(tier: str | None) -> list[str] | None:
+    """The domains a tier fixes, or None when the tier does not constrain them.
+
+    Foundation is the only tier whose domain is a function of the tier itself.
+    Returning None rather than an empty list for the others keeps "this tier
+    decides nothing, go and infer" distinct from "this tier decides: nothing",
+    which is what let the old empty-list contract be read both ways.
+    """
+    if coerce_tier(tier) == AgentTier.FOUNDATION.value:
+        return [SYSTEM_DOMAIN]
+    return None
+
 
 class DataClass(str, Enum):
     """Sensitivity of the data a step handles. Drives egress constraints."""
@@ -92,6 +119,9 @@ _TIER_META: dict[AgentTier, dict[str, str]] = {
                  "for a new use case — a tier-1 agent handles every domain by design.",
         "naming": "Names must NOT include a domain or product word. "
                   "Good: 'Jailbreak Moderation Agent'. Bad: 'Mortgage Input Safety Agent'.",
+        "domain": f"Always `{SYSTEM_DOMAIN}` (System), never an industry. System sits "
+                  "beside BFSI and Healthcare in the tree, so these agents are in scope "
+                  "for every goal no matter what it is about.",
     },
     AgentTier.DOMAIN: {
         "label": "Domain",
@@ -100,6 +130,7 @@ _TIER_META: dict[AgentTier, dict[str, str]] = {
                  "Create only when nothing does.",
         "naming": "Names reflect the business domain, not a product. "
                   "Good: 'Financial Risk Assessor'. Bad: 'Mortgage Risk Assessor'.",
+        "domain": "An industry or domain node (`domain.lending`), never System.",
     },
     AgentTier.USE_CASE: {
         "label": "Use case",
@@ -108,6 +139,7 @@ _TIER_META: dict[AgentTier, dict[str, str]] = {
                  "for that product type exists.",
         "naming": "Names MUST include the product type. "
                   "Good: 'Mortgage Eligibility Assessor'. Bad: 'Eligibility Assessor'.",
+        "domain": "A subdomain node (`domain.lending.mortgage`), never System.",
     },
 }
 
@@ -144,6 +176,7 @@ def tier_rules_block() -> str:
             meta["short"],
             f"- Reuse rule: {meta['reuse']}",
             f"- Naming: {meta['naming']}",
+            f"- Classified under: {meta['domain']}",
             "",
         ]
     lines += [

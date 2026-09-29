@@ -19,7 +19,13 @@ export default defineConfig({
       // The frontend calls relative paths; the dev proxy forwards them to the FastAPI backend.
       proxy: {
         "/api": { target: BACKEND, changeOrigin: true, ws: false },
-        "/health": { target: BACKEND, changeOrigin: true },
+        // /health is also the Health page: a browser loading the page (asking for
+        // HTML) gets the app, while the app's own health check reaches the backend.
+        "/health": {
+          target: BACKEND,
+          changeOrigin: true,
+          bypass: (req) => (req.headers.accept?.includes("text/html") ? req.url : undefined),
+        },
         "/uploads": { target: BACKEND, changeOrigin: true },
       },
     },

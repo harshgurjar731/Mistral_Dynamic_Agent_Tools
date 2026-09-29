@@ -18,7 +18,7 @@ from typing import Iterable, Optional
 
 from app.database import SessionLocal
 from app.rules import catalog
-from app.rules.models import Rule, RuleAssignment, RuleEvent
+from app.rules.models import Rule, RuleAssignment, RuleCategory, RuleEvent
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,36 @@ def _session():
 # ── Serialisation ───────────────────────────────────────────────────────────
 
 
+def _utc_iso(value) -> Optional[str]:
+    """Stored times are naive UTC; say so, or browsers read them as local time."""
+    if not value:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.isoformat() + "Z"
+
+
+def _targets(raw: Optional[str]) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(v) for v in value if str(v).strip()] if isinstance(value, list) else []
+
+
+def _clean_targets(targets) -> list[str]:
+    seen: dict[str, None] = {}
+    for t in targets or []:
+        t = str(t or "").strip()
+        if t:
+            seen[t] = None
+    return list(seen)
+
+
 def _rule_dict(rule: Rule) -> dict:
     rule_type = catalog.get_type(rule.type)
+    targets = _targets(rule.targets)
+    always_on = bool(rule.always_on)
     try:
         params = json.loads(rule.params or "{}")
     except (TypeError, ValueError):
@@ -62,14 +90,20 @@ def _rule_dict(rule: Rule) -> dict:
         "description": rule.description or (rule_type.description if rule_type else ""),
         "params": params,
         "enforcement": rule.enforcement,
-        "always_on": bool(rule.always_on),
+        "always_on": always_on,
+        "targets": [] if always_on else targets,
+        #: always — every agent/workflow; targeted — only ``targets``;
+        #: ai — the orchestrator (or a person) attaches it where relevant.
+        "applies": "always" if always_on else ("targeted" if targets else "ai"),
         "enabled": bool(rule.enabled),
         "source": rule.source,
         "summary": catalog.render_summary(rule_type, params) if rule_type else "",
-        "category": rule_type.category if rule_type else "quality",
+        "category": rule.category or (rule_type.category if rule_type else "quality"),
+        "type_category": rule_type.category if rule_type else "quality",
         "icon": rule_type.icon if rule_type else "Shield",
         "checkpoints": rule_type.checkpoints if rule_type else [],
-        "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+        "created_at": _utc_iso(rule.created_at),
+        "updated_at": _utc_iso(rule.updated_at),
     }
 
 
@@ -131,7 +165,14 @@ def _validated(rule_type_key: str, enforcement: Optional[str], params: Optional[
             f"'{rule_type.name}' cannot use '{enforcement}'. "
             f"Choose one of: {', '.join(rule_type.enforcements)}."
         )
-    return rule_type, enforcement, catalog.normalise_params(rule_type, params)
+    params = catalog.normalise_params(rule_type, params)
+    if params.get("mode") == "regex":
+        for pattern in params.get("patterns") or []:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise RuleError(f"'{pattern}' is not a valid regular expression: {e}.")
+    return rule_type, enforcement, params
 
 
 def create_rule(
@@ -145,10 +186,14 @@ def create_rule(
     enabled: bool = True,
     source: str = "user",
     rule_id: Optional[str] = None,
+    category: Optional[str] = None,
+    targets: Optional[list] = None,
 ) -> dict:
     rule_type, enforcement, params = _validated(type, enforcement, params)
     if not (name or "").strip():
         raise RuleError("A rule needs a name.")
+    category = _checked_category(category)
+    targets = [] if always_on else _clean_targets(targets)
 
     with _session() as db:
         if db is None:
@@ -162,6 +207,8 @@ def create_rule(
             description=(description or "").strip() or None, params=json.dumps(params),
             enforcement=enforcement, always_on=bool(always_on), enabled=bool(enabled),
             source=source,
+            category=None if category == rule_type.category else category,
+            targets=json.dumps(targets) if targets else None,
         ))
         db.commit()
     _invalidate()
@@ -193,6 +240,18 @@ def update_rule(rule_id: str, changes: dict) -> dict:
             rule.always_on = bool(changes["always_on"])
         if "enabled" in changes:
             rule.enabled = bool(changes["enabled"])
+        if "category" in changes:
+            category = _checked_category(changes["category"])
+            rule_type = catalog.get_type(rule.type)
+            type_default = rule_type.category if rule_type else None
+            rule.category = None if not category or category == type_default else category
+        if "targets" in changes:
+            targets = _clean_targets(changes["targets"])
+            rule.targets = json.dumps(targets) if targets else None
+        # Always on applies everywhere; a target list alongside it would be dead
+        # state that silently reappears if the rule is later switched off.
+        if rule.always_on:
+            rule.targets = None
         rule.updated_at = datetime.now(timezone.utc)
         db.commit()
     _invalidate()
@@ -254,23 +313,228 @@ def insert_if_missing(values: dict) -> bool:
     return True
 
 
+# ── Categories ──────────────────────────────────────────────────────────────
+
+
+def _checked_category(category: Optional[str]) -> Optional[str]:
+    """A known category id, or None. Unknown ids are refused, not stored."""
+    category = (category or "").strip()
+    if not category:
+        return None
+    if category in catalog.BUILTIN_CATEGORY_IDS:
+        return category
+    with _session() as db:
+        if db is not None and db.get(RuleCategory, category) is not None:
+            return category
+    raise RuleError(f"Unknown category '{category}'.")
+
+
+_CATEGORY_SCOPES = {"agent", "workflow", "both"}
+_CATEGORY_ENFORCEMENTS = {"block", "warn", "fix"}
+_CATEGORY_APPLIES = {"always", "ai"}
+
+
+def _scope_of(type_keys: list[str]) -> str:
+    scopes = {t.scope for t in (catalog.get_type(k) for k in type_keys) if t}
+    return scopes.pop() if len(scopes) == 1 else "both"
+
+
+def _category_dict(c: RuleCategory, counts: dict) -> dict:
+    try:
+        types = json.loads(c.rule_types or "[]")
+    except (TypeError, ValueError):
+        types = []
+    types = [k for k in types if catalog.get_type(k)]
+    return {
+        "id": c.id, "name": c.name, "description": c.description or "",
+        "color": c.color, "icon": c.icon, "builtin": False,
+        "scope": c.scope or _scope_of(types),
+        "rule_types": types,
+        "default_enforcement": c.default_enforcement,
+        "default_applies": c.default_applies,
+        "rules": counts.get(c.id, 0),
+        "created_at": _utc_iso(c.created_at),
+    }
+
+
+def list_categories() -> list[dict]:
+    """Built-in categories first, then the ones people created, with rule counts.
+
+    Every category has the same shape: the rule types it offers, the scope
+    they cover, and the defaults for rules created from it. A built-in
+    category's rule types are the catalog types filed under it.
+    """
+    counts: dict[str, int] = {}
+    for r in list_rules():
+        counts[r["category"]] = counts.get(r["category"], 0) + 1
+    out = []
+    for c in catalog.BUILTIN_CATEGORIES:
+        types = [t.key for t in catalog.types_for() if t.category == c["id"]]
+        out.append({
+            **c, "builtin": True, "rules": counts.get(c["id"], 0),
+            "scope": _scope_of(types), "rule_types": types,
+            "default_enforcement": None, "default_applies": None, "created_at": None,
+        })
+    with _session() as db:
+        if db is not None:
+            for c in db.query(RuleCategory).order_by(RuleCategory.name).all():
+                out.append(_category_dict(c, counts))
+    return out
+
+
+_CATEGORY_COLORS = {"red", "amber", "emerald", "cyan", "blue", "indigo", "purple", "pink", "orange", "slate"}
+
+
+def _checked_category_config(values: dict) -> dict:
+    """Validate the configurable fields of a category; returns column values."""
+    out: dict = {}
+    if "scope" in values:
+        scope = values["scope"] or "both"
+        if scope not in _CATEGORY_SCOPES:
+            raise RuleError("Scope must be agent, workflow or both.")
+        out["scope"] = scope
+    if "rule_types" in values:
+        keys = []
+        for k in values["rule_types"] or []:
+            t = catalog.get_type(str(k))
+            if not t:
+                raise RuleError(f"Unknown rule type '{k}'.")
+            if k not in keys:
+                keys.append(k)
+        scope = out.get("scope") or values.get("scope") or "both"
+        wrong = [k for k in keys if scope != "both" and catalog.get_type(k).scope != scope]
+        if wrong:
+            raise RuleError(f"These rule types are not {scope} rules: {', '.join(wrong)}.")
+        out["rule_types"] = json.dumps(keys)
+    if "default_enforcement" in values:
+        e = values["default_enforcement"] or None
+        if e is not None and e not in _CATEGORY_ENFORCEMENTS:
+            raise RuleError("Default enforcement must be block, warn or fix.")
+        out["default_enforcement"] = e
+    if "default_applies" in values:
+        a = values["default_applies"] or None
+        if a is not None and a not in _CATEGORY_APPLIES:
+            raise RuleError("Default 'apply to' must be always or ai.")
+        out["default_applies"] = a
+    return out
+
+
+def create_category(
+    *, name: str, description: str = "", color: str = "slate", icon: str = "Tag",
+    scope: str = "both", rule_types: Optional[list] = None,
+    default_enforcement: Optional[str] = None, default_applies: Optional[str] = None,
+) -> dict:
+    name = (name or "").strip()
+    if not name:
+        raise RuleError("A category needs a name.")
+    config = _checked_category_config({
+        "scope": scope, "rule_types": rule_types or [],
+        "default_enforcement": default_enforcement, "default_applies": default_applies,
+    })
+    with _session() as db:
+        if db is None:
+            raise RuleError("The rules database is unavailable.")
+        if any(c["name"].lower() == name.lower() for c in list_categories()):
+            raise RuleError(f"A category called '{name}' already exists.")
+        base = f"custom_{_slug(name)}"
+        new_id, n = base, 2
+        while db.get(RuleCategory, new_id) is not None:
+            new_id, n = f"{base}_{n}", n + 1
+        db.add(RuleCategory(
+            id=new_id, name=name[:60], description=(description or "").strip()[:300] or None,
+            color=color if color in _CATEGORY_COLORS else "slate", icon=(icon or "Tag")[:40],
+            **config,
+        ))
+        db.commit()
+    _invalidate()
+    return next(c for c in list_categories() if c["id"] == new_id)
+
+
+def update_category(category_id: str, changes: dict) -> dict:
+    if category_id in catalog.BUILTIN_CATEGORY_IDS:
+        raise RuleError("Built-in categories cannot be changed.")
+    with _session() as db:
+        if db is None:
+            raise RuleError("The rules database is unavailable.")
+        cat = db.get(RuleCategory, category_id)
+        if not cat:
+            raise RuleError(f"Category '{category_id}' not found.")
+        if "name" in changes:
+            name = (changes["name"] or "").strip()
+            if not name:
+                raise RuleError("A category needs a name.")
+            if any(c["name"].lower() == name.lower() and c["id"] != category_id for c in list_categories()):
+                raise RuleError(f"A category called '{name}' already exists.")
+            cat.name = name[:60]
+        if "description" in changes:
+            cat.description = (changes["description"] or "").strip()[:300] or None
+        if "color" in changes and changes["color"] in _CATEGORY_COLORS:
+            cat.color = changes["color"]
+        if "icon" in changes and changes["icon"]:
+            cat.icon = str(changes["icon"])[:40]
+        config_keys = ("scope", "rule_types", "default_enforcement", "default_applies")
+        if any(k in changes for k in config_keys):
+            current = {"scope": cat.scope or "both"}
+            for key, value in _checked_category_config({**current, **{
+                k: changes[k] for k in config_keys if k in changes
+            }}).items():
+                setattr(cat, key, value)
+        db.commit()
+    _invalidate()
+    return next(c for c in list_categories() if c["id"] == category_id)
+
+
+def delete_category(category_id: str) -> dict:
+    """Delete a custom category; its rules go back to their type's own category."""
+    if category_id in catalog.BUILTIN_CATEGORY_IDS:
+        raise RuleError("Built-in categories cannot be deleted.")
+    with _session() as db:
+        if db is None:
+            raise RuleError("The rules database is unavailable.")
+        cat = db.get(RuleCategory, category_id)
+        if not cat:
+            raise RuleError(f"Category '{category_id}' not found.")
+        moved = db.query(Rule).filter(Rule.category == category_id).update(
+            {"category": None}, synchronize_session=False
+        )
+        db.delete(cat)
+        db.commit()
+    _invalidate()
+    return {"deleted": category_id, "rules_moved": moved}
+
+
 # ── Effective rules ─────────────────────────────────────────────────────────
 
 
-def effective_rules(scope: str, selected_ids: Iterable[str] = ()) -> list[dict]:
-    """Enabled rules of ``scope`` that are always on, plus the selected ones."""
+def effective_rules(
+    scope: str, selected_ids: Iterable[str] = (), subject_id: Optional[str] = None,
+) -> list[dict]:
+    """Enabled rules of ``scope`` that apply: always on, selected, or targeted at ``subject_id``.
+
+    ``subject_id`` is an agent id or a workflow name. Without it, targeted
+    rules are left out — a subject that does not exist yet cannot have been
+    targeted.
+    """
     selected = set(selected_ids or ())
     return [
         r for r in _all_rules_cached()
-        if r["scope"] == scope and r["enabled"] and (r["always_on"] or r["id"] in selected)
+        if r["scope"] == scope and r["enabled"] and (
+            r["always_on"]
+            or r["id"] in selected
+            or (subject_id is not None and subject_id in r.get("targets", []))
+        )
     ]
 
 
 def selectable_rules(scope: str) -> list[dict]:
-    """Enabled rules a person or the orchestrator may attach (i.e. not always on)."""
+    """Enabled rules a person or the orchestrator may attach.
+
+    Always-on rules apply by themselves, and targeted rules apply only where a
+    person pointed them — neither is the orchestrator's to hand out.
+    """
     return [
         r for r in _all_rules_cached()
-        if r["scope"] == scope and r["enabled"] and not r["always_on"]
+        if r["scope"] == scope and r["enabled"] and not r["always_on"] and not r.get("targets")
     ]
 
 
@@ -295,18 +559,20 @@ def agent_assignments(agent_id: str) -> list[dict]:
 def rules_for_agent(agent_id: Optional[str]) -> list[dict]:
     """Effective agent rules for one agent — always-on plus its selection."""
     selected = [a["rule_id"] for a in agent_assignments(agent_id)] if agent_id else []
-    return effective_rules("agent", selected)
+    return effective_rules("agent", selected, subject_id=agent_id)
 
 
 def agent_rule_entries(agent_id: str) -> list[dict]:
     """Every rule that applies to an agent, with who put it there and why."""
     assigned = {a["rule_id"]: a for a in agent_assignments(agent_id)}
     out = []
-    for rule in effective_rules("agent", assigned.keys()):
+    for rule in effective_rules("agent", assigned.keys(), subject_id=agent_id):
         entry = assigned.get(rule["id"])
         out.append({
             **rule,
-            "applied_by": "always" if rule["always_on"] else (entry["source"] if entry else "user"),
+            "applied_by": "always" if rule["always_on"] else (
+                entry["source"] if entry else ("targeted" if agent_id in rule.get("targets", []) else "user")
+            ),
             "reason": (entry or {}).get("reason", ""),
         })
     return out
@@ -452,6 +718,9 @@ def rule_usage() -> dict[str, dict]:
             return usage
         for rule_id, in db.query(RuleAssignment.rule_id).all():
             usage.setdefault(rule_id, {"agents": 0})["agents"] = usage.get(rule_id, {}).get("agents", 0) + 1
+        for rule in db.query(Rule).filter(Rule.targets.isnot(None)).all():
+            bucket = usage.setdefault(rule.id, {"agents": 0})
+            bucket["targets"] = len(_targets(rule.targets))
         since = datetime.now(timezone.utc) - timedelta(days=7)
         rows = (
             db.query(RuleEvent.rule_id, RuleEvent.outcome)

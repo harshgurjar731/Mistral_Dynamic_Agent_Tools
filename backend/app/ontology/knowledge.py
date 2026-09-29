@@ -315,14 +315,24 @@ def agent_has_coverage(agent_id: str) -> bool:
 
 
 def domains_for_agent(agent_id: str) -> list[str]:
-    """The domains an agent is annotated against, for automatic scoping."""
-    from app.ontology.vocab import Predicate, SubjectType
+    """The domains an agent is annotated against, for automatic scoping.
+
+    ``domain.system`` is stripped. It is where foundation agents are filed in
+    the tree, but it is a classification node, not a body of knowledge: there
+    are no industry facts under it and there never will be. Returning it would
+    scope a knowledge search to an empty subtree, which reads as "searched and
+    found nothing" rather than "has no knowledge domain" — and would flip
+    `agent_has_coverage` to True for exactly the guardrails it is meant to
+    exclude.
+    """
+    from app.ontology.vocab import SYSTEM_DOMAIN, Predicate, SubjectType
 
     if not agent_id:
         return []
     try:
         annotations = store.annotations_for(SubjectType.AGENT.value, agent_id)
-        return annotations.get(Predicate.SERVES_DOMAIN.value, []) or []
+        domains = annotations.get(Predicate.SERVES_DOMAIN.value, []) or []
+        return [d for d in domains if d != SYSTEM_DOMAIN]
     except Exception as e:
         logger.debug("Could not read domains for agent %s: %s", agent_id, e)
         return []

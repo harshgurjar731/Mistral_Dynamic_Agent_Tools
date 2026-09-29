@@ -26,7 +26,13 @@ import logging
 from typing import Optional
 
 from app.ontology import backfill, matcher, store
-from app.ontology.vocab import AgentTier, Predicate, Scheme, SubjectType, coerce_tier
+from app.ontology.vocab import (
+    Predicate,
+    Scheme,
+    SubjectType,
+    coerce_tier,
+    domains_for_tier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +58,22 @@ def _is_protected(
 
 
 def _domains_for(tier: str, goal: Optional[str], name: str, body: str) -> list[str]:
-    """Which domains to record, if any.
+    """Which domains to record.
 
     Foundation agents are domain-agnostic *by definition* — the tier exists for
-    safety and quality gates that apply to every domain — so pinning one to a
-    domain would be wrong even when the text of the request it was created for
-    matches one strongly. They get a tier and nothing else.
+    safety and quality gates that apply to every domain — so pinning one to an
+    industry would be wrong even when the text of the request it was created
+    for matches one strongly. They go under `domain.system` instead, which is a
+    sibling of the industries rather than one of them: the claim being recorded
+    is "belongs to no industry", not "belongs to industry X".
 
     For the other tiers the originating goal is the better signal when there is
     one: an agent generated for "assess a residential mortgage application"
     belongs to mortgage regardless of how its instructions happen to be worded.
     """
-    if tier == AgentTier.FOUNDATION.value:
-        return []
+    fixed = domains_for_tier(tier)
+    if fixed is not None:
+        return fixed
 
     if goal:
         from_goal = matcher.match_domains(goal, limit=2)

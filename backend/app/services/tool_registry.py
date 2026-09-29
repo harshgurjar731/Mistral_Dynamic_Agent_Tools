@@ -308,15 +308,39 @@ async def refresh_dynamic_tools():
     from app.services.tool_resolver import tool_resolver
 
     tools = await tool_resolver.list_tools()
+
+    # Forget dynamic tools the service no longer has (deleted or rejected), so
+    # agents stop being offered them. An empty listing is treated as the
+    # service being unreachable rather than as "every tool was deleted".
+    if tools:
+        live = {
+            (t.get("schema") or {}).get("function", {}).get("name", t.get("name", ""))
+            for t in tools if t.get("status") == "approved" and t.get("is_active", True)
+        }
+        for name in [n for n in _dynamic_tool_schemas if n not in live]:
+            _dynamic_tool_schemas.pop(name, None)
+            ALL_TOOLS.pop(name, None)
+            _mcp_published_tools.pop(name, None)
+            if name in AVAILABLE_TOOL_KEYS:
+                AVAILABLE_TOOL_KEYS.remove(name)
+
     for tool in tools:
-        if tool.get("status") == "approved":
+        # With versioning, the listing holds each tool's active version (plus
+        # pending ones). Only the active approved version is registered.
+        if tool.get("status") == "approved" and tool.get("is_active", True):
             schema = tool.get("schema", {})
             name = schema.get("function", {}).get("name", tool.get("name", ""))
-            if name and name not in ALL_TOOLS:
-                _dynamic_tool_schemas[name] = schema
-                ALL_TOOLS[name] = schema
-                if name not in AVAILABLE_TOOL_KEYS:
-                    AVAILABLE_TOOL_KEYS.append(name)
+            if not name:
+                continue
+            if name in ALL_TOOLS and name not in _dynamic_tool_schemas:
+                continue  # a native tool of the same name wins
+            # Replace, not only add: a new version may change the parameters,
+            # and the previous check (`name not in ALL_TOOLS`) kept serving the
+            # first version's schema for the life of the process.
+            _dynamic_tool_schemas[name] = schema
+            ALL_TOOLS[name] = schema
+            if name not in AVAILABLE_TOOL_KEYS:
+                AVAILABLE_TOOL_KEYS.append(name)
 
             # Track MCP-published status
             if tool.get("mcp_published"):
@@ -411,6 +435,14 @@ def get_tools(
     return tools
 
 
+def describe_tool(key: str) -> str:
+    """One tool's description, for showing why an agent was given it."""
+    tool = ALL_TOOLS.get(key) or {}
+    if tool.get("type") == "function":
+        return str((tool.get("function") or {}).get("description") or "")
+    return f"Built-in {tool['type']} capability" if tool.get("type") else ""
+
+
 def get_tool_descriptions() -> str:
     """Return a formatted string describing all available tools."""
     lines = []
@@ -423,7 +455,7 @@ def get_tool_descriptions() -> str:
     return "\n".join(lines)
 
 
-async def execute_tool(tool_name: str, arguments: dict) -> str:
+async def execute_tool(tool_name: str, arguments: dict, version: int | None = None) -> str:
     """
     3-tier tool execution router:
     1. Native tool → execute locally
@@ -454,7 +486,7 @@ async def execute_tool(tool_name: str, arguments: dict) -> str:
     if tool_name in _dynamic_tool_schemas or tool_name not in ALL_TOOLS:
         logger.info("Proxying dynamic tool to Docker Tool Service: %s", tool_name)
         from app.services.tool_resolver import tool_resolver
-        result = await tool_resolver.execute_tool(tool_name, arguments)
+        result = await tool_resolver.execute_tool(tool_name, arguments, version=version)
         if "error" in result:
             return f"Error: {result['error']}"
         return json.dumps(result.get("result", result))

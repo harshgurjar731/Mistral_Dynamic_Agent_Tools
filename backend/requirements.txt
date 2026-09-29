@@ -4,6 +4,10 @@ pydantic-settings
 python-dotenv
 mistralai
 httpx
+# Validates authored specifications (app/layers/codegen/preflight.py).
+jsonschema>=4.20
+# Remote servers: SSH/SFTP deployment of workflow packages to VMs.
+paramiko
 sqlalchemy
 watchfiles
 # mistralai-workflows[mistralai] — install separately if Temporal worker support is needed

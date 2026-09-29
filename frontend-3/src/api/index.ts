@@ -43,6 +43,10 @@ export { api, errorMessage, errorDetails, unwrap } from "./client";
 export { QK } from "./queryKeys";
 export { agentsApi } from "./agents";
 export { rulesApi } from "./rules";
+export { remoteServersApi } from "./remoteServers";
+export type * from "./remoteServers";
+export { runsApi, isTerminal } from "./runs";
+export type { BackgroundRun, RunKind, RunProgress, RunStatus } from "./runs";
 
 /* ── Health ─────────────────────────────────────────────────────────── */
 export const healthApi = {
@@ -113,13 +117,24 @@ export const toolsApi = {
   get: (id: string | number) => get<Tool>(`/api/tools/${id}`),
   pending: () => get<{ tools: Tool[]; count: number }>("/api/tools/pending"),
   synthesize: (task: string, purpose: "tool" | "activity" = "tool") =>
-    post<{ status?: string; tool_name?: string; message?: string }>("/api/tools/synthesize", { task, purpose }),
+    post<{ status?: string; tool_name?: string; message?: string }>("/api/tools/synthesize", {
+      task,
+      purpose,
+    }),
   approve: (id: string | number) => post<unknown>(`/api/tools/${id}/approve`),
   reject: (id: string | number) => post<unknown>(`/api/tools/${id}/reject`),
+  /** An edit is verified and saved as a new version; the reply names it. */
   update: (
     id: string | number,
     body: { source_code?: string; description?: string; purpose?: string },
-  ) => put<unknown>(`/api/tools/${id}`, body),
+  ) =>
+    put<{ status?: string; message?: string; tool_id?: number; version?: number }>(
+      `/api/tools/${id}`,
+      body,
+    ),
+  versions: (name: string) => get<Tool[]>(`/api/tools/${encodeURIComponent(name)}/versions`),
+  activate: (id: string | number) =>
+    post<{ status?: string; message?: string }>(`/api/tools/${id}/activate`),
   remove: (id: string | number) => del<unknown>(`/api/tools/${id}`),
   delete: (id: string | number) => del<unknown>(`/api/tools/${id}`),
   execute: (name: string, args: Record<string, unknown> = {}) =>
@@ -140,23 +155,6 @@ export const mcpApi = {
   execute: (server: string, tool: string, args: Record<string, unknown>) =>
     post<unknown>(`/api/mcp/execute/${server}/${tool}`, { arguments: args }),
   healthCheck: () => post<unknown>("/api/mcp/health-check"),
-};
-
-/* ── Remote servers ─────────────────────────────────────────────────── */
-export const remoteServersApi = {
-  list: () => get<unknown>("/api/remote-servers"),
-  create: (body: { name: string; url: string; description: string }) =>
-    post<unknown>("/api/remote-servers", body),
-  get: (id: string) => get<unknown>(`/api/remote-servers/${id}`),
-  update: (id: string, body: { name?: string; url?: string; description?: string }) =>
-    put<unknown>(`/api/remote-servers/${id}`, body),
-  remove: (id: string) => del<unknown>(`/api/remote-servers/${id}`),
-  check: (url: string) =>
-    post<{ reachable: boolean; url: string; health?: unknown }>("/api/remote-servers/check", {
-      url,
-    }),
-  sendTool: (id: string, toolId: string | number) =>
-    post<unknown>(`/api/remote-servers/${id}/send-tool`, { tool_id: String(toolId) }),
 };
 
 /* ── Libraries ──────────────────────────────────────────────────────── */
@@ -351,6 +349,7 @@ export const ontologyApi = {
       `/api/ontology/knowledge/agent/${agentId}`,
       query ? { query } : {},
     ),
+  /** Moves agents still carrying the two retired retrieval tools onto the current one. */
   attachKnowledgeTool: () =>
     post<{
       checked: number;
@@ -358,10 +357,9 @@ export const ontologyApi = {
       detached: number;
       unchanged: number;
       failed: number;
-    }>("/api/ontology/knowledge/attach-tool"),
+    }>("/api/rag/agents/sync"),
   // Governance rules moved out of the ontology — see `rulesApi`.
 };
-
 
 /* ── Workflows ──────────────────────────────────────────────────────── */
 export const workflowsApi = {
@@ -391,8 +389,7 @@ export const workflowsApi = {
       {},
     ),
   exportLegacy: (name: string) => post<unknown>(`/api/workflows/${name}/export`),
-  getDeploymentManifest: (name: string) =>
-    get<any>(`/api/workflows/${name}/deployment/manifest`),
+  getDeploymentManifest: (name: string) => get<any>(`/api/workflows/${name}/deployment/manifest`),
   deploymentPackageUrl: (name: string) => `/api/workflows/${name}/deployment/package`,
   uploadImage: async (file: File) => {
     const form = new FormData();
@@ -404,6 +401,11 @@ export const workflowsApi = {
   catalog: () => get<BuilderCatalog>("/api/workflows/builder/catalog"),
   archive: (name: string) => put<unknown>(`/api/workflows/${name}/archive`),
   unarchive: (name: string) => put<unknown>(`/api/workflows/${name}/unarchive`),
+  /** Deletes the definition and compiled module; a Mistral-hosted copy is archived. */
+  remove: (name: string) =>
+    del<{ deleted: boolean; remote_archived?: boolean | null }>(
+      `/api/workflows/${encodeURIComponent(name)}`,
+    ),
   execute: (
     name: string,
     body: {
@@ -426,7 +428,8 @@ export const executionsApi = {
     post<unknown>("/api/workflows/executions/cancel", { execution_ids: ids }),
   terminateMany: (ids: string[]) =>
     post<unknown>("/api/workflows/executions/terminate", { execution_ids: ids }),
-  get: (id: string) => get<ExecutionDetail>(`/api/workflows/executions/${id}`, { with_steps: true }),
+  get: (id: string) =>
+    get<ExecutionDetail>(`/api/workflows/executions/${id}`, { with_steps: true }),
   steps: (id: string, includeInternal = false) =>
     get<{ steps: ExecutionStep[] } | ExecutionStep[]>(`/api/workflows/executions/${id}/steps`, {
       include_internal: includeInternal,
@@ -502,10 +505,7 @@ export const ragApi = {
     get<{ document: RagDocument; draft: ExtractionDraft | null }>(
       `/api/rag/documents/${documentId}/draft`,
     ),
-  saveDraft: (
-    documentId: number,
-    body: { entities: unknown[]; relations: unknown[] },
-  ) =>
+  saveDraft: (documentId: number, body: { entities: unknown[]; relations: unknown[] }) =>
     put<{ draft: ExtractionDraft; dropped_relations: number }>(
       `/api/rag/documents/${documentId}/draft`,
       body,
@@ -562,8 +562,7 @@ export const ragApi = {
     post<{ domains: string[]; reasoning?: string }>(
       `/api/rag/libraries/${encodeURIComponent(libraryId)}/domains/classify`,
     ),
-  getUnifiedGraph: (params?: Record<string, unknown>) =>
-    get<any>("/api/rag/graph/unified", params),
+  getUnifiedGraph: (params?: Record<string, unknown>) => get<any>("/api/rag/graph/unified", params),
   syncTaxonomy: () =>
     post<{ status: string; concepts_synced?: number }>("/api/rag/graph/sync-taxonomy"),
   queryCypher: (query: string, params?: Record<string, unknown>, limit = 100) =>
@@ -575,10 +574,8 @@ export const ragApi = {
       execution_time_ms?: number;
       count?: number;
     }>("/api/rag/graph/query", { query, params, limit }),
-  syncAgents: () =>
-    post<{ status: string; synced?: number }>("/api/rag/agents/sync"),
-  timelineStreamUrl: (traceId: string) =>
-    `/api/rag/timeline/${encodeURIComponent(traceId)}/stream`,
+  syncAgents: () => post<{ status: string; synced?: number }>("/api/rag/agents/sync"),
+  timelineStreamUrl: (traceId: string) => `/api/rag/timeline/${encodeURIComponent(traceId)}/stream`,
 };
 
 function unwrapJson<T>(data: T): T {

@@ -144,6 +144,9 @@ def import_dynamic_tools() -> None:
                 "source_code": tool["source_code"],
                 "hash": tool["hash"],
                 "version": tool.get("version", "1.0.0"),
+                # Keeps pinned workflow steps resolvable on this tool service.
+                "version_no": tool.get("version_no"),
+                "purpose": tool.get("purpose", "tool"),
             },
             timeout=30.0,
         )
@@ -169,7 +172,15 @@ def print_connector_checklist() -> bool:
         "script. Authorize each one in the target workspace's Mistral console before "
         "the workflow's connector steps will work."
     )
-    answer = input("\nHave you authorized these connectors? [y/N] ").strip().lower()
+    # Remote deploys run this over a non-interactive SSH channel — prompting
+    # there would block until the deploy step times out.
+    if not sys.stdin or not sys.stdin.isatty():
+        print("(non-interactive run — skipping confirmation)")
+        return False
+    try:
+        answer = input("\nHave you authorized these connectors? [y/N] ").strip().lower()
+    except EOFError:
+        return False
     return answer == "y"
 
 
@@ -179,6 +190,11 @@ def stage_workflow_module() -> None:
     WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
     src = HERE / "mistral_workflows" / f"workflow_{workflow_name}.py"
     dst = WORKFLOWS_DIR / f"workflow_{workflow_name}.py"
+    # The default WORKFLOWS_DIR is the package's own mistral_workflows/, where
+    # the module already lives — copyfile would raise SameFileError.
+    if dst.resolve() == src.resolve():
+        print(f"\nWorkflow module already in place at {dst}")
+        return
     shutil.copyfile(src, dst)
     print(f"\nStaged {dst}")
 

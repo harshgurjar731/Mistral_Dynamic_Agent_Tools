@@ -2,8 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { QK, workflowsApi } from "@/api";
-import { PageHeader } from "@/components/shared/PageHeader";
-import { WorkflowBuilder } from "@/components/workflows/WorkflowBuilder";
+import { BuilderHeader, WorkflowBuilder } from "@/components/workflows/WorkflowBuilder";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -32,41 +31,48 @@ function EditWorkflowPage() {
   });
 
   return (
-    <div className="space-y-5 px-6 py-8">
-      <PageHeader
-        eyebrow="Builder"
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col gap-3 px-4 py-3 md:h-dvh">
+      <BuilderHeader
         title={workflowName}
         description="Saving keeps the change local. Publishing recompiles the module and re-registers it with the worker."
-        actions={
-          <Button variant="outline" size="sm" asChild>
+        back={
+          <Button
+            variant="outline"
+            size="sm"
+            className="size-8 shrink-0 p-0"
+            title="Overview"
+            asChild
+          >
             <Link to="/workflows/$workflowName" params={{ workflowName }}>
-              <ArrowLeft className="size-3.5" /> Overview
+              <ArrowLeft className="size-3.5" />
             </Link>
           </Button>
         }
       />
 
-      {isLoading ? (
-        <DetailSkeleton />
-      ) : isError ? (
-        <ErrorState error={error} onRetry={() => refetch()} />
-      ) : !data ? (
-        <EmptyState title="Workflow not found." />
-      ) : (data.steps?.length ?? 0) === 0 ? (
-        <EmptyState
-          title="This workflow is registered remotely only."
-          description="Its definition lives on the Mistral server, so there is nothing local to edit. You can still run it and watch its executions."
-          action={
-            <Button size="sm" asChild>
-              <Link to="/workflows/$workflowName/execute" params={{ workflowName }}>
-                Run it
-              </Link>
-            </Button>
-          }
-        />
-      ) : (
-        <WorkflowBuilder mode="edit" initial={data} />
-      )}
+      <div className="min-h-0 flex-1">
+        {isLoading ? (
+          <DetailSkeleton />
+        ) : isError ? (
+          <ErrorState error={error} onRetry={() => refetch()} />
+        ) : !data ? (
+          <EmptyState title="Workflow not found." />
+        ) : (data.steps?.length ?? 0) === 0 ? (
+          <EmptyState
+            title="This workflow is registered remotely only."
+            description="Its definition lives on the Mistral server, so there is nothing local to edit. You can still run it and watch its executions."
+            action={
+              <Button size="sm" asChild>
+                <Link to="/workflows/$workflowName/execute" params={{ workflowName }}>
+                  Run it
+                </Link>
+              </Button>
+            }
+          />
+        ) : (
+          <WorkflowBuilder mode="edit" initial={data} />
+        )}
+      </div>
     </div>
   );
 }

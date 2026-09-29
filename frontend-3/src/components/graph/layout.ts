@@ -1,8 +1,8 @@
 import dagre from "dagre";
 import type { LayoutDirection, StepFlowEdge, StepFlowNode } from "./types";
 
-const NODE_WIDTH = 240;
-const NODE_HEIGHT = 92;
+const NODE_WIDTH = 280;
+const NODE_HEIGHT = 200;
 
 /** Auto-layouts nodes with dagre; preserves any coordinates already present when `respectExisting` is true. */
 export function layoutGraph(

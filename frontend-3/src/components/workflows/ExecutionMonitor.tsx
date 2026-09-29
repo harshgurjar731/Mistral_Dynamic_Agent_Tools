@@ -1,16 +1,24 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Activity,
+  AlertTriangle,
   ArrowDownToLine,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Download,
+  FileJson,
+  Hash,
+  Layers,
   Search,
   Send,
+  Server,
+  XCircle,
 } from "lucide-react";
 import { executionsApi, errorMessage } from "@/api";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
@@ -19,17 +27,35 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { executionStatusIdentity, LIVE_STATE_IDENTITY, formatDuration, formatTimestamp } from "@/lib/status";
+import {
+  executionStatusIdentity,
+  LIVE_STATE_IDENTITY,
+  formatDuration,
+  formatTimestamp,
+} from "@/lib/status";
 import { Markdown } from "@/components/chat/Markdown";
-import { useExecutionStream } from "./useExecutionStream";
+import { useExecutionStream, type ExecutionMonitorState } from "./useExecutionStream";
 import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
 import { cn } from "@/lib/utils";
 
 const TABS = ["steps", "result", "logs", "events", "trace", "history", "control"] as const;
 type TabId = (typeof TABS)[number];
 
-export function ExecutionMonitor({ executionId }: { executionId: string | null }) {
-  const { detail, steps, events, phase, error, finalStatus, reconnect } = useExecutionStream(executionId);
+export function ExecutionMonitor({
+  executionId,
+  stream,
+  hideResult = false,
+  title,
+}: {
+  executionId: string | null;
+  /** A stream the page already holds — avoids opening a second connection. */
+  stream?: ExecutionMonitorState | undefined;
+  /** The page shows the result in its own section. */
+  hideResult?: boolean;
+  title?: string | undefined;
+}) {
+  const own = useExecutionStream(stream ? null : executionId);
+  const { detail, steps, events, phase, error, finalStatus, reconnect } = stream ?? own;
   const [tab, setTab] = useState<TabId>("steps");
 
   if (!executionId) {
@@ -41,13 +67,13 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
     );
   }
 
-  const liveIdentity = LIVE_STATE_IDENTITY[phase] ?? LIVE_STATE_IDENTITY['idle']!;
+  const liveIdentity = LIVE_STATE_IDENTITY[phase] ?? LIVE_STATE_IDENTITY["idle"]!;
   const statusIdentity = executionStatusIdentity(detail?.status ?? finalStatus ?? undefined);
 
   return (
     <GlassPanel className="flex h-full flex-col overflow-hidden">
       <GlassPanelHeader
-        title={`Execution ${executionId.slice(0, 8)}`}
+        title={title ?? `Execution ${executionId.slice(0, 8)}`}
         description={detail?.workflow_name}
         actions={
           <div className="flex items-center gap-2">
@@ -65,10 +91,14 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
         }
       />
       <div className="flex-1 overflow-hidden p-4">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="flex h-full flex-col">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as TabId)}
+          className="flex h-full flex-col"
+        >
           <TabsList className="w-full justify-start overflow-x-auto">
             <TabsTrigger value="steps">Steps</TabsTrigger>
-            <TabsTrigger value="result">Result</TabsTrigger>
+            {hideResult ? null : <TabsTrigger value="result">Result</TabsTrigger>}
             <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
             <TabsTrigger value="trace">Trace</TabsTrigger>
@@ -86,9 +116,11 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
                 }
               />
             </TabsContent>
-            <TabsContent value="result" className="h-full">
-              <ResultTab detail={detail} error={error} />
-            </TabsContent>
+            {hideResult ? null : (
+              <TabsContent value="result" className="h-full">
+                <ResultTab detail={detail} error={error} />
+              </TabsContent>
+            )}
             <TabsContent value="logs" className="h-full">
               <LogsTab executionId={executionId} />
             </TabsContent>
@@ -111,26 +143,505 @@ export function ExecutionMonitor({ executionId }: { executionId: string | null }
   );
 }
 
-function ResultTab({ detail, error }: { detail: import("@/types").ExecutionDetail | null; error: string | null }) {
-  if (error) return <p className="text-sm text-red">{error}</p>;
-  if (!detail?.result && !detail?.error) return <EmptyState title="No result yet" />;
-  if (detail.error) return <p className="text-sm text-red">{detail.error}</p>;
-  const text = typeof detail.result === "string" ? detail.result : JSON.stringify(detail.result, null, 2);
-  return typeof detail.result === "string" ? (
-    <Markdown content={text} />
-  ) : (
-    <pre className="custom-scrollbar overflow-auto rounded-xl border border-border bg-background-elevated p-3 text-xs text-foreground">{text}</pre>
+/* ── Result Tab ─────────────────────────────────────────────────────── */
+
+/**
+ * Peel common envelope wrappers like {result: {variables: …}} or {result: X}
+ * so the UI shows the actual data the user cares about.
+ */
+function unwrapResult(value: unknown, depth = 3): unknown {
+  for (let i = 0; i < depth; i++) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const keys = Object.keys(value as Record<string, unknown>);
+      if (keys.length === 1 && (keys[0] === "result" || keys[0] === "output")) {
+        value = (value as Record<string, unknown>)[keys[0]!];
+        continue;
+      }
+    }
+    break;
+  }
+  return value;
+}
+
+/**
+ * A collapsible JSON tree node — renders objects/arrays as expandable sections
+ * and primitives as styled values.
+ */
+function JsonNode({
+  label,
+  value,
+  defaultOpen = true,
+  depth = 0,
+}: {
+  label?: string;
+  value: unknown;
+  defaultOpen?: boolean;
+  depth?: number;
+}) {
+  const [open, setOpen] = useState(defaultOpen && depth < 2);
+
+  if (value === null || value === undefined) {
+    return (
+      <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+        {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+        <span className="font-mono text-[11px] text-muted-foreground italic">null</span>
+      </div>
+    );
+  }
+
+  if (typeof value === "boolean") {
+    return (
+      <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+        {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+        <span
+          className={cn("font-mono text-[11px] font-medium", value ? "text-emerald" : "text-red")}
+        >
+          {String(value)}
+        </span>
+      </div>
+    );
+  }
+
+  if (typeof value === "number") {
+    return (
+      <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+        {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+        <span className="font-mono text-[11px] text-amber font-medium">{value}</span>
+      </div>
+    );
+  }
+
+  if (typeof value === "string") {
+    // Long strings get a multi-line box
+    if (value.length > 120 || value.includes("\n")) {
+      return (
+        <div className="space-y-1" style={{ paddingLeft: depth * 16 }}>
+          {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+          <div className="rounded-lg border border-border/60 bg-background-elevated/50 p-2.5">
+            <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/90">
+              {value}
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+        {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+        <span className="font-mono text-[11px] text-cyan">&quot;{value}&quot;</span>
+      </div>
+    );
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return (
+        <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+          {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+          <span className="font-mono text-[11px] text-muted-foreground">[] (empty)</span>
+        </div>
+      );
+    }
+    return (
+      <div style={{ paddingLeft: depth * 16 }}>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1 text-[11px] font-mono hover:text-primary transition-colors"
+        >
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {label && <span className="text-primary/70">{label}:</span>}
+          <span className="text-muted-foreground">Array[{value.length}]</span>
+        </button>
+        {open && (
+          <div className="mt-1 space-y-1 border-l border-border/40 ml-1.5 pl-1">
+            {value.map((item, idx) => (
+              <JsonNode
+                key={idx}
+                label={`[${idx}]`}
+                value={item}
+                depth={depth + 1}
+                defaultOpen={depth < 1}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      return (
+        <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+          {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+          <span className="font-mono text-[11px] text-muted-foreground">{"{}"} (empty)</span>
+        </div>
+      );
+    }
+    return (
+      <div style={{ paddingLeft: depth * 16 }}>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1 text-[11px] font-mono hover:text-primary transition-colors"
+        >
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {label && <span className="text-primary/70">{label}:</span>}
+          <span className="text-muted-foreground">{`{${entries.length} keys}`}</span>
+        </button>
+        {open && (
+          <div className="mt-1 space-y-1 border-l border-border/40 ml-1.5 pl-1">
+            {entries.map(([k, v]) => (
+              <JsonNode key={k} label={k} value={v} depth={depth + 1} defaultOpen={depth < 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-baseline gap-1.5" style={{ paddingLeft: depth * 16 }}>
+      {label && <span className="font-mono text-[11px] text-primary/70">{label}:</span>}
+      <span className="font-mono text-[11px] text-foreground">{String(value)}</span>
+    </div>
+  );
+}
+
+/**
+ * Render flat key-value result objects as a grid of small info cards.
+ */
+function ResultCards({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data);
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {entries.map(([key, val]) => {
+        const display =
+          val === null || val === undefined
+            ? "null"
+            : typeof val === "string"
+              ? val
+              : JSON.stringify(val);
+        const isLong = String(display).length > 80;
+        return (
+          <div
+            key={key}
+            className={cn(
+              "rounded-xl border border-border/60 bg-background-elevated/50 p-3 transition-colors hover:border-primary/30",
+              isLong && "sm:col-span-2",
+            )}
+          >
+            <p className="mb-1 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {key.replace(/_/g, " ")}
+            </p>
+            <p
+              className={cn(
+                "text-sm text-foreground/90 break-words",
+                isLong && "font-mono text-xs whitespace-pre-wrap",
+              )}
+            >
+              {display}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Check whether an object is "flat" — all values are primitives (no nested objects/arrays).
+ */
+function isFlat(obj: Record<string, unknown>): boolean {
+  return Object.values(obj).every((v) => v === null || v === undefined || typeof v !== "object");
+}
+
+function ResultTab({
+  detail,
+  error,
+}: {
+  detail: import("@/types").ExecutionDetail | null;
+  error: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<"auto" | "json" | "raw">("auto");
+
+  const copyResult = useCallback(async () => {
+    if (!detail?.result) return;
+    try {
+      const text =
+        typeof detail.result === "string" ? detail.result : JSON.stringify(detail.result, null, 2);
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("Result copied to clipboard");
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }, [detail?.result]);
+
+  const downloadResult = useCallback(() => {
+    if (!detail?.result) return;
+    const text =
+      typeof detail.result === "string" ? detail.result : JSON.stringify(detail.result, null, 2);
+    const blob = new Blob([text], {
+      type: typeof detail.result === "string" ? "text/plain" : "application/json",
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${detail.execution_id.slice(0, 8)}_result.${typeof detail.result === "string" ? "txt" : "json"}`;
+    a.click();
+  }, [detail]);
+
+  // ── Error states ──────────────────────────────────────────────────
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red/30 bg-red/5 p-4">
+        <div className="flex items-start gap-2.5">
+          <XCircle className="mt-0.5 size-4 shrink-0 text-red" />
+          <div>
+            <p className="text-sm font-medium text-red">Stream Error</p>
+            <p className="mt-1 text-xs text-red/80 leading-relaxed">{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!detail?.result && !detail?.error) {
+    const isRunning = detail?.status === "RUNNING" || detail?.status === "PENDING";
+    return (
+      <EmptyState
+        title={isRunning ? "Execution in progress…" : "No result yet"}
+        description={
+          isRunning
+            ? "The workflow is still running. Results will appear here once it completes."
+            : "Submit a run using the input form to see results."
+        }
+      />
+    );
+  }
+
+  if (detail.error) {
+    return (
+      <div className="space-y-3">
+        {/* Error banner */}
+        <div className="rounded-xl border border-red/30 bg-red/5 p-4">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-red">Execution Failed</p>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg border border-red/20 bg-background-elevated/60 p-3 font-mono text-[11px] leading-relaxed text-red/90">
+                {detail.error}
+              </pre>
+            </div>
+          </div>
+        </div>
+        {/* Still show partial result if present alongside error */}
+        {detail.result != null && (
+          <div className="rounded-xl border border-border/60 bg-background-elevated/40 p-3">
+            <p className="eyebrow mb-2 text-muted-foreground">Partial Result</p>
+            <pre className="custom-scrollbar overflow-auto font-mono text-[11px] text-foreground/80">
+              {typeof detail.result === "string"
+                ? detail.result
+                : JSON.stringify(detail.result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Success result ──────────────────────────────────────────────────
+
+  const statusIdentity = executionStatusIdentity(detail.status);
+  const unwrapped = unwrapResult(detail.result);
+
+  return (
+    <div className="space-y-4">
+      {/* ── Metadata strip ──────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-background-elevated/40 px-3 py-2">
+        <StatusPill identity={statusIdentity} />
+
+        {detail.total_duration_ms != null && (
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Clock className="size-3" />
+            <span className="font-mono font-medium text-foreground">
+              {formatDuration(detail.total_duration_ms)}
+            </span>
+          </div>
+        )}
+
+        {detail.source && (
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Server className="size-3" />
+            <span className="capitalize">{detail.source}</span>
+          </div>
+        )}
+
+        {detail.start_time && (
+          <div className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
+            <span>{formatTimestamp(detail.start_time)}</span>
+          </div>
+        )}
+
+        <div className="ml-auto flex items-center gap-1">
+          {/* View mode toggle */}
+          <div className="flex items-center gap-0.5 rounded-md border border-border bg-background-elevated p-0.5">
+            {(["auto", "json", "raw"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[10px] font-mono font-medium transition-colors capitalize",
+                  viewMode === mode
+                    ? "bg-primary/20 text-primary font-bold"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={copyResult}
+            className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-surface-hover hover:text-foreground transition-colors"
+            title="Copy result"
+          >
+            {copied ? <Check className="size-3.5 text-emerald" /> : <Copy className="size-3.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={downloadResult}
+            className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-surface-hover hover:text-foreground transition-colors"
+            title="Download result"
+          >
+            <Download className="size-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Result body ──────────────────────────────────────────────── */}
+      {viewMode === "raw" ? (
+        <pre className="custom-scrollbar overflow-auto rounded-xl border border-border bg-background-elevated p-4 font-mono text-xs leading-relaxed text-foreground">
+          {typeof detail.result === "string"
+            ? detail.result
+            : JSON.stringify(detail.result, null, 2)}
+        </pre>
+      ) : viewMode === "json" ? (
+        <div className="custom-scrollbar overflow-auto rounded-xl border border-border bg-background-elevated/70 p-4 max-h-[600px]">
+          <JsonNode value={unwrapped} defaultOpen />
+        </div>
+      ) : (
+        /* auto mode — pick the best renderer */
+        <AutoResultView value={unwrapped} rawResult={detail.result} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Automatically choose the best rendering for the result shape:
+ * - string → markdown
+ * - flat object → card grid
+ * - nested object / array → JSON tree
+ */
+function AutoResultView({ value, rawResult }: { value: unknown; rawResult: unknown }) {
+  // String → render as markdown (may contain text, lists, code, etc.)
+  if (typeof value === "string") {
+    return (
+      <div className="rounded-xl border border-border/60 bg-background-elevated/40 p-4">
+        <Markdown content={value} />
+      </div>
+    );
+  }
+
+  // Primitive
+  if (value === null || value === undefined || typeof value !== "object") {
+    return (
+      <div className="rounded-xl border border-border/60 bg-background-elevated/40 p-4">
+        <p className="font-mono text-sm text-foreground">{String(value ?? "null")}</p>
+      </div>
+    );
+  }
+
+  // Array
+  if (Array.isArray(value)) {
+    // Array of strings → render as a list
+    if (value.every((v) => typeof v === "string")) {
+      return (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Layers className="size-3" />
+            <span>{value.length} items</span>
+          </div>
+          <div className="space-y-1">
+            {value.map((item, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="shrink-0 mt-0.5 flex items-center justify-center rounded bg-primary/10 text-primary font-mono text-[10px] font-bold size-5">
+                    {idx + 1}
+                  </span>
+                  <p className="text-sm text-foreground/90 break-words">{item}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // General array → tree view
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Layers className="size-3" />
+          <span>{value.length} items</span>
+        </div>
+        <div className="custom-scrollbar overflow-auto rounded-xl border border-border bg-background-elevated/70 p-4 max-h-[600px]">
+          <JsonNode value={value} defaultOpen />
+        </div>
+      </div>
+    );
+  }
+
+  // Object — flat → cards, nested → tree
+  const obj = value as Record<string, unknown>;
+  if (isFlat(obj) && Object.keys(obj).length > 0) {
+    return <ResultCards data={obj} />;
+  }
+
+  return (
+    <div className="custom-scrollbar overflow-auto rounded-xl border border-border bg-background-elevated/70 p-4 max-h-[600px]">
+      <JsonNode value={value} defaultOpen />
+    </div>
   );
 }
 
 function EventsTab({ events }: { events: Array<{ type: string; data: unknown; ts: number }> }) {
   if (events.length === 0) {
-    return <EmptyState title="No events yet" description="Live SSE events will appear here as the workflow runs." />;
+    return (
+      <EmptyState
+        title="No events yet"
+        description="Live SSE events will appear here as the workflow runs."
+      />
+    );
   }
   return (
     <div className="custom-scrollbar max-h-[500px] space-y-1.5 overflow-auto">
       {events.map((e, idx) => (
-        <div key={idx} className="rounded-lg border border-border bg-background-elevated/40 p-2 text-xs font-mono">
+        <div
+          key={idx}
+          className="rounded-lg border border-border bg-background-elevated/40 p-2 text-xs font-mono"
+        >
           <div className="flex items-center justify-between text-[10px] text-muted-foreground">
             <span className="font-bold text-primary">{e.type}</span>
             <span>{new Date(e.ts).toLocaleTimeString()}</span>
@@ -178,8 +689,7 @@ function LogsTab({ executionId }: { executionId: string }) {
       }
       if (!needle) return true;
       return (
-        l.message.toLowerCase().includes(needle) ||
-        (l.step_id ?? "").toLowerCase().includes(needle)
+        l.message.toLowerCase().includes(needle) || (l.step_id ?? "").toLowerCase().includes(needle)
       );
     });
   }, [lines, minLevel, filter]);
@@ -395,49 +905,73 @@ function TraceTab({ executionId }: { executionId: string }) {
       return next;
     });
 
-  if (isLoading) return <p className="py-8 text-center text-xs text-muted-foreground">Loading trace…</p>;
+  if (isLoading)
+    return <p className="py-8 text-center text-xs text-muted-foreground">Loading trace…</p>;
   if (error) return <p className="py-8 text-center text-xs text-red">{errorMessage(error)}</p>;
   if (!data?.span_tree || rows.length === 0) {
-    return <EmptyState title="No trace spans" description="Traces are recorded when workflows execute." />;
+    return (
+      <EmptyState
+        title="No trace spans"
+        description="Traces are recorded when workflows execute."
+      />
+    );
   }
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between rounded-lg border border-border bg-background-elevated/40 px-3 py-1.5 text-[11px] text-muted-foreground">
         <span>{rows.length} spans</span>
-        <span className="font-mono font-medium text-foreground">{formatDuration(totalMs)} total</span>
+        <span className="font-mono font-medium text-foreground">
+          {formatDuration(totalMs)} total
+        </span>
       </div>
 
       <div className="custom-scrollbar max-h-[500px] overflow-auto space-y-1">
         {rows.map(({ span, depth, startMs, durationMs, hasChildren, path }) => {
           const leftPercent = Math.min(99, (startMs / totalMs) * 100);
-          const widthPercent = Math.max(0.8, Math.min(100 - leftPercent, (durationMs / totalMs) * 100));
+          const widthPercent = Math.max(
+            0.8,
+            Math.min(100 - leftPercent, (durationMs / totalMs) * 100),
+          );
 
           return (
             <div
               key={path}
               className="group grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_auto] items-center gap-3 rounded-lg border border-border/40 bg-background-elevated/50 px-2.5 py-1.5 hover:bg-surface-hover transition-colors"
             >
-              <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: depth * 14 }}>
+              <div
+                className="flex min-w-0 items-center gap-1.5"
+                style={{ paddingLeft: depth * 14 }}
+              >
                 {hasChildren ? (
                   <button
                     type="button"
                     onClick={() => toggle(path)}
                     className="shrink-0 text-muted-foreground hover:text-foreground"
                   >
-                    {collapsed.has(path) ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    {collapsed.has(path) ? (
+                      <ChevronRight className="size-3.5" />
+                    ) : (
+                      <ChevronDown className="size-3.5" />
+                    )}
                   </button>
                 ) : (
                   <span className="size-3.5 shrink-0" />
                 )}
-                <span className="truncate font-mono text-xs font-medium text-foreground" title={span.name}>
+                <span
+                  className="truncate font-mono text-xs font-medium text-foreground"
+                  title={span.name}
+                >
                   {span.name}
                 </span>
               </div>
 
               <div className="relative h-2.5 rounded-full bg-border/40 overflow-hidden">
                 <div
-                  className={cn("absolute top-0 h-full rounded-full transition-all", spanTone(span))}
+                  className={cn(
+                    "absolute top-0 h-full rounded-full transition-all",
+                    spanTone(span),
+                  )}
                   style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
                   title={`${span.name} · +${formatDuration(startMs)} · ${formatDuration(durationMs)}`}
                 />
@@ -477,9 +1011,12 @@ function ControlTab({ executionId }: { executionId: string }) {
   async function submit() {
     try {
       const parsed = JSON.parse(input || "{}");
-      if (kind === "signals") await executionsApi.signal(executionId, { name: handler, input: parsed });
-      if (kind === "queries") await executionsApi.query(executionId, { name: handler, input: parsed });
-      if (kind === "updates") await executionsApi.update(executionId, { name: handler, input: parsed });
+      if (kind === "signals")
+        await executionsApi.signal(executionId, { name: handler, input: parsed });
+      if (kind === "queries")
+        await executionsApi.query(executionId, { name: handler, input: parsed });
+      if (kind === "updates")
+        await executionsApi.update(executionId, { name: handler, input: parsed });
       toast.success(`Sent ${kind.slice(0, -1)}: ${handler}`);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -497,15 +1034,28 @@ function ControlTab({ executionId }: { executionId: string }) {
               onClick={() => setKind(k)}
               className={cn(
                 "rounded-lg border px-2.5 py-1 text-xs capitalize",
-                kind === k ? "border-primary/50 bg-primary/10 text-primary" : "border-border text-muted-foreground",
+                kind === k
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground",
               )}
             >
               {k.slice(0, -1)}
             </button>
           ))}
         </div>
-        <Input className="mt-2" placeholder="handler name" value={handler} onChange={(e) => setHandler(e.target.value)} />
-        <Textarea className="mt-2 font-mono text-xs" rows={4} placeholder="JSON input" value={input} onChange={(e) => setInput(e.target.value)} />
+        <Input
+          className="mt-2"
+          placeholder="handler name"
+          value={handler}
+          onChange={(e) => setHandler(e.target.value)}
+        />
+        <Textarea
+          className="mt-2 font-mono text-xs"
+          rows={4}
+          placeholder="JSON input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
         <button
           onClick={submit}
           className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-gradient-brand px-3 py-1.5 text-xs font-medium text-primary-foreground"
@@ -545,7 +1095,12 @@ function ControlTab({ executionId }: { executionId: string }) {
           </button>
         </div>
         <div className="mt-3 flex items-center gap-2">
-          <Input placeholder="event id" value={eventId} onChange={(e) => setEventId(e.target.value)} className="h-8 w-32 text-xs" />
+          <Input
+            placeholder="event id"
+            value={eventId}
+            onChange={(e) => setEventId(e.target.value)}
+            className="h-8 w-32 text-xs"
+          />
           <button
             onClick={async () => {
               try {

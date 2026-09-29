@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, Iterable, Optional
 
 from app.config import settings
@@ -45,6 +46,12 @@ logger = logging.getLogger(__name__)
 _driver = None
 _driver_lock = threading.Lock()
 _unavailable_reason: Optional[str] = None
+_failed_at: Optional[float] = None
+
+# How long a failed connection is trusted before the next attempt. Long enough
+# that a page making several graph calls pays the connect timeout once, short
+# enough that starting the container is picked up without a backend restart.
+RETRY_AFTER_SECONDS = 30.0
 
 
 def _get_driver():
@@ -53,22 +60,28 @@ def _get_driver():
     Built once and cached. Connection failure is cached too — as a reason
     string, not an exception — because the retrieval tool asks "is the graph
     available" on the hot path of every RAG query, and a five-second TCP timeout
-    per query would be worse than no graph at all.
+    per query would be worse than no graph at all. A cached failure expires
+    after ``RETRY_AFTER_SECONDS`` so the graph comes back on its own.
     """
-    global _driver, _unavailable_reason
+    global _driver, _unavailable_reason, _failed_at
 
     if _driver is not None:
         return _driver
+    if _failed_at is not None and time.monotonic() - _failed_at < RETRY_AFTER_SECONDS:
+        return None
 
     with _driver_lock:
         if _driver is not None:
             return _driver
+        if _failed_at is not None and time.monotonic() - _failed_at < RETRY_AFTER_SECONDS:
+            return None
         try:
             from neo4j import GraphDatabase
         except ImportError:
             _unavailable_reason = (
                 "the neo4j driver is not installed (pip install -r requirements.txt)"
             )
+            _failed_at = time.monotonic()
             return None
         try:
             driver = GraphDatabase.driver(
@@ -80,11 +93,17 @@ def _get_driver():
             driver.verify_connectivity()
         except Exception as e:
             _unavailable_reason = f"{settings.NEO4J_URI} is unreachable ({e})"
-            logger.warning("Knowledge graph unavailable: %s", _unavailable_reason)
+            _failed_at = time.monotonic()
+            logger.warning(
+                "Knowledge graph unavailable (retrying in %.0fs): %s",
+                RETRY_AFTER_SECONDS,
+                _unavailable_reason,
+            )
             return None
 
         _driver = driver
         _unavailable_reason = None
+        _failed_at = None
         logger.info("Knowledge graph connected: %s", settings.NEO4J_URI)
         return _driver
 
@@ -95,7 +114,7 @@ def reset_connection() -> None:
     Called after a user starts the container without restarting the backend,
     which is the common case during setup.
     """
-    global _driver, _unavailable_reason
+    global _driver, _unavailable_reason, _failed_at
     with _driver_lock:
         if _driver is not None:
             try:
@@ -104,6 +123,7 @@ def reset_connection() -> None:
                 pass
         _driver = None
         _unavailable_reason = None
+        _failed_at = None
 
 
 def close() -> None:

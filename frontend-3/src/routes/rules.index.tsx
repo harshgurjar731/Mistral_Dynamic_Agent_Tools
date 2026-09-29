@@ -1,12 +1,26 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, GitBranch, Loader2, Plus, Search, ShieldCheck, X } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  GitBranch,
+  Loader2,
+  Plus,
+  Search,
+  ShieldCheck,
+  Tags,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { errorMessage, QK, rulesApi } from "@/api";
 import { RuleCard } from "@/components/rules/RuleCard";
-import { RuleEditorSheet } from "@/components/rules/RuleEditorSheet";
-import { CATEGORY_META, CATEGORY_ORDER, OutcomePill } from "@/components/rules/RulePills";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { RuleCreateDialog } from "@/components/rules/RuleCreateDialog";
+import { ManageCategoriesDialog } from "@/components/rules/ManageCategoriesDialog";
+import { OutcomePill, RuleIcon } from "@/components/rules/RulePills";
+import { useRuleCategories } from "@/components/rules/ruleScoping";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton, TableSkeleton } from "@/components/ui/Skeletons";
@@ -14,6 +28,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { Rule, RuleEnforcement, RuleScope } from "@/types";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@/lib/sorting";
 
 export const Route = createFileRoute("/rules/")({
   head: () => ({
@@ -32,10 +48,19 @@ const WHEN: Record<RuleScope, string[]> = {
   workflow: ["On save & publish", "When a run starts", "Before each step", "On step results"],
 };
 
+const RULE_SORTS: SortOption<Rule>[] = [
+  ...standardSorts<Rule>(
+    (r) => r.name,
+    (r) => r.created_at,
+  ),
+  { key: "updated", label: "Recently updated", compare: byDate((r) => r.updated_at) },
+];
+
 function RulesPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<RuleScope | "activity">("agent");
-  /** The sheet creates rules; editing an existing one happens on its own page. */
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  /** The modal creates rules; editing an existing one happens on its own page. */
   const [editor, setEditor] = useState<{ open: boolean; scope: RuleScope }>({
     open: false,
     scope: "agent",
@@ -74,14 +99,24 @@ function RulesPage() {
             orchestrator adds the others where they fit — and you can add them by hand.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setEditor({ open: true, scope: newScope })}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          New {newScope} rule
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCategoriesOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2.5 text-sm text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+          >
+            <Tags className="size-4" />
+            Categories
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditor({ open: true, scope: newScope })}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            New rule
+          </button>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
@@ -123,7 +158,9 @@ function RulesPage() {
         </TabsContent>
       </Tabs>
 
-      <RuleEditorSheet
+      <ManageCategoriesDialog open={categoriesOpen} onOpenChange={setCategoriesOpen} />
+
+      <RuleCreateDialog
         open={editor.open}
         onOpenChange={(open) => setEditor((s) => ({ ...s, open }))}
         scope={editor.scope}
@@ -160,18 +197,35 @@ function ScopeRules({
   togglingId?: string | undefined;
 }) {
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useSortKey(`rules-${scope}`);
   const [category, setCategory] = useState("all");
+  const { categories, byId: categoriesById } = useRuleCategories();
   const [enforcement, setEnforcement] = useState<RuleEnforcement | "all">("all");
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rules.filter((r) => {
+    const rows = rules.filter((r) => {
       if (q && !`${r.name} ${r.summary} ${r.description}`.toLowerCase().includes(q)) return false;
       if (category !== "all" && r.category !== category) return false;
       if (enforcement !== "all" && r.enforcement !== enforcement) return false;
       return true;
     });
-  }, [rules, search, category, enforcement]);
+    return applySort(rows, RULE_SORTS, sort);
+  }, [rules, search, category, enforcement, sort]);
+
+  // Recommended rules can be switched off or edited, but not deleted.
+  const selection = useBulkSelection(
+    filtered,
+    (r) => r.id,
+    (r) => r.source !== "recommended",
+    (r) => r.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "rule",
+    deleteOne: (id) => rulesApi.remove(id),
+    invalidate: [QK.rules()],
+    selection,
+  });
 
   const total = rules.length;
   const hasFilters = Boolean(search) || category !== "all" || enforcement !== "all";
@@ -213,15 +267,16 @@ function ScopeRules({
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={RULE_SORTS} />
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           className="rounded-lg border border-border/60 bg-background-elevated px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         >
           <option value="all">All categories</option>
-          {CATEGORY_ORDER.map((c) => (
-            <option key={c} value={c}>
-              {CATEGORY_META[c]?.label ?? c}
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
             </option>
           ))}
         </select>
@@ -297,17 +352,27 @@ function ScopeRules({
           </div>
         ) : (
           <div className="space-y-8">
-            {CATEGORY_ORDER.map((c) => {
+            <BulkActionBar
+              selection={selection}
+              noun="rule"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Their assignments to agents and workflows are removed. Recommended rules cannot be selected — switch them off instead."
+            />
+            {[
+              ...categories.map((c) => c.id),
+              // Any rule whose category is not (yet) in the list still shows.
+              ...[...new Set(filtered.map((r) => r.category))].filter((id) => !categoriesById[id]),
+            ].map((c) => {
               const items = filtered.filter((r) => r.category === c);
               if (!items.length) return null;
-              const meta = CATEGORY_META[c];
-              const Icon = meta?.icon;
+              const meta = categoriesById[c];
               return (
                 <section key={c}>
                   <div className="mb-3 flex items-center gap-2">
                     <h2 className="eyebrow flex items-center gap-1.5">
-                      {Icon ? <Icon className="size-3" /> : null}
-                      {meta?.label ?? c}
+                      <RuleIcon name={meta?.icon ?? "Tag"} className="size-3" />
+                      {meta?.name ?? c}
                     </h2>
                     <span className="text-[10px] tabular-nums text-muted-foreground/50">
                       {items.length}
@@ -316,12 +381,19 @@ function ScopeRules({
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     {items.map((rule) => (
-                      <RuleCard
+                      <SelectableItem
                         key={rule.id}
-                        rule={rule}
-                        onToggle={(next) => onToggle(rule, next)}
-                        toggling={togglingId === rule.id}
-                      />
+                        selection={selection}
+                        id={rule.id}
+                        label={rule.name}
+                      >
+                        <RuleCard
+                          rule={rule}
+                          onToggle={(next) => onToggle(rule, next)}
+                          toggling={togglingId === rule.id}
+                          category={categoriesById[rule.category]}
+                        />
+                      </SelectableItem>
                     ))}
                   </div>
                 </section>

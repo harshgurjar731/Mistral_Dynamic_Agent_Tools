@@ -84,7 +84,8 @@ export const STEP_TYPE_IDENTITY: Record<StepType, StatusIdentity & { icon: strin
     border: "border-purple/30",
   },
   tool: {
-    label: "Tool",
+    // A workflow "tool" step runs a standalone function — an activity.
+    label: "Activity",
     icon: "Wrench",
     text: "text-blue",
     bg: "bg-blue/10",
@@ -137,7 +138,12 @@ export function tierIdentity(tier?: string | null): StatusIdentity {
 export const TOOL_SOURCE_IDENTITY: Record<ToolSource, StatusIdentity> = {
   builtin: { label: "Builtin", text: "text-cyan", bg: "bg-cyan/10", border: "border-cyan/30" },
   native: { label: "Native", text: "text-blue", bg: "bg-blue/10", border: "border-blue/30" },
-  dynamic: { label: "Dynamic", text: "text-purple", bg: "bg-purple/10", border: "border-purple/30" },
+  dynamic: {
+    label: "Dynamic",
+    text: "text-purple",
+    bg: "bg-purple/10",
+    border: "border-purple/30",
+  },
 };
 
 export function toolSource(id: string | number | null | undefined): ToolSource {
@@ -146,7 +152,21 @@ export function toolSource(id: string | number | null | undefined): ToolSource {
   if (str.startsWith("builtin-")) return "builtin";
   return "dynamic";
 }
-export const isEditableTool = (id: string | number | null | undefined) => toolSource(id) === "dynamic";
+export const isEditableTool = (id: string | number | null | undefined) =>
+  toolSource(id) === "dynamic";
+
+/** Native tools seeded into the Tool Service; it refuses to delete them. */
+const PROTECTED_TOOL_NAMES = new Set([
+  "get_weather",
+  "calculate",
+  "search_knowledge",
+  "create_document",
+  "send_email",
+]);
+
+/** Whether a tool may be deleted — synthesized, and not a protected native tool. */
+export const isDeletableTool = (tool: { id: string | number; name: string }) =>
+  toolSource(tool.id) === "dynamic" && !PROTECTED_TOOL_NAMES.has(tool.name);
 
 export const DOCUMENT_STATUS_IDENTITY: Record<string, StatusIdentity> = {
   uploaded: {
@@ -205,7 +225,12 @@ export const TIMELINE_STATUS_IDENTITY: Record<string, StatusIdentity> = {
 };
 
 export const LIVE_STATE_IDENTITY: Record<string, StatusIdentity> = {
-  idle: { label: "Idle", text: "text-muted-foreground", bg: "bg-muted/40", border: "border-border" },
+  idle: {
+    label: "Idle",
+    text: "text-muted-foreground",
+    bg: "bg-muted/40",
+    border: "border-border",
+  },
   connecting: {
     label: "Connecting",
     text: "text-amber",
@@ -251,9 +276,22 @@ export function formatDuration(ms?: number | null): string {
   return `${h}h ${m % 60}m`;
 }
 
+/**
+ * Parse a server timestamp. The backend stores UTC without saying so
+ * ("2026-09-17T09:28:12"); read as-is, a browser treats that as local time and
+ * every "5 minutes ago" is off by the viewer's offset. A date-time with no zone
+ * is therefore read as UTC. Returns NaN when unparseable.
+ */
+export function parseServerTime(value: string | number): number {
+  if (typeof value === "number") return value;
+  const v = value.trim();
+  const naive = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(v);
+  return Date.parse(naive ? `${v.replace(" ", "T")}Z` : v);
+}
+
 export function formatRelative(value?: string | number | null): string {
   if (!value) return "—";
-  const t = typeof value === "number" ? value : Date.parse(value);
+  const t = parseServerTime(value);
   if (Number.isNaN(t)) return String(value);
   const diff = Date.now() - t;
   const abs = Math.abs(diff);
@@ -269,7 +307,23 @@ export function formatRelative(value?: string | number | null): string {
 
 export function formatTimestamp(value?: string | number | null): string {
   if (!value) return "—";
-  const t = typeof value === "number" ? value : Date.parse(value);
+  const t = parseServerTime(value);
   if (Number.isNaN(t)) return String(value);
   return new Date(t).toLocaleString();
+}
+
+const CREATED_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** "18 Sep 2026, 11:04" in the viewer's time zone, or null when there is no date. */
+export function formatCreated(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  if (value === "" || value === "None") return null;
+  const t = parseServerTime(value);
+  return Number.isNaN(t) ? null : CREATED_FORMAT.format(t);
 }

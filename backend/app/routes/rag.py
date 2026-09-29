@@ -640,12 +640,12 @@ async def search(request: SearchRequest, client=Depends(get_mistral_client)):
 
 @router.post("/rag/agents/sync")
 async def sync_agent_tools(client=Depends(get_mistral_client)):
-    """Reconcile the grounded-knowledge tool across every agent.
+    """Move agents off the two retired retrieval tools. Idempotent.
 
-    Attaches it where the agent has documents or a domain worth searching,
-    removes it where it would return nothing, and strips the two tools it
-    replaced off agents created before the consolidation. Runs on boot; exposed
-    so a newly graphed library takes effect without a restart.
+    The grounded-knowledge tool is an explicit choice per agent, so this never
+    adds it to or removes it from anyone who chose. It only replaces
+    ``query_industry_knowledge`` / ``query_knowledge_graph`` on agents created
+    before the consolidation. Runs on boot; exposed for the Knowledge tab.
     """
     from app.rag import rag_tools
 

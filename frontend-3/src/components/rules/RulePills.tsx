@@ -1,14 +1,19 @@
 import {
   BadgeCheck,
   Ban,
+  Bookmark,
   Braces,
+  Briefcase,
+  Building2,
   CheckCircle2,
   Cpu,
   DatabaseZap,
   EyeOff,
   FileText,
   Filter,
+  Flag,
   Gauge,
+  Globe,
   Library,
   ListOrdered,
   Lock,
@@ -16,10 +21,13 @@ import {
   PlugZap,
   Puzzle,
   Ruler,
+  Scale,
   ScanSearch,
   Shield,
   ShieldAlert,
   Sparkles,
+  Star,
+  Tag,
   Unplug,
   Wrench,
   type LucideIcon,
@@ -96,6 +104,7 @@ export const SOURCE_META: Record<RuleAppliedBy, { label: string; tone: Tone }> =
   always: { label: "Always on", tone: "slate" },
   ai: { label: "AI picked", tone: "purple" },
   user: { label: "Added by you", tone: "primary" },
+  targeted: { label: "Targeted", tone: "blue" },
 };
 
 export const CATEGORY_META: Record<string, { label: string; icon: LucideIcon }> = {
@@ -128,6 +137,17 @@ const ICONS: Record<string, LucideIcon> = {
   ScanSearch,
   ShieldAlert,
   Unplug,
+  // Category icons, built-in and the ones people can choose.
+  Bookmark,
+  Briefcase,
+  Building2,
+  Flag,
+  Globe,
+  Scale,
+  Sparkles,
+  Star,
+  Tag,
+  Wrench,
 };
 
 export function RuleIcon({ name, className }: { name: string; className?: string }) {

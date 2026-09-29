@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # Mistral AI
     MISTRAL_API_KEY: str = ""
     MISTRAL_ORCHESTRATOR_MODEL: str = "mistral-large-latest"
+    # Retired: code-related decisions now use model routes (app/llm_routes.py,
+    # override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
     MISTRAL_CODING_MODEL: str = "codestral-latest"
 
     # Dynamic Tools
@@ -20,6 +22,10 @@ class Settings(BaseSettings):
 
     # Docker Tool Service
     TOOL_SERVICE_URL: str = "http://localhost:9000"
+    # How long a call waits for the Tool Service to come back when its
+    # connection is refused — a container restart takes 15-30s, and a workflow
+    # step that fails on the first refusal fails the whole run.
+    TOOL_SERVICE_WAIT_SECONDS: float = 90.0
 
     # Database
     DATABASE_URL: str = f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sql_app.db')}"

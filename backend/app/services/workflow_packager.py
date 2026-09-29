@@ -18,6 +18,7 @@ import os
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from app.services.workflow_engine.models import (
     WorkflowDefinition, WorkflowStep, StepType,
@@ -51,7 +52,8 @@ async def build_deployment_manifest(workflow_def: WorkflowDefinition, client) ->
 
     agent_specs: dict[str, DeploymentAgentSpec] = {}
     native_tools: set[str] = set()
-    dynamic_tool_names: set[str] = set()
+    #: name → the version steps pin (None: the active version).
+    dynamic_tool_names: dict[str, Optional[int]] = {}
     connectors: list[DeploymentConnectorRef] = []
     seen_connector_keys: set[tuple] = set()
     uses_kg = False
@@ -88,7 +90,9 @@ async def build_deployment_manifest(workflow_def: WorkflowDefinition, client) ->
             if tool_name in ALL_TOOLS or tool_name in BUILTIN_TOOLS:
                 native_tools.add(tool_name)
             else:
-                dynamic_tool_names.add(tool_name)
+                pin = cfg.get("tool_version")
+                if tool_name not in dynamic_tool_names or pin is not None:
+                    dynamic_tool_names[tool_name] = pin
 
         elif step.type == StepType.CONNECTOR:
             key = (cfg.get("connector_name") or "", cfg.get("connector_id") or "", cfg.get("credentials_name") or "")
@@ -104,8 +108,13 @@ async def build_deployment_manifest(workflow_def: WorkflowDefinition, client) ->
     if dynamic_tool_names:
         records = await tool_resolver.list_tools()
         by_tool_name = {r.get("name"): r for r in records if r.get("name")}
-        for name in dynamic_tool_names:
+        for name, pin in dynamic_tool_names.items():
             record = by_tool_name.get(name)
+            if pin is not None and (not record or record.get("version_no") != pin):
+                # The workflow was planned against a version that is no longer
+                # the active one — ship exactly that version's code.
+                record = next((v for v in await tool_resolver.get_tool_versions(name)
+                               if v.get("version_no") == pin), record)
             if not record or record.get("status") != "approved" or not record.get("source_code"):
                 continue
             dynamic_tools.append(DeploymentDynamicTool(
@@ -114,6 +123,8 @@ async def build_deployment_manifest(workflow_def: WorkflowDefinition, client) ->
                 source_code=record["source_code"],
                 hash=record.get("hash", ""),
                 version=record.get("version", "1.0.0"),
+                version_no=record.get("version_no"),
+                purpose=record.get("purpose") or "tool",
             ))
 
     return DeploymentManifest(
@@ -152,7 +163,7 @@ def _iter_source_tree(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR_NAMES]
         for filename in filenames:
-            if filename in _SKIP_FILE_NAMES or filename.endswith((".pyc", ".pyo")):
+            if filename in _SKIP_FILE_NAMES or filename.endswith((".pyc", ".pyo", ".secret")):
                 continue
             full = Path(dirpath) / filename
             yield full, full.relative_to(root)

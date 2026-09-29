@@ -15,7 +15,6 @@ import { toast } from "sonner";
 import { errorMessage, QK, rulesApi } from "@/api";
 import { RuleParamsForm } from "@/components/rules/RuleParamsForm";
 import {
-  CATEGORY_META,
   ENFORCEMENT_META,
   OutcomePill,
   Pill,
@@ -29,7 +28,13 @@ import { DetailSkeleton } from "@/components/ui/Skeletons";
 import { Switch } from "@/components/ui/switch";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import type { Rule, RuleEnforcement, RuleType } from "@/types";
+import type { Rule, RuleApplies, RuleEnforcement, RuleType } from "@/types";
+import {
+  AppliesPicker,
+  CategoryBadge,
+  CategoryPicker,
+} from "@/components/rules/RuleScopingControls";
+import { appliesOf, appliesToFields, useRuleCategories } from "@/components/rules/ruleScoping";
 
 export const Route = createFileRoute("/rules/$id")({
   head: () => ({
@@ -112,7 +117,10 @@ function RuleDetail({
   const [description, setDescription] = useState(rule.description ?? "");
   const [params, setParams] = useState<Record<string, unknown>>(rule.params ?? {});
   const [enforcement, setEnforcement] = useState<RuleEnforcement>(rule.enforcement);
-  const [alwaysOn, setAlwaysOn] = useState(rule.always_on);
+  const [applies, setApplies] = useState<RuleApplies>(appliesOf(rule));
+  const [targets, setTargets] = useState<string[]>(rule.targets ?? []);
+  const [category, setCategory] = useState(rule.category);
+  const { byId: categoriesById } = useRuleCategories();
 
   // Re-seed the form whenever the saved rule changes underneath us.
   useEffect(() => {
@@ -120,14 +128,18 @@ function RuleDetail({
     setDescription(rule.description ?? "");
     setParams(rule.params ?? {});
     setEnforcement(rule.enforcement);
-    setAlwaysOn(rule.always_on);
+    setApplies(appliesOf(rule));
+    setTargets(rule.targets ?? []);
+    setCategory(rule.category);
   }, [rule]);
 
   const dirty =
     name !== rule.name ||
     description !== (rule.description ?? "") ||
     enforcement !== rule.enforcement ||
-    alwaysOn !== rule.always_on ||
+    applies !== appliesOf(rule) ||
+    category !== rule.category ||
+    (applies === "targeted" && JSON.stringify(targets) !== JSON.stringify(rule.targets ?? [])) ||
     JSON.stringify(params) !== JSON.stringify(rule.params ?? {});
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["rules"] });
@@ -139,7 +151,8 @@ function RuleDetail({
         description: description.trim(),
         params,
         enforcement,
-        always_on: alwaysOn,
+        category,
+        ...appliesToFields(applies, targets),
       }),
     onSuccess: () => {
       toast.success("Rule saved");
@@ -187,8 +200,8 @@ function RuleDetail({
   );
 
   const summary = type ? renderSummary(type.summary, params, optionLabels) : rule.summary;
-  const categoryMeta = CATEGORY_META[rule.category];
-  const CategoryIcon = categoryMeta?.icon;
+  const savedApplies = appliesOf(rule);
+  const targetCount = rule.targets?.length ?? 0;
   const checkpoints = type?.checkpoint_labels ?? rule.checkpoints;
 
   return (
@@ -262,7 +275,12 @@ function RuleDetail({
           <Button
             size="sm"
             onClick={() => save.mutate()}
-            disabled={!dirty || save.isPending || !name.trim()}
+            disabled={
+              !dirty ||
+              save.isPending ||
+              !name.trim() ||
+              (applies === "targeted" && targets.length === 0)
+            }
           >
             {save.isPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -352,42 +370,21 @@ function RuleDetail({
             </div>
           </Panel>
 
-          <Panel title="How it's applied">
-            <div className="grid gap-2 sm:grid-cols-2">
-              {[
-                {
-                  on: true,
-                  title: "Always on",
-                  body: `Every ${scopeWord}, including existing ones.`,
-                },
-                {
-                  on: false,
-                  title: "AI decides",
-                  body: `The orchestrator adds it to ${scopeWord}s where it's relevant. You can also add it by hand.`,
-                },
-              ].map((opt) => (
-                <button
-                  key={opt.title}
-                  type="button"
-                  onClick={() => setAlwaysOn(opt.on)}
-                  className={cn(
-                    "rounded-lg border px-3 py-2.5 text-left transition",
-                    alwaysOn === opt.on
-                      ? "border-primary/40 bg-primary/8"
-                      : "border-border hover:border-border-strong",
-                  )}
-                >
-                  <span className="block text-xs font-semibold text-foreground">{opt.title}</span>
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{opt.body}</span>
-                </button>
-              ))}
-            </div>
-            {type?.key === "reviewed_tools_only" && !alwaysOn ? (
-              <p className="mt-2 text-[11px] text-amber">
-                This rule only takes effect when it is always on — tools are generated before any
-                agent exists to attach it to.
-              </p>
-            ) : null}
+          <Panel title="Apply to">
+            <AppliesPicker
+              scope={rule.scope}
+              applies={applies}
+              targets={targets}
+              onlyAlways={type?.key === "reviewed_tools_only"}
+              onChange={(next) => {
+                setApplies(next.applies);
+                setTargets(next.targets);
+              }}
+            />
+          </Panel>
+
+          <Panel title="Category">
+            <CategoryPicker value={category} onChange={setCategory} />
           </Panel>
         </div>
 
@@ -395,20 +392,20 @@ function RuleDetail({
           <Panel title="Where it applies">
             <dl className="space-y-2.5 text-xs">
               <Row label="Kind">
-                <span className="flex items-center gap-1.5 text-foreground">
-                  {CategoryIcon ? <CategoryIcon className="size-3" /> : null}
-                  {categoryMeta?.label ?? rule.category}
-                </span>
+                <CategoryBadge
+                  category={categoriesById[rule.category]}
+                  fallbackId={rule.category}
+                />
               </Row>
               <Row label="Covers">
                 <span className="text-foreground">
-                  {isAgent
-                    ? rule.always_on
-                      ? "All agents"
-                      : `${rule.usage?.agents ?? 0} agent${(rule.usage?.agents ?? 0) === 1 ? "" : "s"}`
-                    : rule.always_on
-                      ? "All workflows"
-                      : "Selected workflows"}
+                  {savedApplies === "always"
+                    ? `All ${scopeWord}s`
+                    : savedApplies === "targeted"
+                      ? `${targetCount} chosen ${scopeWord}${targetCount === 1 ? "" : "s"}`
+                      : isAgent
+                        ? `${rule.usage?.agents ?? 0} agent${(rule.usage?.agents ?? 0) === 1 ? "" : "s"} (picked by AI or by hand)`
+                        : "Workflows it was added to"}
                 </span>
               </Row>
               <Row label="Added by">

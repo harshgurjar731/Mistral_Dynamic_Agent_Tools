@@ -44,6 +44,11 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import {
+  OutputContractPanel,
+  VerificationReportPanel,
+  VersionHistoryPanel,
+} from "@/components/tools/VerificationPanels";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
 export type ToolDetailVariant = "tool" | "activity";
@@ -81,6 +86,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   const qc = useQueryClient();
   const navigate = useNavigate();
   const backTo = variant === "activity" ? "/workflows/activities" : "/tools";
+  const detailPath = variant === "activity" ? "/workflows/activities/$id" : "/tools/$id";
   const noun = variant === "activity" ? "Activity" : "Tool";
 
   const toolQuery = useQuery({
@@ -131,10 +137,14 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
         description: editDescription,
         purpose: editPurpose,
       }),
-    onSuccess: () => {
-      toast.success(`${noun} updated.`);
+    onSuccess: (res) => {
+      toast.success(res?.message ?? `${noun} updated.`);
       setEditing(false);
       invalidateLists();
+      if (tool) qc.invalidateQueries({ queryKey: QK.toolVersions(tool.name) });
+      if (res?.tool_id != null && String(res.tool_id) !== String(id)) {
+        navigate({ to: detailPath, params: { id: String(res.tool_id) } });
+      }
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -201,13 +211,11 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   ).filter((n): n is string => Boolean(n));
 
   const { data: remoteServers } = useQuery({
-    queryKey: QK.remoteServers(),
+    queryKey: [...QK.remoteServers(), "tool"],
     enabled: sendOpen,
-    queryFn: () => remoteServersApi.list(),
+    queryFn: () => remoteServersApi.list("tool"),
   });
-  const remoteList: { id: string; name: string }[] = Array.isArray(remoteServers)
-    ? (remoteServers as { id: string; name: string }[])
-    : ((remoteServers as { items?: { id: string; name: string }[] })?.items ?? []);
+  const remoteList = remoteServers ?? [];
 
   const handleRunTest = async () => {
     if (!tool) return;
@@ -241,7 +249,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
     setEditing(true);
   };
 
-  const isPending = tool?.status === "pending";
+  const isPending = tool?.status === "pending" || tool?.status === "pending_approval";
 
   if (toolQuery.isLoading) return <DetailSkeleton />;
   if (toolQuery.isError)
@@ -358,8 +366,30 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
           {isActivity ? "Activity" : "Agent Tool"}
         </span>
         <span className="inline-flex items-center gap-1 rounded-md border border-blue/20 bg-blue/8 px-2 py-0.5 font-mono text-xs text-blue">
-          <Hash className="size-3" />v{tool.version ?? 1}
+          <Hash className="size-3" />v{tool.version_no ?? tool.version ?? 1}
         </span>
+        {editable && tool.version_no != null && (
+          <span
+            className={cn(
+              "rounded-md border px-2 py-0.5 text-xs",
+              tool.is_active
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400"
+                : "border-border/60 bg-muted/30 text-muted-foreground",
+            )}
+          >
+            {tool.is_active ? "active version" : "not the active version"}
+          </span>
+        )}
+        {tool.kind === "http" && (
+          <span className="rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-xs text-muted-foreground">
+            calls an external API
+          </span>
+        )}
+        {tool.review_required && (
+          <span className="rounded-md border border-amber/20 bg-amber/8 px-2 py-0.5 text-xs font-medium text-amber">
+            needs human review
+          </span>
+        )}
         {params > 0 && (
           <span className="inline-flex items-center gap-1 rounded-md border border-cyan/20 bg-cyan/8 px-2 py-0.5 text-xs font-medium text-cyan">
             <Code2 className="size-3" />
@@ -461,16 +491,26 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
             </GlassPanel>
           )}
 
-          {tool.sandbox_output && (
-            <GlassPanel>
-              <GlassPanelHeader
-                title="Sandbox Output"
-                description="Output from sandbox execution."
-              />
-              <div className="p-4">
-                <CodeBlock code={tool.sandbox_output} language="text" />
-              </div>
-            </GlassPanel>
+          {tool.output_schema && <OutputContractPanel schema={tool.output_schema} />}
+
+          {tool.report ? (
+            <VerificationReportPanel report={tool.report} />
+          ) : (
+            tool.sandbox_output && (
+              <GlassPanel>
+                <GlassPanelHeader
+                  title="Sandbox Output"
+                  description="Output from sandbox execution."
+                />
+                <div className="p-4">
+                  <CodeBlock code={tool.sandbox_output} language="text" />
+                </div>
+              </GlassPanel>
+            )
+          )}
+
+          {editable && tool.version_no != null && (
+            <VersionHistoryPanel tool={tool} detailPath={detailPath} />
           )}
 
           {remoteResponse != null && (
@@ -522,12 +562,22 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
             </SelectTrigger>
             <SelectContent>
               {remoteList.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
+                <SelectItem key={s.id} value={String(s.id)}>
                   {s.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground">
+            {remoteList.length === 0 ? "No tool deployment servers yet. " : null}
+            <Link
+              to="/remote-servers"
+              search={{ purpose: "tool" }}
+              className="text-primary hover:underline"
+            >
+              Manage remote servers
+            </Link>
+          </p>
           <DialogFooter>
             <Button
               onClick={() => sendTool.mutate()}

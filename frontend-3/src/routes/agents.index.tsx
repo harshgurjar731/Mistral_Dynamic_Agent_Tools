@@ -13,6 +13,10 @@ import { AgentClassificationModal } from "@/components/agents/AgentClassificatio
 import { DomainFilterDropdown } from "@/components/ontology/DomainFilterDropdown";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { useSortKey } from "@/lib/sorting";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/agents/")({
   head: () => ({
@@ -28,6 +32,14 @@ export const Route = createFileRoute("/agents/")({
 
 const PAGE_SIZE = 20;
 
+/** Applied on the server across all agents, not just the visible page. */
+const AGENT_SORTS = [
+  { key: "newest", label: "Newest first" },
+  { key: "oldest", label: "Oldest first" },
+  { key: "name_asc", label: "Name A–Z" },
+  { key: "name_desc", label: "Name Z–A" },
+];
+
 function AgentsIndexPage() {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
@@ -37,9 +49,14 @@ function AgentsIndexPage() {
   const [classifyAgent, setClassifyAgent] = useState<Agent | null>(null);
   const qc = useQueryClient();
 
+  const [sort, setSortKey] = useSortKey("agents");
+  const setSort = (key: string) => {
+    setSortKey(key);
+    setPage(0);
+  };
   const agentsQuery = useQuery({
-    queryKey: QK.agentsPage(page, PAGE_SIZE),
-    queryFn: () => agentsApi.list(page, PAGE_SIZE),
+    queryKey: QK.agentsPage(page, PAGE_SIZE, sort),
+    queryFn: () => agentsApi.list(page, PAGE_SIZE, sort),
   });
 
   const domainConceptsQuery = useQuery({
@@ -88,6 +105,20 @@ function AgentsIndexPage() {
       if (!doms.some((d) => domainFilter.has(d))) return false;
     }
     return true;
+  });
+
+  // Selection covers the agents on this page that pass the filters.
+  const selection = useBulkSelection(
+    filtered,
+    (a) => a.id,
+    () => true,
+    (a) => a.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "agent",
+    deleteOne: (id) => agentsApi.remove(id),
+    invalidate: [QK.agents()],
+    selection,
   });
 
   const totalAgents = agentsQuery.data?.items?.length ?? 0;
@@ -159,6 +190,7 @@ function AgentsIndexPage() {
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={AGENT_SORTS} />
         <select
           value={tierFilter}
           onChange={(e) => setTierFilter(e.target.value)}
@@ -230,24 +262,40 @@ function AgentsIndexPage() {
             )}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                domains={extractDomains(annotationMap[agent.id]).map(
-                  (id) => domainLabelById.get(id) ?? id,
-                )}
-                hasKnowledgeTool={(agent.tools ?? []).some((t) =>
-                  JSON.stringify(t).includes("knowledge"),
-                )}
-                onDelete={(a) =>
-                  window.confirm(`Delete agent "${a.name}"?`) && deleteMutation.mutate(a.id)
-                }
-                onClassify={(a) => setClassifyAgent(a)}
-              />
-            ))}
-          </div>
+          <>
+            <BulkActionBar
+              className="mb-4"
+              selection={selection}
+              noun="agent"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Only the agents are deleted — their tools, libraries and connectors are detached and kept. Their knowledge-graph links are removed. Workflow steps bound to a deleted agent stop working until they are rebound."
+            />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((agent) => (
+                <SelectableItem
+                  key={agent.id}
+                  selection={selection}
+                  id={agent.id}
+                  label={agent.name}
+                >
+                  <AgentCard
+                    agent={agent}
+                    domains={extractDomains(annotationMap[agent.id]).map(
+                      (id) => domainLabelById.get(id) ?? id,
+                    )}
+                    hasKnowledgeTool={(agent.tools ?? []).some((t) =>
+                      JSON.stringify(t).includes("knowledge"),
+                    )}
+                    onDelete={(a) =>
+                      window.confirm(`Delete agent "${a.name}"?`) && deleteMutation.mutate(a.id)
+                    }
+                    onClassify={(a) => setClassifyAgent(a)}
+                  />
+                </SelectableItem>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

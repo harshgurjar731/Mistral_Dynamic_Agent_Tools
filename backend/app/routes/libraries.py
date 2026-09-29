@@ -65,11 +65,23 @@ async def update_library(library_id: str, request: UpdateLibraryRequest):
 
 @router.delete("/libraries/{library_id}")
 async def delete_library(library_id: str):
-    """Delete a document library."""
+    """Delete a document library — refused while any agent has it attached.
+
+    Everything graph RAG derived from it (documents, entities, the library
+    node) and all its annotations are removed with it.
+    """
+    from app.services import delete_rules
+
     try:
-        return await library_service.delete_library(library_id)
+        delete_rules.check_library_deletable(library_id)
+    except delete_rules.InUse as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    try:
+        result = await library_service.delete_library(library_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete library: {str(e)}")
+    result["graph"] = delete_rules.forget_in_graph("library", library_id)
+    return result
 
 
 # ── Document Endpoints ─────────────────────────────────────────────────────
@@ -113,8 +125,16 @@ async def upload_webpage(library_id: str, request: WebpageRequest):
 
 @router.delete("/libraries/{library_id}/documents/{document_id}")
 async def delete_document(library_id: str, document_id: str):
-    """Remove a document from a library."""
+    """Remove a document from a library, and its slice of the knowledge graph.
+
+    This path used to leave the document's entities and relations in Neo4j,
+    where an unscoped graph lookup could still cite a document nobody can open.
+    """
+    from app.services import delete_rules
+
     try:
-        return await library_service.delete_document(library_id, document_id)
+        result = await library_service.delete_document(library_id, document_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+    result["graph"] = delete_rules.forget_library_document_in_graph(library_id, document_id)
+    return result

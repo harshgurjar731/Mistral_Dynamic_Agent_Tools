@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Wrench, Inbox, Sparkles, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { toolsApi, QK, errorMessage } from "@/api";
+import { toolsApi, QK } from "@/api";
+import { RunProgressCard } from "@/components/runs/RunProgress";
+import { stopRun } from "@/lib/runs/connections";
+import { runOutputName } from "@/components/runs/runMeta";
+import { useSynthesisRun } from "@/lib/runs/useSynthesisRun";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -19,6 +23,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
+import type { Tool } from "@/types";
+import { isDeletableTool } from "@/lib/status";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/tools/")({
   head: () => ({
@@ -32,9 +42,14 @@ export const Route = createFileRoute("/tools/")({
   component: ToolsPage,
 });
 
+const TOOL_SORTS = standardSorts<Tool>(
+  (t) => t.name,
+  (t) => t.created_at,
+);
+
 function ToolsPage() {
-  const qc = useQueryClient();
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useSortKey("tools");
   const [purposeFilter, setPurposeFilter] = useState<string>("all");
   const [synthesizeOpen, setSynthesizeOpen] = useState(false);
   const [task, setTask] = useState("");
@@ -42,16 +57,25 @@ function ToolsPage() {
   const toolsQuery = useQuery({ queryKey: QK.tools(), queryFn: toolsApi.list });
   const pendingQuery = useQuery({ queryKey: QK.pendingTools(), queryFn: toolsApi.pending });
 
-  const synthesize = useMutation({
-    mutationFn: () => toolsApi.synthesize(task.trim()),
-    onSuccess: () => {
-      toast.success("Tool synthesized and sent to Pending Review.");
-      setTask("");
-      setSynthesizeOpen(false);
-      qc.invalidateQueries({ queryKey: QK.tools() });
-      qc.invalidateQueries({ queryKey: QK.pendingTools() });
+  const [synthError, setSynthError] = useState<string | null>(null);
+  // A background run: closing the dialog does not stop it, and the global
+  // notification reports the outcome if the dialog is no longer open.
+  const synthesize = useSynthesisRun("tool", {
+    watching: synthesizeOpen,
+    onFinished: (run, watching) => {
+      synthesize.clear();
+      if (run.status === "completed") {
+        setTask("");
+        if (watching) {
+          toast.success(
+            `Agent tool “${runOutputName(run) ?? "new"}” synthesised and sent to Pending Review.`,
+          );
+          setSynthesizeOpen(false);
+        }
+      } else if (watching && run.status !== "cancelled") {
+        setSynthError(run.error ?? "Synthesis failed.");
+      }
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const filterTool = (t: { name: string; description?: string; purpose?: string }) => {
@@ -67,9 +91,40 @@ function ToolsPage() {
     return true;
   };
 
-  const activeTools = (toolsQuery.data ?? []).filter(filterTool);
-  const pendingTools = (pendingQuery.data?.tools ?? []).filter(filterTool);
+  const activeTools = applySort((toolsQuery.data ?? []).filter(filterTool), TOOL_SORTS, sort);
+  const pendingTools = applySort(
+    (pendingQuery.data?.tools ?? []).filter(filterTool),
+    TOOL_SORTS,
+    sort,
+  );
   const totalTools = (toolsQuery.data ?? []).length;
+
+  // One selection per tab: each tab deletes only what it shows.
+  const activeSelection = useBulkSelection(
+    activeTools,
+    (t) => t.id,
+    isDeletableTool,
+    (t) => t.name,
+  );
+  const pendingSelection = useBulkSelection(
+    pendingTools,
+    (t) => t.id,
+    isDeletableTool,
+    (t) => t.name,
+  );
+  const invalidate = [QK.tools(), QK.pendingTools()];
+  const deleteActive = useBulkDelete({
+    noun: "tool",
+    deleteOne: (id) => toolsApi.remove(id),
+    invalidate,
+    selection: activeSelection,
+  });
+  const deletePending = useBulkDelete({
+    noun: "tool",
+    deleteOne: (id) => toolsApi.remove(id),
+    invalidate,
+    selection: pendingSelection,
+  });
 
   return (
     <div className="px-6 py-8">
@@ -89,7 +144,13 @@ function ToolsPage() {
           className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
         >
           <Sparkles className="size-4" />
-          Synthesize Tool
+          {synthesize.busy ? (
+            <>
+              <Loader2 className="size-4 animate-spin" /> Synthesizing…
+            </>
+          ) : (
+            "Synthesize Tool"
+          )}
         </button>
       </div>
 
@@ -127,6 +188,7 @@ function ToolsPage() {
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={TOOL_SORTS} />
         <select
           value={purposeFilter}
           onChange={(e) => setPurposeFilter(e.target.value)}
@@ -188,11 +250,28 @@ function ToolsPage() {
                 )}
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {activeTools.map((tool) => (
-                  <ToolCard key={tool.id} tool={tool} />
-                ))}
-              </div>
+              <>
+                <BulkActionBar
+                  className="mb-4"
+                  selection={activeSelection}
+                  noun="tool"
+                  onDelete={deleteActive.run}
+                  deleting={deleteActive.running}
+                  warning="Each tool is detached from every agent that uses it, then deleted with all its versions and its knowledge-graph links. A tool used as a workflow step is refused until it is removed from that workflow. Built-in and native tools cannot be selected."
+                />
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {activeTools.map((tool) => (
+                    <SelectableItem
+                      key={tool.id}
+                      selection={activeSelection}
+                      id={tool.id}
+                      label={tool.name}
+                    >
+                      <ToolCard tool={tool} />
+                    </SelectableItem>
+                  ))}
+                </div>
+              </>
             )}
           </TabsContent>
 
@@ -208,11 +287,27 @@ function ToolsPage() {
                 description="Synthesized tools land here until they're approved or rejected."
               />
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {pendingTools.map((tool) => (
-                  <ToolCard key={tool.id} tool={tool} pending />
-                ))}
-              </div>
+              <>
+                <BulkActionBar
+                  className="mb-4"
+                  selection={pendingSelection}
+                  noun="tool"
+                  onDelete={deletePending.run}
+                  deleting={deletePending.running}
+                />
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {pendingTools.map((tool) => (
+                    <SelectableItem
+                      key={tool.id}
+                      selection={pendingSelection}
+                      id={tool.id}
+                      label={tool.name}
+                    >
+                      <ToolCard tool={tool} pending />
+                    </SelectableItem>
+                  ))}
+                </div>
+              </>
             )}
           </TabsContent>
         </Tabs>
@@ -236,24 +331,44 @@ function ToolsPage() {
               value={task}
               onChange={(e) => setTask(e.target.value)}
               className="resize-none"
-              disabled={synthesize.isPending}
+              disabled={synthesize.busy}
             />
+            {synthError && !synthesize.busy ? (
+              <p className="rounded-lg border border-red/30 bg-red/10 p-2.5 text-xs text-red">
+                {synthError}
+              </p>
+            ) : null}
+            {synthesize.run?.status === "running" ? (
+              <>
+                <RunProgressCard
+                  run={synthesize.run}
+                  onStop={() => synthesize.run && void stopRun(synthesize.run.id)}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  You can close this dialog — synthesis continues in the background and you will be
+                  notified when it is ready.
+                </p>
+              </>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSynthesizeOpen(false)}>
-              Cancel
+              {synthesize.busy ? "Run in background" : "Cancel"}
             </Button>
             <Button
-              disabled={!task.trim() || synthesize.isPending}
-              onClick={() => synthesize.mutate()}
+              disabled={!task.trim() || synthesize.busy}
+              onClick={() => {
+                setSynthError(null);
+                void synthesize.start(task.trim());
+              }}
               className="gap-2"
             >
-              {synthesize.isPending ? (
+              {synthesize.busy ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Sparkles className="size-4" />
               )}
-              {synthesize.isPending ? "Synthesizing…" : "Synthesize"}
+              {synthesize.busy ? "Synthesizing…" : "Synthesize"}
             </Button>
           </DialogFooter>
         </DialogContent>

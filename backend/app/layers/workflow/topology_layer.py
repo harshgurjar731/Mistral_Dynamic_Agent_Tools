@@ -243,6 +243,7 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                     tool_name = bound
                 if tool_name:
                     config["tool_name"] = tool_name
+                    _pin_activity(ctx, step_id, tool_name, config)
                     if tool_name not in activity_names:
                         # Not an error: run_tool_step has a runtime
                         # auto-synthesis fallback for exactly this case.
@@ -256,6 +257,12 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                     value = str(binding.get(key) or "").strip()
                     if value:
                         config[key] = value
+                # The execution-mode decision already chose (and checked) the
+                # connector; the topology model may omit or misquote it.
+                chosen = next((c.connector_id for c in spec.capabilities
+                               if c.id == step_id and c.connector_id), None)
+                if chosen:
+                    config["connector_id"] = chosen
 
             elif step_type == "condition":
                 for key in ("true_step", "false_step"):
@@ -368,6 +375,7 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                 config["agent_id"] = by_capability[cap.id]
             elif step_type == "tool" and cap.id in bindings:
                 config["tool_name"] = bindings[cap.id]
+                _pin_activity(ctx, cap.id, bindings[cap.id], config)
             steps.append({
                 "id": cap.id,
                 "type": step_type,
@@ -392,3 +400,27 @@ class StepTopologyLayer(WorkflowDecisionLayer):
             "steps": steps,
         }
         spec.rationale["topology"] = "Linear fallback — the topology decision could not be made."
+
+
+def _pin_activity(ctx, step_id: str, tool_name: str, config: dict) -> None:
+    """Pin the activity version a step was planned against, and keep its requirement.
+
+    The pin keeps a published workflow running the exact code it was planned
+    and validated with after a newer version of the activity ships. The
+    requirement lets the step rebuild that activity if it has gone missing,
+    instead of guessing a specification from the arguments it happens to pass.
+    """
+    versions = ctx.metadata.get("activity_versions") or {}
+    requirements = ctx.metadata.get("activity_requirements") or {}
+    bound = (ctx.metadata.get("activity_bindings") or {}).get(step_id)
+    if bound and bound == tool_name:
+        if versions.get(step_id) is not None:
+            config["tool_version"] = versions[step_id]
+        if requirements.get(step_id):
+            config["code_requirement"] = requirements[step_id]
+        return
+    # Bound by the model to a catalogue activity rather than by ActivityGapLayer.
+    for activity in (ctx.workflow_spec.inventory or {}).get("activities", []):
+        if activity.get("name") == tool_name and activity.get("version") is not None:
+            config["tool_version"] = activity["version"]
+            return

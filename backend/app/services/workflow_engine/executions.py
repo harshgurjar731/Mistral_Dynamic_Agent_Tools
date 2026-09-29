@@ -444,7 +444,7 @@ async def fetch_execution(
     # *something* to render. The workflow's own query handler is the last place
     # the value can be, so it is worth one extra call — but only once, at the
     # end, not on every poll.
-    if detail.result in (None, "", {}) and detail.status in TERMINAL_STATUSES:
+    if detail.result in (None, "", {}) and detail.status == "COMPLETED":
         detail.result = await _query_last_result(execution_id)
 
     if detail.status in ("FAILED", "TIMED_OUT") and not detail.error:

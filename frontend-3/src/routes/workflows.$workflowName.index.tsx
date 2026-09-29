@@ -33,6 +33,7 @@ import { WorkflowHistoryPanel } from "@/components/workflows/HistoryPanel";
 import { IssueList, ValidationSummary } from "@/components/workflows/ValidationPanel";
 import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
 import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClassificationModal";
+import { StepDetailsDialog } from "@/components/workflows/StepDetailsDialog";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -107,6 +108,7 @@ function WorkflowDetailPage() {
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [direction, setDirection] = useState<"LR" | "TB">("LR");
   const [showMinimap, setShowMinimap] = useState(true);
+  const [openStepId, setOpenStepId] = useState<string | null>(null);
 
   const wf = useQuery({
     queryKey: QK.workflow(workflowName),
@@ -115,6 +117,14 @@ function WorkflowDetailPage() {
 
   const definition = wf.data;
   const remoteOnly = (definition?.steps?.length ?? 0) === 0;
+
+  // Agent names, models, tools and activity parameters for the cards and the step modal.
+  const catalog = useQuery({
+    queryKey: QK.builderCatalog(),
+    queryFn: workflowsApi.catalog,
+    enabled: Boolean(definition) && !remoteOnly,
+    staleTime: 60_000,
+  });
 
   const validation = useQuery({
     queryKey: [...QK.workflow(workflowName), "validation"],
@@ -159,7 +169,9 @@ function WorkflowDetailPage() {
   const graph = useMemo(
     () =>
       definition
-        ? stepsToGraph(definition, validation.data?.issues ?? [], direction)
+        ? // Read-only: always lay out fresh, so the LR/TB toggle works and cards
+          // never overlap because of positions saved for a different card size.
+          stepsToGraph({ ...definition, ui_layout: {} }, validation.data?.issues ?? [], direction)
         : { nodes: [], edges: [] },
     [definition, validation.data, direction],
   );
@@ -313,8 +325,10 @@ function WorkflowDetailPage() {
                 nodes={graph.nodes}
                 edges={graph.edges}
                 readOnly
+                catalog={catalog.data}
+                onNodeClick={(_, node) => setOpenStepId(node.id)}
                 showMinimap={showMinimap}
-                className="h-[540px] w-full"
+                className="relative h-[600px] w-full"
                 overlay={
                   <>
                     <GraphLegend />
@@ -362,7 +376,20 @@ function WorkflowDetailPage() {
             >
               <div className="divide-y divide-border/40">
                 {definition.steps.map((s) => (
-                  <div key={s.id} className="px-5 py-3">
+                  <div
+                    key={s.id}
+                    role="button"
+                    tabIndex={0}
+                    title="Show step details"
+                    onClick={() => setOpenStepId(s.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setOpenStepId(s.id);
+                      }
+                    }}
+                    className="cursor-pointer px-5 py-3 transition-colors hover:bg-surface-hover/60"
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs font-semibold text-foreground">
                         {s.id}
@@ -516,6 +543,14 @@ function WorkflowDetailPage() {
             open={classifyOpen}
             onOpenChange={setClassifyOpen}
             workflowName={workflowName}
+          />
+          <StepDetailsDialog
+            step={definition.steps.find((s) => s.id === openStepId) ?? null}
+            definition={definition}
+            catalog={catalog.data}
+            issues={validation.data?.issues ?? []}
+            onOpenChange={(open) => !open && setOpenStepId(null)}
+            onSelectStep={setOpenStepId}
           />
         </>
       )}

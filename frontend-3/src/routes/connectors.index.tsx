@@ -20,6 +20,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { CreatedAt } from "@/components/shared/CreatedAt";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@/lib/sorting";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/connectors/")({
   head: () => ({
@@ -40,6 +45,14 @@ function visibilityLabel(v: string): string {
   if (v === "private") return "Private";
   return v;
 }
+
+const CONNECTOR_SORTS: SortOption<Connector>[] = [
+  ...standardSorts<Connector>(
+    (c) => c.title || c.name,
+    (c) => c.created_at,
+  ),
+  { key: "modified", label: "Recently modified", compare: byDate((c) => c.modified_at) },
+];
 
 function ConnectorCard({ connector }: { connector: Connector }) {
   const qc = useQueryClient();
@@ -168,7 +181,7 @@ function ConnectorCard({ connector }: { connector: Connector }) {
 
         {/* Footer */}
         <div className="mt-3.5 flex items-center border-t border-border/40 pt-3.5">
-          <span className="text-[10px] text-muted-foreground/40 italic">{connector.name}</span>
+          <CreatedAt value={connector.created_at} />
           {!connector.is_directory && (
             <button
               type="button"
@@ -282,9 +295,10 @@ function ConnectorsIndexPage() {
     queryFn: () => connectorsApi.list({ page_size: 200, ...(cursor ? { cursor } : {}) }),
   });
 
+  const [sort, setSort] = useSortKey("connectors");
   const filtered = useMemo(() => {
     const items = query.data?.items ?? [];
-    return items.filter((c) => {
+    const rows = items.filter((c) => {
       const matchesSearch =
         !search.trim() ||
         c.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -293,7 +307,22 @@ function ConnectorsIndexPage() {
       const matchesVisibility = visibility === "all" || c.visibility === visibility;
       return matchesSearch && matchesVisibility;
     });
-  }, [query.data, search, visibility]);
+    return applySort(rows, CONNECTOR_SORTS, sort);
+  }, [query.data, search, visibility, sort]);
+
+  // Directory connectors belong to the Mistral catalogue and cannot be deleted.
+  const selection = useBulkSelection(
+    filtered,
+    (c) => c.id,
+    (c) => !c.is_directory,
+    (c) => c.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "connector",
+    deleteOne: (id) => connectorsApi.remove(id),
+    invalidate: [QK.connectors()],
+    selection,
+  });
 
   const visibilities = useMemo(() => {
     const set = new Set((query.data?.items ?? []).map((c) => String(c.visibility)));
@@ -357,6 +386,7 @@ function ConnectorsIndexPage() {
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={CONNECTOR_SORTS} />
         {visibilities.length > 1 && (
           <div className="flex flex-wrap gap-1.5">
             <button
@@ -437,11 +467,23 @@ function ConnectorsIndexPage() {
             )}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((c) => (
-              <ConnectorCard key={c.id} connector={c} />
-            ))}
-          </div>
+          <>
+            <BulkActionBar
+              className="mb-4"
+              selection={selection}
+              noun="connector"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Agents and workflow steps using these connectors lose access to them. Their knowledge-graph links are removed. Directory connectors cannot be selected."
+            />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((c) => (
+                <SelectableItem key={c.id} selection={selection} id={c.id} label={c.name}>
+                  <ConnectorCard connector={c} />
+                </SelectableItem>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

@@ -104,6 +104,28 @@ def _find_phrases(text: str, phrases: list[str]) -> list[str]:
     return [p for p in phrases or [] if p and p.lower() in low]
 
 
+def _pattern_hits(text: str, params: dict) -> list[str]:
+    """What a custom pattern rule found in ``text``. Invalid regexes match nothing."""
+    patterns = [p for p in params.get("patterns") or [] if p]
+    if params.get("mode") == "regex":
+        hits = []
+        for p in patterns:
+            try:
+                m = re.search(p, text or "", flags=re.IGNORECASE)
+            except re.error as e:
+                logger.warning("Invalid regex %r in a custom rule: %s", p, e)
+                continue
+            if m:
+                hits.append(m.group(0)[:80])
+        return hits
+    return _find_phrases(text, patterns)
+
+
+def _custom_refusal(rule: dict, default: str) -> str:
+    own = str((rule.get("params") or {}).get("message") or "").strip()
+    return f"Blocked by rule '{rule['name']}': {own}" if own else default
+
+
 def summary_lines(rules: list[dict]) -> str:
     """The rules as short bullet lines, for prompts."""
     return "\n".join(f"- {r['name']}: {r.get('summary') or r.get('description', '')}" for r in rules or [])
@@ -260,6 +282,24 @@ def check_message(text: str, rules: list[dict]) -> tuple[list[dict], Optional[st
                                          {"phrases": hits}))
         except Exception as e:
             logger.warning("Rule '%s' failed on message: %s", rule.get("id"), e)
+    for rule in _of_type(rules, "agent_custom_pattern"):
+        try:
+            if rule["params"].get("check_on", "message") not in ("message", "both"):
+                continue
+            hits = _pattern_hits(text, rule["params"])
+            if not hits:
+                outcomes.append(_outcome(rule, "message", "passed", "No match."))
+            elif rule["enforcement"] == "block":
+                outcomes.append(_outcome(rule, "message", "blocked", f"Matched: {', '.join(hits)}.",
+                                         {"matches": hits}))
+                refusal = refusal or _custom_refusal(
+                    rule, f"Blocked by rule '{rule['name']}': the message matched a blocked pattern."
+                )
+            else:
+                outcomes.append(_outcome(rule, "message", "warned", f"Matched: {', '.join(hits)}.",
+                                         {"matches": hits}))
+        except Exception as e:
+            logger.warning("Rule '%s' failed on message: %s", rule.get("id"), e)
     return outcomes, refusal
 
 
@@ -315,7 +355,9 @@ def answer_rules(rules: list[dict]) -> list[dict]:
     for r in rules or []:
         if r["type"] in ("pii_redaction", "json_answers", "answer_length"):
             out.append(r)
-        elif r["type"] == "blocked_phrases" and r["params"].get("check_on") in ("answer", "both"):
+        elif r["type"] in ("blocked_phrases", "agent_custom_pattern") and r["params"].get(
+            "check_on"
+        ) in ("answer", "both"):
             out.append(r)
     return out
 
@@ -337,7 +379,9 @@ def check_answer(text: str, rules: list[dict]) -> tuple[str, list[dict], Optiona
     text = text or ""
     ordered = sorted(
         answer_rules(rules),
-        key=lambda r: ["blocked_phrases", "pii_redaction", "json_answers", "answer_length"].index(r["type"]),
+        key=lambda r: [
+            "blocked_phrases", "agent_custom_pattern", "pii_redaction", "json_answers", "answer_length",
+        ].index(r["type"]),
     )
     for rule in ordered:
         try:
@@ -351,6 +395,17 @@ def check_answer(text: str, rules: list[dict]) -> tuple[str, list[dict], Optiona
                     refusal = refusal or f"The answer was withheld by rule '{rule['name']}'."
                 else:
                     outcomes.append(_outcome(rule, "answer", "warned", f"Answer contained: {', '.join(hits)}."))
+            elif t == "agent_custom_pattern":
+                hits = _pattern_hits(text, p)
+                if not hits:
+                    outcomes.append(_outcome(rule, "answer", "passed", "No match."))
+                elif enf == "block":
+                    outcomes.append(_outcome(rule, "answer", "blocked", f"Answer matched: {', '.join(hits)}."))
+                    refusal = refusal or _custom_refusal(
+                        rule, f"The answer was withheld by rule '{rule['name']}'."
+                    )
+                else:
+                    outcomes.append(_outcome(rule, "answer", "warned", f"Answer matched: {', '.join(hits)}."))
             elif t == "pii_redaction":
                 redacted, counts = redact(text, p.get("types") or [])
                 total = sum(counts.values())
@@ -699,6 +754,20 @@ def check_workflow_input(input_vars: dict, rules: list[dict]) -> tuple[list[dict
             refusal = refusal or f"Blocked by rule '{rule['name']}': the run inputs contain a blocked phrase."
         else:
             outcomes.append(_outcome(rule, "run_start", "warned", f"Inputs contain: {', '.join(hits)}."))
+    for rule in _of_type(rules, "workflow_custom_pattern"):
+        try:
+            hits = _pattern_hits(text, rule["params"])
+            if not hits:
+                outcomes.append(_outcome(rule, "run_start", "passed", "No match."))
+            elif rule["enforcement"] == "block":
+                outcomes.append(_outcome(rule, "run_start", "blocked", f"Inputs matched: {', '.join(hits)}."))
+                refusal = refusal or _custom_refusal(
+                    rule, f"Blocked by rule '{rule['name']}': the run inputs matched a blocked pattern."
+                )
+            else:
+                outcomes.append(_outcome(rule, "run_start", "warned", f"Inputs matched: {', '.join(hits)}."))
+        except Exception as e:
+            logger.warning("Rule '%s' failed on run inputs: %s", rule.get("id"), e)
     return outcomes, refusal
 
 

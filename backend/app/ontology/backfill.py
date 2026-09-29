@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from app.ontology import matcher, store
-from app.ontology.vocab import Predicate, Scheme, SubjectType, coerce_tier
+from app.ontology.vocab import (
+    Predicate,
+    Scheme,
+    SubjectType,
+    coerce_tier,
+    domains_for_tier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,18 +144,28 @@ def propose_for_agents(agents: list[dict]) -> list[dict]:
         if not agent_id:
             continue
         text = _text_of(agent)
-        domains = _propose_domains(text)
+        # Tier comes from whatever the agent already reports, which is metadata
+        # when set and the keyword heuristic otherwise.
+        tier = coerce_tier(agent.get("tier"))
+
+        # Foundation is the one tier that fixes its own domain, so the lexical
+        # guess is not consulted at all. It used to be, and it fired: a
+        # guardrail whose instructions say "reject anything unrelated to
+        # mortgage lending" scored as mortgage and was then scoped out of every
+        # other workflow — the exact opposite of what the tier means.
+        fixed = domains_for_tier(tier)
+        domains = fixed if fixed is not None else _propose_domains(text)
         requires, provides = _split_capabilities(_propose_capabilities(text))
 
         proposals.append({
             "subject_type": SubjectType.AGENT.value,
             "subject_id": agent_id,
             "name": agent.get("name", ""),
+            # A tier-fixed domain is a statement, not a guess, so it is not
+            # reported at the low confidence an empty lexical match would be.
             "confidence": "high" if domains else "low",
             "annotations": {
-                # Tier comes from whatever the agent already reports, which is
-                # metadata when set and the keyword heuristic otherwise.
-                Predicate.HAS_TIER.value: [f"agent_tier.{coerce_tier(agent.get('tier'))}"],
+                Predicate.HAS_TIER.value: [f"agent_tier.{tier}"],
                 Predicate.SERVES_DOMAIN.value: domains,
                 Predicate.REQUIRES_CAPABILITY.value: requires,
                 Predicate.PROVIDES_CAPABILITY.value: provides,

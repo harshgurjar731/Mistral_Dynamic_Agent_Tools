@@ -33,6 +33,8 @@ import {
 } from "@/components/ui/dialog";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 function getFileIcon(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
@@ -58,9 +60,7 @@ export function DocumentsPanel({
   const [pageUrl, setPageUrl] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest" | "name" | "size">("newest");
-  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
-  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
 
   const docs = useQuery({
     queryKey: QK.libraryDocs(library?.id ?? ""),
@@ -94,13 +94,9 @@ export function DocumentsPanel({
 
   const removeDoc = useMutation({
     mutationFn: (docId: string) => librariesApi.removeDocument(library!.id, docId),
-    onSuccess: (_res, docId) => {
+    onSuccess: () => {
+      // The selection drops the removed document itself once the list refreshes.
       toast.success("Document removed.");
-      setSelectedDocs((prev) => {
-        const next = new Set(prev);
-        next.delete(docId);
-        return next;
-      });
       invalidate();
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -132,24 +128,6 @@ export function DocumentsPanel({
     }
   };
 
-  const handleBatchDelete = async () => {
-    if (!library || selectedDocs.size === 0) return;
-    if (!window.confirm(`Delete ${selectedDocs.size} selected document(s)?`)) return;
-    setIsDeletingBatch(true);
-    try {
-      for (const id of Array.from(selectedDocs)) {
-        await librariesApi.removeDocument(library.id, id);
-      }
-      toast.success(`Deleted ${selectedDocs.size} document(s).`);
-      setSelectedDocs(new Set());
-      invalidate();
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setIsDeletingBatch(false);
-    }
-  };
-
   const processedDocs = useMemo(() => {
     const list = [...(docs.data ?? [])];
     const filtered = search.trim()
@@ -174,23 +152,18 @@ export function DocumentsPanel({
     return filtered;
   }, [docs.data, search, sort]);
 
-  const allSelected = processedDocs.length > 0 && selectedDocs.size === processedDocs.length;
-  const toggleSelectAll = () => {
-    if (allSelected) {
-      setSelectedDocs(new Set());
-    } else {
-      setSelectedDocs(new Set(processedDocs.map((d) => d.id)));
-    }
-  };
-
-  const toggleDoc = (id: string) => {
-    setSelectedDocs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const selection = useBulkSelection(
+    processedDocs,
+    (d) => d.id,
+    () => true,
+    (d) => d.filename,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "document",
+    deleteOne: (id) => librariesApi.removeDocument(library!.id, id),
+    invalidate: [QK.libraryDocs(library?.id ?? ""), QK.libraries()],
+    selection,
+  });
 
   if (!library) {
     return (
@@ -303,33 +276,14 @@ export function DocumentsPanel({
 
         {/* Search, Sort, and Batch Controls */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border/60 py-2">
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleSelectAll}
-                className="rounded accent-primary"
-              />
-              Select all
-            </label>
-            {selectedDocs.size > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-xs text-red hover:bg-red/10"
-                onClick={handleBatchDelete}
-                disabled={isDeletingBatch}
-              >
-                {isDeletingBatch ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Trash2 className="size-3" />
-                )}
-                Delete selected ({selectedDocs.size})
-              </Button>
-            )}
-          </div>
+          <BulkActionBar
+            className="flex-1 border-0 bg-transparent px-0 py-0"
+            selection={selection}
+            noun="document"
+            onDelete={bulkDelete.run}
+            deleting={bulkDelete.running}
+            warning="Their entities and relations are removed from the knowledge graph too."
+          />
 
           <div className="flex items-center gap-2">
             <div className="relative">
@@ -375,17 +329,12 @@ export function DocumentsPanel({
                 key={d.id}
                 className={cn(
                   "flex items-center gap-3 rounded-lg border px-3 py-2 transition",
-                  selectedDocs.has(d.id)
+                  selection.isSelected(d.id)
                     ? "border-primary/40 bg-primary/5"
                     : "border-border bg-background-elevated/60 hover:bg-surface-hover",
                 )}
               >
-                <input
-                  type="checkbox"
-                  checked={selectedDocs.has(d.id)}
-                  onChange={() => toggleDoc(d.id)}
-                  className="rounded accent-primary"
-                />
+                <RowCheckbox selection={selection} id={d.id} label={d.filename} />
                 {getFileIcon(d.filename)}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-foreground">{d.filename}</p>

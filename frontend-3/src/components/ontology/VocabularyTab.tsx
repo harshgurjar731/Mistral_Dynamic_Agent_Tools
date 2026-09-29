@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, Search } from "lucide-react";
+import { ChevronRight, ChevronsUpDown, Plus, Trash2, Pencil, Search } from "lucide-react";
 import { ontologyApi, QK, errorMessage } from "@/api";
 import type { Concept, ConceptScheme } from "@/types";
-import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
+import { GlassPanel } from "@/components/glass/GlassPanel";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
 
 function asArray<T>(res: { [k: string]: T[] } | T[] | undefined, key: string): T[] {
   if (!res) return [];
@@ -31,6 +34,7 @@ export function VocabularyTab() {
   const [conceptDialog, setConceptDialog] = useState<{ mode: "create" | "edit"; concept?: Concept | undefined; parentId?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "scheme" | "concept"; id: string } | null>(null);
   const [schemeDialog, setSchemeDialog] = useState<{ mode: "create" | "edit"; scheme?: ConceptScheme } | null>(null);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   const schemesQ = useQuery({
     queryKey: QK.ontologySchemes(),
@@ -119,116 +123,177 @@ export function VocabularyTab() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  const conceptCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of concepts) m.set(c.scheme_id, (m.get(c.scheme_id) ?? 0) + 1);
+    return m;
+  }, [concepts]);
+
+  /** Concepts per scheme, in scheme order; anything unscoped goes last. */
+  const groups = useMemo(() => {
+    const order = new Map(schemes.map((sc, i) => [sc.id, i]));
+    const byScheme = new Map<string, Concept[]>();
+    for (const c of filtered) byScheme.set(c.scheme_id, [...(byScheme.get(c.scheme_id) ?? []), c]);
+    return [...byScheme.entries()]
+      .sort((a, b) => (order.get(a[0]) ?? 1e6) - (order.get(b[0]) ?? 1e6))
+      .map(([id, items]) => ({
+        id,
+        label: schemes.find((sc) => sc.id === id)?.label ?? id,
+        items,
+      }));
+  }, [filtered, schemes]);
+
+  const searching = search.trim().length > 0;
+  // Groups start folded when showing everything, so the page opens short.
+  const isOpen = (id: string) => searching || groups.length === 1 || (openGroups[id] ?? false);
+  const allOpen = groups.length > 0 && groups.every((g) => openGroups[g.id]);
+  const activeLabel = schemes.find((sc) => sc.id === activeScheme)?.label ?? activeScheme;
+
+  // Only concepts in expanded groups are on screen, so only they can be selected.
+  const shownConcepts = useMemo(
+    () => groups.filter((g) => isOpen(g.id)).flatMap((g) => g.items),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groups, openGroups, searching],
+  );
+  const selection = useBulkSelection(shownConcepts, (c) => c.id, () => true, (c) => c.label);
+  const bulkDelete = useBulkDelete({
+    noun: "concept",
+    // Concepts are graph entities, so deletion cascades: descendants and all
+    // their annotations go too (and they leave the Neo4j mirror).
+    deleteOne: (id) => ontologyApi.deleteConcept(id, true),
+    invalidate: [QK.ontologyConcepts(activeScheme), QK.ontology()],
+    selection,
+  });
+
   return (
-    <div className="space-y-4">
-      <GlassPanel>
-        <GlassPanelHeader
-          title="Schemes"
-          description="Top-level concept schemes."
-          actions={
-            <Button size="sm" onClick={() => setSchemeDialog({ mode: "create" })}>
-              <Plus className="size-3.5" /> New scheme
-            </Button>
-          }
-        />
-        <div className="flex flex-wrap gap-2 p-4">
-          <Button size="sm" variant={activeScheme === "" ? "default" : "outline"} onClick={() => setActiveScheme("")}>
-            All
+    <div className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+      {/* ── Schemes rail ── */}
+      <GlassPanel className="lg:sticky lg:top-0">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Schemes</p>
+            <p className="text-[11px] text-muted-foreground">Top-level groupings</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setSchemeDialog({ mode: "create" })}>
+            <Plus className="size-3.5" /> New
           </Button>
-          {schemes.map((s) => (
-            <div key={s.id} className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant={activeScheme === s.id ? "default" : "outline"}
-                onClick={() => setActiveScheme(s.id)}
-              >
-                {s.label}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSchemeDialog({ mode: "edit", scheme: s })}>
-                <Pencil className="size-3" />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-red hover:text-red"
-                onClick={() => setDeleteTarget({ kind: "scheme", id: s.id })}
-              >
-                <Trash2 className="size-3" />
-              </Button>
-            </div>
-          ))}
         </div>
+        <ul className="custom-scrollbar max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
+          <SchemeRow
+            label="All schemes"
+            count={activeScheme === "" ? concepts.length : undefined}
+            active={activeScheme === ""}
+            onSelect={() => setActiveScheme("")}
+          />
+          {schemes.map((sc) => (
+            <SchemeRow
+              key={sc.id}
+              label={sc.label}
+              sub={sc.id}
+              count={activeScheme === "" ? conceptCount.get(sc.id) : undefined}
+              active={activeScheme === sc.id}
+              onSelect={() => setActiveScheme(sc.id)}
+              onEdit={() => setSchemeDialog({ mode: "edit", scheme: sc })}
+              onDelete={() => setDeleteTarget({ kind: "scheme", id: sc.id })}
+            />
+          ))}
+        </ul>
       </GlassPanel>
 
-      <GlassPanel>
-        <GlassPanelHeader
-          title="Concepts"
-          description="CRUD over the vocabulary."
-          actions={
-            <Button size="sm" onClick={() => setConceptDialog({ mode: "create" })} disabled={schemes.length === 0}>
-              <Plus className="size-3.5" /> New concept
-            </Button>
-          }
-        />
-        <div className="space-y-3 p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      {/* ── Concepts ── */}
+      <GlassPanel className="min-w-0">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-4 py-3">
+          <div className="mr-auto">
+            <p className="text-sm font-semibold text-foreground">Concepts</p>
+            <p className="text-[11px] text-muted-foreground">
+              {filtered.length} of {concepts.length}
+              {activeScheme ? ` in ${activeLabel}` : ""}
+            </p>
+          </div>
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
-              className="pl-8"
+              className="h-9 pl-8"
               placeholder="Search terms and synonyms…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          {groups.length > 1 && !searching ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setOpenGroups(Object.fromEntries(groups.map((g) => [g.id, !allOpen])))}
+            >
+              <ChevronsUpDown className="size-3.5" />
+              {allOpen ? "Collapse all" : "Expand all"}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => setConceptDialog({ mode: "create" })}
+            disabled={schemes.length === 0}
+          >
+            <Plus className="size-3.5" /> New concept
+          </Button>
+        </div>
+
+        <div className="space-y-2 p-3">
           {conceptsQ.isLoading ? (
             <TableSkeleton />
           ) : conceptsQ.isError ? (
             <ErrorState error={conceptsQ.error} onRetry={() => conceptsQ.refetch()} />
           ) : filtered.length === 0 ? (
-            <EmptyState title="No vocabulary loaded." description="Create a scheme and add concepts." />
+            <EmptyState
+              title={searching ? "Nothing matches." : "No vocabulary loaded."}
+              description={searching ? "Try another term or synonym." : "Create a scheme and add concepts."}
+            />
           ) : (
-            <ul className="divide-y divide-border rounded-xl border border-border">
-              {filtered.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {c.label}{" "}
-                      <span className="ml-1 text-xs text-muted-foreground">{c.id}</span>
-                      {c.level_name ? (
-                        <span className="ml-2 rounded-full bg-indigo/10 px-2 py-0.5 text-[10px] text-indigo">
-                          {c.level_name}
-                        </span>
-                      ) : null}
-                    </p>
-                    {c.definition ? (
-                      <p className="truncate text-xs text-muted-foreground">{c.definition}</p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      title="Add a child concept"
-                      onClick={() => setConceptDialog({ mode: "create", parentId: c.id })}
-                    >
-                      <Plus className="size-3.5" />
-                    </Button>
-                    <Button size="sm" variant="ghost" title="Edit" onClick={() => setConceptDialog({ mode: "edit", concept: c })}>
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      title="Delete"
-                      className="text-red hover:text-red"
-                      onClick={() => setDeleteTarget({ kind: "concept", id: c.id })}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <>
+            <BulkActionBar
+              selection={selection}
+              noun="concept"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Deletion cascades: each concept's descendants and every annotation on them are deleted too, and all of them are removed from the knowledge graph."
+            />
+            {groups.map((g) => {
+              const open = isOpen(g.id);
+              return (
+                <section key={g.id} className="overflow-hidden rounded-xl border border-border/60">
+                  <button
+                    type="button"
+                    onClick={() => setOpenGroups((o) => ({ ...o, [g.id]: !open }))}
+                    aria-expanded={open}
+                    className="flex w-full items-center gap-2 bg-background-elevated/60 px-3 py-2.5 text-left transition hover:bg-surface-hover"
+                  >
+                    <ChevronRight
+                      className={cn("size-3.5 text-muted-foreground transition", open && "rotate-90")}
+                    />
+                    <span className="text-sm font-semibold text-foreground">{g.label}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{g.id}</span>
+                    <span className="ml-auto rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+                      {g.items.length}
+                    </span>
+                  </button>
+                  {open ? (
+                    <ul className="grid gap-px border-t border-border/60 bg-border/40 xl:grid-cols-2">
+                      {g.items.map((c) => (
+                        <ConceptRow
+                          key={c.id}
+                          concept={c}
+                          selection={selection}
+                          onAddChild={() => setConceptDialog({ mode: "create", parentId: c.id })}
+                          onEdit={() => setConceptDialog({ mode: "edit", concept: c })}
+                          onDelete={() => setDeleteTarget({ kind: "concept", id: c.id })}
+                        />
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              );
+            })}
+            </>
           )}
         </div>
       </GlassPanel>
@@ -415,5 +480,110 @@ function ConceptForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+function SchemeRow({
+  label,
+  sub,
+  count,
+  active,
+  onSelect,
+  onEdit,
+  onDelete,
+}: {
+  label: string;
+  sub?: string;
+  count?: number | undefined;
+  active: boolean;
+  onSelect: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <li
+      className={cn(
+        "group flex items-center gap-1 rounded-lg border transition",
+        active ? "border-primary/30 bg-primary/10" : "border-transparent hover:bg-surface-hover",
+      )}
+    >
+      <button type="button" onClick={onSelect} className="min-w-0 flex-1 px-2.5 py-1.5 text-left">
+        <span className={cn("block truncate text-xs font-medium", active ? "text-primary" : "text-foreground")}>
+          {label}
+        </span>
+        {sub ? <span className="block truncate font-mono text-[10px] text-muted-foreground">{sub}</span> : null}
+      </button>
+      {typeof count === "number" ? (
+        <span className="px-1 text-[10px] text-muted-foreground tabular-nums">{count}</span>
+      ) : null}
+      {onEdit ? (
+        <button
+          type="button"
+          onClick={onEdit}
+          aria-label={`Edit ${label}`}
+          className="grid size-6 place-items-center rounded-md text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-foreground focus:opacity-100"
+        >
+          <Pencil className="size-3" />
+        </button>
+      ) : null}
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Delete ${label}`}
+          className="mr-1 grid size-6 place-items-center rounded-md text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-red focus:opacity-100"
+        >
+          <Trash2 className="size-3" />
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
+function ConceptRow({
+  concept: c,
+  selection,
+  onAddChild,
+  onEdit,
+  onDelete,
+}: {
+  concept: Concept;
+  selection: BulkSelection;
+  onAddChild: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <li
+      className={cn(
+        "group flex items-center justify-between gap-3 px-3 py-2",
+        selection.isSelected(c.id) ? "bg-primary/5" : "bg-background",
+      )}
+    >
+      <RowCheckbox selection={selection} id={c.id} label={c.label} />
+      <div className="min-w-0 flex-1">
+        <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+          <span className="truncate">{c.label}</span>
+          {c.level_name ? (
+            <span className="shrink-0 rounded-full bg-indigo/10 px-2 py-0.5 text-[10px] text-indigo">
+              {c.level_name}
+            </span>
+          ) : null}
+        </p>
+        <p className="truncate font-mono text-[10px] text-muted-foreground">{c.id}</p>
+        {c.definition ? <p className="truncate text-xs text-muted-foreground">{c.definition}</p> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
+        <Button size="sm" variant="ghost" title="Add a child concept" onClick={onAddChild}>
+          <Plus className="size-3.5" />
+        </Button>
+        <Button size="sm" variant="ghost" title="Edit" onClick={onEdit}>
+          <Pencil className="size-3.5" />
+        </Button>
+        <Button size="sm" variant="ghost" title="Delete" className="text-red hover:text-red" onClick={onDelete}>
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+    </li>
   );
 }

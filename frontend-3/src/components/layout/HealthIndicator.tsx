@@ -2,8 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { healthApi, QK } from "@/api";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { cn } from "@/lib/utils";
 
-export function HealthIndicator() {
+export function HealthIndicator({
+  variant = "pill",
+  collapsed = false,
+}: {
+  /** "rail" is a full-width row for the sidebar; "pill" sits in a header. */
+  variant?: "pill" | "rail";
+  collapsed?: boolean;
+} = {}) {
   const { data, isError, isLoading } = useQuery({
     queryKey: QK.health(),
     queryFn: healthApi.get,
@@ -28,6 +36,28 @@ export function HealthIndicator() {
             bg: "bg-amber/10",
             border: "border-amber/30",
           };
+
+  if (variant === "rail") {
+    return (
+      <Link
+        to="/health"
+        aria-label={`Health: ${identity.label}`}
+        title={collapsed ? identity.label : "Open health dashboard"}
+        className={cn(
+          "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium transition hover:bg-surface-hover",
+          collapsed && "justify-center",
+          identity.text,
+        )}
+      >
+        <span className="grid size-4 shrink-0 place-items-center">
+          <span
+            className={cn("size-2 rounded-full bg-current", identity.pulse && "animate-pulse")}
+          />
+        </span>
+        {collapsed ? null : <span className="truncate">{identity.label}</span>}
+      </Link>
+    );
+  }
 
   return (
     <Link to="/health" aria-label="Open health dashboard">

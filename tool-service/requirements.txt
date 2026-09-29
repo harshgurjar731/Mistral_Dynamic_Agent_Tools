@@ -2,6 +2,12 @@ fastapi[standard]
 uvicorn[standard]
 pydantic-settings
 python-dotenv
-mistralai
+# 2.8.0 is the version the backend is tested on; reasoning_effort (used by the
+# model routes in app/llm/routes.py) needs a 2.x SDK.
+mistralai>=2.8.0
 httpx
 sqlalchemy
+# Validates specs, test inputs, arguments and outputs against JSON Schema.
+jsonschema>=4.20
+# Static analysis in the verification ladder (also installed in the Dockerfile).
+ruff

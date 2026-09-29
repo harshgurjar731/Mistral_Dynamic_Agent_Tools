@@ -1,22 +1,26 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { z } from "zod";
 import {
   ArrowLeft,
   ArrowRight,
   GitBranch,
   History,
+  Layers,
   Loader2,
+  Plus,
   Sparkles,
   Square,
   Zap,
 } from "lucide-react";
-import { createSSEStream, parseEventData } from "@/api/sse";
-import { QK, workflowsApi } from "@/api";
+import { parseEventData, type SSEEvent } from "@/api/sse";
+import { errorMessage, QK, runsApi, workflowsApi, type RunStatus } from "@/api";
 import type { WorkflowDefinition } from "@/types";
-import { usePlannerHistory, type PlannerRun } from "@/stores/plannerHistory";
+import { usePlannerHistory } from "@/stores/plannerHistory";
+import { useRunsStore } from "@/stores/runs";
 import {
   LegacyPlannerTimeline,
   PLANNER_CARD_EVENTS,
@@ -31,11 +35,27 @@ import {
   type PlannerHistoryEntry,
 } from "@/components/workflows/PlannerHistorySheet";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
-import { usePipelineRun } from "@/components/pipeline/usePipelineRun";
+import { BuildingBlockLegend } from "@/components/workflows/BuildingBlockLegend";
+import {
+  applyPipelineEvent,
+  EMPTY_PIPELINE,
+  failPipeline,
+  settlePipeline,
+  type PipelineRun,
+} from "@/components/pipeline/usePipelineRun";
+import { formatElapsed } from "@/components/runs/runMeta";
+import { stopRun, trackStartedRun } from "@/lib/runs/connections";
+import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+const searchSchema = z.object({
+  /** The background planning run on screen. */
+  run: z.string().optional(),
+});
+
 export const Route = createFileRoute("/workflows/new/ai")({
+  validateSearch: searchSchema,
   head: () => ({
     meta: [
       { title: "Plan a workflow — Agentic AI Design Patterns" },
@@ -60,6 +80,79 @@ const EXAMPLES = [
 ];
 
 const isErrorStep = (s: PlannerStep) => s.type === "error" || s.type === "fatal_error";
+
+/* ── Run → view ────────────────────────────────────────────────────────── */
+
+interface PlannerView {
+  pipeline: PipelineRun;
+  steps: PlannerStep[];
+  /** Set once the run's `run_end` has been replayed. */
+  end: { status: RunStatus; error: string | null } | null;
+}
+
+const initPlannerView = (): PlannerView => ({ pipeline: EMPTY_PIPELINE, steps: [], end: null });
+
+/**
+ * The planner's event handling as a pure fold, so a run watched live, reopened
+ * mid-way, or replayed after a reload renders the same timeline.
+ */
+function reducePlanner(view: PlannerView, event: SSEEvent): PlannerView {
+  const pipeline = applyPipelineEvent(view.pipeline, event.type, event.data);
+  if (pipeline) return { ...view, pipeline };
+
+  const withStep = (type: PlannerStepType, content: unknown): PlannerStep[] => [
+    ...view.steps,
+    { id: `${view.steps.length}-${type}`, type, content },
+  ];
+
+  if (PLANNER_CARD_EVENTS.has(event.type)) {
+    const parsed = parseEventData<unknown>(event);
+    if (typeof parsed === "string") return view;
+    return { ...view, steps: withStep(event.type as PlannerStepType, parsed) };
+  }
+
+  switch (event.type) {
+    case "error":
+      return {
+        ...view,
+        steps: withStep("error", event.data),
+        pipeline: failPipeline(view.pipeline, event.data),
+      };
+    case "fatal_error": {
+      const f = parseEventData<{ error?: string }>(event);
+      return {
+        ...view,
+        steps: withStep("fatal_error", typeof f === "string" ? f : (f.error ?? "Planning failed")),
+        pipeline: failPipeline(view.pipeline, "This step could not be completed."),
+      };
+    }
+    case "run_end": {
+      const end = parseEventData<{ status?: RunStatus; error?: string | null }>(event);
+      const status: RunStatus = typeof end === "string" ? "completed" : (end.status ?? "completed");
+      const error = typeof end === "string" ? null : (end.error ?? null);
+      if (status === "completed") {
+        return { ...view, end: { status, error }, pipeline: settlePipeline(view.pipeline) };
+      }
+      if (status === "cancelled") {
+        return {
+          ...view,
+          end: { status, error },
+          pipeline: failPipeline(view.pipeline, "Stopped before it finished."),
+        };
+      }
+      // Failed or interrupted: make sure there is an error row to restart from.
+      const message = error ?? "Planning failed";
+      return {
+        ...view,
+        end: { status, error },
+        pipeline: failPipeline(view.pipeline, message),
+        steps: view.steps.some(isErrorStep) ? view.steps : withStep("error", message),
+      };
+    }
+    default:
+      return view;
+  }
+}
 
 /**
  * A minimal timeline reconstructed from a saved workflow definition, for
@@ -134,26 +227,47 @@ function historyFromWorkflow(wf: WorkflowDefinition): PlannerHistoryEntry {
 }
 
 function AiPlannerPage() {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { run: runId } = Route.useSearch();
   const runs = usePlannerHistory((s) => s.runs);
   const addRun = usePlannerHistory((s) => s.addRun);
   const clearRuns = usePlannerHistory((s) => s.clear);
 
   const [goal, setGoal] = useState("");
-  const [running, setRunning] = useState(false);
-  const [steps, setSteps] = useState<PlannerStep[]>([]);
+  const [starting, setStarting] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const { run, reset, restore, handleEvent, settle, failRunning } = usePipelineRun();
+  /** A locally saved history entry being replayed, instead of a live run. */
+  const [replay, setReplay] = useState<PlannerHistoryEntry | null>(null);
 
-  const stopRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  /** The goal of the run on screen — the textarea keeps changing as the user types. */
-  const goalRef = useRef("");
-  /** Set when a run finishes so the save effect records it exactly once. */
-  const pendingSaveRef = useRef<PlannerRun["status"] | null>(null);
+
+  const tracked = useTrackedRun(runId);
+  const { missing } = useRunView(runId);
+  const view = useRunReducer(runId, reducePlanner, initPlannerView);
+
+  // Until the run's summary loads, a run without a replayed ending counts as live.
+  const running =
+    Boolean(runId) && !missing && !view.end && (tracked ? tracked.status === "running" : true);
+  const elapsed = useElapsed(tracked?.created_at, running, tracked?.finished_at);
+
+  // Coming back to the planner lands on the run still in flight (or one that
+  // finished while the user was away), rather than on an empty form.
+  const attachedRef = useRef(false);
+  useEffect(() => {
+    if (attachedRef.current) return;
+    attachedRef.current = true;
+    if (runId) return;
+    const candidate = Object.values(useRunsStore.getState().runs)
+      .filter((r) => r.kind === "workflow_plan" && (r.status === "running" || !r.seen))
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0];
+    if (candidate) void navigate({ search: { run: candidate.id }, replace: true });
+  }, [navigate, runId]);
+
+  // Show the goal of whichever run is on screen.
+  useEffect(() => {
+    if (runId && tracked?.title) setGoal(tracked.title);
+  }, [runId, tracked?.title]);
 
   // Saved workflows fill in history for plans this browser never watched.
   const { data: savedWorkflows, isLoading: loadingWorkflows } = useQuery({
@@ -170,10 +284,23 @@ function AiPlannerPage() {
     return [...runs, ...synthetic];
   }, [runs, savedWorkflows]);
 
-  useEffect(() => () => stopRef.current?.(), []);
+  const steps = useMemo(() => (replay ? (replay.steps ?? []) : view.steps), [replay, view.steps]);
+  const pipeline = useMemo<PipelineRun>(
+    () =>
+      replay
+        ? {
+            manifest: replay.manifest ?? [],
+            runtime: replay.runtime ?? {},
+            activeNote: "",
+            started: (replay.manifest?.length ?? 0) > 0,
+          }
+        : view.pipeline,
+    [replay, view.pipeline],
+  );
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [steps, run]);
+  }, [steps.length, pipeline.runtime, pipeline.activeNote]);
 
   // Grow the goal box with its content, up to a cap.
   useEffect(() => {
@@ -193,116 +320,81 @@ function AiPlannerPage() {
   // A live run leaves only errors outside the chain; a run replayed without a
   // manifest renders all its steps as plain rows.
   const unowned = useMemo(
-    () => (run.manifest.length > 0 ? steps.filter((s) => !PLANNER_CARD_OWNER[s.type]) : steps),
-    [steps, run.manifest.length],
+    () => (pipeline.manifest.length > 0 ? steps.filter((s) => !PLANNER_CARD_OWNER[s.type]) : steps),
+    [steps, pipeline.manifest.length],
   );
 
-  // Record a finished run once React has flushed its last layer events.
+  // Record a finished run in local history, once per run.
   useEffect(() => {
-    const status = pendingSaveRef.current;
-    if (running || !status) return;
-    pendingSaveRef.current = null;
-    const failed = steps.find(isErrorStep);
+    if (!runId || !view.end || replay) return;
+    if (usePlannerHistory.getState().runs.some((r) => r.runId === runId)) return;
+    const failed = view.steps.find(isErrorStep);
+    const { status, error } = view.end;
+    const name = view.steps.find((s) => s.type === "workflow_ready");
     addRun({
-      goal: goalRef.current,
-      status: failed ? "failed" : status,
-      detail: failed ? String(failed.content) : undefined,
-      workflowName,
-      manifest: run.manifest,
-      runtime: run.runtime,
-      steps,
+      runId,
+      goal: tracked?.title ?? goal,
+      status:
+        status === "cancelled"
+          ? "cancelled"
+          : status === "completed" && !failed
+            ? "completed"
+            : "failed",
+      detail: failed ? String(failed.content) : (error ?? undefined),
+      workflowName: name
+        ? ((name.content as { workflow_name?: string }).workflow_name ?? null)
+        : null,
+      manifest: view.pipeline.manifest,
+      runtime: view.pipeline.runtime,
+      steps: view.steps,
     });
-  }, [running, steps, run, workflowName, addRun]);
-
-  const addStep = useCallback((type: PlannerStepType, content: unknown) => {
-    setSteps((prev) => [...prev, { id: `${prev.length}-${type}`, type, content }]);
-  }, []);
-
-  const stop = useCallback(() => {
-    stopRef.current?.();
-    stopRef.current = null;
-    pendingSaveRef.current = "cancelled";
-    setRunning(false);
-    settle();
-  }, [settle]);
+  }, [runId, view, replay, tracked?.title, goal, addRun]);
 
   const submit = useCallback(
-    (override?: string) => {
+    async (override?: string) => {
       const value = (override ?? goal).trim();
-      if (!value || running) return;
-
-      stopRef.current?.();
-      goalRef.current = value;
-      setSteps([]);
-      setActiveRunId(null);
-      setRunning(true);
-      reset();
-
-      stopRef.current = createSSEStream("/api/workflows/plan", {
-        method: "POST",
-        body: { goal: value },
-        onEvent: (event) => {
-          // `pipeline`, `layer` and `status` drive the chain itself.
-          if (handleEvent(event.type, event.data)) return;
-
-          if (PLANNER_CARD_EVENTS.has(event.type)) {
-            const parsed = parseEventData<unknown>(event);
-            if (typeof parsed !== "string") addStep(event.type as PlannerStepType, parsed);
-            return;
-          }
-
-          switch (event.type) {
-            case "error":
-              addStep("error", event.data);
-              failRunning(event.data);
-              break;
-            case "fatal_error": {
-              const f = parseEventData<{ error?: string }>(event);
-              addStep("fatal_error", typeof f === "string" ? f : (f.error ?? "Planning failed"));
-              failRunning("This step could not be completed.");
-              break;
-            }
-            case "done": {
-              const d = parseEventData<{ workflow_name?: string }>(event);
-              const name = typeof d === "string" ? null : (d.workflow_name ?? null);
-              qc.invalidateQueries({ queryKey: QK.workflows() });
-              toast.success(name ? `Workflow "${name}" is ready.` : "Workflow planned.");
-              break;
-            }
-            default:
-              break;
-          }
-        },
-        onDone: () => {
-          pendingSaveRef.current = "completed";
-          setRunning(false);
-          settle();
-        },
-        onError: (err) => {
-          const message = err instanceof Error ? err.message : "Planning stream failed";
-          addStep("error", message);
-          failRunning(message);
-          pendingSaveRef.current = "failed";
-          setRunning(false);
-        },
-      });
+      if (!value || running || starting) return;
+      setStarting(true);
+      try {
+        const run = await runsApi.startWorkflowPlan(value);
+        trackStartedRun(run);
+        setReplay(null);
+        setGoal(value);
+        void navigate({ search: { run: run.id } });
+      } catch (err) {
+        toast.error(`Could not start planning: ${errorMessage(err)}`);
+      } finally {
+        setStarting(false);
+      }
     },
-    [addStep, failRunning, goal, handleEvent, qc, reset, running, settle],
+    [goal, navigate, running, starting],
   );
 
-  const openHistoryEntry = (entry: PlannerHistoryEntry) => {
-    if (running) return;
-    setActiveRunId(entry.id);
-    setGoal(entry.goal);
-    goalRef.current = entry.goal;
-    setSteps(entry.steps ?? []);
-    // Entries without a manifest fall back to plain rows below the chain.
-    restore(entry.manifest, entry.runtime);
-    setHistoryOpen(false);
+  const newPlan = () => {
+    setReplay(null);
+    setGoal("");
+    void navigate({ search: {} });
+    textareaRef.current?.focus();
   };
 
-  const started = running || run.started || steps.length > 0 || activeRunId !== null;
-  const bareReplay = activeRunId !== null && !run.started && steps.length === 0;
+  const openHistoryEntry = (entry: PlannerHistoryEntry) => {
+    setHistoryOpen(false);
+    setGoal(entry.goal);
+    if (entry.runId && useRunsStore.getState().runs[entry.runId]) {
+      // Still tracked: reopen the run itself, which replays from the server.
+      setReplay(null);
+      void navigate({ search: { run: entry.runId } });
+      return;
+    }
+    setReplay(entry);
+    void navigate({ search: {} });
+  };
+
+  const activeHistoryId =
+    replay?.id ?? (runId ? (runs.find((r) => r.runId === runId)?.id ?? null) : null);
+  const started = Boolean(runId) || replay !== null || starting;
+  const bareReplay = replay !== null && !pipeline.started && steps.length === 0;
+  const busy = running || starting;
 
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-3xl flex-col px-5 py-6">
@@ -318,14 +410,25 @@ function AiPlannerPage() {
           >
             <ArrowLeft className="size-3.5" /> Back
           </Link>
-          <button
-            type="button"
-            onClick={() => setHistoryOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground"
-          >
-            <History className="size-3.5" />
-            View History{runs.length > 0 ? ` (${runs.length})` : ""}
-          </button>
+          <div className="flex items-center gap-2">
+            {started ? (
+              <button
+                type="button"
+                onClick={newPlan}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+              >
+                <Plus className="size-3.5" /> New plan
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground"
+            >
+              <History className="size-3.5" />
+              View History{runs.length > 0 ? ` (${runs.length})` : ""}
+            </button>
+          </div>
         </div>
 
         <div className="mb-8 text-center">
@@ -355,12 +458,12 @@ function AiPlannerPage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                submit();
+                void submit();
               }
             }}
             placeholder="e.g. Build a multi-step insurance claim processing pipeline that validates claims, queries the database, checks weather, and generates a report…"
             rows={6}
-            disabled={running}
+            disabled={busy}
             className="custom-scrollbar min-h-[180px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
           <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 p-2">
@@ -369,20 +472,21 @@ function AiPlannerPage() {
               <span className="hidden sm:inline">Enter to plan · Shift + Enter for a new line</span>
             </span>
             <div className="flex items-center gap-2">
-              {running ? (
-                <Button variant="outline" onClick={stop}>
+              {running && runId ? (
+                <Button variant="outline" onClick={() => void stopRun(runId)}>
                   <Square className="size-3.5" /> Stop
                 </Button>
               ) : null}
               <button
                 type="button"
-                onClick={() => submit()}
-                disabled={!goal.trim() || running}
+                onClick={() => void submit()}
+                disabled={!goal.trim() || busy}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-brand px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 disabled:opacity-50"
               >
-                {running ? (
+                {busy ? (
                   <>
-                    <Loader2 className="size-4 animate-spin" /> Planning…
+                    <Loader2 className="size-4 animate-spin" />{" "}
+                    {starting ? "Starting…" : "Planning…"}
                   </>
                 ) : (
                   <>
@@ -417,34 +521,61 @@ function AiPlannerPage() {
             <div className="mb-4 flex items-center gap-2">
               <Zap className="size-3.5 text-primary" />
               <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                {activeRunId && !running ? "Planning Timeline" : "Planning Pipeline"}
+                {replay ? "Planning Timeline" : "Planning Pipeline"}
               </span>
               {running ? (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                   <span className="size-1.5 animate-pulse rounded-full bg-primary" />
                   Planning
+                  {elapsed != null ? (
+                    <span className="font-mono tabular-nums opacity-80">
+                      {formatElapsed(elapsed)}
+                    </span>
+                  ) : null}
                 </span>
               ) : null}
             </div>
 
+            {running ? (
+              <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                <Layers className="mt-0.5 size-3 shrink-0 text-primary" />
+                Planning runs in the background. You can leave this page — it keeps going, and this
+                timeline picks up where it is when you come back.
+              </p>
+            ) : null}
+
             <div className="space-y-5">
-              {run.manifest.length > 0 ? (
-                <PipelineTimeline
-                  manifest={run.manifest}
-                  runtime={run.runtime}
-                  activeNote={run.activeNote}
-                  cards={layerCards}
-                  raw={layerRaw}
-                />
-              ) : running ? (
+              {missing ? (
+                <p className="text-xs text-muted-foreground">
+                  This planning run is no longer available — it may have been cleared from the
+                  server’s run log.
+                </p>
+              ) : pipeline.manifest.length > 0 ? (
+                <>
+                  <BuildingBlockLegend />
+                  <PipelineTimeline
+                    manifest={pipeline.manifest}
+                    runtime={pipeline.runtime}
+                    activeNote={pipeline.activeNote}
+                    cards={layerCards}
+                    raw={layerRaw}
+                  />
+                </>
+              ) : busy || (runId && !view.end) ? (
                 <div className="shimmer h-16 rounded-xl border border-border/50" />
               ) : null}
 
               <LegacyPlannerTimeline
                 steps={unowned}
-                onRestart={() => submit(goalRef.current)}
-                restartDisabled={running}
+                onRestart={() => void submit(tracked?.title ?? goal)}
+                restartDisabled={busy}
               />
+
+              {view.end?.status === "cancelled" && !replay ? (
+                <p className="text-xs text-muted-foreground">
+                  Planning was stopped before it finished. Anything already created is kept.
+                </p>
+              ) : null}
 
               {bareReplay ? (
                 <p className="text-xs text-muted-foreground">
@@ -488,7 +619,7 @@ function AiPlannerPage() {
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         history={history}
-        activeId={activeRunId}
+        activeId={activeHistoryId}
         isLoading={loadingWorkflows && historyOpen}
         onSelect={openHistoryEntry}
         onClear={clearRuns}

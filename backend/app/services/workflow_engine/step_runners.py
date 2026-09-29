@@ -518,7 +518,19 @@ def _coerce(value, expected: str | None):
     if not expected:
         return value
     if expected in ("object", "array"):
-        return _unwrap(_as_data(value, lenient=True))
+        data = _unwrap(_as_data(value, lenient=True))
+        # A step that returns its list as one named field —
+        # {"validated_invoice_items": [...]} — and a data flow that passes the
+        # whole output. Hand the list through: the tool asked for a list, and
+        # the wrapper key carries no information it could use.
+        if (
+            expected == "array"
+            and isinstance(data, dict)
+            and len(data) == 1
+            and isinstance(_unwrap(_as_data(next(iter(data.values())))), list)
+        ):
+            return _unwrap(_as_data(next(iter(data.values()))))
+        return data
     if expected == "string":
         # A gate or pass-through step returns its text as one named field —
         # {"validated_claim_input": "..."} — and the next step references the
@@ -589,6 +601,49 @@ def _resolve_arguments(template: dict, variables: dict, param_types: dict) -> tu
     for key, raw in (template or {}).items():
         resolved[key] = _coerce(_resolve_value(raw, variables, missing), param_types.get(key))
     return resolved, missing
+
+
+def _wrapped_collection(value):
+    """The inner list when ``value`` is one record wrapping one list of records.
+
+    ``[{"invoice_number": ..., "line_items": [{...}, {...}]}]`` — a whole
+    document handed to a parameter that wants the document's rows. Returns
+    ``(field_name, rows)`` or ``None``. Only an unambiguous shape qualifies:
+    exactly one field holding a non-empty list of objects, every other field a
+    scalar.
+    """
+    record = value
+    if isinstance(record, list):
+        if len(record) != 1:
+            return None
+        record = record[0]
+    if not isinstance(record, dict):
+        return None
+    lists = [
+        (k, v) for k, v in record.items()
+        if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
+    ]
+    if len(lists) != 1:
+        return None
+    others = [v for k, v in record.items() if k != lists[0][0]]
+    if any(isinstance(v, (dict, list)) for v in others):
+        return None
+    return lists[0]
+
+
+def _unwrapped_arguments(arguments: dict, param_types: dict):
+    """Arguments with wrapped collections replaced by their rows, or None."""
+    changed = {}
+    for key, value in arguments.items():
+        if param_types.get(key) != "array":
+            continue
+        found = _wrapped_collection(value)
+        if found:
+            changed[key] = found
+    if not changed:
+        return None, {}
+    fixed = {**arguments, **{k: rows for k, (_, rows) in changed.items()}}
+    return fixed, {k: field for k, (field, _) in changed.items()}
 
 
 async def _tool_param_types(tool_name: str) -> dict:
@@ -1045,24 +1100,36 @@ def _is_tool_error(result) -> bool:
     return text.startswith("Error:") or _is_missing_tool(text)
 
 
-def _infer_parameters(arguments: dict) -> dict:
-    """A JSON-Schema properties block matching the arguments actually passed."""
-    types = {
-        bool: "boolean", int: "integer", float: "number",
-        list: "array", dict: "object", str: "string",
-    }
-    return {
-        key: {
-            # bool before int: bool is a subclass of int in Python, and a
-            # parameter declared "integer" would take the wrong sample value.
-            "type": next(
-                (name for cls, name in types.items() if isinstance(value, cls)),
-                "string",
-            ),
-            "description": f"Value for {key.replace('_', ' ')}",
-        }
-        for key, value in arguments.items()
-    }
+async def _recover_missing_activity(step: WorkflowStep, tool_name: str) -> tuple[bool, str]:
+    """Rebuild a missing activity from the requirement it was planned with.
+
+    Returns ``(rebuilt, message)``. A step only carries a requirement when the
+    planner built or bound it through the code-requirement pipeline; a step
+    without one is not rebuilt. The fallback this replaces synthesised a new
+    activity from the step's description and the arguments it happened to
+    pass — every argument marked required, no output contract — so the
+    "rebuilt" activity rarely returned what the next step read.
+    """
+    requirement = step.config.get("code_requirement")
+    if not isinstance(requirement, dict) or not requirement.get("name"):
+        return False, (
+            f"Activity '{tool_name}' does not exist on the tool service, and this step "
+            f"carries no specification to rebuild it from. Re-plan the workflow, or "
+            f"restore the activity."
+        )
+
+    from app.core.specs import CodeNeed
+    from app.layers.codegen import resolve_code_need
+
+    need = CodeNeed(purpose="activity", origin="runtime", name_hint=tool_name,
+                    intent=requirement.get("description", ""),
+                    requirement={**requirement, "name": tool_name})
+    resolution = await resolve_code_need(need)
+    if resolution.usable:
+        # The rebuilt code is a new version, so a stale pin must not be sent.
+        step.config.pop("tool_version", None)
+        return True, f"rebuilt '{tool_name}' as version {resolution.version}"
+    return False, f"Activity '{tool_name}' is missing and could not be rebuilt: {resolution.message}"
 
 
 async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
@@ -1070,7 +1137,6 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
     start = time.time()
     try:
         from app.services.tool_registry import execute_tool
-        from app.services.tool_resolver import tool_resolver
         from app.services.tool_registry import refresh_dynamic_tools
 
         config = step.config
@@ -1103,28 +1169,47 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
                 input_preview=json.dumps(config.get("arguments", {}), default=str)[:1000],
             )
 
-        result = await execute_tool(tool_name, arguments)
+        # The version the workflow was planned and validated against. Without
+        # a pin (older workflows) the tool's active version runs.
+        version = config.get("tool_version")
+        result = await execute_tool(tool_name, arguments, version=version)
 
-        # Auto-synthesis fallback: build the tool if it does not exist yet.
+        # The activity is gone (deleted, or a fresh tool service): rebuild it
+        # from the requirement the planner stored on this step.
         if _is_missing_tool(result):
-            logger.info("Tool '%s' not found — synthesising it now", tool_name)
-            synth = await tool_resolver.trigger_synthesis(
-                name=tool_name,
-                description=step.description or f"Perform {tool_name.replace('_', ' ')}",
-                # Derived from the arguments this step actually passes, so the
-                # rebuilt tool has the signature the step calls it with.
-                parameters={"properties": _infer_parameters(arguments)},
-                required=sorted(arguments.keys()),
-                purpose="activity",
-            )
-            if synth.get("status") in ("synthesized", "approved"):
+            logger.info("Activity '%s' not found — attempting recovery", tool_name)
+            rebuilt, message = await _recover_missing_activity(step, tool_name)
+            logger.info("Recovery of '%s': %s", tool_name, message)
+            if rebuilt:
                 await refresh_dynamic_tools()
                 result = await execute_tool(tool_name, arguments)
-                logger.info("Auto-synthesis of '%s' succeeded; step retried", tool_name)
             else:
-                logger.warning(
-                    "Auto-synthesis of '%s' failed: %s", tool_name, synth.get("message", synth)
+                duration = (time.time() - start) * 1000
+                return StepResult(
+                    step_id=step.id,
+                    status="failed",
+                    error=message,
+                    duration_ms=duration,
+                    input_preview=json.dumps(arguments, default=str)[:1000],
                 )
+
+        # A list parameter handed one whole record — an invoice with its own
+        # "line_items" — instead of the records themselves. Retried with the
+        # inner list only after the tool itself rejects the value, so a tool
+        # that genuinely wants that single record is never second-guessed.
+        if _envelope_error(_as_data(result)) or _is_tool_error(result):
+            fixed, via = _unwrapped_arguments(arguments, param_types)
+            if fixed is not None:
+                retry = await execute_tool(tool_name, fixed, version=config.get("tool_version"))
+                if not (_envelope_error(_as_data(retry)) or _is_tool_error(retry)):
+                    logger.warning(
+                        "Tool step '%s': %s — the input was one record wrapping a list; "
+                        "used its %s instead.",
+                        step.id,
+                        ", ".join(via),
+                        ", ".join(f"'{f}'" for f in via.values()),
+                    )
+                    arguments, result = fixed, retry
 
         duration = (time.time() - start) * 1000
 

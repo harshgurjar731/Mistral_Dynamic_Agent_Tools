@@ -26,6 +26,9 @@ from app.core.decision import LONG_TIMEOUT_MS
 from app.layers.workflow.base import WorkflowDecisionLayer
 from app.layers.workflow.topology_layer import BINDING_KEYS
 
+#: Set on tool steps by the topology layer; like bindings, never the model's to change.
+_PIN_KEYS = ("tool_version", "code_requirement")
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +80,7 @@ class DataFlowLayer(WorkflowDecisionLayer):
             # it does not get to change which agent runs a step, and a model
             # that silently swapped one would produce a workflow that runs but
             # does the wrong work.
-            for key in BINDING_KEYS:
+            for key in (*BINDING_KEYS, *_PIN_KEYS):
                 if key in topo_step["config"]:
                     config[key] = topo_step["config"][key]
 
@@ -113,6 +116,7 @@ class DataFlowLayer(WorkflowDecisionLayer):
             "variables": variables,
         }
         spec.rationale["data_flow"] = str(data.get("reasoning") or "")
+        _check_contracts(ctx)
 
         templated = sum(
             1 for s in merged_steps
@@ -196,3 +200,29 @@ class DataFlowLayer(WorkflowDecisionLayer):
             "variables": {},
         }
         spec.rationale["data_flow"] = "Composed locally — the data-flow decision could not be made."
+        _check_contracts(ctx)
+
+
+def _check_contracts(ctx: PipelineContext) -> None:
+    """Record references to fields an activity's output schema does not have.
+
+    WorkflowValidationLayer turns these into errors: such a reference cannot
+    resolve at run time, and it is far cheaper to reject the plan now.
+    """
+    from app.layers.codegen.contracts import check_output_references
+
+    spec = ctx.workflow_spec
+    schemas_by_activity = {
+        a.get("name"): a.get("output_schema")
+        for a in (spec.inventory or {}).get("activities", [])
+        if isinstance(a.get("output_schema"), dict)
+    }
+    step_schemas = {
+        s["id"]: schemas_by_activity.get(s["config"].get("tool_name"))
+        for s in (spec.dag or {}).get("steps", [])
+        if s.get("type") == "tool" and s.get("config", {}).get("tool_name") in schemas_by_activity
+    }
+    issues = check_output_references(spec.dag or {}, step_schemas)
+    ctx.metadata["contract_issues"] = issues
+    for issue in issues:
+        logger.warning("Data-flow contract: %s", issue["message"])

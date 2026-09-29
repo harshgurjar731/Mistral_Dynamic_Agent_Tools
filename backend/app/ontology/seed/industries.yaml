@@ -645,3 +645,27 @@ concepts:
     label: Internal operations
     definition: This platform's own operational tooling.
     synonyms: ["!internal tooling", "!platform operations"]
+
+  # ══ SYSTEM ═══════════════════════════════════════════════════════════════
+  #
+  # Not an industry — a sibling of them. Foundation-tier agents are the safety,
+  # routing and quality gates every workflow runs regardless of what it is
+  # about, so they belong to no industry. Leaving them with an empty domain
+  # list said that correctly but stored nothing, which made "domain-agnostic by
+  # design" and "never got annotated" indistinguishable in the store and in the
+  # graph. This node is where they live instead: same level as BFSI and
+  # Healthcare, so the tree reads as a complete partition of the inventory.
+  #
+  # Membership is decided by tier, never by wording — `synonyms: ["!"]` is the
+  # `!` override with an empty phrase, which makes the concept unmatchable by
+  # `matcher.score_concepts`. A goal must never scope *to* System; foundation
+  # agents reach every plan through `scope_for_goal`, which adds this subtree
+  # to every scope.
+  - id: domain.system
+    scheme: domain
+    parent: null
+    label: System
+    definition: >-
+      Domain-agnostic platform gates — safety, moderation, routing, review and
+      response shaping. Home of every foundation-tier agent.
+    synonyms: ["!"]

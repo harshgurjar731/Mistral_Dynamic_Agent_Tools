@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -7,32 +7,31 @@ import {
   type EdgeChange,
   type MarkerType,
   type NodeChange,
+  type XYPosition,
 } from "@xyflow/react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import {
-  Bot,
+  Blocks,
   Code2,
   Columns,
   Loader2,
   Map,
-  Plug,
   Plus,
   Redo2,
   Rocket,
   Rows,
   Save,
-  Sparkles,
+  Settings2,
+  SlidersHorizontal,
   Trash2,
   Undo2,
-  Wrench,
+  X,
 } from "lucide-react";
 import { errorMessage, QK, rulesApi, workflowsApi } from "@/api";
 import { RuleSelector } from "@/components/rules/RuleSelector";
 import type {
   BuilderCatalog,
-  CatalogAgent,
-  CatalogConnector,
-  CatalogTool,
   InputField,
   StepType,
   ValidationResult,
@@ -42,7 +41,7 @@ import type {
 import { GraphCanvas } from "@/components/graph/GraphCanvas";
 import { GraphLegend } from "@/components/graph/Legend";
 import { stepsToGraph } from "@/components/graph/fromDefinition";
-import { layoutGraph } from "@/components/graph/layout";
+import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/components/graph/layout";
 import type { StepFlowEdge, StepFlowNode } from "@/components/graph/types";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { CodeBlock } from "@/components/shared/CodeBlock";
@@ -50,11 +49,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { STEP_TYPE_IDENTITY } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { IssueList, ValidationSummary } from "./ValidationPanel";
 import { StepInspector } from "./StepInspector";
-import { MAX_STEPS, STEP_TYPES, WORKFLOW_NAME_RE } from "./builderModel";
+import { MAX_STEPS, WORKFLOW_NAME_RE } from "./builderModel";
+import {
+  BuilderPalette,
+  PALETTE_MIME,
+  PaletteToggle,
+  parsePaletteItem,
+  type PaletteItem,
+} from "./BuilderPalette";
 import { CreateAgentModal, CreateToolModal } from "./CreateModals";
 
 /** Fills in canvas coordinates for any step that has none, using dagre once. */
@@ -71,6 +76,11 @@ function ensureLayout(def: WorkflowDefinition): WorkflowDefinition {
     if (!layout[n.id]) layout[n.id] = { x: n.position.x, y: n.position.y };
   }
   return { ...def, ui_layout: layout };
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
 function defaultConfig(type: StepType): Record<string, unknown> {
@@ -90,12 +100,76 @@ function defaultConfig(type: StepType): Record<string, unknown> {
   }
 }
 
-function uniqueStepId(existing: string[], type: StepType): string {
+function blankStep(id: string, type: StepType): WorkflowStep {
+  return {
+    id,
+    type,
+    tier: null,
+    config: defaultConfig(type),
+    next_steps: [],
+    description: "",
+    parallel_group: null,
+  };
+}
+
+/** Turns a palette entry into a new step with a unique id. */
+function stepFromItem(item: PaletteItem, existing: string[]): WorkflowStep {
+  switch (item.kind) {
+    case "type":
+      return blankStep(uniqueStepId(existing, `${item.type}_step`), item.type);
+    case "agent":
+      // Named after the agent, so the card and the compiled module both read naturally.
+      return {
+        ...blankStep(uniqueStepId(existing, item.agent.name), "agent"),
+        tier: (item.agent.tier as WorkflowStep["tier"]) ?? null,
+        config: { agent_id: item.agent.id, query_template: "" },
+        description: item.agent.description || item.agent.name,
+      };
+    case "activity":
+      return {
+        ...blankStep(uniqueStepId(existing, item.activity.name), "tool"),
+        config: { tool_name: item.activity.name, arguments: {} },
+        description: item.activity.description || item.activity.name,
+      };
+  }
+}
+
+/** A valid step id (see validation `_STEP_ID_RE`) derived from a display name. */
+function stepIdBase(name: string): string {
+  let base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 56);
+  if (!base) base = "step";
+  if (/^[0-9]/.test(base)) base = `s_${base}`;
+  return base;
+}
+
+/** Just past the furthest node in the flow direction, so a clicked-in step never lands on another. */
+function nextFreePosition(
+  layout: Record<string, { x: number; y: number }>,
+  dir: "LR" | "TB",
+): XYPosition {
+  const points = Object.values(layout);
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (dir === "LR") {
+    const far = points.reduce((a, b) => (b.x > a.x ? b : a));
+    return { x: far.x + NODE_WIDTH + 80, y: far.y };
+  }
+  const far = points.reduce((a, b) => (b.y > a.y ? b : a));
+  return { x: far.x, y: far.y + NODE_HEIGHT + 60 };
+}
+
+type DetailsTab = "step" | "workflow" | "issues";
+
+function uniqueStepId(existing: string[], name: string): string {
+  const base = stepIdBase(name);
   let i = 1;
-  let candidate = `${type}_step`;
+  let candidate = base;
   while (existing.includes(candidate)) {
     i += 1;
-    candidate = `${type}_step_${i}`;
+    candidate = `${base}_${i}`;
   }
   return candidate;
 }
@@ -125,9 +199,13 @@ export function WorkflowBuilder({
   const [showMinimap, setShowMinimap] = useState(false);
   const [direction, setDirection] = useState<"LR" | "TB">("LR");
 
+  // Floating palette and the details modal (null = closed)
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [detailsTab, setDetailsTab] = useState<DetailsTab | null>(null);
+
   // Inline creation modals
   const [showAgentModal, setShowAgentModal] = useState(false);
-  const [synthesizeKind, setSynthesizeKind] = useState<"tool" | "activity" | null>(null);
+  const [synthesizingActivity, setSynthesizingActivity] = useState(false);
 
   const catalogQuery = useQuery({
     queryKey: QK.builderCatalog(),
@@ -179,6 +257,16 @@ export function WorkflowBuilder({
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redo();
+      } else if (
+        e.key.toLowerCase() === "p" &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !isTypingTarget(e.target) &&
+        !document.querySelector("[role=dialog]")
+      ) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -257,7 +345,10 @@ export function WorkflowBuilder({
       }
       return out;
     });
-    const withSelection = base.nodes.map((n) => ({ ...n, selected: n.id === selectedId }));
+    const withSelection = base.nodes.map((n) => ({
+      ...n,
+      selected: n.id === selectedId,
+    }));
     return { nodes: withSelection, edges: [...base.edges, ...branchEdges] };
   }, [definition, selectedId, validation]);
 
@@ -310,114 +401,47 @@ export function WorkflowBuilder({
   );
 
   /* ── Step mutations ───────────────────────────────────────────────── */
-  const addStep = useCallback(
-    (type: StepType) => {
+  const insertStep = useCallback(
+    (step: WorkflowStep, position?: XYPosition) => {
       if (definition.steps.length >= MAX_STEPS) {
         toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
-        return;
+        return false;
       }
-      const id = uniqueStepId(
+      update((d) => ({
+        ...d,
+        steps: [...d.steps, step],
+        entry_step: d.entry_step || step.id,
+        ui_layout: position ? { ...d.ui_layout, [step.id]: position } : d.ui_layout,
+      }));
+      setSelectedId(step.id);
+      return true;
+    },
+    [definition.steps.length, update],
+  );
+
+  const addItem = useCallback(
+    (item: PaletteItem, position?: XYPosition) => {
+      const step = stepFromItem(
+        item,
         definition.steps.map((s) => s.id),
-        type,
       );
-      const step: WorkflowStep = {
-        id,
-        type,
-        tier: null,
-        config: defaultConfig(type),
-        next_steps: [],
-        description: "",
-        parallel_group: null,
-      };
-      update((d) => ({
-        ...d,
-        steps: [...d.steps, step],
-        entry_step: d.entry_step || id,
-      }));
-      setSelectedId(id);
+      if (
+        insertStep(step, position ?? nextFreePosition(definition.ui_layout, direction)) &&
+        item.kind !== "type"
+      ) {
+        toast.success(`Added ${step.type} step "${step.id}"`);
+      }
     },
-    [definition.steps, update],
+    [definition.steps, definition.ui_layout, direction, insertStep],
   );
 
-  const addAgentStep = useCallback(
-    (agent: CatalogAgent) => {
-      if (definition.steps.length >= MAX_STEPS) {
-        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
-        return;
-      }
-      const id = uniqueStepId(definition.steps.map((s) => s.id), "agent");
-      const step: WorkflowStep = {
-        id,
-        type: "agent",
-        tier: (agent.tier as any) ?? null,
-        config: { agent_id: agent.id, query_template: "" },
-        next_steps: [],
-        description: agent.description || agent.name,
-        parallel_group: null,
-      };
-      update((d) => ({
-        ...d,
-        steps: [...d.steps, step],
-        entry_step: d.entry_step || id,
-      }));
-      setSelectedId(id);
-      toast.success(`Added agent step "${id}"`);
+  const onDropItem = useCallback(
+    (payload: string, position: XYPosition) => {
+      const item = parsePaletteItem(payload);
+      // Centre the node under the cursor rather than hanging it off its corner.
+      if (item) addItem(item, { x: position.x - NODE_WIDTH / 2, y: position.y - 30 });
     },
-    [definition.steps, update],
-  );
-
-  const addToolStep = useCallback(
-    (tool: CatalogTool) => {
-      if (definition.steps.length >= MAX_STEPS) {
-        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
-        return;
-      }
-      const id = uniqueStepId(definition.steps.map((s) => s.id), "tool");
-      const step: WorkflowStep = {
-        id,
-        type: "tool",
-        tier: null,
-        config: { tool_name: tool.name, arguments: {} },
-        next_steps: [],
-        description: tool.description || tool.name,
-        parallel_group: null,
-      };
-      update((d) => ({
-        ...d,
-        steps: [...d.steps, step],
-        entry_step: d.entry_step || id,
-      }));
-      setSelectedId(id);
-      toast.success(`Added tool step "${id}"`);
-    },
-    [definition.steps, update],
-  );
-
-  const addConnectorStep = useCallback(
-    (conn: CatalogConnector) => {
-      if (definition.steps.length >= MAX_STEPS) {
-        toast.error(`A workflow is capped at ${MAX_STEPS} steps.`);
-        return;
-      }
-      const id = uniqueStepId(definition.steps.map((s) => s.id), "connector");
-      const step: WorkflowStep = {
-        id,
-        type: "connector",
-        tier: null,
-        config: { connector_id: conn.id, tool_name: conn.tools?.[0]?.name ?? "", arguments: {} },
-        next_steps: [],
-        description: conn.name,
-        parallel_group: null,
-      };
-      update((d) => ({
-        ...d,
-        steps: [...d.steps, step],
-        entry_step: d.entry_step || id,
-      }));
-      setSelectedId(id);
-      toast.success(`Added connector step "${id}"`);
-    },
-    [definition.steps, update],
+    [addItem],
   );
 
   const changeStep = useCallback(
@@ -541,419 +565,447 @@ export function WorkflowBuilder({
 
   const selected = definition.steps.find((s) => s.id === selectedId) ?? null;
 
+  const openCreate = (kind: "agent" | "activity") => {
+    // The create modals portal to <body>, which is hidden while the canvas is full screen.
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    if (kind === "agent") setShowAgentModal(true);
+    else setSynthesizingActivity(true);
+  };
+
+  const issueCount = validation?.issues.length ?? 0;
+
   return (
-    <div className="space-y-4">
-      <GlassPanel tone="raised" className="p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,240px)_1fr_auto]">
-          <div>
-            <label className="eyebrow mb-1.5 block">Workflow name</label>
-            <Input
-              value={definition.name}
-              disabled={mode === "edit"}
-              placeholder="claim_settlement_workflow"
-              onChange={(e) => update((d) => ({ ...d, name: e.target.value }))}
-              className={cn("font-mono text-xs", nameError && "border-red/60")}
-            />
-            {nameError ? <p className="mt-1 text-[11px] text-red">{nameError}</p> : null}
-          </div>
-          <div>
-            <label className="eyebrow mb-1.5 block">Description</label>
-            <Input
-              value={definition.description ?? ""}
-              placeholder="What this workflow produces, in one line."
-              onChange={(e) => update((d) => ({ ...d, description: e.target.value }))}
-              className="text-xs"
-            />
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <ValidationSummary result={validation} pending={validating} className="mr-1" />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => preview.mutate()}
-              disabled={preview.isPending || definition.steps.length === 0}
-            >
-              {preview.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Code2 className="size-3.5" />
-              )}
-              Script
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => save.mutate()}
-              disabled={!canSave || save.isPending}
-            >
-              {save.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Save className="size-3.5" />
-              )}
-              {mode === "create" ? "Create draft" : "Save draft"}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => publish.mutate()}
-              disabled={!canSave || publish.isPending}
-            >
-              {publish.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Rocket className="size-3.5" />
-              )}
-              Publish
-            </Button>
-          </div>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* Top bar: identity on the left, status and actions on the right. */}
+      <GlassPanel tone="raised" className="flex flex-wrap items-center gap-2 px-3 py-2">
+        <div className="w-full sm:w-60">
+          <Input
+            value={definition.name}
+            disabled={mode === "edit"}
+            placeholder="workflow_name"
+            aria-label="Workflow name"
+            title={nameError ?? "Workflow name"}
+            onChange={(e) => update((d) => ({ ...d, name: e.target.value }))}
+            className={cn("h-8 font-mono text-xs", nameError && "border-red/60")}
+          />
         </div>
+        <Input
+          value={definition.description ?? ""}
+          placeholder="What this workflow produces, in one line."
+          aria-label="Description"
+          onChange={(e) => update((d) => ({ ...d, description: e.target.value }))}
+          className="h-8 min-w-[12rem] flex-1 text-xs"
+        />
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {dirty ? (
+            <span
+              className="inline-flex items-center gap-1.5 px-1 font-mono text-[10px] text-muted-foreground"
+              title="Unsaved changes"
+            >
+              <span className="size-1.5 rounded-full bg-amber" /> Unsaved
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setDetailsTab("issues")}
+            title={issueCount ? `${issueCount} issue(s) — click to review` : "Validation"}
+            className="rounded transition hover:opacity-80"
+          >
+            <ValidationSummary result={validation} pending={validating} />
+          </button>
+          <Button size="sm" variant="outline" onClick={() => setDetailsTab("workflow")}>
+            <Settings2 className="size-3.5" /> Settings
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => preview.mutate()}
+            disabled={preview.isPending || definition.steps.length === 0}
+          >
+            {preview.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Code2 className="size-3.5" />
+            )}
+            Script
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => save.mutate()}
+            disabled={!canSave || save.isPending}
+          >
+            {save.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Save className="size-3.5" />
+            )}
+            {mode === "create" ? "Create draft" : "Save draft"}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => publish.mutate()}
+            disabled={!canSave || publish.isPending}
+          >
+            {publish.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Rocket className="size-3.5" />
+            )}
+            Publish
+          </Button>
+        </div>
+        {nameError ? <p className="w-full text-[11px] text-red">{nameError}</p> : null}
       </GlassPanel>
 
-      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_360px]">
-        {/* Palette */}
-        <GlassPanel className="flex h-[calc(100vh-19rem)] min-h-[460px] flex-col overflow-hidden">
-          <GlassPanelHeader
-            title="Palette"
-            description={`${definition.steps.length} / ${MAX_STEPS} steps`}
-            actions={
-              catalog ? (
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {catalog.agents.length}A · {catalog.tools.length}T
-                </span>
-              ) : undefined
-            }
-          />
-          <div className="custom-scrollbar flex-1 space-y-3.5 overflow-y-auto p-3">
-            {/* Step types */}
-            <div>
-              <p className="eyebrow mb-1.5 text-[10px]">Step Types</p>
-              <div className="space-y-1">
-                {STEP_TYPES.map((type) => {
-                  const identity = STEP_TYPE_IDENTITY[type];
-                  return (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => addStep(type)}
-                      className="flex w-full items-center gap-2 rounded-md border border-border bg-background-elevated/60 px-2 py-1.5 text-left transition hover:border-border-strong hover:bg-surface-hover"
+      {/* Canvas fills everything that is left. */}
+      <GlassPanel className="relative min-h-[420px] flex-1 overflow-hidden">
+        <GraphCanvas
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeClick={(_, node) => {
+            setSelectedId(node.id);
+            setDetailsTab("step");
+          }}
+          onPaneClick={() => setSelectedId(null)}
+          catalog={catalog}
+          onDropItem={onDropItem}
+          dropMimeType={PALETTE_MIME}
+          showMinimap={showMinimap}
+          className="relative h-full w-full"
+          overlay={
+            <>
+              <div className="flex items-start gap-2">
+                <PaletteToggle open={paletteOpen} onToggle={() => setPaletteOpen((o) => !o)} />
+                <div className="hidden lg:block">
+                  <GraphLegend />
+                </div>
+              </div>
+              <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-border bg-background-elevated/90 p-1 shadow-sm backdrop-blur-sm">
+                {selected ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 max-w-40 px-2 text-xs"
+                      onClick={() => setDetailsTab("step")}
+                      title="Edit the selected step"
                     >
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-full border",
-                          identity.bg,
-                          identity.border,
-                        )}
-                      />
-                      <span className="flex-1 text-xs font-medium text-foreground">
-                        {identity.label}
-                      </span>
-                      <Plus className="size-3 text-muted-foreground" />
-                    </button>
-                  );
-                })}
+                      <SlidersHorizontal className="size-3" />
+                      <span className="truncate font-mono">{selected.id}</span>
+                    </Button>
+                    <div className="mx-0.5 h-3 w-px bg-border" />
+                  </>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2"
+                  onClick={undo}
+                  disabled={past.length === 0}
+                  title="Undo (Ctrl+Z)"
+                >
+                  <Undo2 className="size-3" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2"
+                  onClick={redo}
+                  disabled={future.length === 0}
+                  title="Redo (Ctrl+Y)"
+                >
+                  <Redo2 className="size-3" />
+                </Button>
+                <div className="mx-0.5 h-3 w-px bg-border" />
+                <Button
+                  size="sm"
+                  variant={direction === "LR" ? "secondary" : "ghost"}
+                  className="h-7 px-2 text-xs"
+                  onClick={() => applyAutoLayout("LR")}
+                  title="Horizontal auto-layout"
+                >
+                  <Columns className="size-3" /> LR
+                </Button>
+                <Button
+                  size="sm"
+                  variant={direction === "TB" ? "secondary" : "ghost"}
+                  className="h-7 px-2 text-xs"
+                  onClick={() => applyAutoLayout("TB")}
+                  title="Vertical auto-layout"
+                >
+                  <Rows className="size-3" /> TB
+                </Button>
+                <div className="mx-0.5 h-3 w-px bg-border" />
+                <Button
+                  size="sm"
+                  variant={showMinimap ? "secondary" : "ghost"}
+                  className="h-7 px-2"
+                  onClick={() => setShowMinimap(!showMinimap)}
+                  title="Toggle minimap"
+                >
+                  <Map className="size-3" />
+                </Button>
+              </div>
+            </>
+          }
+        >
+          <BuilderPalette
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            catalog={catalog}
+            stepCount={definition.steps.length}
+            onAdd={(item) => addItem(item)}
+            onCreate={openCreate}
+          />
+          {definition.steps.length === 0 ? (
+            <div className="absolute inset-0 grid place-items-center p-6">
+              <div className="glass max-w-sm rounded-xl border border-dashed border-border-strong px-6 py-5 text-center animate-in fade-in-0 zoom-in-95">
+                <Blocks className="mx-auto mb-2 size-6 text-primary" />
+                <p className="text-sm font-semibold text-foreground">Start with a step</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Open the palette and click a step, or drag one onto the canvas. Drag between
+                  handles to wire steps together.
+                </p>
+                {!paletteOpen ? (
+                  <Button
+                    size="sm"
+                    className="pointer-events-auto mt-3"
+                    onClick={() => setPaletteOpen(true)}
+                  >
+                    <Blocks className="size-3.5" /> Open palette
+                  </Button>
+                ) : null}
               </div>
             </div>
+          ) : null}
+        </GraphCanvas>
+      </GlassPanel>
 
-            {/* Quick Synthesis */}
-            <div>
-              <p className="eyebrow mb-1.5 text-[10px]">Inline Creation</p>
-              <div className="space-y-1">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-full justify-start text-[11px] gap-1.5"
-                  onClick={() => setShowAgentModal(true)}
-                >
-                  <Bot className="size-3 text-primary" /> + Agent
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-full justify-start text-[11px] gap-1.5"
-                  onClick={() => setSynthesizeKind("activity")}
-                >
-                  <Sparkles className="size-3 text-cyan" /> + Activity
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-full justify-start text-[11px] gap-1.5"
-                  onClick={() => setSynthesizeKind("tool")}
-                >
-                  <Wrench className="size-3 text-amber" /> + Tool
-                </Button>
-              </div>
-            </div>
+      {/* Details: step inspector, workflow settings and issues, as a modal. */}
+      <CanvasDialog
+        open={detailsTab !== null}
+        onOpenChange={(open) => !open && setDetailsTab(null)}
+        title="Details"
+        className="h-[min(85dvh,780px)] max-w-2xl"
+      >
+        <Tabs
+          value={detailsTab ?? "step"}
+          onValueChange={(v) => setDetailsTab(v as DetailsTab)}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <TabsList className="mr-8 justify-start self-start">
+            <TabsTrigger value="step">Step</TabsTrigger>
+            <TabsTrigger value="workflow">Workflow</TabsTrigger>
+            <TabsTrigger value="issues">
+              Issues{issueCount > 0 ? ` (${issueCount})` : ""}
+            </TabsTrigger>
+          </TabsList>
 
-            {/* Catalog Agents */}
-            {catalog && catalog.agents.length > 0 && (
-              <div>
-                <p className="eyebrow mb-1.5 text-[10px]">Agents ({catalog.agents.length})</p>
-                <div className="max-h-36 custom-scrollbar space-y-1 overflow-y-auto pr-1">
-                  {catalog.agents.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => addAgentStep(a)}
-                      title={a.description || a.name}
-                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-primary/50 hover:bg-surface-hover"
-                    >
-                      <Bot className="size-3 shrink-0 text-primary" />
-                      <span className="truncate flex-1 font-mono text-[11px] text-foreground">
-                        {a.name}
-                      </span>
-                      <Plus className="size-2.5 text-muted-foreground" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+          <TabsContent value="step" className="mt-3 min-h-0 flex-1">
+            <StepInspector
+              step={selected}
+              catalog={catalog}
+              stepIds={definition.steps.map((s) => s.id)}
+              tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
+              isEntry={selected?.id === definition.entry_step}
+              onChange={changeStep}
+              onDelete={(id) => {
+                deleteStep(id);
+                setDetailsTab(null);
+              }}
+              onSetEntry={(id) => update((d) => ({ ...d, entry_step: id }))}
+            />
+          </TabsContent>
 
-            {/* Catalog Tools / Activities */}
-            {catalog && catalog.tools.length > 0 && (
-              <div>
-                <p className="eyebrow mb-1.5 text-[10px]">Tools & Activities ({catalog.tools.length})</p>
-                <div className="max-h-36 custom-scrollbar space-y-1 overflow-y-auto pr-1">
-                  {catalog.tools.map((t) => (
-                    <button
-                      key={`${t.source}:${t.name}`}
-                      type="button"
-                      onClick={() => addToolStep(t)}
-                      title={t.description || t.name}
-                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-cyan/50 hover:bg-surface-hover"
-                    >
-                      <Wrench className="size-3 shrink-0 text-cyan" />
-                      <span className="truncate flex-1 font-mono text-[11px] text-foreground">
-                        {t.name}
-                      </span>
-                      <Plus className="size-2.5 text-muted-foreground" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+          <TabsContent value="workflow" className="mt-3 min-h-0 flex-1">
+            <WorkflowSettings definition={definition} update={update} />
+          </TabsContent>
 
-            {/* Catalog Connectors */}
-            {catalog && catalog.connectors.length > 0 && (
-              <div>
-                <p className="eyebrow mb-1.5 text-[10px]">Connectors ({catalog.connectors.length})</p>
-                <div className="max-h-28 custom-scrollbar space-y-1 overflow-y-auto pr-1">
-                  {catalog.connectors.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => addConnectorStep(c)}
-                      title={c.name}
-                      className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background-elevated/40 px-2 py-1 text-left text-xs transition hover:border-violet/50 hover:bg-surface-hover"
-                    >
-                      <Plug className="size-3 shrink-0 text-violet" />
-                      <span className="truncate flex-1 text-[11px] text-foreground">
-                        {c.name}
-                      </span>
-                      <Plus className="size-2.5 text-muted-foreground" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </GlassPanel>
+          <TabsContent value="issues" className="mt-3 min-h-0 flex-1">
+            <GlassPanel className="custom-scrollbar h-full overflow-y-auto p-4">
+              {validating ? (
+                <p className="technical-label">Validating…</p>
+              ) : (
+                <IssueList
+                  issues={validation?.issues ?? []}
+                  onSelectStep={(id) => {
+                    setSelectedId(id);
+                    setDetailsTab("step");
+                  }}
+                  emptyLabel={
+                    definition.steps.length === 0
+                      ? "Add a step to start validating."
+                      : "No issues — the definition is structurally sound."
+                  }
+                />
+              )}
+            </GlassPanel>
+          </TabsContent>
+        </Tabs>
+      </CanvasDialog>
 
-        {/* Canvas */}
-        <GlassPanel className="overflow-hidden">
-          <GraphCanvas
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
-            onPaneClick={() => setSelectedId(null)}
-            showMinimap={showMinimap}
-            className="h-[calc(100vh-19rem)] min-h-[460px] w-full"
-            overlay={
-              <>
-                <GraphLegend />
-                <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-border bg-background-elevated/90 p-1 backdrop-blur-sm shadow-sm">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2"
-                    onClick={undo}
-                    disabled={past.length === 0}
-                    title="Undo (Ctrl+Z)"
-                  >
-                    <Undo2 className="size-3" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2"
-                    onClick={redo}
-                    disabled={future.length === 0}
-                    title="Redo (Ctrl+Y)"
-                  >
-                    <Redo2 className="size-3" />
-                  </Button>
-                  <div className="h-3 w-px bg-border mx-0.5" />
-                  <Button
-                    size="sm"
-                    variant={direction === "LR" ? "secondary" : "ghost"}
-                    className="h-7 px-2 text-xs"
-                    onClick={() => applyAutoLayout("LR")}
-                    title="Horizontal auto-layout"
-                  >
-                    <Columns className="size-3" /> LR
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={direction === "TB" ? "secondary" : "ghost"}
-                    className="h-7 px-2 text-xs"
-                    onClick={() => applyAutoLayout("TB")}
-                    title="Vertical auto-layout"
-                  >
-                    <Rows className="size-3" /> TB
-                  </Button>
-                  <div className="h-3 w-px bg-border mx-0.5" />
-                  <Button
-                    size="sm"
-                    variant={showMinimap ? "secondary" : "ghost"}
-                    className="h-7 px-2"
-                    onClick={() => setShowMinimap(!showMinimap)}
-                    title="Toggle minimap"
-                  >
-                    <Map className="size-3" />
-                  </Button>
-                </div>
-              </>
-            }
-          />
-        </GlassPanel>
-
-        {/* Inspector */}
-        <div className="min-w-0">
-          <Tabs defaultValue="step" className="flex h-full flex-col">
-            <TabsList className="w-full justify-start">
-              <TabsTrigger value="step">Step</TabsTrigger>
-              <TabsTrigger value="workflow">Workflow</TabsTrigger>
-              <TabsTrigger value="issues">
-                Issues
-                {validation && validation.issues.length > 0 ? ` (${validation.issues.length})` : ""}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="step" className="mt-3 h-[calc(100vh-22rem)] min-h-[420px]">
-              <StepInspector
-                step={selected}
-                catalog={catalog}
-                stepIds={definition.steps.map((s) => s.id)}
-                tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
-                isEntry={selected?.id === definition.entry_step}
-                onChange={changeStep}
-                onDelete={deleteStep}
-                onSetEntry={(id) => update((d) => ({ ...d, entry_step: id }))}
-              />
-            </TabsContent>
-
-            <TabsContent value="workflow" className="mt-3">
-              <WorkflowSettings definition={definition} update={update} />
-            </TabsContent>
-
-            <TabsContent value="issues" className="mt-3">
-              <GlassPanel className="p-4">
-                {validating ? (
-                  <p className="technical-label">Validating…</p>
-                ) : (
-                  <IssueList
-                    issues={validation?.issues ?? []}
-                    onSelectStep={(id) => setSelectedId(id)}
-                    emptyLabel={
-                      definition.steps.length === 0
-                        ? "Add a step to start validating."
-                        : "No issues — the definition is structurally sound."
-                    }
-                  />
-                )}
-              </GlassPanel>
-            </TabsContent>
-          </Tabs>
-        </div>
-      </div>
-
-      {script !== null ? (
-        <GlassPanel>
-          <GlassPanelHeader
-            title="Compiled module"
-            description="What the Mistral worker will run"
-            actions={
-              <Button size="sm" variant="ghost" onClick={() => setScript(null)}>
-                Hide
-              </Button>
-            }
-          />
-          <div className="p-4">
-            <CodeBlock code={script} className="max-h-[420px] overflow-auto custom-scrollbar" />
-          </div>
-        </GlassPanel>
-      ) : null}
+      <CanvasDialog
+        open={script !== null}
+        onOpenChange={(open) => !open && setScript(null)}
+        title="Compiled module"
+        description="What the Mistral worker will run"
+        className="h-[min(85dvh,820px)] max-w-4xl"
+      >
+        <CodeBlock code={script ?? ""} className="custom-scrollbar min-h-0 flex-1 overflow-auto" />
+      </CanvasDialog>
 
       <CreateAgentModal
         open={showAgentModal}
         onOpenChange={setShowAgentModal}
-        models={catalog?.models ?? ["mistral-large-latest", "mistral-small-latest", "codestral-latest"]}
+        models={
+          catalog?.models ?? ["mistral-large-latest", "mistral-small-latest", "codestral-latest"]
+        }
         tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
         tools={catalog?.tools ?? []}
-        onCreated={(agentId) => {
+        connectors={catalog?.connectors ?? []}
+        onCatalogChanged={() => {
+          qc.invalidateQueries({ queryKey: QK.builderCatalog() });
+          qc.invalidateQueries({ queryKey: QK.tools() });
+        }}
+        onCreated={(agentId, agentName) => {
           qc.invalidateQueries({ queryKey: QK.builderCatalog() });
           qc.invalidateQueries({ queryKey: QK.agents() });
-          toast.success("Agent created");
-          const id = uniqueStepId(definition.steps.map((s) => s.id), "agent");
-          const step: WorkflowStep = {
-            id,
-            type: "agent",
-            tier: null,
+          toast.success(`Agent "${agentName}" created`);
+          insertStep({
+            ...blankStep(
+              uniqueStepId(
+                definition.steps.map((s) => s.id),
+                agentName,
+              ),
+              "agent",
+            ),
             config: { agent_id: agentId, query_template: "" },
-            next_steps: [],
-            description: "",
-            parallel_group: null,
-          };
-          update((d) => ({
-            ...d,
-            steps: [...d.steps, step],
-            entry_step: d.entry_step || id,
-          }));
-          setSelectedId(id);
+            description: agentName,
+          });
         }}
       />
 
-      {synthesizeKind && (
+      {synthesizingActivity && (
         <CreateToolModal
-          open={Boolean(synthesizeKind)}
-          onOpenChange={(open) => !open && setSynthesizeKind(null)}
-          purpose={synthesizeKind}
-          onCreated={(toolName) => {
+          open={synthesizingActivity}
+          onOpenChange={(open) => !open && setSynthesizingActivity(false)}
+          purpose="activity"
+          onCreated={(activityName) => {
             qc.invalidateQueries({ queryKey: QK.builderCatalog() });
             qc.invalidateQueries({ queryKey: QK.tools() });
-            toast.success(`${synthesizeKind === "activity" ? "Activity" : "Tool"} created`);
-            const id = uniqueStepId(definition.steps.map((s) => s.id), "tool");
-            const step: WorkflowStep = {
-              id,
-              type: "tool",
-              tier: null,
-              config: { tool_name: toolName, arguments: {} },
-              next_steps: [],
-              description: "",
-              parallel_group: null,
-            };
-            update((d) => ({
-              ...d,
-              steps: [...d.steps, step],
-              entry_step: d.entry_step || id,
-            }));
-            setSelectedId(id);
+            toast.success("Activity created");
+            insertStep({
+              ...blankStep(
+                uniqueStepId(
+                  definition.steps.map((s) => s.id),
+                  activityName,
+                ),
+                "tool",
+              ),
+              config: { tool_name: activityName, arguments: {} },
+            });
           }}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Modal that stays visible when the canvas is full screen ───────────── */
+
+/** Tracks the element currently in native full screen, so portals can render inside it. */
+function useFullscreenElement() {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const sync = () => setEl(document.fullscreenElement as HTMLElement | null);
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  return el;
+}
+
+function CanvasDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  className,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const container = useFullscreenElement();
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal container={container}>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[80] bg-background/50 backdrop-blur-[2px] duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <DialogPrimitive.Content
+          {...(description ? {} : { "aria-describedby": undefined })}
+          className={cn(
+            "fixed left-1/2 top-1/2 z-[80] flex w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border-strong bg-popover p-4 shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-2",
+            className,
+          )}
+        >
+          {description ? (
+            <div className="pr-8">
+              <DialogPrimitive.Title className="font-display text-sm font-bold text-foreground">
+                {title}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">
+                {description}
+              </DialogPrimitive.Description>
+            </div>
+          ) : (
+            <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+          )}
+          {children}
+          <DialogPrimitive.Close
+            className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+/* ── Compact page header for the full-height builder pages ─────────────── */
+
+export function BuilderHeader({
+  title,
+  description,
+  back,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  back: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      {back}
+      <div className="min-w-0">
+        <p className="eyebrow text-[10px]">Builder</p>
+        <h1 className="truncate text-lg font-semibold leading-tight tracking-tight text-foreground">
+          {title}
+        </h1>
+      </div>
+      {description ? (
+        <p className="hidden min-w-0 flex-1 truncate border-l border-border pl-3 text-xs text-muted-foreground xl:block">
+          {description}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -978,9 +1030,9 @@ function WorkflowSettings({
     }));
 
   return (
-    <GlassPanel className="flex flex-col">
+    <GlassPanel className="flex h-full flex-col overflow-hidden">
       <GlassPanelHeader title="Workflow settings" description="Entry point and run inputs" />
-      <div className="custom-scrollbar max-h-[calc(100vh-24rem)] space-y-4 overflow-y-auto p-4">
+      <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <div>
           <label className="eyebrow mb-1.5 block">Entry step</label>
           <select
@@ -1072,7 +1124,7 @@ function WorkflowSettings({
                       value={f.type}
                       onChange={(e) => setField(i, { type: e.target.value })}
                     >
-                      {["string", "number", "boolean", "object", "array"].map((t) => (
+                      {["string", "number", "integer", "boolean", "object", "array"].map((t) => (
                         <option key={t} value={t}>
                           {t}
                         </option>
@@ -1100,6 +1152,62 @@ function WorkflowSettings({
                     onChange={(e) => setField(i, { description: e.target.value })}
                     className="mt-2 h-8 text-xs"
                   />
+                  {/* Presentation hints for the run form; inferred when left blank. */}
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <Input
+                      value={f.label ?? ""}
+                      placeholder="Form label"
+                      onChange={(e) => setField(i, { label: e.target.value || undefined })}
+                      className="h-8 text-xs"
+                    />
+                    <select
+                      title="How the run form collects this input"
+                      className="h-8 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground"
+                      value={f.format ?? ""}
+                      onChange={(e) => setField(i, { format: e.target.value || undefined })}
+                    >
+                      <option value="">Format: auto</option>
+                      {[
+                        "text",
+                        "long_text",
+                        "email",
+                        "url",
+                        "date",
+                        "datetime",
+                        "integer",
+                        "currency",
+                        "percent",
+                      ].map((fmt) => (
+                        <option key={fmt} value={fmt}>
+                          {fmt.replace("_", " ")}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      value={(f.enum ?? []).join(", ")}
+                      placeholder="Allowed values (a, b, c)"
+                      onChange={(e) => {
+                        const opts = e.target.value
+                          .split(",")
+                          .map((o) => o.trim())
+                          .filter(Boolean);
+                        setField(i, { enum: opts.length ? opts : undefined });
+                      }}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      value={
+                        f.example === undefined || f.example === null
+                          ? ""
+                          : typeof f.example === "string"
+                            ? f.example
+                            : JSON.stringify(f.example)
+                      }
+                      placeholder="Example value"
+                      onChange={(e) => setField(i, { example: e.target.value || undefined })}
+                      className="h-8 text-xs"
+                    />
+                  </div>
                   <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
                     <input
                       type="checkbox"

@@ -1,5 +1,4 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronsLeft,
@@ -11,8 +10,9 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { agentsApi, QK } from "@/api";
 import { NAV_ITEMS } from "./nav-items";
+import { HealthIndicator } from "./HealthIndicator";
+import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 
@@ -29,18 +29,11 @@ export function Sidebar({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
 
   const sessions = useSessionStore((s) => s.sessions);
   const createSession = useSessionStore((s) => s.createSession);
   const removeSession = useSessionStore((s) => s.removeSession);
   const renameSession = useSessionStore((s) => s.renameSession);
-
-  const agentsQuery = useQuery({
-    queryKey: QK.agentsPage(0, 20),
-    queryFn: () => agentsApi.list(0, 20),
-    enabled: Boolean(expanded["agents"]),
-  });
 
   const generalSessions = useMemo(
     () => sessions.filter((s) => s.type === "general"),
@@ -74,16 +67,16 @@ export function Sidebar({
         )}
       >
         <div className="flex h-[73px] items-center gap-2.5 border-b border-border px-4">
-          <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary shadow-sm">
-            <Boxes className="size-4 text-primary-foreground" />
+          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary shadow-sm">
+            <Boxes className="size-5 text-primary-foreground" />
           </span>
           {showLabels ? (
             <div className="min-w-0 flex-1">
-              <p className="truncate font-display text-xs font-bold leading-tight text-foreground">
-                AGENTIC / AI
+              <p className="truncate font-display text-base font-bold leading-tight text-foreground">
+                Agentic AI
               </p>
-              <p className="truncate text-[11px] leading-tight text-muted-foreground">
-                CONTROL PLANE
+              <p className="mt-0.5 truncate text-[13px] leading-tight text-muted-foreground">
+                Design Patterns
               </p>
             </div>
           ) : null}
@@ -169,92 +162,17 @@ export function Sidebar({
                     )}
                   </div>
                 ) : null}
-
-                {item.expandable === "agents" && open && showLabels ? (
-                  <div className="mt-1 ml-4 space-y-0.5 border-l border-border pl-2">
-                    <span className="block px-1.5 py-1 eyebrow">Active Agents</span>
-                    {agentsQuery.isLoading ? (
-                      <p className="px-1.5 py-1 text-[11px] text-muted-foreground">Loading…</p>
-                    ) : (agentsQuery.data?.items?.length ?? 0) === 0 ? (
-                      <p className="px-1.5 py-1 text-[11px] text-muted-foreground">No agents</p>
-                    ) : (
-                      agentsQuery.data!.items.map((agent) => {
-                        const agentOpen = Boolean(expandedAgents[agent.id]);
-                        const agentSessions = sessions.filter(
-                          (s) => s.type === "agent" && s.agentId === agent.id,
-                        );
-                        return (
-                          <div key={agent.id}>
-                            <div className="flex items-center gap-1">
-                              <Link
-                                to="/agents/$id"
-                                params={{ id: agent.id }}
-                                onClick={onCloseMobile}
-                                className="min-w-0 flex-1 truncate rounded-lg px-1.5 py-1.5 text-xs text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                              >
-                                {agent.name}
-                              </Link>
-                              <button
-                                type="button"
-                                aria-label={`Toggle ${agent.name} sessions`}
-                                onClick={() =>
-                                  setExpandedAgents((e) => ({ ...e, [agent.id]: !e[agent.id] }))
-                                }
-                                className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                              >
-                                <ChevronDown
-                                  className={cn(
-                                    "size-3 transition-transform",
-                                    agentOpen && "rotate-180",
-                                  )}
-                                />
-                              </button>
-                            </div>
-                            {agentOpen ? (
-                              <div className="ml-2 space-y-0.5 border-l border-border pl-2">
-                                <div className="flex items-center justify-between px-1.5 py-1">
-                                  <span className="eyebrow">Sessions</span>
-                                  <button
-                                    type="button"
-                                    aria-label={`New session for ${agent.name}`}
-                                    onClick={() => createSession("agent", agent.id)}
-                                    className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                                  >
-                                    <Plus className="size-3" />
-                                  </button>
-                                </div>
-                                {agentSessions.length === 0 ? (
-                                  <p className="px-1.5 pb-1 text-[11px] text-muted-foreground">
-                                    None yet
-                                  </p>
-                                ) : (
-                                  agentSessions.map((s) => (
-                                    <SessionRow
-                                      key={s.id}
-                                      title={s.title}
-                                      to="/agents/$id"
-                                      params={{ id: agent.id }}
-                                      search={{ session: s.id }}
-                                      onRename={(t) => renameSession(s.id, t)}
-                                      onDelete={() => removeSession(s.id)}
-                                      onNavigate={onCloseMobile}
-                                    />
-                                  ))
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                ) : null}
               </div>
             );
           })}
         </nav>
 
         <div className="space-y-1 border-t border-border px-2 py-3">
+          {/* Desktop only: on phones the top header carries these. */}
+          <div className="hidden space-y-1 border-b border-border pb-2 md:block">
+            <RunsIndicator variant="rail" collapsed={collapsed} />
+            <HealthIndicator variant="rail" collapsed={collapsed} />
+          </div>
           <a
             href="/docs"
             target="_blank"

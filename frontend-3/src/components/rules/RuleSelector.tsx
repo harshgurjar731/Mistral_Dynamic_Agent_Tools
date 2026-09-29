@@ -38,7 +38,8 @@ export function RuleSelector({
   const rulesQuery = useQuery({ queryKey: QK.rules(scope), queryFn: () => rulesApi.list(scope) });
   const rules = (rulesQuery.data?.rules ?? []).filter((r) => r.enabled);
   const alwaysOn = rules.filter((r) => r.always_on);
-  const selectable = rules.filter((r) => !r.always_on);
+  // Targeted rules apply only where a person pointed them — not pickable here.
+  const selectable = rules.filter((r) => !r.always_on && !r.targets?.length);
   const byId = Object.fromEntries(rules.map((r) => [r.id, r]));
 
   const selected = value.filter((v) => byId[v.rule_id] && !byId[v.rule_id]!.always_on);

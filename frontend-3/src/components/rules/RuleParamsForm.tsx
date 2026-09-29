@@ -150,6 +150,15 @@ function FieldControl({
       );
     case "toggle":
       return <Switch checked={Boolean(value)} onCheckedChange={onChange} />;
+    case "text":
+      return (
+        <input
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={500}
+          className="h-9 w-full rounded-lg border border-border bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+        />
+      );
     default:
       return null;
   }

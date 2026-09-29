@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { CreatedAt } from "@/components/shared/CreatedAt";
 import {
   Wrench,
   Zap,
@@ -139,13 +140,9 @@ export function ToolCard({
         </div>
 
         {/* Footer */}
-        {tool.created_at && (
-          <div className="mt-3.5 flex items-center justify-end border-t border-border/40 pt-3.5">
-            <span className="text-[9px] tabular-nums text-muted-foreground/35">
-              {new Date(tool.created_at).toLocaleDateString()}
-            </span>
-          </div>
-        )}
+        <div className="mt-3.5 flex items-center border-t border-border/40 pt-3.5">
+          <CreatedAt value={tool.created_at} />
+        </div>
       </div>
     </div>
   );

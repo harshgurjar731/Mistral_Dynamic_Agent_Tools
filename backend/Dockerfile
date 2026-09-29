@@ -1,0 +1,47 @@
+# Production image for the FastAPI backend (API + Mistral Workflows worker).
+#
+# Used by deploy/docker-compose.yml. Local development does not need it — run
+# `uvicorn app.main:app --reload` from backend/ as before.
+#
+# The layout mirrors the repository: code lives in /srv/backend and compiled
+# workflows in /srv/mistral_workflows, because both the worker and the compiled
+# workflow modules locate each other through ../ relative paths.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Temporal-based Mistral Workflows worker. Set to false to build a smaller
+# image that only runs the local DAG engine (then MISTRAL_WORKER_ENABLED=false).
+ARG WITH_MISTRAL_WORKFLOWS=true
+
+WORKDIR /srv/backend
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt cryptography \
+    && if [ "$WITH_MISTRAL_WORKFLOWS" = "true" ]; then \
+         pip install -r requirements.txt mistralai-workflows; \
+       fi
+
+COPY . .
+
+RUN mkdir -p /srv/data /srv/backend/uploads /srv/mistral_workflows \
+    && useradd --create-home --uid 10001 app \
+    && chown -R app:app /srv
+
+USER app
+
+ENV DATABASE_URL=sqlite:////srv/data/sql_app.db \
+    MISTRAL_WORKFLOWS_DIR=../mistral_workflows
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+
+# One worker on purpose: background runs and the workflow worker supervisor
+# live in-process, so multiple uvicorn workers would each start their own.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

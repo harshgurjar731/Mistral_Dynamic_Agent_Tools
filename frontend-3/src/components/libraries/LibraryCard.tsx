@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Edit2, FileText, Library as LibraryIcon, Loader2, Trash2 } from "lucide-react";
-import { formatRelative } from "@/lib/status";
+import { CreatedAt } from "@/components/shared/CreatedAt";
 import { cn } from "@/lib/utils";
 import type { Library } from "@/types";
 
@@ -68,7 +68,10 @@ export function LibraryCard({
         </div>
 
         {/* Footer — actions + timestamp, pinned to the bottom so rows line up */}
-        <div className="mt-auto flex items-center gap-1.5 border-t border-border/40 pt-3.5">
+        <div
+          data-card-footer
+          className="mt-auto flex items-center gap-1.5 border-t border-border/40 pt-3.5"
+        >
           <div className="pointer-events-auto relative z-10 flex items-center gap-1.5">
             <button
               type="button"
@@ -93,9 +96,7 @@ export function LibraryCard({
               )}
             </button>
           </div>
-          <span className="ml-auto text-[9px] tabular-nums text-muted-foreground/35">
-            {formatRelative(library.created_at)}
-          </span>
+          <CreatedAt value={library.created_at} className="ml-auto" />
         </div>
       </div>
     </div>

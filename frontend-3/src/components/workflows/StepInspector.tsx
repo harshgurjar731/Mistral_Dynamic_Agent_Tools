@@ -220,8 +220,8 @@ export function StepInspector({
         {step.type === "tool" ? (
           <>
             <Field
-              label="Tool"
-              hint="A tool step calls the function directly — no model decides the arguments."
+              label="Activity"
+              hint="An activity step calls the function directly — no model decides the arguments. Agent tools are configured on the agent instead."
             >
               <select
                 className={SELECT_CLASS}
@@ -229,11 +229,16 @@ export function StepInspector({
                 onChange={(e) => setCfg({ tool_name: e.target.value || undefined })}
               >
                 <option value="">— none —</option>
-                {(catalog?.tools ?? []).map((t) => (
+                {(catalog?.activities ?? []).map((t) => (
                   <option key={t.name} value={t.name}>
-                    {t.name} · {t.source}
+                    {t.name}
                   </option>
                 ))}
+                {/* Older workflows may call an agent tool directly; keep it selectable. */}
+                {cfg["tool_name"] &&
+                !(catalog?.activities ?? []).some((t) => t.name === cfg["tool_name"]) ? (
+                  <option value={String(cfg["tool_name"])}>{String(cfg["tool_name"])}</option>
+                ) : null}
               </select>
             </Field>
             <JsonField

@@ -1,258 +1,354 @@
 """
-Remote Server Routes — CRUD for remote servers + reachability check + send tool code.
+Remote Server Routes — deployment targets for tools and workflow packages.
+
+CRUD, provider catalog, diagnostics (per server, bulk, and for unsaved
+config), tool push, workflow package deployment and deployment history.
+Static paths are declared before ``/remote-servers/{server_id}`` so they are
+not captured by it.
 """
 
-import httpx
+import asyncio
+import json
 import logging
-from fastapi import APIRouter, Request, Depends
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.remote_server_model import RemoteServer
+from app.remote_server_model import RemoteServer, RemoteDeployment
+from app.remote_servers import checks, deployers, store
+from app.remote_servers import secrets as secret_box
+from app.remote_servers.providers import catalog, get_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Remote Servers"])
 
 
-# ── List all remote servers ────────────────────────────────────────────────
+def _require_db(db: Optional[Session]) -> Session:
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    return db
+
+
+def _get_server(db: Session, server_id: int) -> RemoteServer:
+    server = db.get(RemoteServer, server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    return server
+
+
+def _save_check(db: Session, server: RemoteServer, result: dict) -> None:
+    server.last_status = result["status"]
+    server.last_check = json.dumps(result, default=str)
+    server.last_checked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Trust on first use: remember the SSH host key the first time we see it.
+    fp = result.get("host_fingerprint")
+    config = store.server_config(server)
+    if fp and not config.get("host_fingerprint"):
+        config["host_fingerprint"] = fp
+        server.config = json.dumps(config)
+    db.commit()
+
+
+def _parse_body(body: dict) -> tuple[str, str, dict, dict]:
+    """Accept the structured body, and the legacy {name, url, description} one."""
+    provider = body.get("provider") or "mcp_code_endpoint"
+    purpose = body.get("purpose") or ("tool" if provider == "mcp_code_endpoint" else "workflow")
+    config = dict(body.get("config") or {})
+    if "url" in body and "url" not in config:
+        config["url"] = body["url"]
+    return provider, purpose, config, dict(body.get("secrets") or {})
+
+
+# ── Catalog ──────────────────────────────────────────────────────────────
+
+@router.get("/remote-servers/providers")
+async def list_providers():
+    """Server kinds, the fields each needs, and workflow post-deploy actions."""
+    return catalog()
+
+
+# ── List / create ────────────────────────────────────────────────────────
 
 @router.get("/remote-servers")
-async def list_remote_servers(db: Session = Depends(get_db)):
-    """Return all saved remote servers."""
+async def list_remote_servers(purpose: Optional[str] = None, db: Session = Depends(get_db)):
     if not db:
         return []
-    servers = db.query(RemoteServer).order_by(RemoteServer.created_at.desc()).all()
-    return [
-        {
-            "id": s.id,
-            "name": s.name,
-            "url": s.url,
-            "description": s.description or "",
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-        }
-        for s in servers
-    ]
+    q = db.query(RemoteServer)
+    if purpose:
+        q = q.filter(RemoteServer.purpose == purpose)
+    return [store.to_dict(s) for s in q.order_by(RemoteServer.created_at.desc()).all()]
 
-
-# ── Add a remote server ───────────────────────────────────────────────────
 
 @router.post("/remote-servers")
 async def add_remote_server(request: Request, db: Session = Depends(get_db)):
-    """Save a new remote server configuration."""
-    if not db:
-        return {"error": "Database not available"}
+    db = _require_db(db)
     body = await request.json()
-    name = body.get("name", "").strip()
-    url = body.get("url", "").strip()
-    description = body.get("description", "").strip()
-    if not name or not url:
-        return {"error": "Name and URL are required"}
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
+    provider, purpose, config, secrets = _parse_body(body)
+    try:
+        config, secrets = store.normalise(provider, purpose, config, secrets)
+    except store.ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
-    server = RemoteServer(name=name, url=url, description=description)
+    server = RemoteServer(
+        name=name,
+        description=(body.get("description") or "").strip(),
+        purpose=purpose,
+        provider=provider,
+        url=store.display_address(provider, config),
+        config=json.dumps(config),
+        secrets=secret_box.encrypt(secrets),
+    )
+    # A test run from the add form can hand its result over, so the new
+    # server starts with a known status instead of "not checked".
+    initial_check = body.get("initial_check")
     db.add(server)
     db.commit()
     db.refresh(server)
-    return {
-        "id": server.id,
-        "name": server.name,
-        "url": server.url,
-        "description": server.description or "",
-        "created_at": server.created_at.isoformat() if server.created_at else None,
-    }
+    if isinstance(initial_check, dict) and initial_check.get("status"):
+        _save_check(db, server, initial_check)
+        db.refresh(server)
+    out = store.to_dict(server)
+    # Provisioned providers (Brev) get their connection details now; the UI
+    # follows the returned deployment's log.
+    if (get_provider(provider) or {}).get("provisioned"):
+        out["provision_deployment_id"] = deployers.start_brev_provision(db, server).id
+    return out
 
 
-# ── Delete a remote server ────────────────────────────────────────────────
+# ── Diagnostics ──────────────────────────────────────────────────────────
 
-@router.delete("/remote-servers/{server_id}")
-async def delete_remote_server(server_id: int, db: Session = Depends(get_db)):
-    """Delete a saved remote server."""
-    if not db:
-        return {"error": "Database not available"}
-    server = db.query(RemoteServer).filter(RemoteServer.id == server_id).first()
-    if not server:
-        return {"error": "Server not found"}
-    db.delete(server)
-    db.commit()
-    return {"status": "deleted", "id": server_id}
-# ── Get a remote server ───────────────────────────────────────────────────
+@router.post("/remote-servers/test")
+async def test_connection(request: Request, db: Session = Depends(get_db)):
+    """Run diagnostics on unsaved settings (the add/edit form).
 
-@router.get("/remote-servers/{server_id}")
-async def get_remote_server(server_id: int, db: Session = Depends(get_db)):
-    """Retrieve a single saved remote server."""
-    if not db:
-        return {"error": "Database not available"}
-    server = db.query(RemoteServer).filter(RemoteServer.id == server_id).first()
-    if not server:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Server not found")
-    return {
-        "id": server.id,
-        "name": server.name,
-        "url": server.url,
-        "description": server.description or "",
-        "created_at": server.created_at.isoformat() if server.created_at else None,
-    }
-
-# ── Update a remote server ────────────────────────────────────────────────
-
-@router.put("/remote-servers/{server_id}")
-async def update_remote_server(server_id: int, request: Request, db: Session = Depends(get_db)):
-    """Update an existing remote server."""
-    if not db:
-        return {"error": "Database not available"}
-    server = db.query(RemoteServer).filter(RemoteServer.id == server_id).first()
-    if not server:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Server not found")
-        
-    body = await request.json()
-    if "name" in body:
-        server.name = body["name"].strip()
-    if "url" in body:
-        server.url = body["url"].strip()
-    if "description" in body:
-        server.description = body["description"].strip()
-        
-    db.commit()
-    db.refresh(server)
-    return {
-        "id": server.id,
-        "name": server.name,
-        "url": server.url,
-        "description": server.description or "",
-        "created_at": server.created_at.isoformat() if server.created_at else None,
-    }
-
-
-# ── Check reachability ────────────────────────────────────────────────────
-
-def _derive_base_url(url: str) -> str:
-    """Derive the server base URL from a /submit-code style endpoint URL.
-    e.g. 'https://example.com/submit-code' → 'https://example.com'
+    With ``server_id``, blank secrets fall back to that server's stored ones,
+    so the edit form can test without re-typing a password.
     """
-    from urllib.parse import urlparse
-    parsed = urlparse(url.strip().rstrip("/"))
-    return f"{parsed.scheme}://{parsed.netloc}"
+    body = await request.json()
+    provider, purpose, config, secrets = _parse_body(body)
+    stored: dict = {}
+    if body.get("server_id") and db:
+        existing = db.get(RemoteServer, int(body["server_id"]))
+        if existing:
+            stored = store.server_secrets(existing)
+            config.setdefault("host_fingerprint", store.server_config(existing).get("host_fingerprint"))
+    try:
+        fp = config.get("host_fingerprint")
+        config, secrets = store.normalise(provider, purpose, config, secrets, stored_secrets=stored)
+        if fp:
+            config["host_fingerprint"] = fp
+    except store.ValidationError as e:
+        return {"status": "unreachable", "ok": False, "reachable": False, "checks": [
+            {"id": "config", "label": "Configuration", "status": "fail", "detail": str(e)}
+        ], "system": {}}
+    return await checks.run_checks(provider, config, secrets)
+
+
+@router.post("/remote-servers/check-all")
+async def check_all(purpose: Optional[str] = None, db: Session = Depends(get_db)):
+    """Run diagnostics on every saved server concurrently."""
+    db = _require_db(db)
+    q = db.query(RemoteServer)
+    if purpose:
+        q = q.filter(RemoteServer.purpose == purpose)
+    servers = q.all()
+    sem = asyncio.Semaphore(6)
+
+    async def one(s: RemoteServer):
+        async with sem:
+            return await checks.run_checks(s.provider or "mcp_code_endpoint",
+                                           store.server_config(s), store.server_secrets(s))
+
+    results = await asyncio.gather(*(one(s) for s in servers))
+    summary = {"healthy": 0, "degraded": 0, "unreachable": 0}
+    out = []
+    for s, r in zip(servers, results):
+        _save_check(db, s, r)
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+        out.append({"id": s.id, "name": s.name, "status": r["status"]})
+    return {"summary": summary, "results": out}
 
 
 @router.post("/remote-servers/check")
 async def check_reachability(request: Request):
-    """Check if a remote server is reachable.
-    
-    Derives the base URL from the stored endpoint and pings /health first,
-    then falls back to GET on the base URL.
-    """
+    """Legacy: quick reachability of a bare URL."""
     body = await request.json()
-    url = body.get("url", "").strip()
+    url = (body.get("url") or "").strip()
     if not url:
         return {"reachable": False, "error": "No URL provided"}
+    result = await checks.run_checks("mcp_code_endpoint", {"url": url}, {})
+    return {"reachable": result["reachable"], "url": url, "health": result.get("health")}
 
-    base_url = _derive_base_url(url)
-    
-    # Try /health endpoint first (the remote MCP server exposes this)
+
+@router.get("/remote-servers/deployments/{deployment_id}")
+async def get_deployment(deployment_id: int, db: Session = Depends(get_db)):
+    db = _require_db(db)
+    dep = db.get(RemoteDeployment, deployment_id)
+    if not dep:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    return store.deployment_to_dict(dep)
+
+
+@router.get("/remote-servers/deployments")
+async def list_all_deployments(workflow_name: Optional[str] = None, limit: int = 50,
+                               db: Session = Depends(get_db)):
+    """Recent deployments across servers — optionally for one workflow."""
+    db = _require_db(db)
+    q = db.query(RemoteDeployment)
+    if workflow_name:
+        q = q.filter(RemoteDeployment.kind == "workflow", RemoteDeployment.target == workflow_name)
+    deps = q.order_by(RemoteDeployment.id.desc()).limit(min(limit, 200)).all()
+    names = {s.id: s.name for s in db.query(RemoteServer).all()}
+    return [{**store.deployment_to_dict(d, include_log=False), "server_name": names.get(d.server_id)} for d in deps]
+
+
+# ── Single server ────────────────────────────────────────────────────────
+
+@router.get("/remote-servers/{server_id}")
+async def get_remote_server(server_id: int, db: Session = Depends(get_db)):
+    return store.to_dict(_get_server(_require_db(db), server_id))
+
+
+@router.put("/remote-servers/{server_id}")
+async def update_remote_server(server_id: int, request: Request, db: Session = Depends(get_db)):
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    body = await request.json()
+
+    if "name" in body:
+        name = (body["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Name is required")
+        server.name = name
+    if "description" in body:
+        server.description = (body["description"] or "").strip()
+
+    provider = body.get("provider") or server.provider or "mcp_code_endpoint"
+    purpose = body.get("purpose") or server.purpose or "tool"
+    old_config = store.server_config(server)
+    config = dict(old_config)
+    if "config" in body:
+        config.update(body.get("config") or {})
+    if "url" in body:
+        config["url"] = body["url"]
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{base_url}/health", follow_redirects=True)
-            if resp.status_code == 200:
-                return {"reachable": True, "url": url, "health": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None}
-    except Exception:
-        pass
+        clean, secrets = store.normalise(provider, purpose, config, body.get("secrets") or {},
+                                         stored_secrets=store.server_secrets(server))
+    except store.ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
-    # Fallback: try GET on base URL
+    # Keep the stored host key unless the host changed or the user cleared it.
+    same_host = (clean.get("host"), clean.get("port")) == (old_config.get("host"), old_config.get("port"))
+    fp = config.get("host_fingerprint", old_config.get("host_fingerprint"))
+    if fp and same_host and provider == server.provider:
+        clean["host_fingerprint"] = fp
+
+    connection_changed = clean != old_config or provider != server.provider
+    secrets_changed = any(v != "" for v in (body.get("secrets") or {}).values())
+    server.provider, server.purpose = provider, purpose
+    server.config = json.dumps(clean)
+    server.secrets = secret_box.encrypt(secrets)
+    server.url = store.display_address(provider, clean)
+    if connection_changed or secrets_changed:
+        server.last_status = None  # previous diagnostics no longer describe this config
+    db.commit()
+    db.refresh(server)
+    return store.to_dict(server)
+
+
+@router.delete("/remote-servers/{server_id}")
+async def delete_remote_server(server_id: int, db: Session = Depends(get_db)):
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    db.query(RemoteDeployment).filter(RemoteDeployment.server_id == server_id).delete()
+    db.delete(server)
+    db.commit()
+    return {"status": "deleted", "id": server_id}
+
+
+@router.post("/remote-servers/{server_id}/check")
+async def check_server(server_id: int, db: Session = Depends(get_db)):
+    """Full diagnostics for a saved server; the result is stored on it."""
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    result = await checks.run_checks(server.provider or "mcp_code_endpoint",
+                                     store.server_config(server), store.server_secrets(server))
+    _save_check(db, server, result)
+    return result
+
+
+@router.post("/remote-servers/{server_id}/provision")
+async def provision_server(server_id: int, db: Session = Depends(get_db)):
+    """(Re-)resolve a Brev server's SSH access and prepare the VM; poll the returned deployment."""
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    if not (get_provider(server.provider or "") or {}).get("provisioned"):
+        raise HTTPException(status_code=422, detail=f"'{server.name}' is not a provisioned server type")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(base_url, follow_redirects=True)
-            reachable = resp.status_code < 500
-    except Exception:
-        reachable = False
-
-    return {"reachable": reachable, "url": url}
+        dep = deployers.start_brev_provision(db, server)
+    except deployers.DeployError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return store.deployment_to_dict(dep)
 
 
-# ── Send tool code to remote server ───────────────────────────────────────
+@router.get("/remote-servers/{server_id}/remote-workflows")
+async def remote_workflows(server_id: int, db: Session = Depends(get_db)):
+    """Workflows currently unpacked on an SSH server, with their containers."""
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    provider = get_provider(server.provider or "") or {}
+    if provider.get("transport") != "ssh":
+        return {"supported": False, "items": []}
+    try:
+        items = await asyncio.to_thread(deployers.list_remote_workflows,
+                                        store.server_config(server), store.server_secrets(server))
+    except Exception as e:
+        return {"supported": True, "items": [], "error": str(e)}
+    return {"supported": True, "items": items}
+
+
+@router.get("/remote-servers/{server_id}/deployments")
+async def list_server_deployments(server_id: int, db: Session = Depends(get_db)):
+    db = _require_db(db)
+    _get_server(db, server_id)
+    deps = (db.query(RemoteDeployment).filter(RemoteDeployment.server_id == server_id)
+            .order_by(RemoteDeployment.id.desc()).limit(50).all())
+    return [store.deployment_to_dict(d, include_log=False) for d in deps]
+
 
 @router.post("/remote-servers/{server_id}/send-tool")
 async def send_tool_to_remote(server_id: int, request: Request, db: Session = Depends(get_db)):
-    """Fetch tool data from the tool-service and POST the source code to the remote server."""
-    if not db:
-        return {"error": "Database not available"}
-
-    server = db.query(RemoteServer).filter(RemoteServer.id == server_id).first()
-    if not server:
-        return {"error": "Remote server not found"}
-
+    """POST a dynamic tool's source code to a tool-deployment server."""
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    if (server.purpose or "tool") != "tool":
+        return {"status": "error", "message": f"'{server.name}' is a workflow deployment server"}
     body = await request.json()
     tool_id = body.get("tool_id")
     if not tool_id:
-        return {"error": "tool_id is required"}
+        return {"status": "error", "message": "tool_id is required"}
+    return await deployers.send_tool(db, server, str(tool_id))
 
-    # Fetch tool data from Docker Tool Service
-    from app.services.tool_resolver import tool_resolver
+
+@router.post("/remote-servers/{server_id}/deploy-workflow")
+async def deploy_workflow(server_id: int, request: Request, db: Session = Depends(get_db)):
+    """Start deploying a workflow package; poll the returned deployment."""
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    if server.purpose != "workflow":
+        raise HTTPException(status_code=422, detail=f"'{server.name}' is not a workflow deployment server")
+    body = await request.json()
+    workflow_name = (body.get("workflow_name") or "").strip()
+    if not workflow_name:
+        raise HTTPException(status_code=422, detail="workflow_name is required")
     try:
-        tools = await tool_resolver.list_tools()
-        tool = None
-        for t in tools:
-            if str(t.get("id")) == str(tool_id):
-                tool = t
-                break
-        if not tool:
-            return {"error": f"Tool {tool_id} not found in tool service"}
-    except Exception as e:
-        return {"error": f"Failed to fetch tool: {str(e)}"}
-
-    # Build payload matching the remote MCP server's /submit-code contract:
-    # POST JSON { name: str, description: str, code: str }
-    # The code must contain a def run(...) function.
-    source_code = tool.get("source_code", "")
-    if not source_code:
-        return {"error": "Tool has no source code to send"}
-
-    tool_name = tool.get("name", "unknown")
-    # Extract description from schema or direct field
-    tool_description = (
-        tool.get("description")
-        or (tool.get("schema", {}).get("function", {}) or {}).get("description")
-        or f"Dynamic tool: {tool_name}"
-    )
-
-    payload = {
-        "name": tool_name,
-        "description": str(tool_description),
-        "code": source_code,
-    }
-
-    # Send to remote server
-    remote_url = server.url.rstrip("/")
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                remote_url,
-                json=payload,
-            )
-            if resp.status_code < 400:
-                resp_data = {}
-                try:
-                    resp_data = resp.json()
-                except Exception:
-                    pass
-                return {
-                    "status": "sent",
-                    "server_name": server.name,
-                    "tool_name": tool_name,
-                    "remote_status_code": resp.status_code,
-                    "remote_response": resp_data,
-                }
-            else:
-                error_text = resp.text[:500]
-                try:
-                    error_data = resp.json()
-                    error_text = str(error_data.get("detail", error_data))
-                except Exception:
-                    pass
-                return {
-                    "status": "error",
-                    "message": f"Remote server returned {resp.status_code}: {error_text}",
-                }
-    except httpx.ConnectError:
-        return {"status": "error", "message": f"Cannot reach remote server at {remote_url}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        dep = deployers.start_workflow_deployment(db, server, workflow_name, body)
+    except deployers.DeployError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return store.deployment_to_dict(dep)

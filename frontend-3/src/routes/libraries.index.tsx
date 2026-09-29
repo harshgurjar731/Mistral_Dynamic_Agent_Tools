@@ -10,6 +10,10 @@ import { LibraryFormDialog } from "@/components/libraries/LibraryFormDialog";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/libraries/")({
   head: () => ({
@@ -28,6 +32,11 @@ export const Route = createFileRoute("/libraries/")({
   }),
   component: LibrariesIndexPage,
 });
+
+const LIBRARY_SORTS = standardSorts<Library>(
+  (l) => l.name,
+  (l) => l.created_at,
+);
 
 function LibrariesIndexPage() {
   const qc = useQueryClient();
@@ -48,13 +57,30 @@ function LibrariesIndexPage() {
   });
 
   const all = useMemo(() => libs.data ?? [], [libs.data]);
+  const [sort, setSort] = useSortKey("libraries");
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter(
-      (l) => l.name.toLowerCase().includes(q) || (l.description ?? "").toLowerCase().includes(q),
-    );
-  }, [all, search]);
+    const rows = !q
+      ? all
+      : all.filter(
+          (l) =>
+            l.name.toLowerCase().includes(q) || (l.description ?? "").toLowerCase().includes(q),
+        );
+    return applySort(rows, LIBRARY_SORTS, sort);
+  }, [all, search, sort]);
+
+  const selection = useBulkSelection(
+    filtered,
+    (l) => l.id,
+    () => true,
+    (l) => l.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "library",
+    deleteOne: (id) => librariesApi.remove(id),
+    invalidate: [QK.libraries()],
+    selection,
+  });
 
   return (
     <div className="px-6 py-8">
@@ -90,6 +116,7 @@ function LibrariesIndexPage() {
             className="w-full rounded-lg border border-border/60 bg-background-elevated py-2 pr-3 pl-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+        <SortSelect value={sort} onChange={setSort} options={LIBRARY_SORTS} />
         {search ? (
           <button
             type="button"
@@ -153,19 +180,30 @@ function LibrariesIndexPage() {
             )}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((lib) => (
-              <LibraryCard
-                key={lib.id}
-                library={lib}
-                onRename={(l) => setEditing(l)}
-                onDelete={(l) =>
-                  window.confirm(`Delete the library "${l.name}"?`) && remove.mutate(l.id)
-                }
-                deleting={remove.isPending && remove.variables === lib.id}
-              />
-            ))}
-          </div>
+          <>
+            <BulkActionBar
+              className="mb-4"
+              selection={selection}
+              noun="library"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="A library attached to any agent is refused — detach it from those agents first. The rest are deleted with their documents and everything they contributed to the knowledge graph."
+            />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((lib) => (
+                <SelectableItem key={lib.id} selection={selection} id={lib.id} label={lib.name}>
+                  <LibraryCard
+                    library={lib}
+                    onRename={(l) => setEditing(l)}
+                    onDelete={(l) =>
+                      window.confirm(`Delete the library "${l.name}"?`) && remove.mutate(l.id)
+                    }
+                    deleting={remove.isPending && remove.variables === lib.id}
+                  />
+                </SelectableItem>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

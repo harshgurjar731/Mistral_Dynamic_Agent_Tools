@@ -15,6 +15,8 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { HealthIndicator } from "@/components/layout/HealthIndicator";
+import { BackgroundRuns } from "@/components/runs/BackgroundRuns";
+import { RunsIndicator } from "@/components/runs/RunsIndicator";
 
 function NotFoundComponent() {
   return (
@@ -149,23 +151,23 @@ function RootComponent() {
             >
               <Menu className="size-4" />
             </button>
-            <span className="font-display text-sm font-bold text-foreground">AGENTIC / AI</span>
-            <div className="ml-auto">
+            <span className="truncate font-display text-sm font-bold text-foreground">
+              Agentic AI Design Patterns
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <RunsIndicator />
               <HealthIndicator />
             </div>
           </header>
 
-          <div className="sticky top-0 z-20 hidden h-12 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-xl md:flex">
-            <span className="technical-label">Pattern control / production</span>
-            <HealthIndicator />
-          </div>
-
           {/* Required: nested routes render here. */}
-          <main className="relative z-10 mx-auto min-h-[60vh] w-full max-w-[1680px]">
+          {/* Full width, no top bar on desktop: the run and health indicators live in the sidebar. */}
+          <main className="relative z-10 min-h-[60vh] w-full">
             <Outlet />
           </main>
         </div>
       </div>
+      <BackgroundRuns />
       <Toaster position="top-right" theme="dark" />
     </QueryClientProvider>
   );

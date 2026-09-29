@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { TableSkeleton } from "@/components/ui/Skeletons";
+import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground";
@@ -67,6 +69,29 @@ export function AnnotationsTab({ overview }: { overview: OntologyOverview | unde
         r.predicate.toLowerCase().includes(q),
     );
   }, [data, search]);
+
+  const rowsById = useMemo(() => new Map(rows.map((r) => [String(r.id), r])), [rows]);
+  const selection = useBulkSelection(
+    rows,
+    (r) => r.id,
+    () => true,
+    (r) => `${r.subject_id} → ${r.concept_id}`,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "annotation",
+    deleteOne: (id) => {
+      const row = rowsById.get(id);
+      if (!row) return Promise.reject(new Error("no longer listed"));
+      return ontologyApi.deleteAnnotation({
+        subject_type: row.subject_type,
+        subject_id: row.subject_id,
+        predicate: row.predicate,
+        concept_id: row.concept_id,
+      });
+    },
+    invalidate: [["ontology", "annotations"], QK.ontology()],
+    selection,
+  });
 
   return (
     <GlassPanel>
@@ -134,51 +159,75 @@ export function AnnotationsTab({ overview }: { overview: OntologyOverview | unde
             description="Classification writes these automatically; you can also set them from an agent's detail page."
           />
         ) : (
-          <div className="custom-scrollbar max-h-[560px] overflow-auto">
-            <table className="w-full text-left">
-              <thead className="sticky top-0 bg-background-elevated">
-                <tr>
-                  {["Subject", "Type", "Predicate", "Concept", "Source", ""].map((h) => (
-                    <th key={h} className="technical-label px-2 py-2">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="max-w-[240px] truncate px-2 py-2 font-mono text-[11px] text-foreground">
-                      {r.subject_id}
-                    </td>
-                    <td className="px-2 py-2 text-[11px] text-muted-foreground">
-                      {r.subject_type}
-                    </td>
-                    <td className="px-2 py-2 text-[11px] text-muted-foreground">
-                      {PREDICATE_LABELS[r.predicate as Predicate] ?? r.predicate}
-                    </td>
-                    <td className="px-2 py-2 font-mono text-[11px] text-cyan">{r.concept_id}</td>
-                    <td className="px-2 py-2">
-                      <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground uppercase">
-                        {r.source}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-red"
-                        disabled={remove.isPending}
-                        onClick={() => remove.mutate(r)}
-                        title="Remove this triple"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </td>
+          <div className="space-y-3">
+            <BulkActionBar
+              selection={selection}
+              noun="annotation"
+              onDelete={bulkDelete.run}
+              deleting={bulkDelete.running}
+              warning="Agents and workflows lose these domain classifications; filters and knowledge scoping that rely on them change."
+            />
+            <div className="custom-scrollbar max-h-[560px] overflow-auto">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-background-elevated">
+                  <tr>
+                    <th className="w-8 px-2 py-2" aria-label="Select" />
+                    {["Subject", "Type", "Predicate", "Concept", "Source", ""].map((h) => (
+                      <th key={h} className="technical-label px-2 py-2">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={
+                        selection.isSelected(String(r.id))
+                          ? "border-t border-border bg-primary/5"
+                          : "border-t border-border"
+                      }
+                    >
+                      <td className="px-2 py-2">
+                        <RowCheckbox
+                          selection={selection}
+                          id={r.id}
+                          label={`${r.subject_id} ${r.concept_id}`}
+                        />
+                      </td>
+                      <td className="max-w-[240px] truncate px-2 py-2 font-mono text-[11px] text-foreground">
+                        {r.subject_id}
+                      </td>
+                      <td className="px-2 py-2 text-[11px] text-muted-foreground">
+                        {r.subject_type}
+                      </td>
+                      <td className="px-2 py-2 text-[11px] text-muted-foreground">
+                        {PREDICATE_LABELS[r.predicate as Predicate] ?? r.predicate}
+                      </td>
+                      <td className="px-2 py-2 font-mono text-[11px] text-cyan">{r.concept_id}</td>
+                      <td className="px-2 py-2">
+                        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground uppercase">
+                          {r.source}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-red"
+                          disabled={remove.isPending}
+                          onClick={() => remove.mutate(r)}
+                          title="Remove this triple"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

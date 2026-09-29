@@ -58,7 +58,13 @@ class ResourceInventoryLayer(Layer):
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         from app.config import settings
         from app.ontology import matcher as ontology_matcher
-        from app.ontology.vocab import AgentTier, Predicate, SubjectType
+        from app.ontology.vocab import (
+            SYSTEM_DOMAIN,
+            AgentTier,
+            Predicate,
+            SubjectType,
+            coerce_tier,
+        )
         from app.rag import inventory as library_inventory
         from app.services import agent_service, connector_service
         from app.services.tool_registry import AVAILABLE_TOOL_KEYS, get_tool_descriptions
@@ -117,13 +123,23 @@ class ResourceInventoryLayer(Layer):
                 "description": fn.get("description") or "",
                 "parameters": params.get("properties", {}),
                 "required": params.get("required", []),
+                # The fields later steps may read. Data-flow wiring and its
+                # validation both work from this contract.
+                "output_schema": t.get("output_schema"),
+                "version": t.get("version_no"),
             })
 
         all_agents = [
             {
                 "id": a["id"],
                 "name": a["name"],
-                "tier": a.get("tier", "foundation"),
+                # Not `.get("tier", "foundation")`. A missing tier now means
+                # more than a label: foundation is what puts an agent under
+                # System and exempts it from domain scoping, so defaulting to
+                # it would quietly grant that exemption to any agent whose tier
+                # failed to resolve. `coerce_tier` defaults to domain, which is
+                # the answer that fails safe.
+                "tier": coerce_tier(a.get("tier")),
                 "description": a.get("description") or "",
                 "instructions": summarise_instructions(a.get("instructions", "")),
                 "connectors": [
@@ -141,6 +157,14 @@ class ResourceInventoryLayer(Layer):
         # Information Extractor. Narrow to the matched domain subtree, always
         # keeping foundation agents — they are domain-agnostic by definition
         # and reused in every workflow.
+        #
+        # `scope_for_goal` already puts the System subtree in every scope, so a
+        # correctly annotated foundation agent survives on its annotation
+        # alone. This stays as the floor under that: an agent whose tier is
+        # known but whose System annotation has not been written yet — a fresh
+        # create, an un-backfilled agent — is kept on the strength of the tier.
+        # Dropping a guardrail because the store is a step behind would be a
+        # silent safety regression, not a scoping nicety.
         foundation_ids = {
             a["id"] for a in all_agents if a.get("tier") == AgentTier.FOUNDATION.value
         }
@@ -167,6 +191,11 @@ class ResourceInventoryLayer(Layer):
         ctx.workflow_spec.inventory = {
             "scope": scope,
             "scope_description": ontology_matcher.describe_scope(scope),
+            # Where foundation agents sit in the domain tree, carried through
+            # so the layers after this one — and anything reading a plan back —
+            # can say *why* a guardrail was in play for an unrelated goal
+            # without re-deriving it from the tier.
+            "system_domain": SYSTEM_DOMAIN,
             "all_agents": all_agents,
             "scoped_agents": scoped_agents,
             "foundation_agents": [

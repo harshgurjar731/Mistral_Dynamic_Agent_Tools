@@ -4,6 +4,7 @@ Follows MCP protocol conventions (JSON-RPC initialize handshake).
 """
 
 import json
+from datetime import datetime, timezone
 import os
 import logging
 import httpx
@@ -16,8 +17,11 @@ logger = logging.getLogger(__name__)
 class MCPServerInfo:
     """Information about a registered MCP server."""
     def __init__(self, name: str, url: str, protocol: str = "mcp-v1",
-                 enabled: bool = False, description: str = ""):
+                 enabled: bool = False, description: str = "",
+                 registered_at: str | None = None):
         self.name = name
+        #: ISO 8601 UTC. None for servers registered before this was recorded.
+        self.registered_at = registered_at
         self.url = url
         self.protocol = protocol
         self.enabled = enabled
@@ -54,6 +58,7 @@ class MCPManager:
                     protocol=server_data.get("protocol", "mcp-v1"),
                     enabled=server_data.get("enabled", False),
                     description=server_data.get("description", ""),
+                    registered_at=server_data.get("registered_at"),
                 )
                 self.servers[info.name] = info
 
@@ -74,6 +79,7 @@ class MCPManager:
                     "protocol": s.protocol,
                     "enabled": s.enabled,
                     "description": s.description,
+                    "registered_at": s.registered_at,
                 }
                 for s in self.servers.values()
             ]
@@ -94,6 +100,7 @@ class MCPManager:
                 "healthy": server.healthy,
                 "description": server.description,
                 "tools_count": len(server.tools),
+                "created_at": server.registered_at,
             })
         return result
 
@@ -103,8 +110,13 @@ class MCPManager:
         # Strip whitespace to prevent URL issues like trailing %20
         name = name.strip()
         url = url.strip().rstrip("/")
-        info = MCPServerInfo(name=name, url=url, protocol=protocol,
-                            enabled=True, description=description)
+        existing = self.servers.get(name)
+        info = MCPServerInfo(
+            name=name, url=url, protocol=protocol, enabled=True, description=description,
+            # Re-registering keeps the original date.
+            registered_at=(existing.registered_at if existing else None)
+            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
 
         # Perform full MCP lifecycle: initialize → initialized → tools/list
         init_ok, tools = await self._initialize_and_discover(info)

@@ -41,6 +41,18 @@ class _WorkflowRecord(_Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
+class _DeletedWorkflowRecord(_Base):
+    """Names of workflows deleted here that may still exist on the Mistral server.
+
+    A Mistral-hosted workflow is archived there rather than destroyed, and the
+    workflow list merges in remote workflows it has no local record for — so
+    without this, a deleted workflow would reappear as a remote-only entry.
+    """
+    __tablename__ = "deleted_workflows"
+    name = Column(String, primary_key=True)
+    deleted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 # Create table if it doesn't exist
 try:
     _Base.metadata.create_all(bind=_engine)
@@ -100,17 +112,38 @@ def _running_result(step_id: str) -> StepResult:
 
 # ── CRUD helpers ──────────────────────────────────────────────────────────
 
+_RECORD_ONLY = {"created_at", "updated_at"}
+
+
+def _utc_iso(value) -> Optional[str]:
+    """A stored (naive, UTC) datetime as ISO 8601 with an explicit Z."""
+    if not value:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.isoformat() + "Z"
+
+
+def _from_record(record) -> WorkflowDefinition:
+    definition = WorkflowDefinition(**json.loads(record.definition_json))
+    definition.created_at = _utc_iso(record.created_at)
+    definition.updated_at = _utc_iso(record.updated_at)
+    return definition
+
+
 def save_workflow(definition: WorkflowDefinition) -> str:
     """Upsert a workflow definition to SQLite. Returns workflow name."""
+    forget_deleted_workflow(definition.name)
+    payload = definition.model_dump_json(exclude=_RECORD_ONLY)
     with _Session() as db:
         record = db.get(_WorkflowRecord, definition.name)
         if record:
-            record.definition_json = definition.model_dump_json()
+            record.definition_json = payload
             record.updated_at = datetime.now(timezone.utc)
         else:
             record = _WorkflowRecord(
                 name=definition.name,
-                definition_json=definition.model_dump_json(),
+                definition_json=payload,
             )
             db.add(record)
         db.commit()
@@ -159,7 +192,7 @@ def get_workflow(name: str) -> Optional[WorkflowDefinition]:
         if not record:
             return None
         try:
-            return WorkflowDefinition(**json.loads(record.definition_json))
+            return _from_record(record)
         except Exception as e:
             logger.error("Failed to deserialise workflow '%s': %s", name, e)
             return None
@@ -172,21 +205,36 @@ def list_workflows() -> list[WorkflowDefinition]:
         workflows = []
         for r in records:
             try:
-                workflows.append(WorkflowDefinition(**json.loads(r.definition_json)))
+                workflows.append(_from_record(r))
             except Exception as e:
                 logger.warning("Skipping malformed workflow record '%s': %s", r.name, e)
         return workflows
 
 
 def delete_workflow(name: str) -> bool:
-    """Delete a workflow definition from SQLite."""
+    """Delete a workflow definition from SQLite and remember that it was deleted."""
     with _Session() as db:
         record = db.get(_WorkflowRecord, name)
-        if not record:
-            return False
-        db.delete(record)
+        if record:
+            db.delete(record)
+        if not db.get(_DeletedWorkflowRecord, name):
+            db.add(_DeletedWorkflowRecord(name=name))
         db.commit()
-        return True
+        return record is not None
+
+
+def deleted_workflow_names() -> set[str]:
+    with _Session() as db:
+        return {r.name for r in db.query(_DeletedWorkflowRecord).all()}
+
+
+def forget_deleted_workflow(name: str) -> None:
+    """A workflow of this name was created again; stop hiding it."""
+    with _Session() as db:
+        record = db.get(_DeletedWorkflowRecord, name)
+        if record:
+            db.delete(record)
+            db.commit()
 
 
 def get_execution(execution_id: str) -> Optional[WorkflowRun]:
@@ -264,7 +312,9 @@ async def execute_workflow(
     # see them without every signature having to carry them.
     from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
 
-    wf_rules = rules_store.effective_rules("workflow", [r.rule_id for r in workflow.rules])
+    wf_rules = rules_store.effective_rules(
+        "workflow", [r.rule_id for r in workflow.rules], subject_id=workflow.name
+    )
     wf_ctx, wf_token = rules_runtime.activate_workflow(wf_rules, workflow_name)
     # 50 is the engine's own safety cap; a step-limit rule can only lower it.
     max_steps = rules_engine.step_limit(wf_rules, 50)

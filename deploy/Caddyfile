@@ -1,0 +1,45 @@
+# Reverse proxy for the production stack — the deployed equivalent of the
+# Vite dev proxy in frontend-3/vite.config.ts.
+#
+# SITE_ADDRESS (deploy/.env):
+#   :80                 plain HTTP on the VM's IP (default)
+#   app.example.com     automatic HTTPS via Let's Encrypt (DNS must point at the
+#                       VM and ports 80 + 443 must be open in the NSG)
+
+{$SITE_ADDRESS::80} {
+	encode gzip zstd
+
+	# Streaming endpoints (SSE) must not be buffered.
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	handle /uploads/* {
+		reverse_proxy backend:8000
+	}
+
+	# Files written by the create_document tool live in the tool service.
+	handle /documents/* {
+		reverse_proxy tool-service:9000
+	}
+
+	# /health is both the frontend's Health page and the API health check:
+	# browsers asking for HTML get the page, the app's own fetch gets the API.
+	@healthApi {
+		path /health
+		not header Accept *text/html*
+	}
+	handle @healthApi {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

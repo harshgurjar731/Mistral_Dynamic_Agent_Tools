@@ -110,6 +110,11 @@ class WorkflowDefinition(BaseModel):
     # adding the field did not mark every published workflow as edited.
     rules: list[RuleRef] = Field(default_factory=list)
 
+    # Read from the storage record, never persisted inside the definition —
+    # the record's own columns are the source of truth.
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
     def semantic_hash(self) -> str:
         """Stable hash of the fields that affect execution.
 
@@ -309,11 +314,19 @@ class DeploymentAgentSpec(BaseModel):
 
 class DeploymentDynamicTool(BaseModel):
     """A synthesized tool, with real source so it can be reproduced verbatim."""
+    # Stored as ``tool_schema`` because ``schema`` shadows a BaseModel method;
+    # the alias keeps the manifest's JSON key exactly as the deploy script reads it.
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     name: str
-    schema: dict
+    tool_schema: dict = Field(alias="schema")
     source_code: str
     hash: str
     version: str = "1.0.0"
+    #: The version number steps pin (``tool_version``). The target keeps it on
+    #: import when free, so the pinned steps resolve there too.
+    version_no: Optional[int] = None
+    purpose: str = "tool"
 
 
 class DeploymentConnectorRef(BaseModel):

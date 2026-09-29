@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Bot,
   Globe,
   MessageSquare,
   Plug,
@@ -467,7 +466,7 @@ function AgentsIdPage() {
   const libraryOptions = librariesQuery.data ?? [];
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col md:h-dvh">
       {/* ── Top Bar ── */}
       <header className="relative z-30 flex items-center gap-3 border-b border-border px-5 py-3">
         {/* Back + Sessions dropdown */}
@@ -602,15 +601,6 @@ function AgentsIdPage() {
           <div className="custom-scrollbar flex-1 overflow-y-auto">
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center px-6 pb-16">
-                <div className="relative mb-6">
-                  <div
-                    className="absolute -inset-8 rounded-full opacity-15 blur-2xl"
-                    style={{ background: "var(--gradient-brand)" }}
-                  />
-                  <div className="relative grid size-14 place-items-center rounded-2xl border border-border/60 glass">
-                    <Bot className="size-6 text-primary" />
-                  </div>
-                </div>
                 <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                   Chat with <span className="text-gradient-brand">{agent.name}</span>
                 </h2>

@@ -19,6 +19,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Markdown } from "@/components/chat/Markdown";
+import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
 
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground";
@@ -66,7 +68,9 @@ export function KnowledgeTab() {
     mutationFn: () => ontologyApi.attachKnowledgeTool(),
     onSuccess: (r) =>
       toast.success(
-        `Checked ${r.checked} agents — ${r.attached} attached, ${r.unchanged} already had it.`,
+        r.attached || r.failed
+          ? `Checked ${r.checked} agents — ${r.attached} moved to the current knowledge tool${r.failed ? `, ${r.failed} failed` : ""}.`
+          : `Checked ${r.checked} agents — all already up to date.`,
       ),
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -83,6 +87,19 @@ export function KnowledgeTab() {
     );
   }, [entriesQ.data, search]);
 
+  const selection = useBulkSelection(
+    visible,
+    (e) => e.id,
+    () => true,
+    (e) => e.title,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "entry",
+    deleteOne: (id) => ontologyApi.deleteKnowledge(Number(id)),
+    invalidate: [["ontology", "knowledge"]],
+    selection,
+  });
+
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <GlassPanel className="min-w-0">
@@ -96,14 +113,14 @@ export function KnowledgeTab() {
                 variant="outline"
                 onClick={() => attach.mutate()}
                 disabled={attach.isPending}
-                title="Give every agent the knowledge tool"
+                title="Move agents still on the retired retrieval tools to the current knowledge tool. Agents opt in to the tool individually."
               >
                 {attach.isPending ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Link2 className="size-3.5" />
                 )}
-                Attach tool
+                Update agents
               </Button>
               <Button size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-3.5" /> New entry
@@ -159,11 +176,25 @@ export function KnowledgeTab() {
               description="Entries are seeded from the shipped vocabulary and can be extended by hand."
             />
           ) : (
-            <ul className="space-y-2">
-              {visible.map((e) => (
-                <EntryCard key={e.id} entry={e} onDelete={() => remove.mutate(e.id)} />
-              ))}
-            </ul>
+            <>
+              <BulkActionBar
+                selection={selection}
+                noun="entry"
+                onDelete={bulkDelete.run}
+                deleting={bulkDelete.running}
+                warning="Agents' knowledge tool stops retrieving these entries."
+              />
+              <ul className="space-y-2">
+                {visible.map((e) => (
+                  <EntryCard
+                    key={e.id}
+                    entry={e}
+                    selection={selection}
+                    onDelete={() => remove.mutate(e.id)}
+                  />
+                ))}
+              </ul>
+            </>
           )}
         </div>
       </GlassPanel>
@@ -180,11 +211,28 @@ export function KnowledgeTab() {
   );
 }
 
-function EntryCard({ entry, onDelete }: { entry: KnowledgeEntry; onDelete: () => void }) {
+function EntryCard({
+  entry,
+  selection,
+  onDelete,
+}: {
+  entry: KnowledgeEntry;
+  selection: BulkSelection;
+  onDelete: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="rounded-lg border border-border bg-background-elevated/60 p-3">
+    <li
+      className={
+        selection.isSelected(String(entry.id))
+          ? "rounded-lg border border-primary/40 bg-primary/5 p-3"
+          : "rounded-lg border border-border bg-background-elevated/60 p-3"
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="pt-0.5">
+          <RowCheckbox selection={selection} id={entry.id} label={entry.title} />
+        </div>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}

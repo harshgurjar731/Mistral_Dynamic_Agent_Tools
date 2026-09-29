@@ -84,6 +84,20 @@ export interface InputField {
   type: string;
   description?: string;
   required?: boolean;
+  /* Optional presentation hints — the run form infers them when absent. */
+  /** Human label; defaults to the name, humanised. */
+  label?: string | undefined;
+  /** text | long_text | email | url | date | datetime | integer | currency | percent. */
+  format?: string | undefined;
+  /** The only values the input accepts. */
+  enum?: Array<string | number> | undefined;
+  /** A realistic sample value, used as placeholder and by "Fill example". */
+  example?: unknown;
+  default?: unknown;
+  min?: number | undefined;
+  max?: number | undefined;
+  /** Element type for arrays: string | number | object. */
+  items?: string | undefined;
 }
 
 export interface WorkflowDefinition {
@@ -103,6 +117,9 @@ export interface WorkflowDefinition {
   has_unpublished_changes?: boolean;
   /** Optional workflow rules selected for this workflow; always-on rules apply regardless. */
   rules?: RuleRef[];
+  /** From the storage record; absent on definitions built in the browser. */
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /* ── Validation ─────────────────────────────────────────────────────── */
@@ -166,6 +183,8 @@ export interface CatalogDomain {
 export interface BuilderCatalog {
   agents: CatalogAgent[];
   tools: CatalogTool[];
+  /** Standalone workflow steps (synthesised with purpose "activity"). */
+  activities?: CatalogTool[];
   connectors: CatalogConnector[];
   domains: CatalogDomain[];
   models: string[];
@@ -194,7 +213,70 @@ export interface Tool {
   mcp_server_name?: string | null;
   created_at?: string;
   purpose?: string;
+  /** "pure" (computation only) or "http" (calls an external API). */
   kind?: string;
+  /** Version number within this tool's history; `version` is a free-text label. */
+  version_no?: number;
+  /** The version `/execute/{name}` runs when no version is pinned. */
+  is_active?: boolean;
+  side_effects?: string;
+  /** A person must approve this version (declared write/delete side effects). */
+  review_required?: boolean;
+  /** JSON Schema for `data` on success — the fields later workflow steps read. */
+  output_schema?: Record<string, unknown> | null;
+  /** The SynthesisSpec this version was built from. */
+  spec?: ToolSpec | null;
+  /** How this version was verified. */
+  report?: ToolReport | null;
+}
+
+export interface ToolSpecExample {
+  input: Record<string, unknown>;
+  output?: unknown;
+  note?: string;
+}
+
+export interface ToolSpec {
+  description?: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown> | null;
+  examples?: ToolSpecExample[];
+  api_details?: string;
+  origin?: string;
+}
+
+export interface ToolCaseReport {
+  case_id: string;
+  origin: string;
+  ok: boolean;
+  expectation: string;
+  detail?: string;
+  input?: unknown;
+  expected?: unknown;
+  actual?: unknown;
+}
+
+export interface ToolAttempt {
+  number: number;
+  stage: string;
+  ok: boolean;
+  fault?: string | null;
+  mode?: string;
+  model?: string;
+  cases_passed?: number;
+  cases_total?: number;
+}
+
+export interface ToolReport {
+  history?: string;
+  model?: string;
+  attempts?: ToolAttempt[];
+  cases?: ToolCaseReport[];
+  weak_plan?: boolean;
+  warnings?: string[];
+  corrected_examples?: { case_id: string; was: unknown; now: unknown }[];
+  elapsed_seconds?: number;
+  review?: { auto_approve?: boolean; review_required?: boolean; reason?: string };
 }
 
 /* ── Executions ─────────────────────────────────────────────────────── */
@@ -592,6 +674,11 @@ export interface LibraryCard {
   entities: number;
   relations: number;
   has_rules: boolean;
+  /** Domain concepts the library is annotated as serving. */
+  serves_domain?: string[];
+  /** Entity types in the library's approved extraction ontology. */
+  content_types?: string[];
+  ontology_version?: number | null;
 }
 export interface GraphStatus {
   available: boolean;
@@ -768,12 +855,12 @@ export interface OrchestrateDoneEvent {
 export type RuleScope = "agent" | "workflow";
 export type RuleEnforcement = "block" | "warn" | "fix";
 export type RuleOutcomeKind = "passed" | "blocked" | "warned" | "fixed" | "applied";
-export type RuleAppliedBy = "always" | "ai" | "user";
+export type RuleAppliedBy = "always" | "ai" | "user" | "targeted";
 
 export interface RuleParamField {
   key: string;
   label: string;
-  kind: "tags" | "multiselect" | "number" | "select" | "checkboxes" | "toggle";
+  kind: "tags" | "multiselect" | "number" | "select" | "checkboxes" | "toggle" | "text";
   default?: unknown;
   help?: string;
   options: { value: string; label: string }[];
@@ -818,14 +905,42 @@ export interface Rule {
   params: Record<string, unknown>;
   enforcement: RuleEnforcement;
   always_on: boolean;
+  /** Agent ids or workflow names the rule is limited to; empty when not targeted. */
+  targets?: string[];
+  /** always — everywhere; targeted — only ``targets``; ai — the orchestrator decides. */
+  applies?: RuleApplies;
   enabled: boolean;
   source: "recommended" | "user";
   summary: string;
+  /** A built-in category id, or a custom one. */
   category: string;
+  /** The category the rule type ships in, before any override. */
+  type_category?: string;
   icon: string;
   checkpoints: string[];
   updated_at?: string | null;
+  created_at?: string | null;
   usage?: RuleUsage;
+}
+
+export type RuleApplies = "always" | "targeted" | "ai";
+
+export interface RuleCategory {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  icon: string;
+  builtin: boolean;
+  rules: number;
+  /** agent | workflow | both — which rule types it offers. */
+  scope?: string;
+  /** Rule type keys offered under this category in "New rule". */
+  rule_types?: string[];
+  /** Defaults for rules created from it; null keeps the rule type's own. */
+  default_enforcement?: string | null;
+  default_applies?: string | null;
+  created_at?: string | null;
 }
 
 export interface RuleRef {

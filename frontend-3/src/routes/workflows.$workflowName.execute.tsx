@@ -1,20 +1,20 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Play } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { errorMessage, QK, workflowsApi } from "@/api";
-import type { InputField } from "@/types";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { ExecutionMonitor } from "@/components/workflows/ExecutionMonitor";
+import { ExecutionResult } from "@/components/workflows/result/ExecutionResult";
+import { useExecutionStream } from "@/components/workflows/useExecutionStream";
 import { DeployBadge } from "@/components/workflows/WorkflowCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
-import { cn } from "@/lib/utils";
+import { rememberRunInput } from "@/components/workflows/runForm/fieldModel";
+import { WorkflowRunForm } from "@/components/workflows/runForm/WorkflowRunForm";
 
 export const Route = createFileRoute("/workflows/$workflowName/execute")({
   validateSearch: (search: Record<string, unknown>): { execId?: string } => {
@@ -35,73 +35,30 @@ export const Route = createFileRoute("/workflows/$workflowName/execute")({
   component: ExecuteWorkflowPage,
 });
 
-/** Coerces a form string back to the type the input schema declares. */
-function coerce(value: string, type: string): unknown {
-  if (type === "number") {
-    const n = Number(value);
-    return Number.isNaN(n) ? value : n;
-  }
-  if (type === "boolean") return value === "true";
-  if (type === "object" || type === "array") {
-    try {
-      return JSON.parse(value || (type === "array" ? "[]" : "{}"));
-    } catch {
-      return value;
-    }
-  }
-  return value;
-}
-
 function ExecuteWorkflowPage() {
   const { workflowName } = Route.useParams();
   const { execId } = Route.useSearch();
   const navigate = useNavigate();
 
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [rawJson, setRawJson] = useState("{}");
-  const [rawError, setRawError] = useState<string | null>(null);
   const [activeExec, setActiveExec] = useState<string | null>(execId ?? null);
 
   useEffect(() => {
     if (execId) setActiveExec(execId);
   }, [execId]);
 
+  // One live connection, shared by the result section and the execution details.
+  const stream = useExecutionStream(activeExec);
+
   const wf = useQuery({
     queryKey: QK.workflow(workflowName),
     queryFn: () => workflowsApi.get(workflowName),
   });
 
-  const fields = useMemo(() => (wf.data?.input_schema ?? []) as InputField[], [wf.data]);
-  const usesSchema = fields.length > 0;
-
-  const buildInput = (): Record<string, unknown> | null => {
-    if (!usesSchema) {
-      try {
-        const parsed = JSON.parse(rawJson || "{}");
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          setRawError("Input must be a JSON object.");
-          return null;
-        }
-        setRawError(null);
-        return parsed as Record<string, unknown>;
-      } catch {
-        setRawError("Invalid JSON.");
-        return null;
-      }
-    }
-    const out: Record<string, unknown> = {};
-    for (const f of fields) {
-      const raw = values[f.name] ?? "";
-      if (raw === "" && f.required === false) continue;
-      out[f.name] = coerce(raw, f.type);
-    }
-    return out;
-  };
-
   const run = useMutation({
     mutationFn: async (input: Record<string, unknown>) =>
       workflowsApi.execute(workflowName, { input, wait_for_result: false }),
-    onSuccess: (res) => {
+    onSuccess: (res, input) => {
+      rememberRunInput(workflowName, input);
       const id = String(res["execution_id"] ?? "");
       if (!id) {
         toast.error("The backend accepted the run but returned no execution id.");
@@ -118,10 +75,6 @@ function ExecuteWorkflowPage() {
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
-
-  const missingRequired = usesSchema
-    ? fields.some((f) => f.required !== false && !(values[f.name] ?? "").trim())
-    : false;
 
   return (
     <div className="space-y-5 px-6 py-8">
@@ -143,103 +96,56 @@ function ExecuteWorkflowPage() {
         }
       />
 
-      <div className="grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(360px,440px)_minmax(0,1fr)]">
         <GlassPanel className="h-fit">
           <GlassPanelHeader
-            title="Inputs"
-            description={usesSchema ? `${fields.length} declared` : "Free-form JSON payload"}
+            title="Run inputs"
+            description={
+              wf.data?.description
+                ? wf.data.description
+                : "What this workflow needs to start. Each field says which steps read it."
+            }
           />
-          <div className="space-y-4 p-4">
-            {wf.isLoading ? (
+          {wf.isLoading ? (
+            <div className="p-4">
               <DetailSkeleton />
-            ) : wf.isError ? (
+            </div>
+          ) : wf.isError ? (
+            <div className="p-4">
               <ErrorState error={wf.error} onRetry={() => wf.refetch()} />
-            ) : usesSchema ? (
-              fields.map((f) => (
-                <div key={f.name}>
-                  <label className="eyebrow mb-1.5 block">
-                    {f.name}
-                    {f.required === false ? (
-                      <span className="ml-1 text-muted-foreground/70 normal-case">optional</span>
-                    ) : null}
-                  </label>
-                  {f.type === "boolean" ? (
-                    <select
-                      className="h-9 w-full rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground"
-                      value={values[f.name] ?? "false"}
-                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
-                  ) : f.type === "object" || f.type === "array" ? (
-                    <Textarea
-                      rows={4}
-                      spellCheck={false}
-                      value={values[f.name] ?? ""}
-                      placeholder={f.type === "array" ? "[]" : "{}"}
-                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                      className="font-mono text-xs"
-                    />
-                  ) : (
-                    <Input
-                      type={f.type === "number" ? "number" : "text"}
-                      value={values[f.name] ?? ""}
-                      onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                      className="text-xs"
-                    />
-                  )}
-                  {f.description ? (
-                    <p className="mt-1 text-[11px] text-muted-foreground">{f.description}</p>
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <div>
-                <label className="eyebrow mb-1.5 block">Payload</label>
-                <Textarea
-                  rows={10}
-                  spellCheck={false}
-                  value={rawJson}
-                  onChange={(e) => {
-                    setRawJson(e.target.value);
-                    setRawError(null);
-                  }}
-                  className={cn("font-mono text-xs", rawError && "border-red/60")}
-                />
-                {rawError ? <p className="mt-1 text-[11px] text-red">{rawError}</p> : null}
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  This workflow declares no input schema, so the object is passed through as the
-                  run's variables.
-                </p>
-              </div>
-            )}
-
-            <Button
-              className="w-full"
-              disabled={run.isPending || wf.isLoading || missingRequired}
-              onClick={() => {
-                const input = buildInput();
-                if (input) run.mutate(input);
-              }}
-            >
-              {run.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Play className="size-4" />
-              )}
-              Run workflow
-            </Button>
-            {missingRequired ? (
-              <p className="text-[11px] text-amber">Fill every required input to run.</p>
-            ) : null}
-          </div>
+            </div>
+          ) : wf.data ? (
+            <WorkflowRunForm
+              definition={wf.data}
+              running={run.isPending}
+              onRun={(input) => run.mutate(input)}
+            />
+          ) : null}
         </GlassPanel>
 
-        <div className="min-h-[540px]">
-          <ExecutionMonitor executionId={activeExec} />
-        </div>
+        <ExecutionResult
+          executionId={activeExec}
+          detail={stream.detail}
+          phase={stream.phase}
+          error={stream.error}
+          definition={wf.data}
+        />
       </div>
+
+      {/* Execution details — steps, logs, events, trace, history, control. */}
+      {activeExec ? (
+        <section className="space-y-2">
+          <h2 className="technical-label text-muted-foreground">Execution details</h2>
+          <div className="h-[560px]">
+            <ExecutionMonitor
+              executionId={activeExec}
+              stream={stream}
+              hideResult
+              title={`Run ${activeExec.slice(0, 8)}`}
+            />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -67,7 +67,34 @@ async def lifespan(app: FastAPI):
     import app.ontology.models       # noqa: F401 — register ontology tables with Base
     import app.rag.models            # noqa: F401 — register graph-RAG tables with Base
     import app.rules.models          # noqa: F401 — register rules tables with Base
+    import app.runs.models           # noqa: F401 — register background-run tables with Base
     create_tables()
+
+    # Before anything reads or seeds rules: the Rule model now has columns an
+    # older rules table lacks.
+    from app.rules import schema as rules_schema
+    rules_schema.ensure_schema()
+
+    # Remote servers gained purpose/provider/config/secrets columns.
+    from app.remote_servers import schema as remote_servers_schema
+    from app.remote_servers.deployers import recover_interrupted
+    remote_servers_schema.ensure_schema()
+    recover_interrupted()
+
+    # Runs a previous process left in flight died with it; say so rather than
+    # leaving them spinning in the UI. Then keep the log to a useful size.
+    try:
+        from app.runs import store as runs_store
+
+        interrupted = runs_store.mark_interrupted()
+        pruned_runs = runs_store.prune()
+        if interrupted or pruned_runs:
+            logger.info(
+                "✅ Background runs: %d interrupted by restart, %d old run(s) pruned",
+                interrupted, pruned_runs,
+            )
+    except Exception as e:
+        logger.warning("⚠️ Background run housekeeping skipped: %s", e)
 
     # The recommended starter rules. Insert-if-missing, so edits made on the
     # Rules page survive a restart.
@@ -153,8 +180,15 @@ async def lifespan(app: FastAPI):
     # seconds later and then persists.
     try:
         from app.dependencies import get_mistral_client
+        from app.ontology import autotag
         from app.ontology import store as ontology_store
-        from app.ontology.vocab import Predicate, SubjectType
+        from app.ontology.vocab import (
+            SYSTEM_DOMAIN,
+            AgentTier,
+            Predicate,
+            SubjectType,
+            coerce_tier,
+        )
         from app.services import agent_service
 
         client = get_mistral_client()
@@ -162,6 +196,43 @@ async def lifespan(app: FastAPI):
         items = listing.get("items", [])
         ids = [a["id"] for a in items if a.get("id")]
         annotated = ontology_store.annotations_for_many(SubjectType.AGENT.value, ids)
+
+        # File every foundation agent under System.
+        #
+        # The block below only classifies agents with *no* domain, which would
+        # leave the ones that need this most untouched: a guardrail the old
+        # lexical backfill filed under Mortgage — because its instructions say
+        # "reject anything unrelated to mortgage lending" — already has a
+        # domain, so it would never be revisited, and would stay scoped out of
+        # every workflow that is not about mortgages.
+        #
+        # Lexical, idempotent and free: `annotate_agent` re-derives the domain
+        # from the tier and declines to overwrite anything a human has stated,
+        # so this converges on the second boot and then does nothing.
+        refiled = 0
+        for agent in items:
+            agent_id = agent.get("id")
+            if not agent_id or coerce_tier(agent.get("tier")) != AgentTier.FOUNDATION.value:
+                continue
+            current = annotated.get(agent_id, {}).get(Predicate.SERVES_DOMAIN.value) or []
+            if current == [SYSTEM_DOMAIN]:
+                continue
+            written = autotag.annotate_agent(
+                agent_id,
+                name=agent.get("name") or "",
+                description=agent.get("description") or "",
+                instructions=(agent.get("instructions") or "")[:2000],
+                tier=AgentTier.FOUNDATION.value,
+            )
+            if written.get(Predicate.SERVES_DOMAIN.value):
+                # Keep the local view in step so the pass below does not then
+                # spend an LLM call re-classifying an agent just filed.
+                annotated.setdefault(agent_id, {})[Predicate.SERVES_DOMAIN.value] = [
+                    SYSTEM_DOMAIN
+                ]
+                refiled += 1
+        if refiled:
+            logger.info("🏛️ Filed %d foundation agent(s) under System", refiled)
 
         unscoped = [
             a for a in items
@@ -282,6 +353,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # ── Shutdown: record in-flight background runs as interrupted ───────
+    try:
+        from app.runs.manager import manager as run_manager
+        await run_manager.shutdown()
+    except Exception as e:
+        logger.warning("Error closing background runs: %s", e)
+
     # ── Shutdown: stop the worker subprocess ────────────────────────────
     if worker_proc and worker_proc.poll() is None:
         logger.info("🛑 Stopping Mistral worker supervisor (pid=%d)…", worker_proc.pid)
@@ -350,6 +428,9 @@ app.include_router(rag.router, prefix=settings.API_PREFIX)
 
 from app.routes import rules as rules_routes  # noqa: E402
 app.include_router(rules_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import runs as runs_routes  # noqa: E402
+app.include_router(runs_routes.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

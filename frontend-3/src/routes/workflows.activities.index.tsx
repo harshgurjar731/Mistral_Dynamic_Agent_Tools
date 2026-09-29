@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Zap, Inbox, Search, Sparkles, Loader2 } from "lucide-react";
-import { toolsApi, QK, errorMessage } from "@/api";
+import { toolsApi, QK } from "@/api";
+import { RunProgressCard } from "@/components/runs/RunProgress";
+import { stopRun } from "@/lib/runs/connections";
+import { runOutputName } from "@/components/runs/runMeta";
+import { useSynthesisRun } from "@/lib/runs/useSynthesisRun";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -20,6 +24,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SortSelect } from "@/components/shared/SortSelect";
+import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
+import { isDeletableTool } from "@/lib/status";
+import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
+import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 
 export const Route = createFileRoute("/workflows/activities/")({
   head: () => ({
@@ -47,8 +56,12 @@ export function toolPurpose(tool: Record<string, unknown>): "activity" | "tool" 
   return "tool";
 }
 
+const ACTIVITY_SORTS = standardSorts<{ name: string; created_at?: string | undefined }>(
+  (t) => t.name,
+  (t) => t.created_at,
+);
+
 function ActivityGalleryPage() {
-  const qc = useQueryClient();
   const [tab, setTab] = useState<"active" | "pending">("active");
   const [search, setSearch] = useState("");
   const [synthesizeOpen, setSynthesizeOpen] = useState(false);
@@ -67,33 +80,64 @@ function ActivityGalleryPage() {
     return list.filter((t) => toolPurpose(t as unknown as Record<string, unknown>) === "activity");
   }, [pendingQuery.data?.tools]);
 
+  const [sort, setSort] = useSortKey("activities");
   const filteredActive = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return activeActivities;
-    return activeActivities.filter(
-      (t) => t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
-    );
-  }, [activeActivities, search]);
+    const rows = !q
+      ? activeActivities
+      : activeActivities.filter(
+          (t) =>
+            t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
+        );
+    return applySort(rows, ACTIVITY_SORTS, sort);
+  }, [activeActivities, search, sort]);
 
   const filteredPending = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return pendingActivities;
-    return pendingActivities.filter(
-      (t) => t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
-    );
-  }, [pendingActivities, search]);
+    const rows = !q
+      ? pendingActivities
+      : pendingActivities.filter(
+          (t) =>
+            t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
+        );
+    return applySort(rows, ACTIVITY_SORTS, sort);
+  }, [pendingActivities, search, sort]);
 
-  const synthesizeMut = useMutation({
-    mutationFn: () => toolsApi.synthesize(task.trim(), "activity"),
-    onSuccess: () => {
-      toast.success("Activity synthesized and sent to Pending Review.");
-      setTask("");
-      setSynthesizeOpen(false);
-      qc.invalidateQueries({ queryKey: QK.pendingTools() });
-      qc.invalidateQueries({ queryKey: QK.tools() });
-      setTab("pending");
+  // The visible tab's list is what can be selected and deleted.
+  const visible = tab === "active" ? filteredActive : filteredPending;
+  const selection = useBulkSelection(
+    visible,
+    (t) => t.id,
+    isDeletableTool,
+    (t) => t.name,
+  );
+  const bulkDelete = useBulkDelete({
+    noun: "activity",
+    deleteOne: (id) => toolsApi.remove(id),
+    invalidate: [QK.tools(), QK.pendingTools()],
+    selection,
+  });
+
+  const [synthError, setSynthError] = useState<string | null>(null);
+  // A background run: closing the dialog does not stop it, and the global
+  // notification reports the outcome if the dialog is no longer open.
+  const synthesizeMut = useSynthesisRun("activity", {
+    watching: synthesizeOpen,
+    onFinished: (run, watching) => {
+      synthesizeMut.clear();
+      if (run.status === "completed") {
+        setTask("");
+        setTab("pending");
+        if (watching) {
+          toast.success(
+            `Activity “${runOutputName(run) ?? "new"}” synthesised and sent to Pending Review.`,
+          );
+          setSynthesizeOpen(false);
+        }
+      } else if (watching && run.status !== "cancelled") {
+        setSynthError(run.error ?? "Synthesis failed.");
+      }
     },
-    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (
@@ -111,7 +155,15 @@ function ActivityGalleryPage() {
           onClick={() => setSynthesizeOpen(true)}
           className="bg-primary hover:bg-primary/90 self-start sm:self-auto gap-1.5"
         >
-          <Sparkles className="size-4" /> Synthesize Activity
+          {synthesizeMut.busy ? (
+            <>
+              <Loader2 className="size-4 animate-spin" /> Synthesizing…
+            </>
+          ) : (
+            <>
+              <Sparkles className="size-4" /> Synthesize Activity
+            </>
+          )}
         </Button>
       </div>
 
@@ -127,18 +179,29 @@ function ActivityGalleryPage() {
           </TabsList>
         </Tabs>
 
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-          <Input
-            placeholder="Search activities..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <SortSelect value={sort} onChange={setSort} options={ACTIVITY_SORTS} />
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input
+              placeholder="Search activities..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
       </div>
 
       <div className="mt-6">
+        <BulkActionBar
+          className="mb-4"
+          selection={selection}
+          noun="activity"
+          onDelete={bulkDelete.run}
+          deleting={bulkDelete.running}
+          warning="An activity still used by any workflow (archived ones included) is refused — remove it from those workflows first. The rest are deleted with all their versions and knowledge-graph links."
+        />
         {tab === "active" ? (
           toolsQuery.isLoading ? (
             <TableSkeleton rows={4} />
@@ -153,7 +216,14 @@ function ActivityGalleryPage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {filteredActive.map((activity) => (
-                <ToolCard key={activity.id} tool={activity} variant="activity" />
+                <SelectableItem
+                  key={activity.id}
+                  selection={selection}
+                  id={activity.id}
+                  label={activity.name}
+                >
+                  <ToolCard tool={activity} variant="activity" />
+                </SelectableItem>
               ))}
             </div>
           )
@@ -170,7 +240,14 @@ function ActivityGalleryPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filteredPending.map((activity) => (
-              <ToolCard key={activity.id} tool={activity} variant="activity" pending />
+              <SelectableItem
+                key={activity.id}
+                selection={selection}
+                id={activity.id}
+                label={activity.name}
+              >
+                <ToolCard tool={activity} variant="activity" pending />
+              </SelectableItem>
             ))}
           </div>
         )}
@@ -195,18 +272,39 @@ function ActivityGalleryPage() {
               value={task}
               onChange={(e) => setTask(e.target.value)}
               className="resize-none"
+              disabled={synthesizeMut.busy}
             />
+            {synthError && !synthesizeMut.busy ? (
+              <p className="rounded-lg border border-red/30 bg-red/10 p-2.5 text-xs text-red">
+                {synthError}
+              </p>
+            ) : null}
+            {synthesizeMut.run?.status === "running" ? (
+              <>
+                <RunProgressCard
+                  run={synthesizeMut.run}
+                  onStop={() => synthesizeMut.run && void stopRun(synthesizeMut.run.id)}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  You can close this dialog — synthesis continues in the background and you will be
+                  notified when it is ready.
+                </p>
+              </>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSynthesizeOpen(false)}>
-              Cancel
+              {synthesizeMut.busy ? "Run in background" : "Cancel"}
             </Button>
             <Button
-              disabled={!task.trim() || synthesizeMut.isPending}
-              onClick={() => synthesizeMut.mutate()}
+              disabled={!task.trim() || synthesizeMut.busy}
+              onClick={() => {
+                setSynthError(null);
+                void synthesizeMut.start(task.trim());
+              }}
               className="gap-2"
             >
-              {synthesizeMut.isPending ? (
+              {synthesizeMut.busy ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Sparkles className="size-4" />

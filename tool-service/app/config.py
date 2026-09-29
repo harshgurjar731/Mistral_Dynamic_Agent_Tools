@@ -11,28 +11,53 @@ class Settings(BaseSettings):
     # Mistral Platform
     MISTRAL_API_KEY: str = ""
 
-    # Kept for anything still reading it; synthesis uses the two below.
+    # Retired for synthesis — models are chosen per job in app/llm/routes.py
+    # (override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
     MISTRAL_CODING_MODEL: str = "codestral-latest"
 
     # ── Code synthesis ──────────────────────────────────────────────────
-    # Codestral is a code *completion* model, tuned for filling in code given
-    # surrounding context. Writing a whole correct function from a JSON schema
-    # — with the error handling, the optional-argument guards and the return
-    # contract this service requires — is a reasoning task, and the flagship
-    # holds a long specification in mind noticeably better while doing it.
-    TOOL_CODEGEN_MODEL: str = "mistral-large-latest"
-    # Repair reads a traceback and works out which line caused it, which is
-    # reasoning rather than completion, so it uses the same model.
-    TOOL_REPAIR_MODEL: str = "mistral-large-latest"
-    TOOL_CODEGEN_TEMPERATURE: float = 0.1
-    # Per attempt. Several tools synthesise at once, and a long single timeout
-    # meant one slow call held the request open until the client gave up.
-    TOOL_MODEL_TIMEOUT_MS: int = 90_000
+    # Transport retries per model call, before the route's fallback model.
     TOOL_MODEL_MAX_ATTEMPTS: int = 3
-    TOOL_SYNTHESIS_MAX_ATTEMPTS: int = 3
+    # Generate/repair passes per job.
+    TOOL_SYNTHESIS_MAX_ATTEMPTS: int = 4
+    # Hard wall-clock budget per job, across every attempt. Reasoning calls are
+    # slow; an attempt budget alone let one job hold a worker for many minutes.
+    SYNTHESIS_WALL_CLOCK_SECONDS: int = 900
+    # Concurrent synthesis jobs. Each holds a model call and a sandbox process.
+    SYNTHESIS_WORKERS: int = 3
+    # How long the legacy blocking POST /synthesize waits before answering 202
+    # with a job id. Below the backend's 180s HTTP timeout on purpose.
+    SYNTHESIZE_WAIT_SECONDS: int = 150
+
+    # Activities must carry output_schema and worked examples. Off only while
+    # callers that predate SynthesisSpec v2 are migrated.
+    STRICT_ACTIVITY_SPEC: bool = True
+    # G7: when an activity disagrees with one of its own examples, run an
+    # independently written reference implementation to decide which is wrong.
+    ORACLE_ARBITRATION: bool = True
+    # When the reference implementation and the generated code agree against
+    # an example, correct the example (and report it) instead of sending the
+    # spec back. Worked examples are hand arithmetic by a model; code is not.
+    ORACLE_AUTOCORRECT: bool = True
 
     # Tool synthesis safety
     AUTO_APPROVE_DYNAMIC_TOOLS: bool = False
+
+    # ── Runtime ─────────────────────────────────────────────────────────
+    # A labelled, LLM-written "degraded" answer when an *agent tool* fails.
+    # Never applies to activities: a workflow step must fail, not be invented.
+    TOOL_RUNTIME_FALLBACK: bool = False
+    # Environment variables a tool may receive through ``_secrets``, and only
+    # when its spec names them. Comma-separated.
+    SECRETS_ALLOWLIST: str = ""
+
+    # ── Sandbox ─────────────────────────────────────────────────────────
+    SANDBOX_TIMEOUT_SECONDS: int = 20
+    SANDBOX_MEMORY_MB: int = 512
+    # Unprivileged user the sandbox runs as when the service runs as root
+    # (the Dockerfile creates it). Ignored where not applicable.
+    SANDBOX_USER: str = "sandboxuser"
+    DYNAMIC_TOOLS_DIR: str = "dynamic_tools"
 
     # Database
     DATABASE_URL: str = "sqlite:////app/db/tool_service.db"
@@ -48,6 +73,10 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+    @property
+    def secrets_allowlist(self) -> set[str]:
+        return {s.strip() for s in self.SECRETS_ALLOWLIST.split(",") if s.strip()}
 
 
 settings = Settings()

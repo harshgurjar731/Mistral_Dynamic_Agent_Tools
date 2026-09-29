@@ -21,6 +21,9 @@
 *.toml text eol=lf
 *.txt text eol=lf
 *.env.example text eol=lf
+.env.example text eol=lf
+Caddyfile text eol=lf
+.dockerignore text eol=lf
 Dockerfile text eol=lf
 
 # Binary files — no conversion

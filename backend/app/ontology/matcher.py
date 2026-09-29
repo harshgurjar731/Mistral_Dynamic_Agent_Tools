@@ -20,7 +20,7 @@ import re
 from typing import Iterable
 
 from app.ontology import store
-from app.ontology.vocab import Scheme
+from app.ontology.vocab import SYSTEM_DOMAIN, Scheme
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,22 @@ def scope_for_goal(goal: str) -> dict:
 
     # Include descendants so matching "lending" also admits mortgage agents.
     concepts = store.expand(domains)
+
+    # System is in scope for every goal. Foundation agents live under it and are
+    # domain-agnostic by definition, so narrowing to an industry must never
+    # narrow them away — every workflow needs its guardrails whatever it is
+    # about. Adding the concept here rather than relying on the planner's
+    # `always_include` means the scope *itself* is correct, so anything that
+    # reads it — the /scope endpoint, the scope graph — agrees with what the
+    # planner actually sees.
+    #
+    # Only `concepts` gains it. `domains` is what `describe_scope` renders, and
+    # "scoped to Lending, System" would describe the goal, which it does not.
+    concepts = concepts | store.expand([SYSTEM_DOMAIN])
+
     logger.info(
-        "Ontology: goal scoped to %s (%d concepts in subtree)", domains, len(concepts)
+        "Ontology: goal scoped to %s (%d concepts in subtree, System included)",
+        domains, len(concepts),
     )
     return {"domains": domains, "concepts": concepts, "scoped": True}
 

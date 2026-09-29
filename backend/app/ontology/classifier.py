@@ -27,7 +27,13 @@ import logging
 from typing import Any, Optional
 
 from app.ontology import store
-from app.ontology.vocab import Predicate, Scheme, SubjectType, coerce_tier
+from app.ontology.vocab import (
+    Predicate,
+    Scheme,
+    SubjectType,
+    coerce_tier,
+    domains_for_tier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +48,8 @@ Rules:
   mortgages, choose the mortgage subdomain, not just lending.
 - Choose at most 2 domains. One is usually correct.
 - A foundation-tier resource is domain-agnostic (safety, moderation, routing,
-  review). For those return an empty domain list.
+  review). Those belong to no industry: return ["domain.system"] as the only
+  domain, never an industry alongside it.
 - requires_capability is only for capabilities the resource must get from a
   tool or connector attached to it — retrieval, integration, computation.
   Reasoning it performs itself is provides_capability.
@@ -141,14 +148,26 @@ async def classify(
     capabilities = _valid_ids(Scheme.CAPABILITY.value)
     data_classes = _valid_ids(Scheme.DATA_CLASS.value)
 
+    tier = coerce_tier(payload.get("tier"))
     result = {
         "domains": _clean(payload.get("domains"), domains, 2),
         "requires_capability": _clean(payload.get("requires_capability"), capabilities, 4),
         "provides_capability": _clean(payload.get("provides_capability"), capabilities, 4),
         "data_classes": _clean(payload.get("data_classes"), data_classes, 4),
-        "tier": coerce_tier(payload.get("tier")),
+        "tier": tier,
         "reasoning": str(payload.get("reasoning") or "")[:400],
     }
+
+    # The prompt asks for domain.system on a foundation resource; this is what
+    # makes it true. A model that names a foundation agent's subject matter
+    # anyway — and they do, because the instructions are full of it — would
+    # otherwise file a guardrail under an industry and scope it out of every
+    # other one. A workflow has no tier, so the rule does not apply to it.
+    if subject_kind == SubjectType.AGENT.value:
+        fixed = domains_for_tier(tier)
+        if fixed is not None:
+            result["domains"] = [d for d in fixed if d in domains]
+
     logger.info(
         "Classified %s %r → domains=%s tier=%s",
         subject_kind, name, result["domains"], result["tier"],

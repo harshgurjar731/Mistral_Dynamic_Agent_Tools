@@ -24,6 +24,27 @@ from typing import Any, Optional
 # ── Vocabulary ──────────────────────────────────────────────────────────────
 
 SCOPES = ("agent", "workflow")
+
+#: The categories every rule type ships in. People can add their own
+#: (``RuleCategory``); these cannot be renamed or deleted.
+BUILTIN_CATEGORIES = [
+    {"id": "safety", "name": "Safety", "icon": "ShieldAlert", "color": "red",
+     "description": "Harmful content, prompt injection and unsafe input."},
+    {"id": "data", "name": "Data & privacy", "icon": "Lock", "color": "cyan",
+     "description": "Personal data, sensitive data and database access."},
+    {"id": "tools", "name": "Tools & access", "icon": "Wrench", "color": "amber",
+     "description": "Which tools, connectors and integrations may be used."},
+    {"id": "quality", "name": "Quality", "icon": "Sparkles", "color": "purple",
+     "description": "Answer format, length and instruction quality."},
+    {"id": "limits", "name": "Limits", "icon": "Gauge", "color": "blue",
+     "description": "Caps on steps, tool calls and models."},
+]
+BUILTIN_CATEGORY_IDS = {c["id"] for c in BUILTIN_CATEGORIES}
+
+PATTERN_MODES = [
+    {"value": "keywords", "label": "keywords"},
+    {"value": "regex", "label": "regular expression"},
+]
 ENFORCEMENTS = ("block", "warn", "fix")
 OUTCOMES = ("passed", "blocked", "warned", "fixed", "applied")
 
@@ -208,6 +229,31 @@ def _types() -> list[RuleType]:
             },
         ),
         RuleType(
+            key="agent_custom_pattern", scope="agent", name="Custom text check",
+            description="Your own check on what users send or what the agent answers — "
+                        "words, phrases or a regular expression you define.",
+            category="safety", icon="ScanSearch",
+            checkpoints=["message", "answer"], enforcements=["block", "warn"],
+            default_enforcement="block",
+            summary="Checks the {check_on} for: {patterns} (as {mode}).",
+            params=[
+                ParamField("mode", "Match by", "select", default="keywords", options=PATTERN_MODES),
+                ParamField("patterns", "Words, phrases or patterns", "tags", default=[],
+                           help="Keywords match case-insensitively anywhere in the text. "
+                                "Regular expressions are case-insensitive too."),
+                ParamField("check_on", "Check", "select", default="message",
+                           options=[{"value": "message", "label": "User message"},
+                                    {"value": "answer", "label": "Agent answer"},
+                                    {"value": "both", "label": "Both"}]),
+                ParamField("message", "Message when it matches", "text", default="",
+                           help="Shown when a message is refused or an answer withheld."),
+            ],
+            enforcement_help={
+                "block": "The message is refused, or the answer is withheld, with your message shown.",
+                "warn": "The text goes through and the match is recorded.",
+            },
+        ),
+        RuleType(
             key="pii_redaction", scope="agent", name="Personal data redaction",
             description="Masks personal data in the agent's answers before anyone sees them.",
             category="data", icon="EyeOff",
@@ -385,6 +431,26 @@ def _types() -> list[RuleType]:
             },
         ),
         RuleType(
+            key="workflow_custom_pattern", scope="workflow", name="Custom input check",
+            description="Your own check on a run's inputs — words, phrases or a regular "
+                        "expression you define, for anything the built-in rules do not cover.",
+            category="safety", icon="ScanSearch",
+            checkpoints=["run_start"], enforcements=["block", "warn"], default_enforcement="block",
+            summary="Checks run inputs for: {patterns} (as {mode}).",
+            params=[
+                ParamField("mode", "Match by", "select", default="keywords", options=PATTERN_MODES),
+                ParamField("patterns", "Words, phrases or patterns", "tags", default=[],
+                           help="Keywords match case-insensitively anywhere in the text. "
+                                "Regular expressions are case-insensitive too."),
+                ParamField("message", "Message when it matches", "text", default="",
+                           help="Shown when a run is refused. Leave empty for a default."),
+            ],
+            enforcement_help={
+                "block": "The run is refused before any step executes.",
+                "warn": "The run goes ahead and the match is recorded.",
+            },
+        ),
+        RuleType(
             key="agent_step_tool_limit", scope="workflow", name="Tool calls per agent step",
             description="Caps the tool-call rounds each agent step may make.",
             category="limits", icon="Gauge",
@@ -429,6 +495,8 @@ def normalise_params(rule_type: RuleType, params: dict | None) -> dict:
             value = [str(v).strip() for v in (value or []) if str(v).strip()]
         elif f.kind == "toggle":
             value = bool(value)
+        elif f.kind == "text":
+            value = str(value or "").strip()[:500]
         elif f.kind == "select":
             allowed = {o["value"] for o in f.options}
             value = value if value in allowed else f.default

@@ -66,11 +66,13 @@ def prepare_agent(
     guardrails: list[dict] | None,
     selection: Optional[list] = None,
     mode: str = "manual",
+    agent_id: Optional[str] = None,
 ) -> PreparedAgent:
     """Apply creation-time rules to a configuration about to be created.
 
     ``selection`` is the rules chosen for this agent (``[{rule_id, ...}]`` or
-    bare ids); always-on rules are added automatically. Never raises: a rules
+    bare ids); always-on rules are added automatically, and so are rules a
+    person targeted at ``agent_id`` when the agent already exists. Never raises: a rules
     failure leaves the configuration exactly as it was given.
     """
     prepared = PreparedAgent(
@@ -78,7 +80,7 @@ def prepare_agent(
         guardrails=[g for g in (guardrails or []) if g],
     )
     try:
-        prepared.rules = store.effective_rules("agent", _selected_ids(selection))
+        prepared.rules = store.effective_rules("agent", _selected_ids(selection), subject_id=agent_id)
         config, outcomes = engine.check_agent_config(
             {
                 "model": model,

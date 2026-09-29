@@ -409,7 +409,9 @@ def seed_native_tools(db: Session):
                 source_code=source,
                 module_path=module_path,
                 status="approved",
-                sandbox_output="Pre-approved native tool."
+                sandbox_output="Pre-approved native tool.",
+                version_no=1,
+                is_active=True,
             )
             db.add(record)
             seeded += 1

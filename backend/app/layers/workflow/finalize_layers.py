@@ -79,7 +79,9 @@ class WorkflowValidationLayer(WorkflowStepLayer):
         try:
             from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
 
-            rules = rules_store.effective_rules("workflow", [r.rule_id for r in definition.rules])
+            rules = rules_store.effective_rules(
+                "workflow", [r.rule_id for r in definition.rules], subject_id=definition.name
+            )
             agents_by_id = {
                 a["agent_id"]: {
                     "name": a.get("agent_name"),
@@ -103,6 +105,20 @@ class WorkflowValidationLayer(WorkflowStepLayer):
                 })
         except Exception as e:
             logger.warning("Workflow rules skipped during planning: %s", e)
+
+        # Data-flow references to fields an activity does not return
+        # (recorded by DataFlowLayer against each activity's output schema).
+        contract_issues = ctx.metadata.get("contract_issues") or []
+        if contract_issues:
+            from app.services.workflow_engine.models import ValidationIssue
+
+            issues = [*result.issues, *(ValidationIssue(**i) for i in contract_issues)]
+            result = result.model_copy(update={
+                "issues": issues,
+                "valid": not any(i.severity == "error" for i in issues),
+                "error_count": sum(1 for i in issues if i.severity == "error"),
+                "warning_count": sum(1 for i in issues if i.severity == "warning"),
+            })
 
         blocking = [
             i for i in result.issues
@@ -195,6 +211,17 @@ class WorkflowCompilationLayer(WorkflowStepLayer):
 
         spec = ctx.workflow_spec
         if not spec.definition:
+            return await next(ctx)
+
+        # A compiled module is picked up and run by the local worker, so an
+        # invalid plan must not get one — it would fail mid-run (e.g. a
+        # connector step with no connector) instead of being fixed first.
+        if ctx.metadata.get(VALIDATION_FAILED_KEY):
+            ctx.emit("compiled", json.dumps({
+                "workflow_name": spec.workflow_name,
+                "skipped": True,
+                "error": "Not compiled — the workflow has validation errors.",
+            }))
             return await next(ctx)
 
         ctx.emit("status", "Compiling to the Mistral SDK…")

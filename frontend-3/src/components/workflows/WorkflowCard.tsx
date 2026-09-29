@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { CreatedAt } from "@/components/shared/CreatedAt";
 import { Link } from "@tanstack/react-router";
 import {
   Archive,
@@ -210,7 +211,11 @@ export function WorkflowCard({
         {/* Actions — icon only */}
         <TooltipProvider delayDuration={200}>
           <div className="mt-auto pt-3.5">
-            <div className="flex items-center gap-1.5 border-t border-border/40 pt-3.5">
+            <CreatedAt value={workflow.created_at} className="mb-2.5" />
+            <div
+              data-card-footer
+              className="flex items-center gap-1.5 border-t border-border/40 pt-3.5"
+            >
               <IconAction label="Run">
                 {onExecuteModal ? (
                   <button

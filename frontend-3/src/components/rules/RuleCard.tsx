@@ -1,20 +1,27 @@
 import { Link } from "@tanstack/react-router";
 import { Switch } from "@/components/ui/switch";
-import { formatRelative } from "@/lib/status";
+import { CreatedAt } from "@/components/shared/CreatedAt";
 import { cn } from "@/lib/utils";
-import type { Rule } from "@/types";
+import type { Rule, RuleCategory } from "@/types";
 import { EnforcementPill, Pill, RuleIcon } from "./RulePills";
+import { CategoryBadge } from "./RuleScopingControls";
+import { appliesOf } from "./ruleScoping";
 
 /** One rule on the Rules page: what it does, how strict it is, and whether it is on. */
 export function RuleCard({
   rule,
   onToggle,
   toggling,
+  category,
 }: {
   rule: Rule;
   onToggle: (enabled: boolean) => void;
   toggling?: boolean;
+  /** The rule's category, resolved by the page that lists the rules. */
+  category?: RuleCategory | undefined;
 }) {
+  const applies = appliesOf(rule);
+  const targetCount = rule.targets?.length ?? 0;
   const usage = rule.usage ?? { agents: 0 };
   const isAgent = rule.scope === "agent";
 
@@ -79,26 +86,34 @@ export function RuleCard({
         {/* Enforcement + source badges */}
         <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
           <EnforcementPill enforcement={rule.enforcement} />
-          <Pill tone={rule.always_on ? "slate" : "purple"}>
-            {rule.always_on ? "Always on" : "AI decides"}
-          </Pill>
+          {applies === "always" ? (
+            <Pill tone="slate">Always on</Pill>
+          ) : applies === "targeted" ? (
+            <Pill tone="blue">Targeted</Pill>
+          ) : (
+            <Pill tone="purple">AI decides</Pill>
+          )}
+          <CategoryBadge category={category} fallbackId={rule.category} />
           {rule.source === "recommended" ? <Pill tone="muted">Recommended</Pill> : null}
         </div>
 
         {/* Footer — coverage + timestamp, pinned to the bottom so rows line up */}
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/40 pt-3.5 text-[11px] text-muted-foreground">
+        <div
+          data-card-footer
+          className="mt-auto flex items-center justify-between gap-2 border-t border-border/40 pt-3.5 text-[11px] text-muted-foreground"
+        >
           <span className="truncate">
-            {isAgent
-              ? rule.always_on
+            {applies === "always"
+              ? isAgent
                 ? "All agents"
-                : `${usage.agents} agent${usage.agents === 1 ? "" : "s"}`
-              : rule.always_on
-                ? "All workflows"
-                : "Selected workflows"}
+                : "All workflows"
+              : applies === "targeted"
+                ? `${targetCount} ${isAgent ? "agent" : "workflow"}${targetCount === 1 ? "" : "s"} chosen`
+                : isAgent
+                  ? `${usage.agents} agent${usage.agents === 1 ? "" : "s"}`
+                  : "Selected workflows"}
           </span>
-          <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/35">
-            {rule.updated_at ? formatRelative(rule.updated_at) : null}
-          </span>
+          <CreatedAt value={rule.created_at} className="shrink-0" />
         </div>
       </div>
     </div>

@@ -31,7 +31,10 @@ from app.services.workflow_engine.engine import (
 )
 from app.services.workflow_engine.validation import validate_workflow, format_errors
 from app.services import workflow_planner
-from app.services.mistral_workflows_compiler import compile_workflow_to_python
+from app.services.mistral_workflows_compiler import (
+    WorkflowCompileError,
+    compile_workflow_to_python,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +269,9 @@ async def _validate_with_rules(definition, *, record: bool = False) -> Validatio
             if not isinstance(connectors_resp, Exception) else {}
         )
 
-        rules = rules_store.effective_rules("workflow", [r.rule_id for r in definition.rules])
+        rules = rules_store.effective_rules(
+            "workflow", [r.rule_id for r in definition.rules], subject_id=definition.name
+        )
         extra = rules_engine.check_workflow(definition, agents_by_id, connectors_by_id, rules)
         if record:
             rules_runtime.record(
@@ -312,7 +317,10 @@ async def preview_script(request: ValidateWorkflowRequest):
             detail=f"Cannot compile an invalid workflow: {format_errors(result)}",
         )
 
-    code = compile_workflow_to_python(definition)
+    try:
+        code = compile_workflow_to_python(definition)
+    except WorkflowCompileError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return ScriptResponse(
         workflow_name=definition.name,
         code=code,
@@ -600,8 +608,11 @@ async def get_builder_catalog():
 @router.get("/workflows", response_model=WorkflowListResponse)
 async def list_all_workflows():
     """List all workflow definitions, merged with Mistral server status."""
+    from app.services.workflow_engine.engine import deleted_workflow_names
+
     local_workflows = list_workflows()
     local_dict = {wf.name: wf for wf in local_workflows}
+    deleted = deleted_workflow_names()
 
     try:
         resp = _mistral_get("/v1/workflows")
@@ -613,7 +624,14 @@ async def list_all_workflows():
                 if name in local_dict:
                     local_dict[name].is_deployed = True
                     local_dict[name].id = rw.get("id")
-                    local_dict[name].archived = rw.get("archived", False)
+                    # Archived here or there counts as archived: the remote
+                    # archive runs in the background and can lag or fail, and
+                    # it used to overwrite a local archive back to active.
+                    local_dict[name].archived = bool(
+                        local_dict[name].archived or rw.get("archived", False)
+                    )
+                elif name in deleted:
+                    continue
                 else:
                     local_dict[name] = WorkflowDefinition(
                         id=rw.get("id"),
@@ -623,6 +641,8 @@ async def list_all_workflows():
                         entry_step="",
                         is_deployed=True,
                         archived=rw.get("archived", False),
+                        created_at=rw.get("created_at"),
+                        updated_at=rw.get("updated_at"),
                     )
     except Exception as e:
         logger.warning("Failed to fetch remote workflows: %s", e)
@@ -654,6 +674,8 @@ async def get_workflow_detail(workflow_name: str):
                         entry_step="",
                         is_deployed=True,
                         archived=rw.get("archived", False),
+                        created_at=rw.get("created_at"),
+                        updated_at=rw.get("updated_at"),
                     )
                 break
 
@@ -694,6 +716,42 @@ async def archive_workflow_endpoint(workflow_name: str, background_tasks: Backgr
     return {"archived": True, "workflow_name": workflow_name}
 
 
+@router.delete("/workflows/{workflow_name}")
+async def delete_workflow_endpoint(workflow_name: str):
+    """Delete a workflow: its definition, its compiled module, and (archived) its
+    Mistral-hosted copy.
+
+    The Mistral copy is archived rather than destroyed — the platform keeps its
+    run history — and the name is remembered so the list does not bring the
+    remote copy back.
+    """
+    from app.services.workflow_engine.engine import delete_workflow
+
+    workflow = get_workflow(workflow_name)
+    remote_id = _get_mistral_workflow_id(workflow_name)
+    if not workflow and not remote_id:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+
+    delete_workflow(workflow_name)
+    py_file = os.path.join(settings.MISTRAL_WORKFLOWS_DIR, f"workflow_{workflow_name}.py")
+    if os.path.exists(py_file):
+        try:
+            os.remove(py_file)
+        except OSError as e:
+            logging.warning("Could not remove %s: %s", py_file, e)
+
+    remote_archived = None
+    if remote_id:
+        resp = _mistral_put(f"/v1/workflows/{remote_id}/archive")
+        remote_archived = bool(resp is not None and resp.status_code < 300)
+
+    from app.services import delete_rules
+
+    return {"deleted": True, "workflow_name": workflow_name, "remote_archived": remote_archived,
+            # Only the workflow: its agents, tools and activities stay.
+            "graph": delete_rules.forget_in_graph("workflow", workflow_name)}
+
+
 @router.put("/workflows/{workflow_name}/unarchive")
 async def unarchive_workflow_endpoint(workflow_name: str):
     """Unarchive a workflow (locally + on Mistral server)."""
@@ -724,6 +782,26 @@ async def unarchive_workflow_endpoint(workflow_name: str):
 
 # ── Execute ───────────────────────────────────────────────────────────────────
 
+def _check_required_inputs(workflow, payload: dict) -> None:
+    """Raise 422 when the payload lacks a required input the workflow declares."""
+    fields = [f for f in (workflow.input_schema or []) if isinstance(f, dict) and f.get("name")]
+    missing = [
+        f["name"] for f in fields
+        if f.get("required", True) is not False and f["name"] not in payload
+    ]
+    if not missing:
+        return
+    declared = ", ".join(f["name"] for f in fields)
+    received = ", ".join(k for k in payload if not k.startswith("_")) or "nothing"
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"Missing required input{'s' if len(missing) > 1 else ''}: {', '.join(missing)}. "
+            f"This workflow expects: {declared}. Received: {received}."
+        ),
+    )
+
+
 @router.post("/workflows/{workflow_name}/execute", response_model=WorkflowExecutionResponse)
 async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflowRequest):
     """
@@ -738,6 +816,12 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
     workflow = get_workflow(workflow_name)
     # Note: workflow may be None for Mistral-only (remotely registered) workflows.
     # We still attempt Mistral server execution before raising 404.
+
+    # A required input missing from the payload fails the run on whichever step
+    # first reads it — inside the worker, after three retries, with an error
+    # about "earlier steps". Say what is wrong before starting anything.
+    if workflow:
+        _check_required_inputs(workflow, request.input or {})
 
     # ── Always try Mistral server first via direct HTTP ──────────────────
     # We use httpx directly so we can pass worker routing fields that the
@@ -977,7 +1061,12 @@ async def register_workflow_on_mistral(workflow_name: str, wait_seconds: float |
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
 
     # ── Step 1: write compiled file for local worker hot-reload ──────────
-    code = compile_workflow_to_python(workflow)
+    # A module that fails to compile is never written: the worker would fail
+    # to import it and the previously published version would stop loading.
+    try:
+        code = compile_workflow_to_python(workflow)
+    except WorkflowCompileError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     workflows_dir = os.path.abspath(
         os.path.join(os.getcwd(), settings.MISTRAL_WORKFLOWS_DIR)
     )

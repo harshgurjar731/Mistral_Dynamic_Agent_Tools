@@ -872,13 +872,14 @@ WHAT THIS WORKFLOW HANDLES (judge safety fit against this):
 REQUIRED CAPABILITIES:
 {capabilities}
 
-EXISTING FOUNDATION AGENTS (check these first):
+EXISTING FOUNDATION AGENTS — the System node, in scope for every goal
+regardless of the domain this request narrowed to (check these first):
 {foundation_agents}
 
-EXISTING DOMAIN AGENTS:
+EXISTING DOMAIN AGENTS (in scope because they serve this goal's domain):
 {domain_agents}
 
-EXISTING USE-CASE AGENTS:
+EXISTING USE-CASE AGENTS (in scope because they serve this goal's domain):
 {usecase_agents}
 
 Decide reuse or create for every capability.
@@ -952,6 +953,12 @@ attached, so the step is correctly wired and documents can be added later.
 3. Choose `document_library_ids` only from the valid library ids provided.
 4. Respect the capability's assigned tier when naming the agent: foundation
    names carry no domain word, use_case names must carry the product word.
+5. An agent tool is something the agent calls for itself, mid-reasoning, when
+   what it needs depends on what it has read so far (a lookup, a search, a
+   calculation on values it extracted). Work that always happens the same way
+   before or after the agent is not a tool — it is a separate workflow step.
+   For every tool you choose, state in `tool_rationale` why this agent must
+   call it itself rather than receive its result from a step.
 
 ## Output schema
 {
@@ -961,6 +968,7 @@ attached, so the step is correctly wired and documents can be added later.
   "model": "mistral-large-latest|mistral-medium-latest|mistral-small-latest",
   "temperature": 0.0,
   "tools": ["<tool_key>"],
+  "tool_rationale": {"<tool_key>": "<one sentence: why the agent calls this itself while reasoning>"},
   "connectors": ["<connector_id>"],
   "document_library_ids": ["<library_id>"],
   "create_library": {"name": "string", "description": "string"} or null,
@@ -1118,6 +1126,9 @@ validation that already passed on it.
 - Tools reply {"status": "success", "data": {...}}. A tool step's output is the
   inner `data` object, so address its fields with a dot path —
   step_<id>_output.field_name — never the envelope.
+- When an activity lists an `output_schema`, its output has exactly those
+  fields: reference only property names from it. Any other field name is
+  rejected at validation, because it cannot exist at run time.
 - A parameter declared as a number, boolean or string must be given exactly
   that field, not the whole upstream object: pass
   step_excess_output.calculated_excess, not step_excess_output.
@@ -1155,7 +1166,17 @@ transform steps — `transform_code`:
 ## Also produce
 - `input_schema`: the workflow's inputs, each with `name`, `type`,
   `description` and `required`. Derive from what the entry step's template
-  references.
+  references. A person fills these in on a run form, so also give, where it
+  applies:
+  - `label`: a short human label ("Loss date", not "loss_date").
+  - `format`: how to collect a string or number — one of text, long_text
+    (anything longer than a line: a document, a description, a message),
+    email, url, date, datetime, integer, currency, percent.
+  - `enum`: the allowed values, when the input is one of a fixed set.
+  - `example`: one realistic value.
+  - `min` / `max`: bounds for numbers, when they exist.
+  - `items`: for an array, the type of each entry (string, number, object).
+  `type` stays one of string, number, integer, boolean, object, array.
 - `variables`: seed values available before the first step. Usually empty.
 
 ## Rules
@@ -1173,7 +1194,19 @@ transform steps — `transform_code`:
   "description": "string",
   "entry_step": "<unchanged>",
   "input_schema": [
-    {"name": "string", "type": "string", "description": "string", "required": true}
+    {
+      "name": "string",
+      "type": "string|number|integer|boolean|object|array",
+      "description": "string",
+      "required": true,
+      "label": "string",
+      "format": "text|long_text|email|url|date|datetime|integer|currency|percent",
+      "enum": ["<allowed value>"],
+      "example": "<a realistic value>",
+      "min": 0,
+      "max": 0,
+      "items": "string|number|object"
+    }
   ],
   "variables": {},
   "steps": [
@@ -1291,69 +1324,6 @@ Review this workflow's safety.
 """
 
 
-# ── 15. Activity gap ───────────────────────────────────────────────────────
-
-ACTIVITY_GAP_SYSTEM_PROMPT = """\
-You are a capability auditor. Given the deterministic capabilities a workflow
-requires and the activities this platform can already execute, you decide which
-activities must be built.
-
-An "activity" is a standalone workflow step performed by a function, not by an
-agent: parsing, formatting, arithmetic, a fixed-shape API call. It becomes a
-step of its own in the graph.
-
-You decide which activities are MISSING and specify them. You do not decide the
-graph, the agents, or how the activities are wired together.
-
-## Rules
-1. For each capability, first look for an existing activity that already does
-   the job. Name matching is not enough — read the description. An existing
-   activity with a different name that performs the same transformation is a
-   match, and reusing it is always better than building a near-duplicate.
-2. Specify a new activity only when nothing existing covers the capability.
-3. A specification must be precise enough to implement without further
-   questions: exact parameter names, exact types, and what the function
-   returns. Vague specifications produce functions that do not fit the step.
-4. Parameters use JSON Schema types: string, number, integer, boolean, array,
-   object.
-5. Prefer pure computation. Specify an external API call only when the
-   capability genuinely cannot be satisfied locally, and say which API.
-
-## Output schema
-{
-  "resolutions": [
-    {
-      "capability_id": "string",
-      "action": "exists|create",
-      "existing_activity_name": "string or null",
-      "specification": {
-        "name": "snake_case_function_name",
-        "description": "<what it does, one sentence>",
-        "parameters": {"<param_name>": {"type": "string", "description": "string"}},
-        "required": ["<param_name>"],
-        "api_details": "<the external API to call, or a statement that this is pure computation>",
-        "expected_output_shape": "<the structure the function returns>"
-      }
-    }
-  ],
-  "reasoning": "string"
-}
-""" + _TOOL_SAFETY_BLOCKLIST + _SINGLE_DECISION_CONTRACT
-
-ACTIVITY_GAP_USER_PROMPT = """\
-GOAL:
-{goal}
-
-DETERMINISTIC CAPABILITIES REQUIRED:
-{capabilities}
-
-ACTIVITIES THIS PLATFORM ALREADY HAS:
-{activities}
-
-Decide which activities exist and which must be built.
-"""
-
-
 # ── 16. Execution mode ─────────────────────────────────────────────────────
 
 EXECUTION_MODE_SYSTEM_PROMPT = """\
@@ -1396,9 +1366,12 @@ Common cases that are NOT agents, though planners routinely make them so:
   - splitting one record into several, or merging several into one
 
 Choose "connector" only when the capability names a specific external product
-AND that product appears in the available list below as attachable. A connector
-that is not authenticated cannot be used — route that capability to an agent or
-an activity instead and say so in the rationale.
+AND that product appears in the available list below as attachable — and then
+give its id as `connector_id`, copied exactly from that list. A public web API
+with no connector in the list (an exchange-rate feed, a weather service) is NOT
+a connector: route it to "activity", which is built as code that calls the API.
+A connector that is not authenticated cannot be used — route that capability to
+an agent or an activity instead and say so in the rationale.
 
 ## Optimisation — removing what should not exist
 
@@ -1424,6 +1397,7 @@ hint for the layer that designs the agent, not a tool list.
     {
       "capability_id": "string",
       "mode": "agent|activity|connector",
+      "connector_id": "<id from the attachable list, only when mode is connector; else null>",
       "agent_needs_tools": true|false,
       "redundant": true|false,
       "merge_into": "capability_id or null",

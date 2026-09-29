@@ -185,7 +185,11 @@ async def delete_scheme(
     scheme_id: str,
     cascade: bool = Query(False, description="Also delete its concepts and their annotations"),
 ):
-    return _vocab_guard(store.delete_scheme)(scheme_id, cascade)
+    from app.services import delete_rules
+
+    result = _vocab_guard(store.delete_scheme)(scheme_id, cascade)
+    result["neo4j"] = delete_rules.forget_concepts_in_neo4j(result.get("concept_ids", []))
+    return result
 
 
 @router.post("/ontology/concepts", status_code=201)
@@ -209,7 +213,11 @@ async def delete_concept(
     concept_id: str,
     cascade: bool = Query(False, description="Also delete descendants and their annotations"),
 ):
-    return _vocab_guard(store.delete_concept)(concept_id, cascade)
+    from app.services import delete_rules
+
+    result = _vocab_guard(store.delete_concept)(concept_id, cascade)
+    result["neo4j"] = delete_rules.forget_concepts_in_neo4j(result.get("concept_ids", []))
+    return result
 
 
 # ── Annotations ────────────────────────────────────────────────────────────
@@ -329,6 +337,48 @@ async def get_graph(
         include_orphans=include_orphans,
         hops=hops,
     )
+
+
+@router.get("/ontology/scope")
+async def scope_goal(goal: str = Query(..., min_length=1)):
+    """How the planner would narrow a goal — the same matcher it calls, shown.
+
+    Read-only: nothing is planned or recorded.
+    """
+    scope = matcher.scope_for_goal(goal)
+    concepts = [c for c in (store.get_concept(cid) for cid in sorted(scope["concepts"])) if c]
+    return {
+        "goal": goal,
+        "scoped": scope["scoped"],
+        "domains": scope["domains"],
+        "label": matcher.describe_scope(scope),
+        "concepts": concepts,
+        "scores": matcher.score_concepts(goal, Scheme.DOMAIN.value)[:8],
+    }
+
+
+@router.get("/ontology/scope/graph")
+async def scope_goal_graph(goal: str = Query(..., min_length=1)):
+    """The subgraph a goal is narrowed to: matched domains, their subtree, and
+    everything annotated within it. Empty when the goal matched nothing."""
+    scope = matcher.scope_for_goal(goal)
+    if not scope["scoped"]:
+        return {
+            "nodes": [], "edges": [], "counts": {}, "kinds": [], "predicates": [],
+            "totals": {"nodes": 0, "edges": 0, "concepts": 0, "annotations": 0},
+            "scoped": False, "label": matcher.describe_scope(scope),
+            "matched_domains": [], "goal": goal,
+        }
+    graph = await ontology_graph.build_graph(
+        get_mistral_client(), root_concept=",".join(scope["domains"]),
+    )
+    return {
+        **graph,
+        "scoped": True,
+        "label": matcher.describe_scope(scope),
+        "matched_domains": scope["domains"],
+        "goal": goal,
+    }
 
 
 @router.post("/ontology/classify")

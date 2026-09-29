@@ -158,6 +158,7 @@ def _apply_update_rules(agent_id: str, agent, data: dict) -> dict:
         guardrails=guardrails,
         selection=[a["rule_id"] for a in rules_store.agent_assignments(agent_id)],
         mode="manual",
+        agent_id=agent_id,
     )
     rules_runtime.record(prepared.outcomes, scope="agent", subject_id=agent_id)
     if prepared.blocked:
@@ -549,6 +550,10 @@ async def create_agent(client: Mistral, data: dict) -> dict:
             create_kwargs["description"] = data["description"]
         if data.get("tier"):
             create_kwargs["metadata"] = {"tier": coerce_tier(data["tier"])}
+        completion_fields = ["temperature", "top_p", "max_tokens", "random_seed", "frequency_penalty", "presence_penalty"]
+        ca_data = {k: data[k] for k in completion_fields if data.get(k) is not None}
+        if ca_data:
+            create_kwargs["completion_args"] = CompletionArgs(**ca_data)
         # Tools, libraries and connectors all live in the same `tools` array —
         # connectors are entries of type "connector", not a separate field — so
         # they are resolved together and assigned once.

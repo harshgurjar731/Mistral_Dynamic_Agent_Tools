@@ -4,7 +4,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { tierIdentity } from "@/lib/status";
 import type { Agent, AnnotationMap } from "@/types";
 import { cn } from "@/lib/utils";
-import { formatRelative } from "@/lib/status";
+import { CreatedAt } from "@/components/shared/CreatedAt";
 
 export function AgentCard({
   agent,
@@ -128,14 +128,10 @@ export function AgentCard({
           </button>
         </div>
 
-        {/* Footer — timestamp */}
-        {agent.created_at && (
-          <div className="mt-2.5 flex items-center justify-end">
-            <span className="text-[9px] tabular-nums text-muted-foreground/35">
-              {formatRelative(agent.created_at)}
-            </span>
-          </div>
-        )}
+        {/* Footer — when it was created */}
+        <div className="mt-2.5 flex items-center">
+          <CreatedAt value={agent.created_at} />
+        </div>
       </div>
     </div>
   );

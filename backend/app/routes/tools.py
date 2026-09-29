@@ -3,7 +3,9 @@ Tool Proxy Routes — Proxy to Docker Tool Service for tool management,
 synthesis, and MCP operations.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from app.dependencies import get_mistral_client
 from app.services.tool_resolver import tool_resolver
 
 router = APIRouter(tags=["Tools"])
@@ -30,11 +32,53 @@ async def reject_tool(tool_id: int):
 
 
 @router.delete("/tools/{tool_id}")
-async def delete_tool(tool_id: str):
-    """Proxy → Docker Tool Service: delete a tool."""
+async def delete_tool(tool_id: str, client=Depends(get_mistral_client)):
+    """Delete a tool or activity, following the delete rules.
+
+    Deleting a pending or rejected version removes only that version, which
+    no agent or workflow can be using. Deleting an approved one removes the
+    tool, so first:
+
+      * refused while any workflow runs it as a step (activities, and agent
+        tools used directly as steps) — the step could not run;
+      * an agent tool is detached from every agent that has it;
+      * afterwards its annotations — its edges in the knowledge graph — go.
+    """
+    from fastapi import HTTPException
+
+    from app.services import delete_rules
+
     if str(tool_id).startswith("native-") or str(tool_id).startswith("builtin-"):
         return {"error": "Cannot delete native or built-in tools."}
-    return await tool_resolver.delete_tool(int(tool_id))
+
+    record = await tool_resolver.get_tool(int(tool_id))
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found.")
+    name = record.get("name", "")
+    purpose = record.get("purpose") or "tool"
+    whole_tool = record.get("status") == "approved"
+
+    detached: list[dict] = []
+    if whole_tool:
+        try:
+            delete_rules.check_tool_deletable(name, purpose)
+        except delete_rules.InUse as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        if purpose == "tool":
+            try:
+                detached = await delete_rules.detach_tool_from_agents(client, name)
+            except RuntimeError as e:
+                raise HTTPException(status_code=502, detail=str(e))
+
+    result = await tool_resolver.delete_tool(int(tool_id))
+    if isinstance(result, dict) and result.get("status") == "deleted":
+        if whole_tool:
+            result["graph"] = delete_rules.forget_in_graph("tool", name)
+            from app.services.tool_registry import refresh_dynamic_tools
+
+            await refresh_dynamic_tools()
+        result["detached_from"] = [a["name"] for a in detached]
+    return result
 
 
 @router.put("/tools/{tool_id}")
@@ -114,7 +158,32 @@ async def get_tool(tool_id: str):
         if str(tool.get("id")) == tool_id:
             return tool
 
+    # A superseded version: not in the listing, but reachable from version history.
+    if tool_id.isdigit():
+        version = await tool_resolver.get_tool(int(tool_id))
+        if version:
+            return version
+
     raise HTTPException(status_code=404, detail=f"Tool '{tool_id}' not found.")
+
+
+@router.get("/tools/{name}/versions")
+async def list_tool_versions(name: str):
+    """Proxy → Tool Service: every version of one tool, newest first."""
+    return await tool_resolver.get_tool_versions(name)
+
+
+@router.post("/tools/{tool_id}/activate")
+async def activate_tool_version(tool_id: str):
+    """Proxy → Tool Service: make an approved version the active one."""
+    from fastapi import HTTPException
+
+    if not tool_id.isdigit():
+        raise HTTPException(status_code=400, detail="Only synthesized tools have versions.")
+    result = await tool_resolver.activate_tool(int(tool_id))
+    if result.get("error") or result.get("detail"):
+        raise HTTPException(status_code=400, detail=result.get("error") or result.get("detail"))
+    return result
 
 
 # ── Synthesis ──────────────────────────────────────────────────────────────

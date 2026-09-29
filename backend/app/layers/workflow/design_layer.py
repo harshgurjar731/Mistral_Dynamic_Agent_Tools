@@ -63,7 +63,10 @@ class AgentDesignLayer(WorkflowStepLayer):
 
     name = "agent_design"
     label = "Design each new agent"
-    detail = "Gives every new agent its own focused design pass, against its contract with its neighbours."
+    detail = (
+        "Gives every new agent its own focused design pass, against its contract with "
+        "its neighbours, and chooses the agent tools it may call."
+    )
 
     async def process(self, ctx: PipelineContext, next):
         from app.config import map_model_name, settings
@@ -71,6 +74,7 @@ class AgentDesignLayer(WorkflowStepLayer):
             AGENT_DESIGN_SYSTEM_PROMPT,
             AGENT_DESIGN_USER_PROMPT,
         )
+        from app.services.tool_registry import describe_tool
 
         spec = ctx.workflow_spec
         inv = spec.inventory
@@ -209,6 +213,20 @@ class AgentDesignLayer(WorkflowStepLayer):
             )
             agent_spec.rationale["design"] = str(data.get("reasoning") or "")
 
+            # Why each kept tool is the agent's to call, rather than a step of
+            # its own. Only tools that survived validation are explained.
+            raw_tool_why = data.get("tool_rationale")
+            tool_why = raw_tool_why if isinstance(raw_tool_why, dict) else {}
+            tool_rationale = [
+                {
+                    "tool": key,
+                    "why": str(tool_why.get(key) or ""),
+                    "description": describe_tool(key),
+                }
+                for key in agent_spec.tools
+            ]
+            ctx.metadata.setdefault("tool_rationale", {})[cap.id] = tool_rationale
+
             # The output contract is what the data-flow layer writes templates
             # against, so it is carried on the capability rather than buried in
             # the agent's own configuration.
@@ -228,6 +246,9 @@ class AgentDesignLayer(WorkflowStepLayer):
                 "model": agent_spec.model,
                 "temperature": agent_spec.temperature,
                 "tools": agent_spec.tools,
+                "tool_rationale": tool_rationale,
+                "why_agent": cap.mode_rationale,
+                "agent_needs_tools": cap.agent_needs_tools,
                 "connectors": agent_spec.connectors,
                 "document_library_ids": agent_spec.document_library_ids,
                 "knowledge_graph": agent_spec.knowledge_graph,

@@ -112,12 +112,13 @@ def parse_json(raw: str, fallback: Any = None) -> Any:
 async def decide(
     client: Any,
     *,
-    model: str,
+    model: Optional[str] = None,
     system: str,
     user: str,
     phase: str,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
     temperature: float = 0.1,
+    route: Optional[str] = None,
 ) -> dict:
     """Run one decision completion off the event loop, with a real timeout.
 
@@ -130,8 +131,28 @@ async def decide(
     429 here is not an error to report but a queue to join: the caller's only
     alternative is its fallback, which produces an agent assembled from defaults
     nobody decided.
+
+    ``route`` names a model route (``app/llm_routes.py``) instead of a model:
+    the route supplies the model, the reasoning effort, a timeout floor and a
+    fallback model tried once if the primary errors for a reason other than a
+    timeout or a rate limit.
     """
     from app.config import settings
+
+    effort: Optional[str] = None
+    fallback: Optional[str] = None
+    if route:
+        from app.llm_routes import route_for
+
+        r = route_for(route)
+        model = model or r.model
+        effort = r.reasoning_effort
+        timeout_ms = max(timeout_ms, r.timeout_ms)
+        if r.temperature is not None:
+            temperature = r.temperature
+        fallback = r.fallback_model
+    if not model:
+        raise ValueError("decide() needs a model or a route")
 
     started = time.monotonic()
     attempts = max(1, int(settings.DECISION_MAX_RETRIES))
@@ -149,17 +170,8 @@ async def decide(
                 logger.info("Decision '%s': retry %d/%d", phase, attempt, attempts - 1)
 
             try:
-                result = await asyncio.to_thread(
-                    client.chat.complete,
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=temperature,
-                    response_format={"type": "json_object"},
-                    timeout_ms=timeout_ms,
-                )
+                result = await _complete(client, model, system, user, temperature,
+                                         timeout_ms, effort, fallback)
             except Exception as e:
                 elapsed = time.monotonic() - started
                 text = str(e).lower()
@@ -179,7 +191,9 @@ async def decide(
                 logger.info(
                     "Decision '%s': completed in %.1fs", phase, time.monotonic() - started
                 )
-                return result.choices[0].message.content
+                from app.llm_routes import extract_text
+
+                return extract_text(result.choices[0].message.content)
 
         if attempt < attempts - 1:
             # Exponential backoff with jitter. The jitter matters more than the
@@ -195,6 +209,39 @@ async def decide(
     raise DecisionRateLimited(
         f"The '{phase}' step was rate limited after {attempts} attempts."
     ) from last_rate_limit
+
+
+async def _complete(client: Any, model: str, system: str, user: str, temperature: float,
+                    timeout_ms: int, effort: Optional[str], fallback: Optional[str]):
+    """One completion, with the route's reasoning effort and fallback model.
+
+    A model that rejects the effort value is retried without it. Any other
+    non-transient failure is retried once on the fallback model; timeouts and
+    rate limits are re-raised for ``decide`` to handle as before.
+    """
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    def _kwargs(m: str, with_effort: bool) -> dict:
+        kw = dict(model=m, messages=messages, response_format={"type": "json_object"},
+                  timeout_ms=timeout_ms)
+        if with_effort and effort:
+            kw["reasoning_effort"] = effort
+        else:
+            kw["temperature"] = temperature
+        return kw
+
+    try:
+        return await asyncio.to_thread(client.chat.complete, **_kwargs(model, True))
+    except Exception as e:
+        text = str(e).lower()
+        if effort and "reasoning_effort" in text and "not supported" in text:
+            return await asyncio.to_thread(client.chat.complete, **_kwargs(model, False))
+        transient = ("timed out" in text or "timeout" in text
+                     or _rate_limit_retry_after(e) is not None)
+        if transient or not fallback or fallback == model:
+            raise
+        logger.warning("Decision model %s failed (%s) — trying %s", model, type(e).__name__, fallback)
+        return await asyncio.to_thread(client.chat.complete, **_kwargs(fallback, False))
 
 
 class DecisionLayer(Layer):

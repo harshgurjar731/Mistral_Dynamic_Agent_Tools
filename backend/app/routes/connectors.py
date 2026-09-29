@@ -100,8 +100,13 @@ async def update_connector(connector_id: str, request: UpdateConnectorRequest):
 
 @router.delete("/connectors/{connector_id}")
 async def delete_connector(connector_id: str):
-    """Delete a custom connector."""
-    return await connector_service.delete_connector(connector_id)
+    """Delete a custom connector, and its edges in the knowledge graph."""
+    from app.services import delete_rules
+
+    result = await connector_service.delete_connector(connector_id)
+    if isinstance(result, dict) and not result.get("error"):
+        result["graph"] = delete_rules.forget_in_graph("connector", connector_id)
+    return result
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────

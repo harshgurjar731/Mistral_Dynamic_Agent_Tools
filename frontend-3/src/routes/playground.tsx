@@ -186,7 +186,7 @@ function PlaygroundPage() {
   const activeModel = CHAT_MODELS.find((m) => m.value === model);
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col md:h-dvh">
       {/* ── Top Bar ── */}
       <header className="relative z-30 flex items-center gap-3 border-b border-border px-5 py-3">
         {/* Left: Sessions dropdown trigger */}

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -6,6 +6,7 @@ import {
   Clock,
   FileText,
   History,
+  Layers,
   RefreshCw,
   RotateCcw,
   Search,
@@ -15,7 +16,10 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createSSEStream, parseEventData } from "@/api/sse";
+import { toast } from "sonner";
+import { z } from "zod";
+import { parseEventData, type SSEEvent } from "@/api/sse";
+import { errorMessage, runsApi, type RunStatus } from "@/api";
 import { Composer } from "@/components/chat/Composer";
 import { Markdown } from "@/components/chat/Markdown";
 import { TierSelector } from "@/components/chat/TierSelector";
@@ -30,13 +34,29 @@ import {
   type LayerManifestEntry,
   type LayerRuntime,
 } from "@/components/pipeline/PipelineTimeline";
-import { usePipelineRun } from "@/components/pipeline/usePipelineRun";
+import {
+  applyPipelineEvent,
+  EMPTY_PIPELINE,
+  failPipeline,
+  settlePipeline,
+  type PipelineRun,
+} from "@/components/pipeline/usePipelineRun";
+import { formatElapsed } from "@/components/runs/runMeta";
+import { stopRun, trackStartedRun } from "@/lib/runs/connections";
+import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
+import { useRunsStore } from "@/stores/runs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
+const searchSchema = z.object({
+  /** The background agent run on screen. */
+  run: z.string().optional(),
+});
+
 export const Route = createFileRoute("/")({
+  validateSearch: searchSchema,
   head: () => ({
     meta: [
       { title: "Orchestrator — Agentic AI Design Patterns" },
@@ -81,6 +101,8 @@ const SUGGESTIONS = [
  */
 interface OrchestratorRunEntry {
   id: string;
+  /** The background run this entry records — keeps a run from being saved twice. */
+  runId?: string | null | undefined;
   timestamp: number;
   prompt: string;
   manifest?: LayerManifestEntry[];
@@ -97,26 +119,136 @@ interface OrchestratorRunEntry {
 const HISTORY_KEY = "agent_orchestrator_history";
 const MAX_HISTORY = 40;
 
+/* ── Run → view ────────────────────────────────────────────────────────── */
+
+interface AgentView {
+  pipeline: PipelineRun;
+  decisions: AgentDecisions;
+  answer: string;
+  conversationId: string | null;
+  agentId: string | null;
+  errorText: string | null;
+  /** Set once the run's `run_end` has been replayed. */
+  end: { status: RunStatus; error: string | null } | null;
+}
+
+const initAgentView = (): AgentView => ({
+  pipeline: EMPTY_PIPELINE,
+  decisions: {},
+  answer: "",
+  conversationId: null,
+  agentId: null,
+  errorText: null,
+  end: null,
+});
+
+/**
+ * The orchestrator's event handling as a pure fold, so a run watched live,
+ * reopened mid-way, or replayed after a reload renders the same screen.
+ */
+function reduceAgent(view: AgentView, event: SSEEvent): AgentView {
+  const pipeline = applyPipelineEvent(view.pipeline, event.type, event.data);
+  if (pipeline) return { ...view, pipeline };
+
+  if (AGENT_DECISION_EVENTS.has(event.type as keyof AgentDecisions)) {
+    const parsed = parseEventData<unknown>(event);
+    if (typeof parsed === "string") return view;
+    return { ...view, decisions: { ...view.decisions, [event.type]: parsed } };
+  }
+
+  switch (event.type) {
+    case "text_chunk":
+      return { ...view, answer: view.answer + event.data };
+    case "conversation_id":
+      return { ...view, conversationId: event.data };
+    case "error":
+      return {
+        ...view,
+        errorText: event.data,
+        pipeline: failPipeline(view.pipeline, event.data),
+      };
+    case "done": {
+      const done = parseEventData<{ agent_id?: string }>(event);
+      return typeof done !== "string" && done.agent_id ? { ...view, agentId: done.agent_id } : view;
+    }
+    case "run_end": {
+      const end = parseEventData<{ status?: RunStatus; error?: string | null }>(event);
+      const status: RunStatus = typeof end === "string" ? "completed" : (end.status ?? "completed");
+      const error = typeof end === "string" ? null : (end.error ?? null);
+      if (status === "completed") {
+        return { ...view, end: { status, error }, pipeline: settlePipeline(view.pipeline) };
+      }
+      if (status === "cancelled") {
+        return {
+          ...view,
+          end: { status, error },
+          pipeline: failPipeline(view.pipeline, "Stopped before it finished."),
+        };
+      }
+      const message = view.errorText ?? error ?? "Generation failed";
+      return {
+        ...view,
+        end: { status, error },
+        errorText: message,
+        pipeline: failPipeline(view.pipeline, message),
+      };
+    }
+    default:
+      return view;
+  }
+}
+
 function OrchestratorChat() {
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { run: runId } = Route.useSearch();
+
   const [input, setInput] = useState("");
   const [tier, setTier] = useState("domain");
-  const [answer, setAnswer] = useState("");
-  const [decisions, setDecisions] = useState<AgentDecisions>({});
-  const [errorText, setErrorText] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [agentId, setAgentId] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  /** The prompt of a run being started, shown before the run exists. */
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<OrchestratorRunEntry[]>([]);
-  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  /** A saved history entry being shown, instead of a live run. */
+  const [replay, setReplay] = useState<OrchestratorRunEntry | null>(null);
 
-  const { run, reset, restore, handleEvent, settle, failRunning } = usePipelineRun();
-
-  const stopRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  /** Guards the save effect so a finished run is recorded exactly once. */
-  const savedRef = useRef(true);
+
+  const tracked = useTrackedRun(runId);
+  const { missing } = useRunView(runId);
+  const view = useRunReducer(runId, reduceAgent, initAgentView);
+
+  // Until the run's summary loads, a run without a replayed ending counts as live.
+  const running =
+    Boolean(runId) && !missing && !view.end && (tracked ? tracked.status === "running" : true);
+  const isProcessing = running || starting;
+  const elapsed = useElapsed(tracked?.created_at, running, tracked?.finished_at);
+
+  const run = useMemo<PipelineRun>(
+    () =>
+      replay
+        ? {
+            manifest: replay.manifest ?? [],
+            runtime: replay.runtime ?? {},
+            activeNote: "",
+            started: (replay.manifest?.length ?? 0) > 0,
+          }
+        : view.pipeline,
+    [replay, view.pipeline],
+  );
+  const decisions = useMemo(
+    () => (replay ? (replay.decisions ?? {}) : view.decisions),
+    [replay, view.decisions],
+  );
+  const answer = replay ? (replay.response ?? replay.answer ?? "") : view.answer;
+  const agentId = replay ? (replay.agentId ?? null) : view.agentId;
+  const errorText = replay ? null : view.errorText;
+  const submittedQuery = replay
+    ? replay.prompt
+    : runId
+      ? (tracked?.title ?? pendingQuery)
+      : pendingQuery;
 
   useEffect(() => {
     try {
@@ -126,6 +258,24 @@ function OrchestratorChat() {
       // A corrupt store is not worth failing the page over.
     }
   }, []);
+
+  // Coming back to the orchestrator lands on the run still in flight (or one
+  // that finished while the user was away), rather than on an empty screen.
+  const attachedRef = useRef(false);
+  useEffect(() => {
+    if (attachedRef.current) return;
+    attachedRef.current = true;
+    if (runId) return;
+    const candidate = Object.values(useRunsStore.getState().runs)
+      .filter((r) => r.kind === "agent" && (r.status === "running" || !r.seen))
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0];
+    if (candidate) void navigate({ search: { run: candidate.id }, replace: true });
+  }, [navigate, runId]);
+
+  // Follow-up messages continue the conversation of the run on screen.
+  useEffect(() => {
+    if (view.conversationId) setConversationId(view.conversationId);
+  }, [view.conversationId]);
 
   const persistHistory = useCallback((next: OrchestratorRunEntry[]) => {
     try {
@@ -146,131 +296,83 @@ function OrchestratorChat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [run, answer, errorText]);
+  }, [run.runtime, run.activeNote, answer, errorText]);
 
-  useEffect(() => () => stopRef.current?.(), []);
-
-  // Record the run once it has fully settled. An effect rather than the stream
-  // callback: that fires in the same tick as the last layer events and settle(),
-  // so the state it can see is one render behind.
+  // Record a finished run once, keyed by its run id.
   useEffect(() => {
-    if (isProcessing || savedRef.current || (!run.started && !errorText)) return;
-    savedRef.current = true;
-    const entry: OrchestratorRunEntry = {
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
-      prompt: submittedQuery ?? "",
-      manifest: run.manifest,
-      runtime: run.runtime,
-      decisions,
-      title: decisions.agent_config?.agent_name ?? null,
-      response: answer,
-      agentId,
-      failed: Boolean(errorText),
-    };
-    setActiveHistoryId(entry.id);
+    if (!runId || !view.end || replay) return;
+    if (!view.pipeline.started && !view.errorText) return;
     setHistory((prev) => {
+      if (prev.some((h) => h.runId === runId)) return prev;
+      const entry: OrchestratorRunEntry = {
+        id: crypto.randomUUID(),
+        runId,
+        timestamp: Date.now(),
+        prompt: tracked?.title ?? "",
+        manifest: view.pipeline.manifest,
+        runtime: view.pipeline.runtime,
+        decisions: view.decisions,
+        title: view.decisions.agent_config?.agent_name ?? null,
+        response: view.answer,
+        agentId: view.agentId,
+        failed: Boolean(view.errorText),
+      };
       const next = [entry, ...prev].slice(0, MAX_HISTORY);
       persistHistory(next);
       return next;
     });
-  }, [isProcessing, run, decisions, submittedQuery, answer, agentId, errorText, persistHistory]);
+  }, [runId, view, replay, tracked?.title, persistHistory]);
 
   const submit = useCallback(
-    (override?: string) => {
+    async (override?: string) => {
       const query = (override ?? input).trim();
       if (!query || isProcessing) return;
 
-      stopRef.current?.();
-      setSubmittedQuery(query);
+      setStarting(true);
+      setPendingQuery(query);
+      setReplay(null);
       if (override === undefined) setInput("");
-      setAnswer("");
-      setDecisions({});
-      setErrorText(null);
-      setAgentId(null);
-      setActiveHistoryId(null);
-      setIsProcessing(true);
-      savedRef.current = false;
-      reset();
-
-      const finish = () => {
-        setIsProcessing(false);
-        settle();
-      };
-
-      stopRef.current = createSSEStream("/api/orchestrate/stream", {
-        method: "POST",
-        body: { query, tier, ...(conversationId ? { conversation_id: conversationId } : {}) },
-        onEvent: (event) => {
-          // The manifest, layer lifecycle and status notes are handled centrally.
-          if (handleEvent(event.type, event.data)) return;
-
-          if (AGENT_DECISION_EVENTS.has(event.type as keyof AgentDecisions)) {
-            const parsed = parseEventData<unknown>(event);
-            if (typeof parsed === "string") return;
-            setDecisions((prev) => ({ ...prev, [event.type]: parsed }));
-            return;
-          }
-
-          switch (event.type) {
-            case "text_chunk":
-              setAnswer((prev) => prev + event.data);
-              break;
-            case "conversation_id":
-              setConversationId(event.data);
-              break;
-            case "error":
-              setErrorText(event.data);
-              failRunning(event.data);
-              break;
-            case "done": {
-              const done = parseEventData<{ agent_id?: string }>(event);
-              if (typeof done !== "string" && done.agent_id) setAgentId(done.agent_id);
-              break;
-            }
-            default:
-              break;
-          }
-        },
-        onDone: finish,
-        onError: (err) => {
-          const message = err instanceof Error ? err.message : "Stream failed";
-          setErrorText(message);
-          failRunning(message);
-          setIsProcessing(false);
-        },
-      });
+      try {
+        const started = await runsApi.startAgent({
+          query,
+          tier,
+          ...(conversationId ? { conversation_id: conversationId } : {}),
+        });
+        trackStartedRun(started);
+        void navigate({ search: { run: started.id } });
+      } catch (err) {
+        toast.error(`Could not start: ${errorMessage(err)}`);
+        if (override === undefined) setInput(query);
+        setPendingQuery(null);
+      } finally {
+        setStarting(false);
+      }
     },
-    [conversationId, failRunning, handleEvent, input, isProcessing, reset, settle, tier],
+    [conversationId, input, isProcessing, navigate, tier],
   );
 
   const loadHistoryEntry = (entry: OrchestratorRunEntry) => {
-    stopRef.current?.();
-    setIsProcessing(false);
-    savedRef.current = true;
-    setSubmittedQuery(entry.prompt);
-    setDecisions(entry.decisions ?? {});
-    setAnswer(entry.response ?? entry.answer ?? "");
-    setAgentId(entry.agentId ?? null);
-    setErrorText(null);
-    setActiveHistoryId(entry.id);
-    restore(entry.manifest, entry.runtime);
     setHistoryOpen(false);
+    setPendingQuery(null);
+    if (entry.runId && useRunsStore.getState().runs[entry.runId]) {
+      // Still tracked: reopen the run itself, which replays from the server.
+      setReplay(null);
+      void navigate({ search: { run: entry.runId } });
+      return;
+    }
+    setReplay(entry);
+    void navigate({ search: {} });
   };
 
   const resetChat = () => {
-    stopRef.current?.();
-    savedRef.current = true;
-    setSubmittedQuery(null);
-    setDecisions({});
-    setAnswer("");
-    setErrorText(null);
-    setAgentId(null);
+    setReplay(null);
+    setPendingQuery(null);
     setConversationId(null);
-    setActiveHistoryId(null);
-    setIsProcessing(false);
-    reset();
+    void navigate({ search: {} });
   };
+
+  const activeHistoryId =
+    replay?.id ?? (runId ? (history.find((h) => h.runId === runId)?.id ?? null) : null);
 
   const cards = useMemo(() => agentLayerCards(decisions), [decisions]);
   const raw = useMemo(() => agentLayerRaw(decisions), [decisions]);
@@ -278,7 +380,7 @@ function OrchestratorChat() {
   const empty = !submittedQuery && !run.started && !answer;
 
   return (
-    <div className="relative mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-4xl flex-col px-5 pb-8">
+    <div className="relative mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-4xl md:min-h-dvh flex-col px-5 pb-8">
       {/* ── History toggle ── */}
       <div className="flex items-center justify-end gap-2 py-3">
         {!empty && (
@@ -303,17 +405,7 @@ function OrchestratorChat() {
 
       {/* ── Empty / Hero State ── */}
       {empty ? (
-        <div className="flex flex-1 flex-col items-center justify-center pb-24">
-          <div className="relative mb-8">
-            <div
-              className="absolute -inset-12 rounded-full opacity-20 blur-3xl"
-              style={{ background: "var(--gradient-brand)" }}
-            />
-            <div className="relative grid size-16 place-items-center rounded-2xl border border-border/60 glass">
-              <Bot className="size-7 text-primary" />
-            </div>
-          </div>
-
+        <div className="flex flex-1 flex-col items-center justify-center py-8">
           <h1 className="text-center text-3xl font-semibold tracking-tight text-foreground sm:text-4xl lg:text-5xl">
             Describe your goal.
             <br />
@@ -364,12 +456,24 @@ function OrchestratorChat() {
                   Orchestration Pipeline
                 </span>
                 {isProcessing ? (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                     <span className="size-1.5 animate-pulse rounded-full bg-primary" />
                     Processing
+                    {running && elapsed != null ? (
+                      <span className="font-mono tabular-nums opacity-80">
+                        {formatElapsed(elapsed)}
+                      </span>
+                    ) : null}
                   </span>
                 ) : null}
               </div>
+              {running ? (
+                <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                  <Layers className="mt-0.5 size-3 shrink-0 text-primary" />
+                  This runs in the background. You can leave this page — the agent keeps being
+                  built, and this timeline picks up where it is when you come back.
+                </p>
+              ) : null}
               {run.started ? (
                 <PipelineTimeline
                   manifest={run.manifest}
@@ -384,6 +488,18 @@ function OrchestratorChat() {
             </div>
           ) : null}
 
+          {missing ? (
+            <p className="rounded-2xl border border-border/50 bg-surface/30 p-4 text-xs text-muted-foreground">
+              This run is no longer available — it may have been cleared from the server’s run log.
+            </p>
+          ) : null}
+
+          {view.end?.status === "cancelled" && !replay ? (
+            <p className="text-xs text-muted-foreground">
+              Stopped before it finished. Anything already created is kept.
+            </p>
+          ) : null}
+
           {errorText ? (
             <div className="flex flex-col items-start gap-3 rounded-2xl border border-red/25 bg-red/5 p-4">
               <div className="flex items-start gap-2">
@@ -394,7 +510,7 @@ function OrchestratorChat() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => submit(submittedQuery)}
+                  onClick={() => void submit(submittedQuery ?? undefined)}
                   disabled={isProcessing}
                 >
                   <RefreshCw className="size-3.5" /> Retry generation
@@ -453,11 +569,9 @@ function OrchestratorChat() {
           <Composer
             value={input}
             onChange={setInput}
-            onSubmit={() => submit()}
+            onSubmit={() => void submit()}
             onStop={() => {
-              stopRef.current?.();
-              setIsProcessing(false);
-              settle();
+              if (runId) void stopRun(runId);
             }}
             isProcessing={isProcessing}
             leading={<TierSelector value={tier} onChange={setTier} disabled={isProcessing} />}

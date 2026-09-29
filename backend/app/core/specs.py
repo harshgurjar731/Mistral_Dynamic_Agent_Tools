@@ -306,6 +306,8 @@ class CapabilitySpec:
     kind: str = "agent"                 # agent | activity | connector
     mode_rationale: str = ""
     agent_needs_tools: bool = False
+    #: For kind "connector": the attachable connector chosen for it.
+    connector_id: Optional[str] = None
 
     # Filled by CapabilityReuseLayer.
     reuse_agent_id: Optional[str] = None
@@ -350,3 +352,100 @@ class WorkflowSpec:
     mistral_workflow_id: Optional[str] = None
 
     rationale: dict[str, str] = field(default_factory=dict)
+
+
+# ── Code requirements (tools and activities) ────────────────────────────────
+
+
+@dataclass
+class CodeNeed:
+    """Something the platform must be able to execute, before anyone has
+    decided whether it already exists or what exactly it is.
+
+    Every entry point that can cause code to be built — the chat pipeline's
+    capability gap, the workflow planner's activity gap, an explicit request,
+    and a workflow step whose activity has gone missing at run time — produces
+    one of these and hands it to the code-requirement pipeline
+    (``app.layers.codegen``). They used to each build their own specification,
+    differently.
+    """
+
+    purpose: str = "tool"               # tool | activity
+    origin: str = "explicit"            # chat | workflow | explicit | runtime
+    intent: str = ""                    # what is needed, in words
+    name_hint: str = ""
+    goal: str = ""                      # the wider goal, for context
+    #: Workflow capability this need serves: {"id", "name", "purpose", "inputs", "outputs"}.
+    capability: dict = field(default_factory=dict)
+    #: Neighbouring capabilities — what feeds this step and what reads its output.
+    upstream: list[dict] = field(default_factory=list)
+    downstream: list[dict] = field(default_factory=list)
+    #: A partial specification a caller already has (e.g. the chat gap
+    #: decision's parameters). Refined, not trusted.
+    draft: dict = field(default_factory=dict)
+    #: A complete stored requirement (runtime recovery) — skips authoring.
+    requirement: Optional[dict] = None
+
+
+@dataclass
+class CodeRequirement:
+    """SynthesisSpec v2 as the backend authors it — the tool service's contract."""
+
+    name: str = ""
+    description: str = ""
+    purpose: str = "tool"
+    kind: str = "pure"
+    input_schema: dict = field(default_factory=lambda: {"type": "object", "properties": {}, "required": []})
+    output_schema: Optional[dict] = None
+    examples: list[dict] = field(default_factory=list)
+    api_details: str = "No external API. This is a pure computation using the standard library."
+    secrets: list[str] = field(default_factory=list)
+    side_effects: str = "none"
+    http_fixtures: list[dict] = field(default_factory=list)
+    origin: str = "explicit"
+
+    def as_request(self) -> dict:
+        return {
+            "name": self.name, "description": self.description, "purpose": self.purpose,
+            "kind": self.kind, "input_schema": self.input_schema,
+            "output_schema": self.output_schema, "examples": self.examples,
+            "api_details": self.api_details, "secrets": self.secrets,
+            "side_effects": self.side_effects, "http_fixtures": self.http_fixtures,
+            "origin": self.origin,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CodeRequirement":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: copy.deepcopy(v) for k, v in (data or {}).items() if k in known})
+
+
+@dataclass
+class CodeResolution:
+    """What the code-requirement pipeline concluded for one need."""
+
+    status: str = "failed"              # reused | built | pending_approval | blocked | failed
+    name: str = ""
+    version: Optional[int] = None
+    tool_id: Optional[int] = None
+    purpose: str = "tool"
+    reason: str = ""
+    message: str = ""
+    issues: list[str] = field(default_factory=list)
+    requirement: Optional[CodeRequirement] = None
+    output_schema: Optional[dict] = None
+    review_required: bool = False
+
+    @property
+    def usable(self) -> bool:
+        """True when the code exists and runs now."""
+        return self.status in ("reused", "built")
+
+    def as_dict(self) -> dict:
+        return {
+            "status": self.status, "tool_name": self.name, "version": self.version,
+            "tool_id": self.tool_id, "purpose": self.purpose, "reason": self.reason,
+            "message": self.message, "issues": list(self.issues),
+            "requirement": self.requirement.as_request() if self.requirement else None,
+            "output_schema": self.output_schema, "review_required": self.review_required,
+        }

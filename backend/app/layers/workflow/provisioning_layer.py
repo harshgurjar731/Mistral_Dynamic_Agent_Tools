@@ -76,6 +76,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
 
         spec = ctx.workflow_spec
         contracts = ctx.metadata.get("output_contracts") or {}
+        tool_rationale = ctx.metadata.get("tool_rationale") or {}
         agent_caps = [c for c in spec.capabilities if c.kind == "agent"]
 
         # ── Reused agents ────────────────────────────────────────────────
@@ -95,6 +96,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                 "model": "",
                 "tier": existing.get("tier", "foundation"),
                 "tools": [],
+                "why_agent": cap.mode_rationale,
                 # What the agent already has attached in Mistral, not what this
                 # plan asked for — reuse never re-attaches.
                 "connectors": existing.get("connectors", []),
@@ -214,6 +216,13 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         "model": map_model_name(config["model"]),
                         "tier": config["tier"],
                         "tools": config["tools"],
+                        # Explanations for the tools that survived the rules
+                        # gate — a tool the gate removed is not attached.
+                        "tool_rationale": [
+                            t for t in tool_rationale.get(cap.id, [])
+                            if t.get("tool") in config["tools"]
+                        ],
+                        "why_agent": cap.mode_rationale,
                         "connectors": config["connectors"],
                         "description": config["description"],
                         "output_contract": contracts.get(cap.id, {}).get(
