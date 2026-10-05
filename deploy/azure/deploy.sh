@@ -35,10 +35,12 @@ if ! grep -qE "^MISTRAL_API_KEY=.+" "$ENV_FILE"; then
   exit 1
 fi
 
-# The backend container runs as a non-root user and writes compiled workflows
-# into the repo's mistral_workflows/ directory.
+# The backend container runs as a non-root user (uid 10001) and writes compiled
+# workflows into the repo's mistral_workflows/ directory. Open up only what we
+# own (the directory, files from git): files the container compiled belong to
+# its user, who can already write them, and we are not allowed to chmod them.
 mkdir -p ../mistral_workflows
-chmod -R a+rwX ../mistral_workflows
+find ../mistral_workflows -user "$(id -u)" -exec chmod a+rwX {} +
 
 docker compose up -d --build --remove-orphans
 docker image prune -f >/dev/null
