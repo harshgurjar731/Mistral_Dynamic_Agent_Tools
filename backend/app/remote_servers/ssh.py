@@ -150,6 +150,11 @@ def connect(config: dict, secrets: dict, *, timeout: float = 12.0, expected_fing
         raise SSHError(f"Cannot connect: {e}") from e
 
     actual = fingerprint(client.get_transport().get_remote_server_key())
+    # Brev's ingress does not present a stable host key — its own ssh_config
+    # disables host-key checking — so a pin would reject later connections.
+    # Brev servers are authenticated by Brev-signed certificates instead.
+    if config.get("brev_env"):
+        expected_fingerprint = None
     if expected_fingerprint and actual != expected_fingerprint:
         client.close()
         raise SSHError(

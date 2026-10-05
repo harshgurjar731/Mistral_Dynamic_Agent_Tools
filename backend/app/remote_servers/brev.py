@@ -89,6 +89,9 @@ def run(*args: str, input: str | None = None, check: bool = True, timeout: int =
     except subprocess.TimeoutExpired as e:
         raise BrevError(f"`{' '.join(args[:2])}` timed out after {timeout}s") from e
     out = ANSI.sub("", r.stdout + r.stderr)
+    if "currently logged out" in out:
+        raise BrevError("The Brev CLI on the backend host is logged out — run `brev login` there "
+                        "(Docker: docker compose exec -it backend brev login)")
     if check and r.returncode:
         raise BrevError(f"`{' '.join(args[:3])}` failed (exit {r.returncode}):\n{out.strip()}")
     return out
@@ -119,6 +122,20 @@ def require_running(name: str) -> None:
         raise BrevError(f"Brev instance '{name}' is {status} — start it in the Brev console first")
 
 
+def _fix_ssh_permissions() -> None:
+    """ssh refuses a group/world-writable ~/.ssh/config ("Bad owner or
+    permissions"), which `brev refresh` can leave behind. Tighten what we own;
+    report what we cannot (e.g. files created by root in a container)."""
+    out = run("sh", "-c",
+              'd="$HOME/.ssh"; [ -d "$d" ] || exit 0; chmod 700 "$d" 2>/dev/null; '
+              'for f in "$d/config" "$HOME/.brev/ssh_config"; do [ -e "$f" ] || continue; '
+              'chmod go-w "$f" 2>/dev/null; [ -O "$f" ] || echo "not-owned: $f"; done', check=False)
+    bad = [line.split(": ", 1)[1] for line in out.splitlines() if line.startswith("not-owned: ")]
+    if bad:
+        raise BrevError(f"{', '.join(bad)} is owned by another user, so ssh will refuse it. In Docker: "
+                        "docker compose exec -u root backend chown -R app:app /home/app/.ssh /home/app/.brev")
+
+
 def ssh_details(name: str) -> dict:
     """host / port / username / private_key for an instance, via `brev refresh` + `ssh -G`.
 
@@ -127,6 +144,7 @@ def ssh_details(name: str) -> dict:
     caller needs a public endpoint (Access tab → TCP/UDP ports) instead.
     """
     run("brev", "refresh")
+    _fix_ssh_permissions()
     opts: dict[str, list[str]] = {}
     for line in run("ssh", "-G", name).splitlines():
         key, _, value = line.strip().partition(" ")
