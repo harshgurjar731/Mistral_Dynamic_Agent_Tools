@@ -802,6 +802,41 @@ def _check_required_inputs(workflow, payload: dict) -> None:
     )
 
 
+async def mistral_execute(workflow_name: str, inputs: dict, deployment: str,
+                          execution_id: str | None = None) -> dict:
+    """Start a run on Mistral, routed to the worker polling ``deployment``.
+
+    Raises RuntimeError on a non-2xx answer. Also used to run a workflow on a
+    remote server's worker (routes/remote_servers.py), with that server's
+    DEPLOYMENT_NAME.
+    """
+    body: dict = {
+        "input": {"variables": inputs},
+        # Send all known field-name variants for worker task-queue routing.
+        # The Mistral API field name has changed across versions; sending
+        # all three is safe (unknown fields are silently ignored server-side).
+        "worker_deployment": deployment,   # current API field name
+        "worker_identifier": deployment,   # older API field name
+        "deployment_name":   deployment,   # alias in some versions
+    }
+    if execution_id:
+        body["execution_id"] = execution_id
+
+    logger.info("Executing '%s' on Mistral server — worker_deployment='%s'", workflow_name, deployment)
+    resp = await asyncio.to_thread(
+        lambda: httpx.post(
+            f"https://api.mistral.ai/v1/workflows/{workflow_name}/execute",
+            headers={**_mistral_headers(), "Content-Type": "application/json"},
+            json=body,
+            timeout=30.0,
+        )
+    )
+    logger.info("Mistral execute response: status=%d body=%.300s", resp.status_code, resp.text)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Mistral API returned {resp.status_code}: {resp.text}")
+    return resp.json()
+
+
 @router.post("/workflows/{workflow_name}/execute", response_model=WorkflowExecutionResponse)
 async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflowRequest):
     """
@@ -828,41 +863,8 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
     # SDK wrapper does not expose. We send all known field-name variants
     # for the worker routing hint — the server ignores unknown fields.
     try:
-        body: dict = {
-            "input": {"variables": request.input or {}},
-            # Send all known field-name variants for worker task-queue routing.
-            # The Mistral API field name has changed across versions; sending
-            # all three is safe (unknown fields are silently ignored server-side).
-            "worker_deployment": WORKER_DEPLOYMENT,   # current API field name
-            "worker_identifier": WORKER_DEPLOYMENT,   # older API field name
-            "deployment_name":   WORKER_DEPLOYMENT,   # alias in some versions
-        }
-        if request.execution_id:
-            body["execution_id"] = request.execution_id
-
-        logger.info(
-            "Executing '%s' on Mistral server — worker_deployment='%s'",
-            workflow_name, WORKER_DEPLOYMENT,
-        )
-
-        resp = await asyncio.to_thread(
-            lambda: httpx.post(
-                f"https://api.mistral.ai/v1/workflows/{workflow_name}/execute",
-                headers={**_mistral_headers(), "Content-Type": "application/json"},
-                json=body,
-                timeout=30.0,
-            )
-        )
-
-        logger.info(
-            "Mistral execute response: status=%d body=%.300s",
-            resp.status_code, resp.text,
-        )
-
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Mistral API returned {resp.status_code}: {resp.text}")
-
-        data = resp.json()
+        data = await mistral_execute(workflow_name, request.input or {}, WORKER_DEPLOYMENT,
+                                     request.execution_id)
         exec_id = data.get("execution_id", data.get("id", ""))
         status_raw = str(data.get("status", "RUNNING")).upper()
 

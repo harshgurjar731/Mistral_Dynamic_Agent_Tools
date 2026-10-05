@@ -14,6 +14,7 @@ import io
 import logging
 import shlex
 import socket
+import threading
 import time
 from typing import Callable
 
@@ -166,8 +167,12 @@ def connect(config: dict, secrets: dict, *, timeout: float = 12.0, expected_fing
 
 
 def run(client, command: str, *, timeout: float = 60.0,
-        on_output: Callable[[str], None] | None = None) -> tuple[int, str]:
-    """Run a command, stdout+stderr combined. Returns (exit_code, output)."""
+        on_output: Callable[[str], None] | None = None,
+        cancel: threading.Event | None = None) -> tuple[int, str]:
+    """Run a command, stdout+stderr combined. Returns (exit_code, output).
+
+    Setting ``cancel`` closes the channel, which ends the remote command.
+    """
     transport = client.get_transport()
     channel = transport.open_session()
     channel.set_combine_stderr(True)
@@ -176,6 +181,9 @@ def run(client, command: str, *, timeout: float = 60.0,
     chunks: list[str] = []
     deadline = time.monotonic() + timeout
     while True:
+        if cancel is not None and cancel.is_set():
+            channel.close()
+            raise SSHError("Stopped")
         if channel.recv_ready():
             data = channel.recv(65536).decode(errors="replace")
             chunks.append(data)

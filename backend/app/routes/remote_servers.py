@@ -195,6 +195,20 @@ async def get_deployment(deployment_id: int, db: Session = Depends(get_db)):
     return store.deployment_to_dict(dep)
 
 
+@router.post("/remote-servers/deployments/{deployment_id}/cancel")
+async def cancel_deployment(deployment_id: int, db: Session = Depends(get_db)):
+    """Stop a running console command (e.g. a `logs -f`)."""
+    db = _require_db(db)
+    dep = db.get(RemoteDeployment, deployment_id)
+    if not dep:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    if dep.kind != "command":
+        raise HTTPException(status_code=422, detail="Only console commands can be stopped")
+    if not deployers.cancel_command(deployment_id):
+        raise HTTPException(status_code=409, detail="This command is not running")
+    return {"status": "stopping", "id": deployment_id}
+
+
 @router.get("/remote-servers/deployments")
 async def list_all_deployments(workflow_name: Optional[str] = None, limit: int = 50,
                                db: Session = Depends(get_db)):
@@ -295,6 +309,139 @@ async def provision_server(server_id: int, db: Session = Depends(get_db)):
     except deployers.DeployError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return store.deployment_to_dict(dep)
+
+
+@router.post("/remote-servers/{server_id}/commands")
+async def run_command(server_id: int, request: Request, db: Session = Depends(get_db)):
+    """Run a console command (or a preset) over SSH; poll the returned deployment.
+
+    Body: {command? | preset?, workflow?, timeout?} — ``workflow`` runs it in
+    that deployed workflow's directory, otherwise in the deploy directory.
+    """
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    if (get_provider(server.provider or "") or {}).get("transport") != "ssh":
+        raise HTTPException(status_code=422, detail=f"'{server.name}' is not an SSH server")
+    body = await request.json()
+    try:
+        dep = deployers.start_remote_command(
+            db, server,
+            command=str(body.get("command") or ""),
+            preset=str(body.get("preset") or ""),
+            workflow=str(body.get("workflow") or "").strip(),
+            timeout=int(body.get("timeout") or 600),
+        )
+    except (deployers.DeployError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return store.deployment_to_dict(dep)
+
+
+def _require_ssh(server: RemoteServer) -> None:
+    if (get_provider(server.provider or "") or {}).get("transport") != "ssh":
+        raise HTTPException(status_code=422, detail=f"'{server.name}' is not an SSH server")
+
+
+@router.post("/remote-servers/{server_id}/build")
+async def build_workflow(server_id: int, request: Request, db: Session = Depends(get_db)):
+    """Build (and optionally start) a deployed workflow's Docker stack on the server.
+
+    Body: {workflow, services[], no_cache, pull, run_bootstrap, start,
+    force_recreate, remove_orphans, build_args{}, env{}} — ``env`` is merged
+    into the workflow's .env first. Poll the returned deployment for the log.
+    """
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    _require_ssh(server)
+    body = await request.json()
+    workflow = str(body.get("workflow") or "").strip()
+    if not workflow:
+        raise HTTPException(status_code=422, detail="Choose a deployed workflow")
+    try:
+        command = deployers.build_compose_command(
+            services=list(body.get("services") or ["backend"]),
+            no_cache=bool(body.get("no_cache")),
+            pull=bool(body.get("pull")),
+            run_bootstrap=bool(body.get("run_bootstrap")),
+            start=body.get("start", True) is not False,
+            force_recreate=bool(body.get("force_recreate")),
+            remove_orphans=bool(body.get("remove_orphans")),
+            build_args=body.get("build_args") or {},
+        )
+        dep = deployers.start_remote_command(
+            db, server, command=command, workflow=workflow, timeout=3600, action="build",
+            env=deployers.clean_env(body.get("env") or {}),
+        )
+    except (deployers.DeployError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return store.deployment_to_dict(dep)
+
+
+@router.post("/remote-servers/{server_id}/run-workflow")
+async def run_workflow_on_server(server_id: int, request: Request, db: Session = Depends(get_db)):
+    """Start a run of a deployed workflow on this server's worker.
+
+    Mistral routes a run to the worker polling the run's deployment name, so
+    this sends it with the DEPLOYMENT_NAME from the workflow's .env on the
+    server (or ``deployment_name`` from the body). Body: {workflow, input{},
+    deployment_name?}.
+    """
+    import hashlib
+
+    from app.config import settings
+    from app.routes.workflows import WORKER_DEPLOYMENT, _check_required_inputs, mistral_execute
+    from app.services.workflow_engine.engine import get_workflow
+
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    _require_ssh(server)
+    body = await request.json()
+    workflow = str(body.get("workflow") or "").strip()
+    inputs = body.get("input") or {}
+    if not workflow:
+        raise HTTPException(status_code=422, detail="Choose a deployed workflow")
+    if not isinstance(inputs, dict):
+        raise HTTPException(status_code=422, detail="input must be an object")
+
+    local = get_workflow(workflow)
+    if local:
+        _check_required_inputs(local, inputs)
+
+    warnings: list[str] = []
+    try:
+        info = await asyncio.to_thread(deployers.remote_env_info, store.server_config(server),
+                                       store.server_secrets(server), workflow)
+    except (deployers.DeployError, Exception) as e:
+        raise HTTPException(status_code=422, detail=f"Could not read the workflow's .env on the server: {e}")
+
+    deployment = str(body.get("deployment_name") or "").strip() or info["deployment_name"]
+    if not deployment:
+        raise HTTPException(status_code=422, detail="The workflow's .env on the server has no DEPLOYMENT_NAME "
+                                                    "— set one (Build panel → .env overrides) and restart the worker")
+    empty_hash = hashlib.sha256(b"").hexdigest()
+    local_hash = hashlib.sha256((settings.MISTRAL_API_KEY or "").encode()).hexdigest()
+    if info["key_hash"] in ("", empty_hash):
+        raise HTTPException(status_code=422, detail="The workflow's .env on the server has no MISTRAL_API_KEY")
+    if info["key_hash"] != local_hash:
+        raise HTTPException(status_code=422, detail=(
+            "The server's MISTRAL_API_KEY belongs to a different key than this app's, so its worker "
+            "polls another workspace and would never pick up this run. Set the same key in the "
+            "server's .env (Build panel → .env overrides) and restart the worker."))
+    if deployment == WORKER_DEPLOYMENT and settings.MISTRAL_WORKER_ENABLED:
+        warnings.append(f"This app's own worker also polls '{deployment}', so it may take this run "
+                        "instead of the server. Give the server its own DEPLOYMENT_NAME, or set "
+                        "MISTRAL_WORKER_ENABLED=false for this app.")
+
+    try:
+        data = await mistral_execute(workflow, inputs, deployment)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "execution_id": data.get("execution_id", data.get("id", "")),
+        "status": str(data.get("status", "RUNNING")).upper(),
+        "workflow_name": workflow,
+        "deployment_name": deployment,
+        "warnings": warnings,
+    }
 
 
 @router.get("/remote-servers/{server_id}/remote-workflows")

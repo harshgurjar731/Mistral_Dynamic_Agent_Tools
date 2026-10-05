@@ -35,10 +35,20 @@ export interface ServerProvider {
   provisioned?: boolean;
 }
 
+export interface CommandPreset {
+  label: string;
+  /** "workflow": runs in a deployed workflow's directory; "server": in the deploy directory. */
+  scope: "workflow" | "server";
+  command: string;
+  /** Streams until stopped (e.g. following logs). */
+  long_running?: boolean;
+}
+
 export interface ProviderCatalog {
   purposes: Record<ServerPurpose, { label: string; description: string }>;
   providers: ServerProvider[];
   workflow_actions: Record<string, string>;
+  command_presets: Record<string, CommandPreset>;
 }
 
 export interface ServerCheck {
@@ -97,7 +107,7 @@ export interface RemoteDeployment {
   id: number;
   server_id: number;
   server_name?: string | null;
-  kind: "tool" | "workflow" | "provision";
+  kind: "tool" | "workflow" | "provision" | "command";
   target: string;
   status: DeploymentStatus;
   options: Record<string, unknown>;
@@ -120,6 +130,31 @@ export interface WorkflowDeployOptions {
   action: string;
   mistral_api_key?: string | undefined;
   custom_command?: string | undefined;
+}
+
+export type BuildService = "backend" | "tool-service" | "neo4j";
+
+export interface WorkflowBuildOptions {
+  workflow: string;
+  services: BuildService[];
+  no_cache: boolean;
+  pull: boolean;
+  run_bootstrap: boolean;
+  start: boolean;
+  force_recreate: boolean;
+  remove_orphans: boolean;
+  build_args: Record<string, string>;
+  /** Merged into the workflow's .env on the server before building. */
+  env: Record<string, string>;
+}
+
+export interface RemoteRunResponse {
+  execution_id: string;
+  status: string;
+  workflow_name: string;
+  /** The task queue the run was routed to — the server worker's DEPLOYMENT_NAME. */
+  deployment_name: string;
+  warnings: string[];
 }
 
 export const remoteServersApi = {
@@ -145,9 +180,35 @@ export const remoteServersApi = {
       `/api/remote-servers/${id}/remote-workflows`,
     ),
 
+  /** Run a console command or preset over SSH; follow the returned deployment's log. */
+  runCommand: (
+    id: string | number,
+    body: {
+      command?: string | undefined;
+      preset?: string | undefined;
+      workflow?: string | undefined;
+      timeout?: number | undefined;
+    },
+  ) => post<RemoteDeployment>(`/api/remote-servers/${id}/commands`, body),
+  /** Stop a running console command. */
+  cancelCommand: (deploymentId: number) =>
+    post<unknown>(`/api/remote-servers/deployments/${deploymentId}/cancel`),
+
+  /** Build (and optionally start) a deployed workflow's Docker stack; follow the log. */
+  build: (id: string | number, body: WorkflowBuildOptions) =>
+    post<RemoteDeployment>(`/api/remote-servers/${id}/build`, body),
+  /** Start a run on this server's worker (routed by the DEPLOYMENT_NAME in its .env). */
+  runWorkflow: (
+    id: string | number,
+    body: {
+      workflow: string;
+      input: Record<string, unknown>;
+      deployment_name?: string | undefined;
+    },
+  ) => post<RemoteRunResponse>(`/api/remote-servers/${id}/run-workflow`, body),
+
   /** Re-resolve a Brev server's SSH access and prepare the VM. */
-  provision: (id: string | number) =>
-    post<RemoteDeployment>(`/api/remote-servers/${id}/provision`),
+  provision: (id: string | number) => post<RemoteDeployment>(`/api/remote-servers/${id}/provision`),
 
   sendTool: (id: string | number, toolId: string | number) =>
     post<unknown>(`/api/remote-servers/${id}/send-tool`, { tool_id: String(toolId) }),

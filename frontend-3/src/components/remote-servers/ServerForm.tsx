@@ -310,9 +310,9 @@ export function ServerForm({
         )}
         {provisioned ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Adding the server looks up the running instance with the Brev CLI, fills in its SSH
-            host and key, installs python3-venv and Docker, then runs diagnostics. Follow the log
-            on the server's page.
+            Adding the server looks up the running instance with the Brev CLI, fills in its SSH host
+            and key, installs python3-venv and Docker, then runs diagnostics. Follow the log on the
+            server's page.
           </p>
         ) : report ? (
           <CheckReportView report={report} />

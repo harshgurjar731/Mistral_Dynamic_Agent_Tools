@@ -11,16 +11,19 @@ import {
   Copy,
   Cpu,
   Gauge,
+  Hammer,
   History,
   KeyRound,
   Loader2,
   Pencil,
+  Play,
   PlugZap,
   RefreshCw,
   Rocket,
   Send,
   Server,
   Settings2,
+  SquareTerminal,
   Stethoscope,
   Trash2,
 } from "lucide-react";
@@ -54,6 +57,9 @@ import {
 import { CheckReportView, HostFacts } from "@/components/remote-servers/CheckReportView";
 import { ServerForm } from "@/components/remote-servers/ServerForm";
 import { DeployWorkflowPanel } from "@/components/remote-servers/DeployWorkflowPanel";
+import { RemoteConsole } from "@/components/remote-servers/RemoteConsole";
+import { BuildWorkflowPanel } from "@/components/remote-servers/BuildWorkflowPanel";
+import { RunOnServerPanel } from "@/components/remote-servers/RunOnServerPanel";
 import { DeploymentHistory, DeploymentLog } from "@/components/remote-servers/Deployments";
 import { SectionCard, StatCard } from "@/components/shared/SectionCard";
 import {
@@ -295,6 +301,36 @@ function RemoteServerDetailPage() {
           )}
 
           {isSshWorkflow ? <RemoteWorkflowsCard server={server} /> : null}
+
+          {isSshWorkflow ? (
+            <SectionCard
+              icon={Hammer}
+              title="Build"
+              description="Build a deployed workflow's containers on this server, with every docker compose option, and start them."
+            >
+              <BuildWorkflowPanel server={server} />
+            </SectionCard>
+          ) : null}
+
+          {isSshWorkflow ? (
+            <SectionCard
+              icon={Play}
+              title="Run workflow"
+              description="Execute a deployed workflow on this server's worker and watch the run live."
+            >
+              <RunOnServerPanel server={server} />
+            </SectionCard>
+          ) : null}
+
+          {server.transport === "ssh" ? (
+            <SectionCard
+              icon={SquareTerminal}
+              title="Console"
+              description="Start and inspect the workflow worker, or run any command on this server."
+            >
+              <RemoteConsole server={server} />
+            </SectionCard>
+          ) : null}
 
           <SectionCard
             icon={History}

@@ -28,6 +28,38 @@ WORKFLOW_ACTIONS = {
     "custom": "Upload, extract & run a custom command",
 }
 
+# Provisions the package's agents/tools and stages the workflow (bootstrap_deploy.py).
+BOOTSTRAP_COMMAND = (
+    "python3 -m venv .deploy-venv"
+    " && .deploy-venv/bin/pip install -q --disable-pip-version-check mistralai httpx python-dotenv"
+    " && .deploy-venv/bin/python bootstrap_deploy.py"
+)
+
+_DC = 'DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"; '
+_COMPOSE = _DC + "$DC -f docker-compose.deploy.yml "
+
+# One-click console commands on SSH servers. "workflow" presets run inside a
+# deployed workflow's directory, "server" ones in the deploy directory.
+# long_running ones keep streaming until stopped.
+COMMAND_PRESETS = {
+    "worker_status": {"label": "Worker status", "scope": "workflow", "command": _COMPOSE + "ps"},
+    "start_worker": {"label": "Start worker", "scope": "workflow",
+                     "command": _COMPOSE + "up -d --build backend && $DC -f docker-compose.deploy.yml ps"},
+    "restart_worker": {"label": "Restart worker", "scope": "workflow", "command": _COMPOSE + "restart backend"},
+    "stop_worker": {"label": "Stop worker", "scope": "workflow", "command": _COMPOSE + "stop backend"},
+    "worker_logs": {"label": "Worker logs", "scope": "workflow", "command": _COMPOSE + "logs --tail 200 backend"},
+    "follow_logs": {"label": "Follow logs", "scope": "workflow", "long_running": True,
+                    "command": _COMPOSE + "logs -f --tail 50 backend"},
+    "bootstrap": {"label": "Run bootstrap", "scope": "workflow", "command": BOOTSTRAP_COMMAND},
+    # Names only — values (API keys) never reach the log.
+    "env_keys": {"label": "Show .env keys", "scope": "workflow",
+                 "command": "grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env | sed 's/=$//'"},
+    "host_info": {"label": "Host info", "scope": "server",
+                  "command": "uname -srm; uptime; df -h ~ | tail -1; free -h | head -2; "
+                             "docker ps --format 'table {{.Names}}\\t{{.Status}}' 2>&1"},
+    "list_deployments": {"label": "List deployments", "scope": "server", "command": "ls -la"},
+}
+
 
 def _f(key, label, type_="text", *, required=False, secret=False, default=None,
        placeholder="", help_="", options=None, show_if=None, group="connection"):
@@ -243,7 +275,8 @@ PROVIDERS_BY_ID = {p["id"]: p for p in PROVIDERS}
 
 
 def catalog() -> dict:
-    return {"purposes": PURPOSES, "providers": PROVIDERS, "workflow_actions": WORKFLOW_ACTIONS}
+    return {"purposes": PURPOSES, "providers": PROVIDERS, "workflow_actions": WORKFLOW_ACTIONS,
+            "command_presets": COMMAND_PRESETS}
 
 
 def get_provider(provider_id: str) -> dict | None:

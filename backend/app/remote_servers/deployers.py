@@ -20,6 +20,7 @@ import ipaddress
 import json
 import logging
 import posixpath
+import re
 import shlex
 import threading
 import time
@@ -32,7 +33,9 @@ from app.remote_server_model import RemoteServer, RemoteDeployment
 from app.remote_servers import brev, checks, ssh, store
 from app.remote_servers import secrets as secret_box
 from app.remote_servers.checks import http_auth
-from app.remote_servers.providers import get_provider, WORKFLOW_ACTIONS
+from app.remote_servers.providers import (
+    BOOTSTRAP_COMMAND, COMMAND_PRESETS, WORKFLOW_ACTIONS, get_provider,
+)
 from app.remote_servers.edge import EDGE_BLOCK_ADVICE, edge_block
 
 logger = logging.getLogger(__name__)
@@ -272,11 +275,7 @@ def _compose_command(manifest) -> str:
     return " && ".join(parts)
 
 
-_BOOTSTRAP = (
-    "python3 -m venv .deploy-venv"
-    " && .deploy-venv/bin/pip install -q --disable-pip-version-check mistralai httpx python-dotenv"
-    " && .deploy-venv/bin/python bootstrap_deploy.py"
-)
+_BOOTSTRAP = BOOTSTRAP_COMMAND
 
 
 def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name: str,
@@ -547,6 +546,233 @@ async def _run_brev_provision(dep_id: int, server_id: int, instance: str) -> Non
             logger.exception("Brev provisioning %s failed", dep_id)
         log.write(f"\n✖ {e}\n")
         log.flush(status="failed", error=str(e), finished_at=_now())
+
+
+# ── Console commands ─────────────────────────────────────────────────────
+#
+# A command run from a server's console, recorded as a kind="command"
+# deployment so the UI streams its log with the same polling. Runs in the
+# deploy directory, or in a deployed workflow's directory under it.
+
+_CANCEL: dict[int, threading.Event] = {}
+_WORKFLOW_DIR = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_MAX_COMMAND_LOG = 1_000_000  # characters; `logs -f` could otherwise grow the row without bound
+
+
+def start_remote_command(db, server: RemoteServer, *, command: str = "", preset: str = "",
+                         workflow: str = "", timeout: int = 600, action: str = "",
+                         env: dict[str, str] | None = None) -> RemoteDeployment:
+    """``env`` is merged into the workflow's .env before the command runs."""
+    if env and not workflow:
+        raise DeployError(".env overrides need a workflow directory")
+    if preset:
+        spec = COMMAND_PRESETS.get(preset)
+        if not spec:
+            raise DeployError(f"Unknown preset '{preset}'")
+        if spec["scope"] == "workflow" and not workflow:
+            raise DeployError(f"'{spec['label']}' runs in a workflow's directory — choose a workflow")
+        command = spec["command"]
+        if spec.get("long_running"):
+            timeout = max(timeout, 3600)
+    command = (command or "").strip()
+    if not command:
+        raise DeployError("Enter a command")
+    if workflow and not _WORKFLOW_DIR.match(workflow):
+        raise DeployError(f"Invalid workflow directory '{workflow}'")
+    timeout = min(max(int(timeout or 600), 5), 3600)
+
+    dep = RemoteDeployment(server_id=server.id, kind="command", target=workflow or "~",
+                           status="queued", log="",
+                           # .env values can be secrets: only their names are kept.
+                           options=json.dumps({"action": action or preset or "command", "command": command,
+                                               "workflow": workflow or None, "timeout": timeout,
+                                               "env_keys": sorted(env or {}) or None}))
+    db.add(dep)
+    db.commit()
+    db.refresh(dep)
+
+    cancel = _CANCEL[dep.id] = threading.Event()
+    task = asyncio.create_task(_run_remote_command(dep.id, server.id, command, workflow, timeout,
+                                                   cancel, env or {}))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return dep
+
+
+def cancel_command(dep_id: int) -> bool:
+    event = _CANCEL.get(dep_id)
+    if not event:
+        return False
+    event.set()
+    return True
+
+
+async def _run_remote_command(dep_id: int, server_id: int, command: str, workflow: str,
+                              timeout: int, cancel: threading.Event, env: dict[str, str]) -> None:
+    log = _DeployLog(dep_id)
+    log.flush(status="running")
+    try:
+        db = SessionLocal()
+        try:
+            server = db.get(RemoteServer, server_id)
+            if not server:
+                raise DeployError("Server was deleted")
+            config, secrets = store.server_config(server), store.server_secrets(server)
+        finally:
+            db.close()
+        if (get_provider(server.provider or "") or {}).get("transport") != "ssh":
+            raise DeployError("Commands can only run on SSH servers")
+
+        code = await asyncio.to_thread(_command_over_ssh, log, config, secrets, command,
+                                       workflow, timeout, cancel, env)
+        log.write(f"\n▶ exit code {code}\n")
+        log.flush(status="succeeded" if code == 0 else "failed",
+                  error=None if code == 0 else f"Exited with status {code}", finished_at=_now())
+    except Exception as e:
+        stopped = cancel.is_set()
+        if not stopped and not isinstance(e, (DeployError, ssh.SSHError, brev.BrevError)):
+            logger.exception("Remote command %s failed", dep_id)
+        log.write("\n■ Stopped\n" if stopped else f"\n✖ {e}\n")
+        log.flush(status="failed", error="Stopped" if stopped else str(e), finished_at=_now())
+    finally:
+        _CANCEL.pop(dep_id, None)
+
+
+def _command_over_ssh(log: _DeployLog, config: dict, secrets: dict, command: str, workflow: str,
+                      timeout: int, cancel: threading.Event, env: dict[str, str] | None = None) -> int:
+    base = ssh.shell_path(config.get("deploy_path") or "~/workflow-deployments")
+    where = f"mkdir -p {base} && cd {base}" + (f" && cd {shlex.quote(workflow)}" if workflow else "")
+    client = ssh.connect(config, secrets, expected_fingerprint=config.get("host_fingerprint") or None)
+    if env:
+        _merge_remote_env(log, client, where, env)
+    log.write(f"$ {command}\n")
+    written = 0
+
+    def capped(text: str) -> None:
+        nonlocal written
+        if written < _MAX_COMMAND_LOG:
+            log.write(text[:_MAX_COMMAND_LOG - written])
+            written += len(text)
+            if written >= _MAX_COMMAND_LOG:
+                log.write("\n… output truncated — the command keeps running until it ends or is stopped\n")
+
+    try:
+        # A login shell, so PATH matches an interactive session (e.g. ~/.local/bin).
+        code, _ = ssh.run(client, f"{where} && bash -lc {shlex.quote(command)}",
+                          timeout=timeout, on_output=capped, cancel=cancel)
+    finally:
+        client.close()
+    return code
+
+
+_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def clean_env(values: dict | None, what: str = ".env") -> dict[str, str]:
+    """Validate KEY=VALUE pairs: shell-safe names, single-line values."""
+    out: dict[str, str] = {}
+    for key, value in (values or {}).items():
+        key = str(key).strip()
+        if not key:
+            continue
+        if not _ENV_KEY.match(key):
+            raise DeployError(f"Invalid {what} name '{key}'")
+        value = "" if value is None else str(value)
+        if "\n" in value or "\r" in value:
+            raise DeployError(f"{what} value for '{key}' must be a single line")
+        out[key] = value
+    return out
+
+
+def _merge_remote_env(log: _DeployLog, client, where: str, env: dict[str, str]) -> None:
+    code, out = ssh.run(client, f"{where} && pwd", timeout=30)
+    if code != 0:
+        raise DeployError(f"Workflow directory not found: {out.strip()}")
+    path = posixpath.join(out.strip().splitlines()[-1], ".env")
+    sftp = client.open_sftp()
+    try:
+        try:
+            with sftp.open(path, "r") as fh:
+                base_env = fh.read().decode()
+        except IOError:
+            base_env = ""
+        with sftp.open(path, "w") as fh:
+            fh.write(_merge_env(base_env, env).encode())
+        sftp.chmod(path, 0o600)
+    finally:
+        sftp.close()
+    log.write(f"Updated .env: {', '.join(sorted(env))}\n")
+
+
+BUILD_SERVICES = ("backend", "tool-service", "neo4j")
+
+
+def build_compose_command(*, services: list[str], no_cache: bool = False, pull: bool = False,
+                          run_bootstrap: bool = False, start: bool = True, force_recreate: bool = False,
+                          remove_orphans: bool = False, build_args: dict[str, str] | None = None) -> str:
+    """The shell for building (and optionally starting) a deployed workflow's stack.
+
+    Order matters: supporting services come up before bootstrap_deploy.py,
+    which imports dynamic tools into the tool service; the worker starts last.
+    """
+    unknown = [s for s in services if s not in BUILD_SERVICES]
+    if unknown or not services:
+        raise DeployError(f"Choose services from: {', '.join(BUILD_SERVICES)}")
+    profiles = []
+    if "tool-service" in services:
+        profiles += ["--profile", "tools"]
+    if "neo4j" in services:
+        profiles += ["--profile", "knowledge-graph"]
+    dc = " ".join(["$DC", "-f", "docker-compose.deploy.yml", *profiles])
+    args = " ".join(f"--build-arg {shlex.quote(f'{k}={v}')}"
+                    for k, v in clean_env(build_args, "build arg").items())
+
+    steps = ['DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"']
+    buildable = [s for s in services if s != "neo4j"]  # neo4j is a stock image
+    if buildable:
+        flags = " ".join(f for f, on in (("--no-cache", no_cache), ("--pull", pull)) if on)
+        steps.append(" ".join(x for x in (dc, "build", flags, args, *buildable) if x))
+    if "neo4j" in services and pull:
+        steps.append(f"{dc} pull neo4j")
+    up_flags = " ".join(f for f, on in (("--force-recreate", force_recreate),
+                                        ("--remove-orphans", remove_orphans)) if on)
+    supporting = [s for s in services if s != "backend"]
+    if start and supporting:
+        steps.append(" ".join(x for x in (dc, "up -d", up_flags, *supporting) if x))
+    if run_bootstrap:
+        steps.append(BOOTSTRAP_COMMAND)
+    if start and "backend" in services:
+        steps.append(" ".join(x for x in (dc, "up -d", up_flags, "backend") if x))
+    if start:
+        steps.append(f"{dc} ps")
+    return steps[0] + "; " + " && ".join(steps[1:])
+
+
+def remote_env_info(config: dict, secrets: dict, workflow: str) -> dict:
+    """DEPLOYMENT_NAME from a deployed workflow's .env, and a hash of its
+    MISTRAL_API_KEY (computed on the server, so the key itself never travels)."""
+    if not _WORKFLOW_DIR.match(workflow or ""):
+        raise DeployError(f"Invalid workflow directory '{workflow}'")
+    base = ssh.shell_path(config.get("deploy_path") or "~/workflow-deployments")
+    script = (
+        f"cd {base}/{shlex.quote(workflow)} 2>/dev/null || {{ echo MISSING; exit 0; }}; "
+        "[ -f .env ] || { echo NOENV; exit 0; }; "
+        "echo \"name=$(sed -n 's/^DEPLOYMENT_NAME=//p' .env | tail -1)\"; "
+        "printf %s \"$(sed -n 's/^MISTRAL_API_KEY=//p' .env | tail -1)\" | sha256sum | cut -c1-64"
+    )
+    client = ssh.connect(config, secrets, expected_fingerprint=config.get("host_fingerprint") or None)
+    try:
+        _, out = ssh.run(client, script, timeout=30)
+    finally:
+        client.close()
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    if "MISSING" in lines:
+        raise DeployError(f"'{workflow}' is not deployed on this server")
+    if "NOENV" in lines:
+        raise DeployError(f"'{workflow}' has no .env on the server — deploy it again or set its environment")
+    name = next((line[5:] for line in lines if line.startswith("name=")), "").strip()
+    key_hash = lines[-1] if lines and len(lines[-1]) == 64 else ""
+    return {"deployment_name": name, "key_hash": key_hash}
 
 
 # ── Inspecting what is deployed ──────────────────────────────────────────
