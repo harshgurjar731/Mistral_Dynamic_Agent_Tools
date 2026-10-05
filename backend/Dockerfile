@@ -17,6 +17,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # image that only runs the local DAG engine (then MISTRAL_WORKER_ENABLED=false).
 ARG WITH_MISTRAL_WORKFLOWS=true
 
+# NVIDIA Brev servers (app/remote_servers/brev.py): the backend runs the Brev
+# CLI to resolve SSH access and mint the short-lived certificates Brev
+# requires, and `ssh -G` to read Brev's SSH config. Log the CLI in once inside
+# the container (`docker compose exec backend brev login --token ...`); the
+# login lives in the brev-home volume. Set to false to leave the CLI out.
+ARG WITH_BREV_CLI=true
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && if [ "$WITH_BREV_CLI" = "true" ]; then \
+         apt-get install -y --no-install-recommends curl ca-certificates \
+         && curl -fsSL https://raw.githubusercontent.com/brevdev/brev-cli/main/bin/install-latest.sh -o /tmp/install-brev.sh \
+         && BREV_INSTALL_DIR=/usr/local/bin bash /tmp/install-brev.sh \
+         && rm /tmp/install-brev.sh; \
+       fi \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv/backend
 
 COPY requirements.txt .
@@ -29,7 +46,9 @@ COPY . .
 
 RUN mkdir -p /srv/data /srv/backend/uploads /srv/mistral_workflows \
     && useradd --create-home --uid 10001 app \
-    && chown -R app:app /srv
+    && mkdir -p /home/app/.brev /home/app/.ssh \
+    && chmod 700 /home/app/.ssh \
+    && chown -R app:app /srv /home/app
 
 USER app
 

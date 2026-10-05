@@ -43,6 +43,7 @@ services:
       context: ../backend
       args:
         WITH_MISTRAL_WORKFLOWS: ${WITH_MISTRAL_WORKFLOWS:-true}
+        WITH_BREV_CLI: ${WITH_BREV_CLI:-true}
     restart: unless-stopped
     env_file: ./.env
     environment:
@@ -58,6 +59,10 @@ services:
       - backend-uploads:/srv/backend/uploads
       # Compiled workflows stay in the repo checkout, same as local dev.
       - ../mistral_workflows:/srv/mistral_workflows
+      # Brev CLI login and the SSH config `brev refresh` writes, kept across
+      # rebuilds. Log in once: docker compose exec backend brev login --token ...
+      - brev-home:/home/app/.brev
+      - brev-ssh:/home/app/.ssh
     depends_on:
       tool-service:
         condition: service_healthy
@@ -111,6 +116,8 @@ volumes:
   caddy-config:
   backend-data:
   backend-uploads:
+  brev-home:
+  brev-ssh:
   tool-data:
   tool-db:
   tool-docs:
