@@ -79,6 +79,27 @@ class Settings(BaseSettings):
     RAG_TEXT_POLL_SECONDS: int = 5
     RAG_TEXT_POLL_ATTEMPTS: int = 60
 
+    # ── Observability (traces on Mistral) ──────────────────────────────
+    # Every API action, workflow run, step, rule verdict, tool call, pipeline
+    # layer and model call is exported as an OpenTelemetry span to Mistral's
+    # telemetry endpoint, and read back by the Logs page. See
+    # app/observability/tracing.py.
+    OBSERVABILITY_ENABLED: bool = True
+    OBSERVABILITY_SERVICE_NAME: str = "mistral-dynamic-agent-tools"
+    OBSERVABILITY_ENVIRONMENT: str = "development"
+    # Empty = Mistral's endpoint (https://api.mistral.ai/telemetry/v1/traces).
+    OBSERVABILITY_ENDPOINT: str = ""
+    # Mask secrets and PII in span attributes before they leave the process,
+    # with the Mistral SDK's default policy. Turn off only if the workspace is
+    # allowed to hold raw customer data.
+    OBSERVABILITY_REDACT: bool = True
+    # Large inputs/outputs are clipped so one span stays well under the
+    # exporter's payload limits.
+    OBSERVABILITY_MAX_ATTR_CHARS: int = 16000
+    OBSERVABILITY_MAX_LOG_LINES: int = 200
+    # Where the "Open in Mistral" links on the Logs page point.
+    OBSERVABILITY_CONSOLE_URL: str = "https://console.mistral.ai/observability/traces"
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse comma-separated CORS origins into a list."""

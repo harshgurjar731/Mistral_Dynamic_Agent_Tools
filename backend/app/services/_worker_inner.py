@@ -213,6 +213,12 @@ async def run() -> None:
     log.info("  workflows dir   : %s", workflows_dir)
     log.info("=" * 60)
 
+    # Step spans, rule verdicts, tool calls and model calls made by this
+    # worker's activities go to Mistral alongside the API's, grouped into the
+    # execution's trace. Before the client, so the client is created traced.
+    from app import observability
+    observability.setup("worker")
+
     try:
         from app.dependencies import init_mistral_client
         init_mistral_client()
@@ -244,7 +250,9 @@ async def run() -> None:
         log.info("Inner worker cancelled — exiting cleanly.")
     except Exception as e:
         log.error("Inner worker crashed: %s", e, exc_info=True)
+        observability.shutdown()
         sys.exit(1)
+    observability.shutdown()
 
 
 if __name__ == "__main__":

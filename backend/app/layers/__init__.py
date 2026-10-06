@@ -77,7 +77,7 @@ from app.layers.workflow import (
 #   InstructionAuthoringLayer runs last of the design layers because the
 #     instructions are where every prior decision is expressed to the model.
 
-chat_pipeline = Pipeline()
+chat_pipeline = Pipeline("agent_chat")
 chat_pipeline.add(CleanupLayer())
 chat_pipeline.add(RequirementAnalysisLayer())
 chat_pipeline.add(CapabilityGapLayer())
@@ -108,7 +108,7 @@ chat_pipeline.add(ExecutionLayer())
 # concurrently, ActivityGapLayer synthesises concurrently, and
 # AgentProvisioningLayer creates concurrently, each under its own bound.
 
-workflow_pipeline = Pipeline()
+workflow_pipeline = Pipeline("workflow_design")
 workflow_pipeline.add(ResourceInventoryLayer())
 workflow_pipeline.add(GoalDecompositionLayer())
 workflow_pipeline.add(ExecutionModeLayer())

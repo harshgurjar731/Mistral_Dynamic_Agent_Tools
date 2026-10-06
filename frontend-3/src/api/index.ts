@@ -46,6 +46,8 @@ export { rulesApi } from "./rules";
 export { remoteServersApi } from "./remoteServers";
 export type * from "./remoteServers";
 export { runsApi, isTerminal } from "./runs";
+export { observabilityApi } from "./observability";
+export type * from "./observability";
 export type { BackgroundRun, RunKind, RunProgress, RunStatus } from "./runs";
 
 /* ── Health ─────────────────────────────────────────────────────────── */

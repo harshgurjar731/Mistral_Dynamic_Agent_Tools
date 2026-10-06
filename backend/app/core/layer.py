@@ -114,21 +114,30 @@ class ParallelGroup(Layer):
             ctx.emit_layer(layer.name, "active")
             branch_ctx = ctx.snapshot()
             started = time.monotonic()
-            try:
-                result = await layer.process(branch_ctx, _noop_next)
-                # The branch wrote its summary onto its own snapshot, which is
-                # merged back only after the whole group settles — read it
-                # across now so this branch's row can carry its reasoning.
-                ctx.emit_layer(
-                    layer.name, "completed",
-                    ms=(time.monotonic() - started) * 1000,
-                    summary=result.layer_summary(layer.name) if result else "",
-                )
-                return result
-            except Exception as e:
-                logger.exception("Layer '%s' failed inside ParallelGroup '%s'", layer.name, self.name)
-                ctx.emit_layer(layer.name, "failed", error=str(e))
-                return None
+            from app.observability import tracing
+
+            with tracing.span(
+                f"layer {layer.name}", kind="layer",
+                attrs={"app.layer.name": layer.name, "app.layer.group": self.name,
+                       "app.layer.label": layer.describe().get("label")},
+            ) as span:
+                try:
+                    result = await layer.process(branch_ctx, _noop_next)
+                    # The branch wrote its summary onto its own snapshot, which is
+                    # merged back only after the whole group settles — read it
+                    # across now so this branch's row can carry its reasoning.
+                    summary = result.layer_summary(layer.name) if result else ""
+                    ms = (time.monotonic() - started) * 1000
+                    ctx.emit_layer(layer.name, "completed", ms=ms, summary=summary)
+                    tracing.set_attrs(span, {"app.layer.state": "completed", "app.layer.summary": summary or None,
+                                             "app.layer.duration_ms": round(ms, 1)})
+                    return result
+                except Exception as e:
+                    logger.exception("Layer '%s' failed inside ParallelGroup '%s'", layer.name, self.name)
+                    ctx.emit_layer(layer.name, "failed", error=str(e))
+                    span.set_attribute("app.layer.state", "failed")
+                    tracing.mark_error(span, e)
+                    return None
 
         started = time.monotonic()
         results = await asyncio.gather(*[_run_one(l) for l in self.layers])

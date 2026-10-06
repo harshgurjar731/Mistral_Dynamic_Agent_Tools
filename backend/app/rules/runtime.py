@@ -94,6 +94,22 @@ def record(outcomes: list[dict], *, scope: str, subject_id: str,
     except Exception:
         pass
 
+    # On the Workflows worker there is no local execution registry; Temporal
+    # knows which execution this activity belongs to.
+    from app.observability import tracing
+
+    activity = tracing.temporal_activity_info()
+    if execution_id is None and activity:
+        execution_id = activity["execution_id"]
+    # Which workflow the verdict was reached in, for the trace only — an agent
+    # rule checked inside a workflow step belongs to that workflow's run too.
+    wf = current_workflow()
+    workflow_name = (
+        (wf.subject_id if wf else None)
+        or (activity["workflow_type"] if activity else None)
+        or (subject_id if scope == "workflow" else None)
+    )
+
     events = [
         {
             **o,
@@ -108,6 +124,11 @@ def record(outcomes: list[dict], *, scope: str, subject_id: str,
     if ctx is not None:
         ctx.outcomes.extend(outcomes)
     store.record_events(events)
+    for event in events:
+        try:
+            tracing.record_rule_outcome({**event, "workflow_name": workflow_name})
+        except Exception as e:  # tracing must never break a rule check
+            logger.debug("Rule outcome not traced: %s", e)
     return events
 
 

@@ -1005,8 +1005,21 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             if parsed_dict is not None:
                 output = parsed_dict
 
+            from app.observability import annotate
+
+            annotate({
+                "gen_ai.agent.id": resolved_id,
+                "app.agent.requested": agent_id,
+                "app.agent.prompt": query,
+                "app.agent.answer": result_text,
+                "app.agent.tool_rounds": round_num + 1,
+                "app.agent.tool_round_limit": MAX_TOOL_ROUNDS,
+                "app.agent.hit_tool_limit": hit_tool_limit,
+                "app.agent.rules": [r.get("name") for r in agent_rules] or None,
+            })
+
             duration = (time.time() - start) * 1000
-            
+
             input_preview = query[:1000] + "..." if len(query) > 1000 else query
             output_preview = result_text[:1000] + "..." if len(result_text) > 1000 else result_text
             
@@ -1489,8 +1502,71 @@ STEP_RUNNERS = {
 
 
 async def run_step(step: WorkflowStep, variables: dict) -> StepResult:
-    """Dispatch to the appropriate step runner."""
-    runner = STEP_RUNNERS.get(step.type)
-    if not runner:
-        return StepResult(step_id=step.id, status="failed", error=f"Unknown step type: {step.type}")
-    return await runner(step, variables)
+    """Dispatch to the appropriate step runner, as one traced step.
+
+    Both executors come through here — the local DAG engine and the compiled
+    activities on the Workflows worker — so this is where a step's span lives.
+    Locally it nests under the engine's workflow span. On the worker nothing is
+    current, so it attaches to the execution's root, derived from the
+    execution id Temporal hands the activity: the run stays one trace.
+    """
+    from app.observability import GEN_AI_WORKFLOW_NAME, tracing
+
+    step_type = step.type.value if hasattr(step.type, "value") else str(step.type)
+    attrs: dict[str, Any] = {
+        "app.step.id": step.id,
+        "app.step.type": step_type,
+        "app.step.description": step.description or None,
+        "app.step.config": step.config,
+        "app.step.parallel_group": step.parallel_group or None,
+        "app.step.variables": variables,
+    }
+    if step_type == "agent":
+        attrs["gen_ai.agent.id"] = (step.config or {}).get("agent_id")
+    elif step_type in ("tool", "connector"):
+        attrs["gen_ai.tool.name"] = (step.config or {}).get("tool_name")
+
+    parent = None
+    activity = tracing.temporal_activity_info()
+    if activity and not tracing.current_span().get_span_context().is_valid:
+        parent = tracing.workflow_remote_parent(activity["execution_id"])
+        attrs.update({
+            GEN_AI_WORKFLOW_NAME: activity["workflow_type"],
+            "app.workflow.name": activity["workflow_type"],
+            "app.execution.id": activity["execution_id"],
+            "app.execution.source": "mistral",
+            "app.activity.type": activity["activity_type"],
+            "app.activity.attempt": activity["attempt"],
+        })
+    else:
+        from app.rules import runtime as rules_runtime
+        from app.services.workflow_engine import execution_logs
+
+        wf = rules_runtime.current_workflow()
+        if wf is not None:
+            attrs[GEN_AI_WORKFLOW_NAME] = wf.subject_id
+        attrs["app.execution.id"] = execution_logs.CURRENT_EXECUTION.get()
+
+    with tracing.span(f"step {step.id}", kind="step", attrs=attrs, parent=parent) as span:
+        runner = STEP_RUNNERS.get(step.type)
+        if not runner:
+            result = StepResult(step_id=step.id, status="failed", error=f"Unknown step type: {step.type}")
+        else:
+            result = await runner(step, variables)
+
+        tracing.set_attrs(span, {
+            "app.step.status": result.status,
+            "app.step.duration_ms": round(result.duration_ms, 1) if result.duration_ms else None,
+            "app.step.input": result.input_preview,
+            "app.step.output": result.output,
+            "app.step.error": result.error,
+            "app.step.next": (result.output or {}).get("next_step") if isinstance(result.output, dict) else None,
+        })
+        if result.status == "failed":
+            tracing.mark_error(span, result.error or "Step failed", error_type="step_failed")
+
+    if parent is not None:
+        # The worker process can be recycled at any moment by the supervisor's
+        # hot reload; do not leave this step's spans sitting in a batch.
+        await asyncio.to_thread(tracing.flush)
+    return result

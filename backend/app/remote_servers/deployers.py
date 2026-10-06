@@ -27,6 +27,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
+from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal
 from app.remote_server_model import RemoteServer, RemoteDeployment
@@ -55,42 +56,71 @@ def _now() -> datetime:
 class _DeployLog:
     """Appends to a deployment row's log, flushing at most once a second.
 
-    Called from the event loop and from the SSH worker thread alike.
+    Called from the event loop and from the SSH worker thread alike. Output
+    that arrives within a second of a flush is saved by a timer, so the last
+    lines before a quiet stretch (a long build step) still reach the UI.
     """
 
     def __init__(self, dep_id: int):
         self.dep_id = dep_id
         self._buf: list[str] = []
         self._lock = threading.Lock()
+        self._db_lock = threading.Lock()
         self._last_flush = 0.0
+        self._timer: threading.Timer | None = None
 
     def write(self, text: str) -> None:
         with self._lock:
             self._buf.append(text)
-        if time.monotonic() - self._last_flush > 1.0:
+            due = time.monotonic() - self._last_flush > 1.0
+            if not due and self._timer is None:
+                self._timer = threading.Timer(1.0, self._timed_flush)
+                self._timer.daemon = True
+                self._timer.start()
+        if due:
             self.flush()
+
+    def _timed_flush(self) -> None:
+        with self._lock:
+            self._timer = None
+        try:
+            self.flush()
+        except Exception:  # the next write or the final flush retries
+            logger.warning("Deployment %s: timed log flush failed", self.dep_id, exc_info=True)
 
     def step(self, text: str) -> None:
         self.write(f"\n▶ {text}\n")
         self.flush()
 
     def flush(self, **fields) -> None:
-        with self._lock:
-            chunk = "".join(self._buf)
-            self._buf.clear()
-            self._last_flush = time.monotonic()
-        if not chunk and not fields:
-            return
-        db = SessionLocal()
-        try:
-            dep = db.get(RemoteDeployment, self.dep_id)
-            if dep:
-                dep.log = (dep.log or "") + chunk
-                for k, v in fields.items():
-                    setattr(dep, k, v)
-                db.commit()
-        finally:
-            db.close()
+        # One flush at a time per log: the SSH thread and the event loop both
+        # flush, and two read-append-write cycles would drop a chunk.
+        with self._db_lock:
+            with self._lock:
+                chunk = "".join(self._buf)
+                self._buf.clear()
+                self._last_flush = time.monotonic()
+            if not chunk and not fields:
+                return
+            # SQLite is briefly locked under concurrent writers; losing the
+            # final status write would leave the row "running" forever.
+            for attempt in range(5):
+                db = SessionLocal()
+                try:
+                    dep = db.get(RemoteDeployment, self.dep_id)
+                    if dep:
+                        dep.log = (dep.log or "") + chunk
+                        for k, v in fields.items():
+                            setattr(dep, k, v)
+                        db.commit()
+                    return
+                except OperationalError:
+                    db.rollback()
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.5 * (attempt + 1))
+                finally:
+                    db.close()
 
 
 # ── Tool push ────────────────────────────────────────────────────────────
@@ -642,14 +672,17 @@ def _command_over_ssh(log: _DeployLog, config: dict, secrets: dict, command: str
                       timeout: int, cancel: threading.Event, env: dict[str, str] | None = None) -> int:
     base = ssh.shell_path(config.get("deploy_path") or "~/workflow-deployments")
     where = f"mkdir -p {base} && cd {base}" + (f" && cd {shlex.quote(workflow)}" if workflow else "")
+    # Every slow step before the command gets a line, so a stall or failure is
+    # visible in the UI instead of an empty log.
+    log.step(f"Connecting to {config.get('username')}@{config.get('host')}:{config.get('port') or 22}"
+             + (" (minting a Brev certificate)" if config.get("brev_env") else ""))
     client = ssh.connect(config, secrets, expected_fingerprint=config.get("host_fingerprint") or None)
-    if env:
-        _merge_remote_env(log, client, where, env)
-    log.write(f"$ {command}\n")
     written = 0
 
     def capped(text: str) -> None:
         nonlocal written
+        # Progress UIs redraw lines with \r; in a text log that hides them.
+        text = ANSI_ESCAPE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
         if written < _MAX_COMMAND_LOG:
             log.write(text[:_MAX_COMMAND_LOG - written])
             written += len(text)
@@ -657,12 +690,26 @@ def _command_over_ssh(log: _DeployLog, config: dict, secrets: dict, command: str
                 log.write("\n… output truncated — the command keeps running until it ends or is stopped\n")
 
     try:
-        # A login shell, so PATH matches an interactive session (e.g. ~/.local/bin).
-        code, _ = ssh.run(client, f"{where} && bash -lc {shlex.quote(command)}",
+        log.write("Connected\n")
+        if env:
+            log.step("Updating the workflow's .env")
+            _merge_remote_env(log, client, where, env)
+        log.step(f"Running in {workflow or 'the deploy directory'}")
+        log.write(f"$ {command}\n")
+        log.flush()
+        # A login shell, so PATH matches an interactive session (e.g.
+        # ~/.local/bin). Plain, colourless progress: there is no terminal.
+        code, _ = ssh.run(client, f"{where} && {_PLAIN_OUTPUT} bash -lc {shlex.quote(command)}",
                           timeout=timeout, on_output=capped, cancel=cancel)
     finally:
         client.close()
     return code
+
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# docker compose / BuildKit otherwise draw an animated progress view.
+_PLAIN_OUTPUT = ("env COMPOSE_PROGRESS=plain BUILDKIT_PROGRESS=plain COMPOSE_ANSI=never "
+                 "NO_COLOR=1 DEBIAN_FRONTEND=noninteractive")
 
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

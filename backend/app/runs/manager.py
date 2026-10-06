@@ -238,6 +238,33 @@ class RunManager:
         return run
 
     async def _drive(self, run: LiveRun, runner: Runner) -> None:
+        """Drive one run as its own trace on Mistral, linked to the request
+        that started it — a run outlives that request by minutes."""
+        from app.observability import tracing
+
+        with tracing.span(
+            f"run {run.kind}", kind="run", root=True, link_current=True,
+            attrs={
+                "app.run.id": run.id,
+                "app.run.kind": run.kind,
+                "app.run.title": run.title,
+                "app.run.request": run.request,
+            },
+        ) as span:
+            try:
+                await self._drive_run(run, runner)
+            finally:
+                tracing.set_attrs(span, {
+                    "app.run.status": run.status,
+                    "app.run.result": run.result,
+                    "app.run.error": run.error,
+                    "app.run.events": len(run.events),
+                })
+                if run.status in ("failed", "interrupted"):
+                    tracing.mark_error(span, run.error or run.status, error_type=f"run_{run.status}")
+        await asyncio.to_thread(tracing.flush)
+
+    async def _drive_run(self, run: LiveRun, runner: Runner) -> None:
         flusher = asyncio.create_task(run._flush_loop())
         started = time.monotonic()
         try:

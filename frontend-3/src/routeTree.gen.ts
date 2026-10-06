@@ -20,6 +20,8 @@ import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
 import { Route as ConnectorsIdRouteImport } from './routes/connectors.$id'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries.index'
 import { Route as LibrariesIdRouteImport } from './routes/libraries.$id'
+import { Route as LogsIndexRouteImport } from './routes/logs.index'
+import { Route as LogsTraceIdRouteImport } from './routes/logs.$traceId'
 import { Route as McpIndexRouteImport } from './routes/mcp.index'
 import { Route as McpServerNameRouteImport } from './routes/mcp.$serverName'
 import { Route as RemoteServersIndexRouteImport } from './routes/remote-servers.index'
@@ -31,6 +33,7 @@ import { Route as ToolsIndexRouteImport } from './routes/tools.index'
 import { Route as ToolsIdRouteImport } from './routes/tools.$id'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
 import { Route as WorkflowsArchivedRouteImport } from './routes/workflows.archived'
+import { Route as LogsExecutionExecutionIdRouteImport } from './routes/logs.execution.$executionId'
 import { Route as OntologyLibrariesLibraryIdRouteImport } from './routes/ontology_.libraries.$libraryId'
 import { Route as WorkflowsWorkflowNameIndexRouteImport } from './routes/workflows.$workflowName.index'
 import { Route as WorkflowsWorkflowNameEditRouteImport } from './routes/workflows.$workflowName.edit'
@@ -96,6 +99,16 @@ const LibrariesIdRoute = LibrariesIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => LibrariesRoute,
 } as any)
+const LogsIndexRoute = LogsIndexRouteImport.update({
+  id: '/logs/',
+  path: '/logs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LogsTraceIdRoute = LogsTraceIdRouteImport.update({
+  id: '/logs/$traceId',
+  path: '/logs/$traceId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const McpIndexRoute = McpIndexRouteImport.update({
   id: '/mcp/',
   path: '/mcp/',
@@ -151,6 +164,12 @@ const WorkflowsArchivedRoute = WorkflowsArchivedRouteImport.update({
   path: '/workflows/archived',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LogsExecutionExecutionIdRoute =
+  LogsExecutionExecutionIdRouteImport.update({
+    id: '/logs/execution/$executionId',
+    path: '/logs/execution/$executionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const OntologyLibrariesLibraryIdRoute =
   OntologyLibrariesLibraryIdRouteImport.update({
     id: '/ontology_/libraries/$libraryId',
@@ -211,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
+  '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
@@ -220,11 +240,13 @@ export interface FileRoutesByFullPath {
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
+  '/logs/': typeof LogsIndexRoute
   '/mcp/': typeof McpIndexRoute
   '/remote-servers/': typeof RemoteServersIndexRoute
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
@@ -243,6 +265,7 @@ export interface FileRoutesByTo {
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
+  '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
@@ -252,11 +275,13 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsIndexRoute
   '/connectors': typeof ConnectorsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
+  '/logs': typeof LogsIndexRoute
   '/mcp': typeof McpIndexRoute
   '/remote-servers': typeof RemoteServersIndexRoute
   '/rules': typeof RulesIndexRoute
   '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
+  '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
@@ -277,6 +302,7 @@ export interface FileRoutesById {
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
+  '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
@@ -286,11 +312,13 @@ export interface FileRoutesById {
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
+  '/logs/': typeof LogsIndexRoute
   '/mcp/': typeof McpIndexRoute
   '/remote-servers/': typeof RemoteServersIndexRoute
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology_/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
@@ -312,6 +340,7 @@ export interface FileRouteTypes {
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
+    | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
     | '/remote-servers/new'
@@ -321,11 +350,13 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/connectors/'
     | '/libraries/'
+    | '/logs/'
     | '/mcp/'
     | '/remote-servers/'
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/logs/execution/$executionId'
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
@@ -344,6 +375,7 @@ export interface FileRouteTypes {
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
+    | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
     | '/remote-servers/new'
@@ -353,11 +385,13 @@ export interface FileRouteTypes {
     | '/agents'
     | '/connectors'
     | '/libraries'
+    | '/logs'
     | '/mcp'
     | '/remote-servers'
     | '/rules'
     | '/tools'
     | '/workflows'
+    | '/logs/execution/$executionId'
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
@@ -377,6 +411,7 @@ export interface FileRouteTypes {
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
+    | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/remote-servers/$id'
     | '/remote-servers/new'
@@ -386,11 +421,13 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/connectors/'
     | '/libraries/'
+    | '/logs/'
     | '/mcp/'
     | '/remote-servers/'
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/logs/execution/$executionId'
     | '/ontology_/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
@@ -410,6 +447,7 @@ export interface RootRouteChildren {
   PlaygroundRoute: typeof PlaygroundRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
+  LogsTraceIdRoute: typeof LogsTraceIdRoute
   McpServerNameRoute: typeof McpServerNameRoute
   RemoteServersIdRoute: typeof RemoteServersIdRoute
   RemoteServersNewRoute: typeof RemoteServersNewRoute
@@ -418,11 +456,13 @@ export interface RootRouteChildren {
   WorkflowsArchivedRoute: typeof WorkflowsArchivedRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ConnectorsIndexRoute: typeof ConnectorsIndexRoute
+  LogsIndexRoute: typeof LogsIndexRoute
   McpIndexRoute: typeof McpIndexRoute
   RemoteServersIndexRoute: typeof RemoteServersIndexRoute
   RulesIndexRoute: typeof RulesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
+  LogsExecutionExecutionIdRoute: typeof LogsExecutionExecutionIdRoute
   OntologyLibrariesLibraryIdRoute: typeof OntologyLibrariesLibraryIdRoute
   WorkflowsWorkflowNameEditRoute: typeof WorkflowsWorkflowNameEditRoute
   WorkflowsWorkflowNameExecuteRoute: typeof WorkflowsWorkflowNameExecuteRoute
@@ -513,6 +553,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LibrariesIdRouteImport
       parentRoute: typeof LibrariesRoute
     }
+    '/logs/': {
+      id: '/logs/'
+      path: '/logs'
+      fullPath: '/logs/'
+      preLoaderRoute: typeof LogsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/logs/$traceId': {
+      id: '/logs/$traceId'
+      path: '/logs/$traceId'
+      fullPath: '/logs/$traceId'
+      preLoaderRoute: typeof LogsTraceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mcp/': {
       id: '/mcp/'
       path: '/mcp'
@@ -588,6 +642,13 @@ declare module '@tanstack/react-router' {
       path: '/workflows/archived'
       fullPath: '/workflows/archived'
       preLoaderRoute: typeof WorkflowsArchivedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/logs/execution/$executionId': {
+      id: '/logs/execution/$executionId'
+      path: '/logs/execution/$executionId'
+      fullPath: '/logs/execution/$executionId'
+      preLoaderRoute: typeof LogsExecutionExecutionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ontology_/libraries/$libraryId': {
@@ -678,6 +739,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlaygroundRoute: PlaygroundRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
+  LogsTraceIdRoute: LogsTraceIdRoute,
   McpServerNameRoute: McpServerNameRoute,
   RemoteServersIdRoute: RemoteServersIdRoute,
   RemoteServersNewRoute: RemoteServersNewRoute,
@@ -686,11 +748,13 @@ const rootRouteChildren: RootRouteChildren = {
   WorkflowsArchivedRoute: WorkflowsArchivedRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ConnectorsIndexRoute: ConnectorsIndexRoute,
+  LogsIndexRoute: LogsIndexRoute,
   McpIndexRoute: McpIndexRoute,
   RemoteServersIndexRoute: RemoteServersIndexRoute,
   RulesIndexRoute: RulesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
+  LogsExecutionExecutionIdRoute: LogsExecutionExecutionIdRoute,
   OntologyLibrariesLibraryIdRoute: OntologyLibrariesLibraryIdRoute,
   WorkflowsWorkflowNameEditRoute: WorkflowsWorkflowNameEditRoute,
   WorkflowsWorkflowNameExecuteRoute: WorkflowsWorkflowNameExecuteRoute,

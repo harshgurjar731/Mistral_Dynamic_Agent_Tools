@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Activity,
@@ -15,6 +16,7 @@ import {
   FileJson,
   Hash,
   Layers,
+  ScrollText,
   Search,
   Send,
   Server,
@@ -79,6 +81,15 @@ export function ExecutionMonitor({
           <div className="flex items-center gap-2">
             <StatusPill identity={liveIdentity} />
             {detail ? <StatusPill identity={statusIdentity} /> : null}
+            <Link
+              to="/logs/execution/$executionId"
+              params={{ executionId }}
+              title="Every step, rule verdict, tool call and model call of this run, on Mistral"
+              className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+            >
+              <ScrollText className="size-3.5" />
+              Full trace
+            </Link>
             {(phase === "disconnected" || phase === "closed") && detail && !finalStatus ? (
               <button
                 onClick={reconnect}

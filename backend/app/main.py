@@ -52,6 +52,9 @@ async def lifespan(app: FastAPI):
     import subprocess
 
     logger.info("🚀 Starting Mistral Dynamic Agent Backend …")
+    # Before the client exists, so the client is created already traced.
+    from app import observability
+    observability.setup("api")
     init_mistral_client()
     logger.info("✅ Mistral client initialized")
 
@@ -382,6 +385,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Last, so spans from the shutdown itself are sent too.
+    observability.shutdown()
+
     logger.info("🛑 Shutting down …")
 
 
@@ -402,6 +408,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# One trace on Mistral per user action (every non-GET request). CORS
+# preflights are OPTIONS requests, which the middleware passes straight through.
+from app.observability.http import ActionTracingMiddleware  # noqa: E402
+
+app.add_middleware(ActionTracingMiddleware)
 
 # ── Exception Handlers ─────────────────────────────────────────────────────
 
@@ -431,6 +443,9 @@ app.include_router(rules_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import runs as runs_routes  # noqa: E402
 app.include_router(runs_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import observability as observability_routes  # noqa: E402
+app.include_router(observability_routes.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

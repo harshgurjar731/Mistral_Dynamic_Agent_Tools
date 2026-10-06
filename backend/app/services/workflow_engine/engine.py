@@ -261,6 +261,57 @@ async def execute_workflow(
     execution_id: Optional[str] = None,
     wait_for_result: bool = False,
 ) -> WorkflowRun:
+    """Execute a workflow, traced on Mistral as one trace per execution.
+
+    The trace id is derived from the execution id (see
+    ``app.observability.tracing``), and every step, rule verdict, tool call and
+    model call of the run nests under this root span.
+    """
+    from app.observability import GEN_AI_WORKFLOW_NAME, tracing
+
+    exec_id = execution_id or str(uuid.uuid4())
+    workflow = get_workflow(workflow_name)
+    attrs = {
+        GEN_AI_WORKFLOW_NAME: workflow_name,
+        "app.workflow.name": workflow_name,
+        "app.workflow.description": workflow.description if workflow else None,
+        "app.workflow.step_count": len(workflow.steps) if workflow else None,
+        "app.workflow.entry_step": workflow.entry_step if workflow else None,
+        "app.workflow.rules": [r.rule_id for r in workflow.rules] if workflow else None,
+        "app.execution.id": exec_id,
+        "app.execution.source": "local",
+        "app.workflow.input": input_vars,
+    }
+    with tracing.span(
+        f"workflow {workflow_name}", kind="workflow", attrs=attrs, root=True,
+        link_current=True, forced_ids=tracing.workflow_root_ids(exec_id),
+    ) as wf_span, tracing.rule_tally() as tally:
+        run = await _execute_workflow(workflow_name, input_vars, exec_id, wait_for_result)
+
+        status = run.status.value if hasattr(run.status, "value") else str(run.status)
+        result = run.result if isinstance(run.result, dict) else {}
+        tracing.set_attrs(wf_span, {
+            "app.execution.status": status,
+            "app.workflow.output": run.result,
+            "app.workflow.steps_run": [r.step_id for r in run.step_results],
+            "app.workflow.failed_step": result.get("failed_step") or result.get("stopped_at"),
+            "app.workflow.blocked_by_rule": bool(result.get("blocked_by_rule")),
+            **tracing.tally_attrs(tally),
+        })
+        if run.status == WorkflowStatus.FAILED:
+            tracing.mark_error(wf_span, result.get("error") or "Workflow failed", error_type="workflow_failed")
+    # A finished run is what someone opens the Logs page to look at: send it now
+    # rather than on the exporter's next batch. Off the loop: a flush is HTTP.
+    await asyncio.to_thread(tracing.flush)
+    return run
+
+
+async def _execute_workflow(
+    workflow_name: str,
+    input_vars: dict,
+    execution_id: Optional[str] = None,
+    wait_for_result: bool = False,
+) -> WorkflowRun:
     """
     Execute a workflow by processing its DAG.
     Supports both sequential steps and parallel groups (asyncio.gather).

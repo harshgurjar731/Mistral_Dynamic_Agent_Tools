@@ -2,7 +2,9 @@ fastapi[standard]
 uvicorn[standard]
 pydantic-settings
 python-dotenv
-mistralai
+# [telemetry] brings the OpenTelemetry SDK + OTLP exporter that ship every
+# span to Mistral Observability (app/observability/tracing.py).
+mistralai[telemetry]>=2.6.0
 httpx
 # Validates authored specifications (app/layers/codegen/preflight.py).
 jsonschema>=4.20

@@ -823,6 +823,7 @@ async def mistral_execute(workflow_name: str, inputs: dict, deployment: str,
         body["execution_id"] = execution_id
 
     logger.info("Executing '%s' on Mistral server — worker_deployment='%s'", workflow_name, deployment)
+    dispatched_at = time.time_ns()
     resp = await asyncio.to_thread(
         lambda: httpx.post(
             f"https://api.mistral.ai/v1/workflows/{workflow_name}/execute",
@@ -834,7 +835,39 @@ async def mistral_execute(workflow_name: str, inputs: dict, deployment: str,
     logger.info("Mistral execute response: status=%d body=%.300s", resp.status_code, resp.text)
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"Mistral API returned {resp.status_code}: {resp.text}")
-    return resp.json()
+    data = resp.json()
+    _trace_dispatch(workflow_name, inputs, deployment, data, dispatched_at)
+    return data
+
+
+def _trace_dispatch(workflow_name: str, inputs: dict, deployment: str, data: dict,
+                    started_ns: int) -> None:
+    """Open the root of a Mistral-hosted run's trace.
+
+    The run itself happens on the worker, whose step spans attach to this root
+    by the ids both sides derive from the execution id — so the dispatch and
+    every step it leads to read as one trace on Mistral.
+    """
+    from app.observability import GEN_AI_WORKFLOW_NAME, tracing
+
+    exec_id = data.get("execution_id") or data.get("id")
+    if not exec_id:
+        return
+    tracing.annotate({"app.execution.id": exec_id, GEN_AI_WORKFLOW_NAME: workflow_name})
+    with tracing.span(
+        f"workflow {workflow_name}", kind="workflow", root=True, link_current=True,
+        forced_ids=tracing.workflow_root_ids(exec_id), start_time=started_ns,
+        attrs={
+            GEN_AI_WORKFLOW_NAME: workflow_name,
+            "app.workflow.name": workflow_name,
+            "app.execution.id": exec_id,
+            "app.execution.source": "mistral",
+            "app.execution.status": str(data.get("status") or "RUNNING"),
+            "app.worker.deployment": deployment,
+            "app.workflow.input": inputs,
+        },
+    ):
+        pass
 
 
 @router.post("/workflows/{workflow_name}/execute", response_model=WorkflowExecutionResponse)

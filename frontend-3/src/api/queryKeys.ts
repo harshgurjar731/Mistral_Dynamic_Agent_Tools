@@ -67,4 +67,10 @@ export const QK = {
   agentRuleActivity: (id: string) => ["rules", "agent", id, "activity"] as const,
   workflowRules: (name: string) => ["rules", "workflow", name] as const,
   ruleEvents: (params: Record<string, unknown>) => ["rules", "events", params] as const,
+  observabilityStatus: () => ["observability", "status"] as const,
+  traces: (params: object) => ["observability", "traces", params] as const,
+  trace: (id: string) => ["observability", "trace", id] as const,
+  executionTrace: (id: string) => ["observability", "execution", id] as const,
+  ruleVerdicts: (params: object) => ["observability", "rules", params] as const,
+  tracedWorkflows: () => ["observability", "workflows"] as const,
 };

@@ -455,7 +455,46 @@ def get_tool_descriptions() -> str:
     return "\n".join(lines)
 
 
+def _tool_tier(tool_name: str) -> str:
+    if tool_name in NATIVE_EXECUTORS:
+        return "native"
+    if tool_name in _dynamic_tool_schemas or tool_name not in ALL_TOOLS:
+        return "dynamic"
+    if ":" in tool_name:
+        return "mcp"
+    return "unknown"
+
+
 async def execute_tool(tool_name: str, arguments: dict, version: int | None = None) -> str:
+    """Route one tool call, traced as a GenAI ``execute_tool`` span on Mistral.
+
+    The span carries the arguments and the result, and any rule verdict from
+    the tool gate nests under it — so a refused call shows which rule refused.
+    """
+    from app.observability import tracing
+
+    attrs = {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": tool_name,
+        "gen_ai.tool.type": "function",
+        "gen_ai.tool.call.arguments": arguments,
+        "gen_ai.agent.id": CURRENT_AGENT.get(),
+        "app.tool.tier": _tool_tier(tool_name),
+        "app.tool.version": version,
+    }
+    with tracing.span(f"execute_tool {tool_name}", kind="tool", attrs=attrs) as span:
+        result = await _route_tool(tool_name, arguments, version)
+        text = result if isinstance(result, str) else json.dumps(result, default=str)
+        tracing.set_attrs(span, {"gen_ai.tool.call.result": text})
+        lowered = text.lstrip()[:200].lower()
+        if lowered.startswith("error") or lowered.startswith("blocked by rule") or (
+            lowered.startswith("tool '") and "not found" in lowered
+        ):
+            tracing.mark_error(span, text[:1000], error_type="tool_error")
+        return result
+
+
+async def _route_tool(tool_name: str, arguments: dict, version: int | None = None) -> str:
     """
     3-tier tool execution router:
     1. Native tool → execute locally

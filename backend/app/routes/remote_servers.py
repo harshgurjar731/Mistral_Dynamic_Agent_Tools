@@ -204,9 +204,18 @@ async def cancel_deployment(deployment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Deployment not found")
     if dep.kind != "command":
         raise HTTPException(status_code=422, detail="Only console commands can be stopped")
-    if not deployers.cancel_command(deployment_id):
-        raise HTTPException(status_code=409, detail="This command is not running")
-    return {"status": "stopping", "id": deployment_id}
+    if deployers.cancel_command(deployment_id):
+        return {"status": "stopping", "id": deployment_id}
+    if dep.status in ("queued", "running"):
+        # Nothing in this process runs it any more (its task ended without
+        # recording a final status): close the row so the UI stops waiting.
+        dep.status = "failed"
+        dep.error = "Not running any more — stopped tracking it"
+        dep.log = (dep.log or "") + "\n■ Stopped (no longer running on the backend)\n"
+        dep.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        return {"status": "cleared", "id": deployment_id}
+    raise HTTPException(status_code=409, detail="This command has already finished")
 
 
 @router.get("/remote-servers/deployments")

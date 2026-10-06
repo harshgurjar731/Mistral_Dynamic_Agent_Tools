@@ -80,8 +80,9 @@ export function CommandRunOutput({ deploymentId }: { deploymentId: number }) {
   const running = active.data?.status === "running" || active.data?.status === "queued";
   const stop = useMutation({
     mutationFn: () => remoteServersApi.cancelCommand(deploymentId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.remoteDeployment(deploymentId) }),
     onError: (e) => toast.error(errorMessage(e)),
+    // Either way, re-read the run: it may have ended already.
+    onSettled: () => qc.invalidateQueries({ queryKey: QK.remoteDeployment(deploymentId) }),
   });
 
   return (

@@ -17,6 +17,11 @@ def init_mistral_client() -> Mistral:
             "MISTRAL_API_KEY is not set. Please set it in your .env file."
         )
     _mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY, timeout_ms=120000)
+    # Every model call made through the shared client becomes a span on
+    # Mistral (no-op when observability is off or not yet set up).
+    from app.observability import instrument_client
+
+    instrument_client(_mistral_client)
     return _mistral_client
 
 
