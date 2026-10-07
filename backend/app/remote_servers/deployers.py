@@ -473,7 +473,7 @@ def _resolve_brev(log: _DeployLog, instance: str, token: str | None,
                           "backend cannot use. Expose TCP port 22 in the instance's Access tab and set "
                           "'Public IP override' / 'Public SSH port' to the endpoint it shows.")
     if public_host:
-        details.update(host=public_host, port=public_port or 22)
+        details.update(host=public_host, port=brev.override_port(details, public_host, public_port))
         log.write(f"Using the public IP override: {public_host}:{details['port']}\n")
     elif _is_overlay_address(details["host"]):
         log.write("⚠ This is a Brev private-network address — it is only reachable where the Brev CLI "

@@ -188,6 +188,15 @@ def cert_params(name: str) -> dict | None:
     return None
 
 
+def override_port(details: dict, public_host: str, public_port: int | None) -> int:
+    """Port for a public-host override. Left empty, it is Brev's own port when
+    the override names the host Brev already reports (e.g. its endpoint on
+    :51322) — not 22, which there reaches something that rejects the login."""
+    if public_port:
+        return int(public_port)
+    return int(details["port"]) if public_host == details["host"] else 22
+
+
 def resolve_connection(name: str, public_host: str | None = None,
                        public_port: int | None = None) -> dict:
     """The instance's current SSH settings — after a stop/start Brev can hand
@@ -196,7 +205,7 @@ def resolve_connection(name: str, public_host: str | None = None,
     require_running(name)
     details = ssh_details(name)
     if public_host:
-        details.update(host=public_host, port=public_port or 22)
+        details.update(host=public_host, port=override_port(details, public_host, public_port))
     elif details["proxied"]:
         raise BrevError(f"Brev reaches '{name}' through an SSH proxy — set a public IP override")
     fresh = {k: details[k] for k in ("host", "port", "username")}
