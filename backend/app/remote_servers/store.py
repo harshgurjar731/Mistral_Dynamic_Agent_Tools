@@ -174,6 +174,27 @@ def normalise(provider_id: str, purpose: str, config: dict, secrets: dict, *, st
     return clean, merged_secrets
 
 
+def update_brev_connection(instance: str, fresh: dict) -> None:
+    """Save re-resolved SSH settings on every Brev server for ``instance``."""
+    from app.database import SessionLocal
+
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        for server in db.query(RemoteServer).filter(RemoteServer.provider == "brev").all():
+            config = server_config(server)
+            if (config.get("instance_name") or "").strip() != instance:
+                continue
+            config.update(fresh)
+            config.pop("host_fingerprint", None)
+            server.config = json.dumps(config)
+            server.url = display_address(server.provider, config)
+        db.commit()
+    finally:
+        db.close()
+
+
 def parse_env_lines(text: str | None) -> dict[str, str]:
     env: dict[str, str] = {}
     for line in (text or "").splitlines():

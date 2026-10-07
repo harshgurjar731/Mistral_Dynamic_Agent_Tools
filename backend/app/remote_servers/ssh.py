@@ -102,7 +102,36 @@ def fingerprint(key) -> str:
 
 
 def connect(config: dict, secrets: dict, *, timeout: float = 12.0, expected_fingerprint: str | None = None):
-    """Open an authenticated SSHClient. Raises SSHError with a readable message."""
+    """Open an authenticated SSHClient. Raises SSHError with a readable message.
+
+    A Brev server whose saved settings stopped working (after the instance
+    was stopped and started, Brev can hand out a new endpoint port or port
+    ID) is re-resolved through the Brev CLI and retried once. The fresh
+    settings are written into ``config`` and saved on the server.
+    """
+    try:
+        return _connect(config, secrets, timeout=timeout, expected_fingerprint=expected_fingerprint)
+    except SSHError as first:
+        instance = (config.get("instance_name") or "").strip()
+        if not (config.get("brev_env") and instance):
+            raise
+        from app.remote_servers import brev, store
+
+        try:
+            fresh = brev.resolve_connection(instance, (config.get("public_host") or "").strip() or None,
+                                            config.get("public_port"))
+        except brev.BrevError as e:
+            raise SSHError(f"{first} — and re-resolving the Brev instance failed: {e}") from e
+        if all(config.get(k) == v for k, v in fresh.items()):
+            raise  # nothing changed on Brev's side; the original error stands
+        config.update(fresh)
+        config.pop("host_fingerprint", None)
+        client = _connect(config, secrets, timeout=timeout)
+        store.update_brev_connection(instance, fresh)
+        return client
+
+
+def _connect(config: dict, secrets: dict, *, timeout: float = 12.0, expected_fingerprint: str | None = None):
     paramiko = _paramiko()
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # verified manually below

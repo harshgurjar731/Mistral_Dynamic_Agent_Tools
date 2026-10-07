@@ -188,6 +188,22 @@ def cert_params(name: str) -> dict | None:
     return None
 
 
+def resolve_connection(name: str, public_host: str | None = None,
+                       public_port: int | None = None) -> dict:
+    """The instance's current SSH settings — after a stop/start Brev can hand
+    out a new endpoint port or port ID. Keys match the server config:
+    host, port, username, brev_env, brev_port_id, brev_linux_user."""
+    require_running(name)
+    details = ssh_details(name)
+    if public_host:
+        details.update(host=public_host, port=public_port or 22)
+    elif details["proxied"]:
+        raise BrevError(f"Brev reaches '{name}' through an SSH proxy — set a public IP override")
+    fresh = {k: details[k] for k in ("host", "port", "username")}
+    fresh.update(cert_params(name) or {"brev_env": "", "brev_port_id": "", "brev_linux_user": ""})
+    return fresh
+
+
 def mint_cert(env: str, port_id: str = "", linux_user: str = "") -> tuple[str, str]:
     """A fresh (private key, certificate) pair for one SSH connection."""
     home = run("sh", "-c", "echo $HOME").strip()

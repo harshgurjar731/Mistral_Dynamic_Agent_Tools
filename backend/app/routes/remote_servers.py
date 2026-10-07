@@ -40,6 +40,9 @@ def _get_server(db: Session, server_id: int) -> RemoteServer:
 
 
 def _save_check(db: Session, server: RemoteServer, result: dict) -> None:
+    # The check may have re-resolved a Brev server's settings and saved them
+    # from another session; don't write the stale copy back over them.
+    db.refresh(server)
     server.last_status = result["status"]
     server.last_check = json.dumps(result, default=str)
     server.last_checked_at = datetime.now(timezone.utc).replace(tzinfo=None)
