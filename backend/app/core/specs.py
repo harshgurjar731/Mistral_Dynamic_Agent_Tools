@@ -435,6 +435,14 @@ class CodeResolution:
     requirement: Optional[CodeRequirement] = None
     output_schema: Optional[dict] = None
     review_required: bool = False
+    #: On a failure: a requirement that passed every spec check, so building
+    #: it can be retried at run time. None when the spec itself was the problem.
+    retry_requirement: Optional[dict] = None
+    #: A version was built, failed when executed, and was rejected.
+    rolled_back: bool = False
+    #: This resolution created a new version (not reused, not an identical
+    #: earlier build the tool service handed back) — what a rollback removes.
+    created: bool = False
 
     @property
     def usable(self) -> bool:
@@ -448,4 +456,6 @@ class CodeResolution:
             "message": self.message, "issues": list(self.issues),
             "requirement": self.requirement.as_request() if self.requirement else None,
             "output_schema": self.output_schema, "review_required": self.review_required,
+            "retry_requirement": self.retry_requirement, "rolled_back": self.rolled_back,
+            "created": self.created,
         }

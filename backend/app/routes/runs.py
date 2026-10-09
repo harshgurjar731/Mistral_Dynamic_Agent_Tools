@@ -8,6 +8,7 @@ Background run routes — start creation pipelines that outlive the request.
     GET  /runs/{id}              one run: status, progress, result
     GET  /runs/{id}/events       SSE: replay after ?after=<seq>, then follow live
     POST /runs/{id}/cancel       stop a running run
+    POST /runs/{id}/decisions/{d} answer a question the run is waiting on
 
 Starting returns immediately with the run. Closing the event stream never stops
 a run; only the cancel endpoint does.
@@ -124,3 +125,18 @@ async def cancel_run(run_id: str):
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
         return {"cancelled": False, "status": run["status"]}
     return {"cancelled": True, "status": "cancelling"}
+
+
+class DecisionAnswer(BaseModel):
+    choice: str = Field(min_length=1)
+
+
+@router.post("/runs/{run_id}/decisions/{decision_id}")
+async def answer_decision(run_id: str, decision_id: str, body: DecisionAnswer):
+    """Answer a question a running run is waiting on (``decision_required`` event)."""
+    error = manager.answer(run_id, decision_id, body.choice)
+    if error:
+        if manager.live(run_id) is None and await manager.get(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+        raise HTTPException(status_code=409, detail=error)
+    return {"accepted": True, "choice": body.choice}

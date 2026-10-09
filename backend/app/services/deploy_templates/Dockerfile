@@ -3,7 +3,8 @@
 # Context is the package root (docker-compose.deploy.yml builds with
 # `context: ./backend`), so this Dockerfile only sees the bundled backend/
 # tree — the same layout as the source repo's backend/ directory.
-FROM python:3.11-slim
+# 3.12+: mistralai-workflows publishes no release for 3.11.
+FROM python:3.12-slim
 WORKDIR /app
 
 COPY requirements.txt .

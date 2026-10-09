@@ -15,18 +15,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { workflowsApi, executionsApi, QK, errorMessage } from "@/api";
 import type { WorkflowDefinition } from "@/types";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Markdown } from "@/components/chat/Markdown";
 import { formatDuration } from "@/lib/status";
 import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
+import { useWorkflowPrerequisites, WorkflowPrerequisites } from "./WorkflowPrerequisites";
 import { cn } from "@/lib/utils";
 
 interface StepResult {
@@ -69,6 +65,9 @@ export function WorkflowExecutionModal({
   });
 
   const workflow: WorkflowDefinition | undefined = wfQuery.data;
+  // The backend refuses a run while a blocking prerequisite is unmet.
+  const prereq = useWorkflowPrerequisites(open ? workflowName : null);
+  const prereqReady = Boolean(prereq.data?.ready);
 
   // Initialize input fields
   useEffect(() => {
@@ -199,6 +198,7 @@ export function WorkflowExecutionModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
+          {!prereqReady ? <WorkflowPrerequisites workflowName={workflowName} /> : null}
           {/* Input schema fields */}
           {workflow?.input_schema && workflow.input_schema.length > 0 && (
             <div className="space-y-3 rounded-xl border border-border bg-background-elevated/50 p-4">
@@ -258,7 +258,7 @@ export function WorkflowExecutionModal({
                 )}
                 <Button
                   size="sm"
-                  disabled={runMut.isPending}
+                  disabled={runMut.isPending || !prereqReady}
                   onClick={() => runMut.mutate()}
                   className="ml-auto h-7 text-xs gap-1.5 bg-emerald hover:bg-emerald/90 text-black font-semibold"
                 >

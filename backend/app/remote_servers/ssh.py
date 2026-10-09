@@ -197,15 +197,20 @@ def _connect(config: dict, secrets: dict, *, timeout: float = 12.0, expected_fin
 
 def run(client, command: str, *, timeout: float = 60.0,
         on_output: Callable[[str], None] | None = None,
-        cancel: threading.Event | None = None) -> tuple[int, str]:
+        cancel: threading.Event | None = None,
+        stdin: bytes | None = None) -> tuple[int, str]:
     """Run a command, stdout+stderr combined. Returns (exit_code, output).
 
     Setting ``cancel`` closes the channel, which ends the remote command.
+    ``stdin`` is sent to the command, then its input is closed.
     """
     transport = client.get_transport()
     channel = transport.open_session()
     channel.set_combine_stderr(True)
     channel.exec_command(command)
+    if stdin is not None:
+        channel.sendall(stdin)
+        channel.shutdown_write()
 
     chunks: list[str] = []
     deadline = time.monotonic() + timeout

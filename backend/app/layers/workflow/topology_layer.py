@@ -245,8 +245,10 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                     config["tool_name"] = tool_name
                     _pin_activity(ctx, step_id, tool_name, config)
                     if tool_name not in activity_names:
-                        # Not an error: run_tool_step has a runtime
-                        # auto-synthesis fallback for exactly this case.
+                        # Not an error here: an activity deferred by
+                        # ActivityGapLayer carries its checked requirement and
+                        # is rebuilt on the first run; one that could not be
+                        # built at all is reported by validation.
                         logger.info(
                             "Step '%s' references activity '%s' not in the catalogue",
                             step_id, tool_name,

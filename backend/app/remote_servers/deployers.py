@@ -7,14 +7,16 @@ recorded in ``remote_deployments``: the UI polls the row for status and log.
 
 SSH workflow deployment, in the workflow's directory on the server:
   1. upload package.zip over SFTP and extract it (python3 zipfile, or unzip);
-  2. write .env — the existing one (kept across redeploys) or .env.template,
-     overlaid with the server's stored env vars and any deploy-time API key;
+  2. write .env over a plain exec channel — the existing one (kept across
+     redeploys) or .env.template, overlaid with the server's stored env vars
+     and any deploy-time API key;
   3. run the chosen post-deploy action (bootstrap / docker compose / custom).
 """
 
 from __future__ import annotations
 
 import asyncio
+import difflib
 import io
 import ipaddress
 import json
@@ -51,6 +53,12 @@ class DeployError(RuntimeError):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _error_text(e: BaseException) -> str:
+    # Some errors carry no message (paramiko's EOFError when a channel drops),
+    # which would otherwise leave a bare "✖" as the last line of the log.
+    return str(e).strip() or f"{type(e).__name__} (no details — see the backend log)"
 
 
 class _DeployLog:
@@ -275,8 +283,8 @@ async def _run_workflow_deployment(dep_id: int, server_id: int, workflow_name: s
     except Exception as e:
         if not isinstance(e, (DeployError, ssh.SSHError)):
             logger.exception("Workflow deployment %s failed", dep_id)
-        log.write(f"\n✖ {e}\n")
-        log.flush(status="failed", error=str(e), finished_at=_now())
+        log.write(f"\n✖ {_error_text(e)}\n")
+        log.flush(status="failed", error=_error_text(e), finished_at=_now())
 
 
 def _merge_env(base: str, overrides: dict[str, str]) -> str:
@@ -294,6 +302,55 @@ def _merge_env(base: str, overrides: dict[str, str]) -> str:
     if extra:
         lines += ["", "# Added by remote deployment", *extra]
     return "\n".join(lines) + "\n"
+
+
+def _env_keys(text: str) -> set[str]:
+    keys = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            keys.add(stripped.split("=", 1)[0].strip())
+    return keys
+
+
+def _env_typo_warnings(base: str, overrides: dict[str, str]) -> list[str]:
+    """A new key that is a near-miss of one already in .env is likely a typo
+    (DEPLOYEMENT_NAME for DEPLOYMENT_NAME): it would be added, not replace."""
+    known = _env_keys(base)
+    warnings = []
+    for key in overrides:
+        if key in known:
+            continue
+        match = difflib.get_close_matches(key, known, n=1, cutoff=0.85)
+        if match:
+            warnings.append(f"⚠ {key} is not in .env — did you mean {match[0]}? "
+                            f"It was added as a new variable; {match[0]} is unchanged.\n")
+    return warnings
+
+
+# .env is read and written over plain exec channels rather than SFTP: Brev's
+# SSH gateway drops SFTP sessions now and then, while commands keep working.
+_MISSING = 3
+
+
+def _read_remote_file(client, path: str) -> str | None:
+    """A remote file's text, or None when it does not exist."""
+    q = shlex.quote(path)
+    code, out = ssh.run(client, f"if [ -e {q} ]; then cat {q}; else exit {_MISSING}; fi", timeout=30)
+    if code == _MISSING:
+        return None
+    if code != 0:
+        raise DeployError(f"Could not read {path}: {out.strip() or f'exit status {code}'}")
+    return out
+
+
+def _write_remote_file(client, path: str, content: str) -> None:
+    """Replace a remote file with mode 600, atomically (temp file + mv)."""
+    q, tmp = shlex.quote(path), shlex.quote(path + ".tmp")
+    code, out = ssh.run(client, f"umask 077 && cat > {tmp} && chmod 600 {tmp} && mv -f {tmp} {q}",
+                        timeout=30, stdin=content.encode())
+    if code != 0:
+        raise DeployError(f"Could not write {path}: {out.strip() or f'exit status {code}'}")
 
 
 def _compose_command(manifest) -> str:
@@ -323,37 +380,41 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
         log.write(f"Workflow directory: {workdir}\n")
 
         log.step("Uploading package")
-        sftp = client.open_sftp()
         try:
-            sftp.putfo(io.BytesIO(zip_bytes), posixpath.join(workdir, "package.zip"))
-
-            log.step("Extracting package")
-            code, out = ssh.run(
-                client,
-                f"cd {qdir} && (python3 -m zipfile -e package.zip . 2>/dev/null || unzip -o -q package.zip)"
-                " && rm -f package.zip && ls -1",
-                timeout=300, on_output=log.write,
-            )
-            if code != 0:
-                raise DeployError("Extraction failed — the server needs python3 or unzip")
-
-            log.step("Writing .env")
-            env_path = posixpath.join(workdir, ".env")
+            sftp = client.open_sftp()
             try:
-                with sftp.open(env_path, "r") as fh:
-                    base_env = fh.read().decode()
-                log.write("Keeping existing .env\n")
-            except IOError:
-                with sftp.open(posixpath.join(workdir, ".env.template"), "r") as fh:
-                    base_env = fh.read().decode()
-                log.write("Created .env from .env.template\n")
-            with sftp.open(env_path, "w") as fh:
-                fh.write(_merge_env(base_env, env_overrides).encode())
-            sftp.chmod(env_path, 0o600)
-            if env_overrides:
-                log.write(f"Set: {', '.join(sorted(env_overrides))}\n")
-        finally:
-            sftp.close()
+                sftp.putfo(io.BytesIO(zip_bytes), posixpath.join(workdir, "package.zip"))
+            finally:
+                sftp.close()
+        except Exception as e:  # paramiko raises EOFError/SSHException when the session drops
+            raise DeployError(f"Uploading the package over SFTP failed: {e!r}") from e
+
+        log.step("Extracting package")
+        code, out = ssh.run(
+            client,
+            f"cd {qdir} && (python3 -m zipfile -e package.zip . 2>/dev/null || unzip -o -q package.zip)"
+            " && rm -f package.zip && ls -1",
+            timeout=300, on_output=log.write,
+        )
+        if code != 0:
+            raise DeployError("Extraction failed — the server needs python3 or unzip")
+
+        log.step("Writing .env")
+        env_path = posixpath.join(workdir, ".env")
+        base_env = _read_remote_file(client, env_path)
+        if base_env is not None:
+            log.write("Keeping existing .env\n")
+        else:
+            template = posixpath.join(workdir, ".env.template")
+            base_env = _read_remote_file(client, template)
+            if base_env is None:
+                raise DeployError(f"Neither .env nor .env.template exists in {workdir}")
+            log.write("Created .env from .env.template\n")
+        for warning in _env_typo_warnings(base_env, env_overrides):
+            log.write(warning)
+        _write_remote_file(client, env_path, _merge_env(base_env, env_overrides))
+        if env_overrides:
+            log.write(f"Set: {', '.join(sorted(env_overrides))}\n")
 
         action = options.get("action") or "upload_only"
         commands: list[tuple[str, str, int]] = []
@@ -574,8 +635,8 @@ async def _run_brev_provision(dep_id: int, server_id: int, instance: str) -> Non
     except Exception as e:
         if not isinstance(e, (DeployError, ssh.SSHError, brev.BrevError)):
             logger.exception("Brev provisioning %s failed", dep_id)
-        log.write(f"\n✖ {e}\n")
-        log.flush(status="failed", error=str(e), finished_at=_now())
+        log.write(f"\n✖ {_error_text(e)}\n")
+        log.flush(status="failed", error=_error_text(e), finished_at=_now())
 
 
 # ── Console commands ─────────────────────────────────────────────────────
@@ -591,8 +652,9 @@ _MAX_COMMAND_LOG = 1_000_000  # characters; `logs -f` could otherwise grow the r
 
 def start_remote_command(db, server: RemoteServer, *, command: str = "", preset: str = "",
                          workflow: str = "", timeout: int = 600, action: str = "",
-                         env: dict[str, str] | None = None) -> RemoteDeployment:
-    """``env`` is merged into the workflow's .env before the command runs."""
+                         env: dict[str, str] | None = None, target: str = "") -> RemoteDeployment:
+    """``env`` is merged into the workflow's .env before the command runs.
+    ``target`` names the run in the history when it is not ``workflow``."""
     if env and not workflow:
         raise DeployError(".env overrides need a workflow directory")
     if preset:
@@ -611,7 +673,7 @@ def start_remote_command(db, server: RemoteServer, *, command: str = "", preset:
         raise DeployError(f"Invalid workflow directory '{workflow}'")
     timeout = min(max(int(timeout or 600), 5), 3600)
 
-    dep = RemoteDeployment(server_id=server.id, kind="command", target=workflow or "~",
+    dep = RemoteDeployment(server_id=server.id, kind="command", target=target or workflow or "~",
                            status="queued", log="",
                            # .env values can be secrets: only their names are kept.
                            options=json.dumps({"action": action or preset or "command", "command": command,
@@ -662,8 +724,8 @@ async def _run_remote_command(dep_id: int, server_id: int, command: str, workflo
         stopped = cancel.is_set()
         if not stopped and not isinstance(e, (DeployError, ssh.SSHError, brev.BrevError)):
             logger.exception("Remote command %s failed", dep_id)
-        log.write("\n■ Stopped\n" if stopped else f"\n✖ {e}\n")
-        log.flush(status="failed", error="Stopped" if stopped else str(e), finished_at=_now())
+        log.write("\n■ Stopped\n" if stopped else f"\n✖ {_error_text(e)}\n")
+        log.flush(status="failed", error="Stopped" if stopped else _error_text(e), finished_at=_now())
     finally:
         _CANCEL.pop(dep_id, None)
 
@@ -736,18 +798,10 @@ def _merge_remote_env(log: _DeployLog, client, where: str, env: dict[str, str]) 
     if code != 0:
         raise DeployError(f"Workflow directory not found: {out.strip()}")
     path = posixpath.join(out.strip().splitlines()[-1], ".env")
-    sftp = client.open_sftp()
-    try:
-        try:
-            with sftp.open(path, "r") as fh:
-                base_env = fh.read().decode()
-        except IOError:
-            base_env = ""
-        with sftp.open(path, "w") as fh:
-            fh.write(_merge_env(base_env, env).encode())
-        sftp.chmod(path, 0o600)
-    finally:
-        sftp.close()
+    base_env = _read_remote_file(client, path) or ""
+    for warning in _env_typo_warnings(base_env, env):
+        log.write(warning)
+    _write_remote_file(client, path, _merge_env(base_env, env))
     log.write(f"Updated .env: {', '.join(sorted(env))}\n")
 
 
@@ -793,6 +847,48 @@ def build_compose_command(*, services: list[str], no_cache: bool = False, pull: 
     if start:
         steps.append(f"{dc} ps")
     return steps[0] + "; " + " && ".join(steps[1:])
+
+
+def build_delete_command(workflow: str, *, stop_containers: bool = True,
+                         remove_volumes: bool = False, remove_images: bool = False) -> str:
+    """The shell for deleting a deployed workflow package; runs in the deploy directory.
+
+    Only a directory holding manifest.json is touched, so a mistyped name
+    cannot remove anything that is not a workflow package. When the stack's
+    ``down`` fails the files are kept, or its containers would be orphaned
+    with no compose file left to manage them.
+    """
+    if not _WORKFLOW_DIR.match(workflow or ""):
+        raise DeployError(f"Invalid workflow directory '{workflow}'")
+    if (remove_volumes or remove_images) and not stop_containers:
+        raise DeployError("Removing volumes or images needs the containers stopped too")
+    wf = shlex.quote(workflow)
+    lines = [
+        f"WF={wf}",
+        '[ -f "$WF/manifest.json" ] || { echo "No workflow package named $WF in $PWD"; exit 2; }',
+    ]
+    if stop_containers:
+        flags = " ".join(f for f, on in (("-v", remove_volumes), ("--rmi local", remove_images)) if on)
+        lines += [
+            'if [ -f "$WF/docker-compose.deploy.yml" ] && command -v docker >/dev/null 2>&1; then',
+            '  echo "Stopping and removing the workflow\'s containers…"',
+            '  DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"',
+            # down reads env_file: ./.env; an empty one keeps it from failing without it.
+            '  (cd "$WF" && { [ -f .env ] || : > .env; } && '
+            f'$DC -f docker-compose.deploy.yml --profile tools --profile knowledge-graph down --remove-orphans {flags}) '
+            '|| { echo "docker compose down failed — keeping the files so the stack can still be managed"; exit 1; }',
+            "fi",
+        ]
+    lines += [
+        'echo "Deleting $PWD/$WF"',
+        'rm -rf -- "$WF" 2>/dev/null',
+        # Containers can leave root-owned files (e.g. __pycache__ in mounted dirs).
+        '[ -e "$WF" ] && sudo -n rm -rf -- "$WF" 2>/dev/null',
+        'if [ -e "$WF" ]; then echo "Some files could not be removed (owned by another user?):"; '
+        'find "$WF" ! -user "$(id -un)" | head -20; exit 1; fi',
+        'echo "Deleted $WF"',
+    ]
+    return "\n".join(lines)
 
 
 def remote_env_info(config: dict, secrets: dict, workflow: str) -> dict:

@@ -18,6 +18,8 @@ import type {
   LibraryDocument,
   OntologyGraph,
   OntologyOverview,
+  PrerequisiteReport,
+  RebuildActivityResult,
   AnnotationMap,
   AnnotationRow,
   ClassificationResult,
@@ -48,7 +50,7 @@ export type * from "./remoteServers";
 export { runsApi, isTerminal } from "./runs";
 export { observabilityApi } from "./observability";
 export type * from "./observability";
-export type { BackgroundRun, RunKind, RunProgress, RunStatus } from "./runs";
+export type { BackgroundRun, RunDecision, RunKind, RunProgress, RunStatus } from "./runs";
 
 /* ── Health ─────────────────────────────────────────────────────────── */
 export const healthApi = {
@@ -380,6 +382,13 @@ export const workflowsApi = {
     put<unknown>(`/api/workflows/${name}`, { definition }),
   validate: (definition: WorkflowDefinition) =>
     post<ValidationResult>("/api/workflows/validate", { definition }),
+  /** What must be in place before a run; execution is refused until `ready`. */
+  prerequisites: (name: string) =>
+    get<PrerequisiteReport>(`/api/workflows/${encodeURIComponent(name)}/prerequisites`),
+  rebuildActivity: (name: string, stepId: string) =>
+    post<RebuildActivityResult>(
+      `/api/workflows/${encodeURIComponent(name)}/steps/${encodeURIComponent(stepId)}/rebuild-activity`,
+    ),
   scriptPreview: (definition: WorkflowDefinition) =>
     post<ScriptResult>("/api/workflows/script/preview", { definition }),
   script: (name: string) => get<ScriptResult>(`/api/workflows/${name}/script`),

@@ -42,10 +42,18 @@ function rowsToRecord(rows: KeyValueRow[]): Record<string, string> {
 /**
  * Build a deployed workflow's Docker stack on the server, with every
  * docker compose option the package supports, then optionally start it.
+ * With ``workflow`` set the panel works on that workflow and hides its picker.
  */
-export function BuildWorkflowPanel({ server }: { server: RemoteServer }) {
+export function BuildWorkflowPanel({
+  server,
+  workflow: fixedWorkflow,
+}: {
+  server: RemoteServer;
+  workflow?: string | undefined;
+}) {
   const qc = useQueryClient();
-  const [workflow, setWorkflow] = useState("");
+  const [pickedWorkflow, setWorkflow] = useState("");
+  const workflow = fixedWorkflow ?? pickedWorkflow;
   const [services, setServices] = useState<BuildService[]>(["backend"]);
   const [options, setOptions] = useState<Record<OptionKey, boolean>>({
     start: true,
@@ -84,10 +92,12 @@ export function BuildWorkflowPanel({ server }: { server: RemoteServer }) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Workflow</Label>
-        <RemoteWorkflowSelect server={server} value={workflow} onChange={setWorkflow} />
-      </div>
+      {fixedWorkflow == null ? (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Workflow</Label>
+          <RemoteWorkflowSelect server={server} value={workflow} onChange={setWorkflow} />
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <fieldset className="space-y-2">

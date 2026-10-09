@@ -35,7 +35,7 @@ function NewRemoteServerPage() {
   });
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-6 py-8">
       <Button size="sm" variant="ghost" asChild className="mb-4">
         <Link to="/remote-servers" search={{ purpose }}>
           <ArrowLeft className="size-3.5" /> Remote Servers
@@ -45,11 +45,11 @@ function NewRemoteServerPage() {
         Add a <span className="text-gradient-brand">remote server</span>
       </h1>
       <p className="mt-1.5 text-sm text-muted-foreground">
-        Pick what the server is for and where it runs, fill in its connection details, and test the
-        connection before saving. Passwords, keys and tokens are stored encrypted.
+        A place to deploy workflows or tools. Four quick steps — you can test the connection before
+        anything is saved.
       </p>
 
-      <div className="mt-8">
+      <div className="mt-6">
         {catalog.isLoading ? (
           <DetailSkeleton />
         ) : catalog.isError || !catalog.data ? (
@@ -61,7 +61,12 @@ function NewRemoteServerPage() {
             onCancel={() => navigate({ to: "/remote-servers", search: { purpose } })}
             onSaved={(s) => {
               qc.invalidateQueries({ queryKey: QK.remoteServers() });
-              navigate({ to: "/remote-servers/$id", params: { id: String(s.id) } });
+              navigate({
+                to: "/remote-servers/$id",
+                params: { id: String(s.id) },
+                // Brev provisioning streams its log on the Settings tab.
+                search: { tab: s.provision_deployment_id ? "settings" : undefined },
+              });
             }}
           />
         )}

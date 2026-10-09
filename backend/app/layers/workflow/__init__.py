@@ -23,6 +23,7 @@ Chain, as assembled in ``app.layers``:
     WorkflowValidationLayer     is it runnable, and does it follow its rules (no LLM)
     WorkflowPersistenceLayer    save it                             (no LLM)
     WorkflowCompilationLayer    compile to the SDK                  (no LLM)
+    WorkflowReviewLayer         you test it, then accept or roll back (no LLM)
     WorkflowRegistrationLayer   register on Mistral                 (no LLM)
 
 Once ``ctx.error`` is set, every remaining layer passes straight through — see
@@ -37,6 +38,7 @@ from app.layers.workflow.finalize_layers import (
     WorkflowCompilationLayer,
     WorkflowPersistenceLayer,
     WorkflowRegistrationLayer,
+    WorkflowReviewLayer,
     WorkflowValidationLayer,
 )
 from app.layers.workflow.guardrail_layer import WorkflowGuardrailLayer
@@ -63,5 +65,6 @@ __all__ = [
     "WorkflowValidationLayer",
     "WorkflowPersistenceLayer",
     "WorkflowCompilationLayer",
+    "WorkflowReviewLayer",
     "WorkflowRegistrationLayer",
 ]

@@ -138,6 +138,50 @@ export interface ValidationResult {
   warning_count: number;
 }
 
+/** Where a prerequisite is fixed: a page, an in-place build, or an approval. */
+export type PrerequisiteAction =
+  | { type: "link"; to: string; label: string }
+  | { type: "rebuild"; step_id: string; label: string }
+  | { type: "approve"; tool_id: number; label: string; to?: string };
+
+/** One thing that must (or should) be true before a workflow runs. */
+export interface Prerequisite {
+  id: string;
+  category: string;
+  title: string;
+  /** unmet blocks the run; warning lets it start but it may not work fully. */
+  status: "met" | "unmet" | "warning" | "info";
+  blocking: boolean;
+  detail: string;
+  step_id: string | null;
+  instructions: string[];
+  action: PrerequisiteAction | null;
+}
+
+export interface PrerequisiteReport {
+  workflow_name: string;
+  ready: boolean;
+  blocking_count: number;
+  warning_count: number;
+  items: Prerequisite[];
+}
+
+/** Outcome of retrying one activity step's build (smoke-tested; broken builds roll back). */
+export interface RebuildActivityResult {
+  workflow_name: string;
+  step_id: string;
+  status: "reused" | "built" | "pending_approval" | "failed" | "blocked";
+  tool_name: string;
+  version: number | null;
+  message: string;
+  issues: string[];
+  rolled_back: boolean;
+  /** True when the step was re-bound and the workflow saved. */
+  saved: boolean;
+  valid: boolean;
+  validation_issues: ValidationIssue[];
+}
+
 export interface ScriptResult {
   workflow_name: string;
   code: string;

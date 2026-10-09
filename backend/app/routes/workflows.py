@@ -232,6 +232,42 @@ async def update_workflow(workflow_name: str, request: UpdateWorkflowRequest):
     }
 
 
+@router.post("/workflows/{workflow_name}/steps/{step_id}/rebuild-activity")
+async def rebuild_step_activity_endpoint(workflow_name: str, step_id: str):
+    """Retry building the activity behind one step.
+
+    Built (and smoke-tested) code is bound to the step and the workflow saved;
+    a broken build is rolled back by the pipeline and the workflow is left as
+    it was. ``status`` says which: reused | built | pending_approval | failed | blocked.
+    """
+    from app.services.workflow_engine.activity_rebuild import RebuildError, rebuild_step_activity
+
+    definition = get_workflow(workflow_name)
+    if not definition:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+    try:
+        resolution, changed = await rebuild_step_activity(definition, step_id)
+    except RebuildError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if changed:
+        await asyncio.to_thread(save_workflow, definition)
+    result = validate_workflow(definition)
+    return {
+        "workflow_name": workflow_name,
+        "step_id": step_id,
+        "status": resolution.status,
+        "tool_name": resolution.name,
+        "version": resolution.version,
+        "message": resolution.message,
+        "issues": list(resolution.issues),
+        "rolled_back": resolution.rolled_back,
+        "saved": changed,
+        "valid": result.valid,
+        "validation_issues": [i.model_dump() for i in result.issues],
+    }
+
+
 # ── Builder support ───────────────────────────────────────────────────────────
 
 async def _validate_with_rules(definition, *, record: bool = False) -> ValidationResponse:
@@ -802,6 +838,37 @@ def _check_required_inputs(workflow, payload: dict) -> None:
     )
 
 
+@router.get("/workflows/{workflow_name}/prerequisites")
+async def workflow_prerequisites(workflow_name: str):
+    """What must be in place before this workflow can run, with how to fix each item.
+
+    ``ready`` is false while any blocking item is unmet; execution refuses to
+    start until it is true.
+    """
+    from app.services.workflow_engine.prerequisites import check_prerequisites
+
+    workflow = get_workflow(workflow_name)
+    if not workflow:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+    return await check_prerequisites(workflow, get_mistral_client())
+
+
+async def _require_prerequisites(workflow) -> None:
+    """Raise 409 with the prerequisite report while any blocking item is unmet."""
+    from app.services.workflow_engine.prerequisites import check_prerequisites
+
+    report = await check_prerequisites(workflow, get_mistral_client())
+    if report["ready"]:
+        return
+    unmet = [i["title"] + (f" — {i['detail']}" if i["detail"] else "")
+             for i in report["items"] if i["blocking"]]
+    raise HTTPException(status_code=409, detail={
+        "message": (f"'{workflow.name}' cannot run yet: {len(unmet)} prerequisite(s) are not met. "
+                    + "; ".join(unmet[:5])),
+        "prerequisites": report,
+    })
+
+
 async def mistral_execute(workflow_name: str, inputs: dict, deployment: str,
                           execution_id: str | None = None) -> dict:
     """Start a run on Mistral, routed to the worker polling ``deployment``.
@@ -890,6 +957,7 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
     # about "earlier steps". Say what is wrong before starting anything.
     if workflow:
         _check_required_inputs(workflow, request.input or {})
+        await _require_prerequisites(workflow)
 
     # ── Always try Mistral server first via direct HTTP ──────────────────
     # We use httpx directly so we can pass worker routing fields that the

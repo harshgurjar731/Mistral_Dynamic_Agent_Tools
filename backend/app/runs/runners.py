@@ -26,11 +26,17 @@ async def workflow_plan(run: LiveRun, *, client, goal: str) -> RunOutcome:
     ctx.event_queue = run
     await workflow_pipeline.execute(ctx)
 
+    from app.layers.workflow import plan_control
+
     done = _as_dict(run.payload("done")) or {}
     result = {
         "workflow_name": done.get("workflow_name"),
         "mistral_workflow_id": done.get("mistral_workflow_id"),
+        "created": plan_control.created(ctx),
     }
+    if ctx.metadata.get(plan_control.ROLLED_BACK_KEY):
+        result["rolled_back"] = True
+        return RunOutcome(status="cancelled", result=result, error=ctx.error)
     fatal = _as_dict(run.payload("fatal_error"))
     if ctx.error or fatal:
         error = ctx.error or (fatal or {}).get("error") or "Planning failed"

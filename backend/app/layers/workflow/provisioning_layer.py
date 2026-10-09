@@ -18,6 +18,8 @@ from functools import partial
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowStepLayer
 
+from app.layers.workflow import plan_control
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,16 +117,23 @@ class AgentProvisioningLayer(WorkflowStepLayer):
         if to_create:
             ctx.emit("status", f"Creating {len(to_create)} agent(s)…")
             semaphore = asyncio.Semaphore(_CREATION_CONCURRENCY)
+            # Libraries made for a capability, kept across retries so a retried
+            # agent is not given a second, duplicate library.
+            libraries: dict[str, str | None] = {}
 
             async def _create(cap):
                 agent_spec = cap.spec
                 # Created before to_config so the new id is in the attachment
                 # list this agent is built with.
-                new_library = await _provision_library(cap, ctx)
-                if new_library:
-                    agent_spec.document_library_ids = list(
-                        agent_spec.document_library_ids or []
-                    ) + [new_library]
+                if cap.id not in libraries:
+                    libraries[cap.id] = await _provision_library(cap, ctx)
+                    if libraries[cap.id]:
+                        requested = getattr(agent_spec, "requested_library", None) or {}
+                        plan_control.record_created(ctx, "library", libraries[cap.id],
+                                                    str(requested.get("name") or ""))
+                        agent_spec.document_library_ids = list(
+                            agent_spec.document_library_ids or []
+                        ) + [libraries[cap.id]]
                 config = agent_spec.to_config()
 
                 # The same creation gate the chat pipeline uses, in pipeline
@@ -188,26 +197,36 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         partial(ctx.client.beta.agents.create, **create_kwargs)
                     )
 
-                    # The tier already went into Mistral's metadata above, but
-                    # metadata is invisible to scoping and validation — only the
-                    # concept store drives those. Without this the planner's own
-                    # agents were unclassified the moment they were made.
-                    await asyncio.to_thread(
-                        partial(
-                            ontology_autotag.annotate_agent,
-                            agent_obj.id,
-                            name=config["agent_name"],
-                            description=config["description"],
-                            instructions=config["agent_instructions"],
-                            tier=config["tier"],
-                            goal=spec.goal,
+                    try:
+                        # The tier already went into Mistral's metadata above, but
+                        # metadata is invisible to scoping and validation — only the
+                        # concept store drives those. Without this the planner's own
+                        # agents were unclassified the moment they were made.
+                        await asyncio.to_thread(
+                            partial(
+                                ontology_autotag.annotate_agent,
+                                agent_obj.id,
+                                name=config["agent_name"],
+                                description=config["description"],
+                                instructions=config["agent_instructions"],
+                                tier=config["tier"],
+                                goal=spec.goal,
+                            )
                         )
-                    )
-
+                        rule_summary = rules_apply.finish_agent(
+                            agent_obj.id, prepared, config.get("rules") or [], default_source="ai"
+                        )
+                    except Exception:
+                        # Half-made: remove it, so a retry does not leave a
+                        # duplicate behind.
+                        try:
+                            await asyncio.to_thread(ctx.client.beta.agents.delete,
+                                                    agent_id=agent_obj.id)
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning("Could not remove half-made agent %s: %s",
+                                           agent_obj.id, e)
+                        raise
                     agent_spec.agent_id = agent_obj.id
-                    rule_summary = rules_apply.finish_agent(
-                        agent_obj.id, prepared, config.get("rules") or [], default_source="ai"
-                    )
                     return {
                         "rules_applied": rule_summary,
                         "capability_id": cap.id,
@@ -240,23 +259,55 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         "reused": False,
                     }
 
-            results = await asyncio.gather(
-                *[_create(c) for c in to_create], return_exceptions=True
-            )
+            # Every failed agent is tried once more automatically; after that
+            # the user decides (see plan_control).
+            pending, attempts, auto_retried = list(to_create), 0, False
+            while pending:
+                results = await asyncio.gather(
+                    *[_create(c) for c in pending], return_exceptions=True
+                )
+                attempts += 1
+                failures = []
+                for cap, item in zip(pending, results):
+                    if isinstance(item, Exception):
+                        logger.error("Agent creation for '%s' failed: %s", cap.id, item)
+                        failures.append((cap, item))
+                        continue
+                    plan_control.record_created(ctx, "agent", item["agent_id"], item["agent_name"])
+                    provisioned.append(item)
+                    ctx.emit("agent_new", json.dumps(item))
+                pending = [cap for cap, _ in failures]
+                if not pending:
+                    break
+                if not auto_retried:
+                    auto_retried = True
+                    ctx.emit("status", f"Retrying {len(pending)} agent(s) that could not be created…")
+                    continue
 
-            for item in results:
-                if isinstance(item, Exception):
-                    # Fatal: a capability with no agent leaves a step that cannot
-                    # be bound, and a workflow saved in that state fails at run
-                    # time in a way that is hard to trace back to planning.
-                    logger.error("Agent creation failed: %s", item)
-                    ctx.emit("fatal_error", json.dumps(
-                        {"error": f"Agent creation failed: {item}"}
-                    ))
-                    ctx.set_error(f"Agent creation failed: {item}")
+                rows = plan_control.failure_rows([
+                    {"id": cap.id, "name": _agent_name(cap), "step": cap.name,
+                     "error": f"{type(err).__name__}: {err}"}
+                    for cap, err in failures])
+                choice = await plan_control.ask_build_failed(ctx, "agent", rows, attempts=attempts)
+                if choice == "retry":
+                    ctx.emit("status", f"Retrying {len(pending)} agent(s) at your request…")
+                    continue
+                if choice == "rollback":
+                    await plan_control.roll_back_plan(ctx, "agents could not be created")
                     return await next(ctx)
-                provisioned.append(item)
-                ctx.emit("agent_new", json.dumps(item))
+                # Manual: finish without them. Their steps stay unbound, and
+                # validation reports each one until an agent is chosen.
+                issues = ctx.metadata.setdefault("build_issues", [])
+                for row in rows:
+                    issues.append({
+                        "severity": "error", "code": "agent.unbuilt", "step_id": row["id"],
+                        "field": "agent_id",
+                        "message": (f"No agent could be created for '{row['step']}': "
+                                    f"{row['error'][:300]}. Choose or create an agent for "
+                                    f"this step in the builder, then register the workflow."),
+                    })
+                ctx.emit("agents_failed", json.dumps({"failures": rows, "manual": True}))
+                break
 
         spec.provisioned_agents = provisioned
         logger.info(
@@ -267,3 +318,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
         )
 
         return await next(ctx)
+
+
+def _agent_name(cap) -> str:
+    return str(getattr(cap.spec, "agent_name", "") or cap.name)

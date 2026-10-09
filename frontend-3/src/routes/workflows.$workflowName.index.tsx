@@ -34,6 +34,7 @@ import { IssueList, ValidationSummary } from "@/components/workflows/ValidationP
 import { DeployPackageModal } from "@/components/workflows/DeployPackageModal";
 import { WorkflowClassificationModal } from "@/components/workflows/WorkflowClassificationModal";
 import { StepDetailsDialog } from "@/components/workflows/StepDetailsDialog";
+import { WorkflowPrerequisites } from "@/components/workflows/WorkflowPrerequisites";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -300,6 +301,10 @@ function WorkflowDetailPage() {
           </p>
         </div>
       ) : (
+        <WorkflowPrerequisites workflowName={workflowName} />
+      )}
+
+      {remoteOnly ? null : (
         <Tabs defaultValue="graph">
           <TabsList className="h-10 rounded-xl border border-border/50 bg-surface/40 p-1 backdrop-blur-sm">
             <TabsTrigger value="graph" className={tabTrigger}>

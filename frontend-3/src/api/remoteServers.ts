@@ -148,6 +148,18 @@ export interface WorkflowBuildOptions {
   env: Record<string, string>;
 }
 
+export interface WorkflowDeleteOptions {
+  workflow: string;
+  /** Must repeat the workflow name. */
+  confirm: string;
+  /** docker compose down first; without it the containers keep running. */
+  stop_containers: boolean;
+  /** Also delete named volumes (Neo4j graph, tool data). Needs stop_containers. */
+  remove_volumes: boolean;
+  /** Also delete the images built for this workflow. Needs stop_containers. */
+  remove_images: boolean;
+}
+
 export interface RemoteRunResponse {
   execution_id: string;
   status: string;
@@ -197,6 +209,9 @@ export const remoteServersApi = {
   /** Build (and optionally start) a deployed workflow's Docker stack; follow the log. */
   build: (id: string | number, body: WorkflowBuildOptions) =>
     post<RemoteDeployment>(`/api/remote-servers/${id}/build`, body),
+  /** Delete a deployed workflow package (and optionally its containers); follow the log. */
+  deleteWorkflow: (id: string | number, body: WorkflowDeleteOptions) =>
+    post<RemoteDeployment>(`/api/remote-servers/${id}/delete-workflow`, body),
   /** Start a run on this server's worker (routed by the DEPLOYMENT_NAME in its .env). */
   runWorkflow: (
     id: string | number,

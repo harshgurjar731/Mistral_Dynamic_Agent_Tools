@@ -98,9 +98,11 @@ export function ServerCard({ server }: { server: RemoteServer }) {
           </div>
         </div>
 
-        <p className="mt-3 line-clamp-2 min-h-[2.5rem] text-xs leading-relaxed text-muted-foreground/80">
-          {server.description || "No description provided"}
-        </p>
+        {server.description ? (
+          <p className="mt-2.5 line-clamp-1 text-xs text-muted-foreground/80">
+            {server.description}
+          </p>
+        ) : null}
 
         {/* Address */}
         <div
@@ -113,23 +115,17 @@ export function ServerCard({ server }: { server: RemoteServer }) {
           </span>
         </div>
 
-        {/* Metrics */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <Metric label="Status">
-            <ServerStatusBadge state={state} size="xs" />
-          </Metric>
-          <Metric label="Latency">
-            {server.last_check?.latency_ms != null ? `${server.last_check.latency_ms} ms` : "—"}
-          </Metric>
-          <Metric label="Checks">
-            {checks.length ? (
-              <span className={issues.length ? "text-amber" : "text-emerald"}>
-                {passed}/{checks.length}
-              </span>
-            ) : (
-              "—"
-            )}
-          </Metric>
+        {/* Status line */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
+          <ServerStatusBadge state={state} size="xs" />
+          {checks.length ? (
+            <span className={issues.length ? "text-amber" : "text-emerald"}>
+              {passed}/{checks.length} checks
+            </span>
+          ) : null}
+          {server.last_check?.latency_ms != null ? (
+            <span>{server.last_check.latency_ms} ms</span>
+          ) : null}
         </div>
 
         {issues.length > 0 ? (
@@ -186,26 +182,13 @@ export function ServerCard({ server }: { server: RemoteServer }) {
   );
 }
 
-function Metric({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-border/40 bg-background-elevated/40 px-2 py-1.5">
-      <p className="text-[9px] font-medium tracking-wider text-muted-foreground/70 uppercase">
-        {label}
-      </p>
-      <div className="mt-0.5 truncate text-xs font-medium text-foreground tabular-nums">
-        {children}
-      </div>
-    </div>
-  );
-}
-
 /** Dashed placeholder card that starts adding a server of a purpose. */
 export function AddServerCard({ purpose }: { purpose?: ServerPurpose | undefined }) {
   return (
     <Link
       to="/remote-servers/new"
       search={{ purpose }}
-      className="group flex h-full min-h-[16rem] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/60 p-5 text-center transition hover:border-primary/40 hover:bg-primary/5"
+      className="group flex h-full min-h-[11rem] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/60 p-5 text-center transition hover:border-primary/40 hover:bg-primary/5"
     >
       <div className="grid size-12 place-items-center rounded-xl border border-border/60 bg-background-elevated text-muted-foreground transition group-hover:border-primary/30 group-hover:text-primary">
         <Plus className="size-5" />

@@ -15,6 +15,10 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
 import { rememberRunInput } from "@/components/workflows/runForm/fieldModel";
 import { WorkflowRunForm } from "@/components/workflows/runForm/WorkflowRunForm";
+import {
+  useWorkflowPrerequisites,
+  WorkflowPrerequisites,
+} from "@/components/workflows/WorkflowPrerequisites";
 
 export const Route = createFileRoute("/workflows/$workflowName/execute")({
   validateSearch: (search: Record<string, unknown>): { execId?: string } => {
@@ -53,6 +57,12 @@ function ExecuteWorkflowPage() {
     queryKey: QK.workflow(workflowName),
     queryFn: () => workflowsApi.get(workflowName),
   });
+  const prereq = useWorkflowPrerequisites(workflowName);
+  const blockedReason = prereq.isLoading
+    ? "Checking prerequisites…"
+    : prereq.data && !prereq.data.ready
+      ? `Complete ${prereq.data.blocking_count} prerequisite(s) above before running.`
+      : null;
 
   const run = useMutation({
     mutationFn: async (input: Record<string, unknown>) =>
@@ -73,7 +83,11 @@ function ExecuteWorkflowPage() {
       });
       toast.success(`Run started (${String(res["source"] ?? "mistral")}).`);
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => {
+      toast.error(errorMessage(e));
+      // A 409 carries the latest prerequisite report; show it.
+      void prereq.refetch();
+    },
   });
 
   return (
@@ -95,6 +109,10 @@ function ExecuteWorkflowPage() {
           </Button>
         }
       />
+
+      {!activeExec || (prereq.data && !prereq.data.ready) ? (
+        <WorkflowPrerequisites workflowName={workflowName} />
+      ) : null}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(360px,440px)_minmax(0,1fr)]">
         <GlassPanel className="h-fit">
@@ -119,6 +137,7 @@ function ExecuteWorkflowPage() {
               definition={wf.data}
               running={run.isPending}
               onRun={(input) => run.mutate(input)}
+              blockedReason={blockedReason}
             />
           ) : null}
         </GlassPanel>

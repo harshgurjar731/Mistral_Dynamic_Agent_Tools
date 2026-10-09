@@ -6,8 +6,10 @@
  * layer's row in the PipelineTimeline; `LegacyPlannerTimeline` renders whatever
  * no layer owns (errors, and history entries recorded without a manifest).
  */
+import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import {
   AlertCircle,
   AlertTriangle,
@@ -30,6 +32,7 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
+import { errorMessage, workflowsApi } from "@/api";
 import { tierIdentity } from "@/lib/status";
 import { BLOCK, blockForMode, type BuildingBlock } from "@/lib/terminology";
 import { cn } from "@/lib/utils";
@@ -66,6 +69,9 @@ export type PlannerStepType =
   | "workflow_rules_selected"
   | "workflow_ready"
   | "compiled"
+  | "agents_failed"
+  | "workflow_test"
+  | "workflow_accepted"
   | "registered"
   | "fatal_error"
   | "error";
@@ -100,6 +106,9 @@ export const PLANNER_CARD_OWNER: Partial<Record<PlannerStepType, string>> = {
   validation: "workflow_validation",
   workflow_ready: "workflow_persistence",
   compiled: "workflow_compilation",
+  agents_failed: "agent_provisioning",
+  workflow_test: "workflow_review",
+  workflow_accepted: "workflow_review",
   registered: "workflow_registration",
 };
 
@@ -175,7 +184,21 @@ interface ActivityPlanData {
     /** Why nothing existing covered it. */
     reason?: string;
   }>;
-  failed?: Array<{ capability?: string; tool_name: string; error?: string; why_activity?: string }>;
+  failed?: Array<{
+    capability?: string;
+    capability_name?: string;
+    tool_name: string;
+    status?: string;
+    error?: string;
+    issues?: string[];
+    why_activity?: string;
+    /** The spec passed every check; the step rebuilds it on its first run. */
+    deferred?: boolean;
+    /** A version was built, failed when executed, and was rolled back. */
+    rolled_back?: boolean;
+    /** The user chose to finish the workflow and build this one later. */
+    manual?: boolean;
+  }>;
   reasoning?: string;
 }
 
@@ -605,11 +628,48 @@ function ReusePlanCard({ data }: { data: ReusePlanData }) {
   );
 }
 
+/** Activities that are not usable yet, with why — and whether a broken build was rolled back. */
+function FailedActivities({
+  title,
+  rows,
+  tone,
+}: {
+  title: string;
+  rows: NonNullable<ActivityPlanData["failed"]>;
+  tone: string;
+}) {
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <p className={cn("mb-1.5 text-[10px] tracking-wider uppercase opacity-80", tone)}>{title}</p>
+      <div className="space-y-1.5">
+        {rows.map((f, i) => (
+          <div key={`${f.tool_name}-${i}`} className={cn("text-[11px]", tone)}>
+            <p>
+              <span className="font-mono">{f.tool_name || f.capability_name || f.capability}</span>
+              {f.capability_name ? (
+                <span className="text-muted-foreground"> · step for {f.capability_name}</span>
+              ) : null}
+              {f.rolled_back ? (
+                <span className="ml-1.5 rounded border border-current/30 px-1 py-px text-[9px] uppercase">
+                  broken build rolled back
+                </span>
+              ) : null}
+            </p>
+            {f.error ? <p className="text-muted-foreground">{f.error}</p> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The activities a workflow runs as steps: which were reused, which built, and why. */
 function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
   const reused = data.reused ?? [];
   const built = data.built ?? [];
   const failed = data.failed ?? [];
+  const deferred = failed.filter((f) => f.deferred);
+  const unbuilt = failed.filter((f) => !f.deferred);
   const meta = BLOCK.activity;
   if (data.note && reused.length === 0 && built.length === 0) {
     return (
@@ -704,17 +764,23 @@ function ActivityPlanCard({ data }: { data: ActivityPlanData }) {
         </div>
       ) : null}
 
-      {failed.length > 0 ? (
-        <div className="mt-3 border-t border-border pt-3">
-          <p className="mb-1.5 text-[10px] tracking-wider text-amber/80 uppercase">
-            Activities that could not be built ({failed.length}) — built at run time instead
-          </p>
-          {failed.map((f, i) => (
-            <p key={i} className="text-[11px] text-amber">
-              <span className="font-mono">{f.tool_name}</span>: {f.error}
-            </p>
-          ))}
-        </div>
+      {deferred.length > 0 ? (
+        <FailedActivities
+          title={`Not built yet (${deferred.length}) — specification checked, built on the first run`}
+          rows={deferred}
+          tone="text-amber"
+        />
+      ) : null}
+      {unbuilt.length > 0 ? (
+        <FailedActivities
+          title={`Could not be built (${unbuilt.length}) — ${
+            unbuilt.some((f) => f.manual)
+              ? "you chose to finish without them: build or write their code, then register"
+              : "these steps cannot run until rebuilt or re-planned"
+          }`}
+          rows={unbuilt}
+          tone="text-destructive"
+        />
       ) : null}
       <Rationale text={data.reasoning} />
     </CardShell>
@@ -1134,7 +1200,9 @@ function RegisteredCard({ data }: { data: RegisteredData }) {
 interface LedgerActivity {
   name: string;
   capability: string | undefined;
-  status: "reused" | "new" | "failed";
+  /** The workflow step (capability id) this activity runs as. */
+  stepId: string | undefined;
+  status: "reused" | "new" | "deferred" | "failed";
   whyActivity: string | undefined;
   reason: string | undefined;
 }
@@ -1179,6 +1247,7 @@ function buildLedger(steps: PlannerStep[]): {
         activities.push({
           name: r.tool_name,
           capability: r.capability_name ?? r.capability,
+          stepId: r.capability,
           status: "reused",
           whyActivity: why(r.capability, r.why_activity),
           reason: r.reason,
@@ -1188,6 +1257,7 @@ function buildLedger(steps: PlannerStep[]): {
         activities.push({
           name: b.tool_name,
           capability: b.capability_name ?? b.capability,
+          stepId: b.capability,
           status: "new",
           whyActivity: why(b.capability, b.why_activity),
           reason: b.reason,
@@ -1196,8 +1266,9 @@ function buildLedger(steps: PlannerStep[]): {
       for (const f of d.failed ?? []) {
         activities.push({
           name: f.tool_name,
-          capability: f.capability,
-          status: "failed",
+          capability: f.capability_name ?? f.capability,
+          stepId: f.capability,
+          status: f.deferred ? "deferred" : "failed",
           whyActivity: why(f.capability, f.why_activity),
           reason: f.error,
         });
@@ -1216,15 +1287,68 @@ function buildLedger(steps: PlannerStep[]): {
   return { activities, tools: [...tools.values()] };
 }
 
+/** Retry one activity step's build on the saved workflow; shows the outcome inline. */
+export function RetryBuildButton({
+  workflowName,
+  stepId,
+}: {
+  workflowName: string;
+  stepId: string;
+}) {
+  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
+  const rebuild = useMutation({
+    mutationFn: () => workflowsApi.rebuildActivity(workflowName, stepId),
+    onSuccess: (r) => {
+      const ok = r.saved;
+      const text = ok
+        ? `Built '${r.tool_name}'${r.version != null ? ` v${r.version}` : ""} and bound it to the step` +
+          (r.valid ? "." : " — the workflow still has other validation errors.")
+        : `${r.rolled_back ? "Built broken and rolled back: " : "Still could not be built: "}${r.message}`;
+      setOutcome({ ok, text });
+      if (ok) toast.success(`Activity for '${stepId}' rebuilt`);
+      else toast.error(`Activity for '${stepId}' could not be built`);
+    },
+    onError: (e) => {
+      setOutcome({ ok: false, text: errorMessage(e) });
+      toast.error(errorMessage(e));
+    },
+  });
+  if (outcome?.ok) {
+    return <p className="mt-1 text-[10px] text-emerald">{outcome.text}</p>;
+  }
+  return (
+    <div className="mt-1">
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-6 gap-1 px-2 text-[10px]"
+        disabled={rebuild.isPending}
+        onClick={() => rebuild.mutate()}
+      >
+        <RefreshCw className={cn("size-3", rebuild.isPending && "animate-spin")} />
+        {rebuild.isPending ? "Building and testing…" : "Retry build"}
+      </Button>
+      {outcome ? <p className="mt-1 text-[10px] text-destructive">{outcome.text}</p> : null}
+    </div>
+  );
+}
+
 function BuildLedgerCard({ steps }: { steps: PlannerStep[] }) {
   const { activities, tools } = buildLedger(steps);
+  const workflowName = (
+    steps.find((s) => s.type === "workflow_ready")?.content as WorkflowReadyData | undefined
+  )?.workflow_name;
   if (activities.length === 0 && tools.length === 0) return null;
   const act = BLOCK.activity;
   const tool = BLOCK.agent_tool;
   const STATUS = {
     reused: { label: "Reused", cls: "border-border bg-background-elevated text-muted-foreground" },
     new: { label: "New", cls: act.chip },
-    failed: { label: "Not built", cls: "border-amber/25 bg-amber/10 text-amber" },
+    deferred: { label: "Builds on first run", cls: "border-amber/25 bg-amber/10 text-amber" },
+    failed: {
+      label: "Not built",
+      cls: "border-destructive/25 bg-destructive/10 text-destructive",
+    },
   } as const;
   return (
     <CardShell
@@ -1265,6 +1389,11 @@ function BuildLedgerCard({ steps }: { steps: PlannerStep[] }) {
                     }
                     text={a.reason}
                   />
+                  {(a.status === "failed" || a.status === "deferred") &&
+                  workflowName &&
+                  a.stepId ? (
+                    <RetryBuildButton workflowName={workflowName} stepId={a.stepId} />
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1304,6 +1433,176 @@ function BuildLedgerCard({ steps }: { steps: PlannerStep[] }) {
           </p>
         </div>
       </div>
+    </CardShell>
+  );
+}
+
+/* ── Build failures, user-driven test, rollback ───────────────────────── */
+
+interface AgentsFailedData {
+  failures?: Array<{ id?: string; name?: string; step?: string; error?: string }>;
+  manual?: boolean;
+}
+
+function AgentsFailedCard({ data }: { data: AgentsFailedData }) {
+  const failures = data.failures ?? [];
+  return (
+    <CardShell
+      icon={<AlertTriangle className="size-3 text-destructive" />}
+      title={`Agents not created (${failures.length})`}
+      tone="border-destructive/25 bg-destructive/5"
+    >
+      <p className="mb-2 text-[11px] text-muted-foreground">
+        You chose to finish the workflow without them. Their steps stay unbound — choose or create
+        an agent for each in the builder, then register the workflow.
+      </p>
+      {failures.map((f, i) => (
+        <div key={`${f.id}-${i}`} className="mt-1.5 text-[11px]">
+          <span className="font-mono text-foreground">{f.name || f.id}</span>
+          {f.step ? <span className="text-muted-foreground"> · step for {f.step}</span> : null}
+          {f.error ? <p className="text-destructive">{f.error}</p> : null}
+        </div>
+      ))}
+    </CardShell>
+  );
+}
+
+export interface WorkflowTestData {
+  workflow_name?: string;
+  passed?: boolean;
+  summary?: string;
+  validation?: { valid?: boolean; issues?: Array<{ message?: string; step_id?: string | null }> };
+  steps?: Array<{
+    step_id: string;
+    type?: string;
+    result: "passed" | "failed" | "skipped";
+    name?: string;
+    detail?: string;
+  }>;
+}
+
+const TEST_RESULT = {
+  passed: { label: "Passed", cls: "border-emerald/25 bg-emerald/10 text-emerald" },
+  failed: { label: "Failed", cls: "border-destructive/25 bg-destructive/10 text-destructive" },
+  skipped: {
+    label: "Not tested",
+    cls: "border-border bg-background-elevated text-muted-foreground",
+  },
+} as const;
+
+function WorkflowTestCard({ data }: { data: WorkflowTestData }) {
+  const steps = data.steps ?? [];
+  const issues = data.validation?.issues ?? [];
+  return (
+    <CardShell
+      icon={
+        data.passed ? (
+          <CheckCircle2 className="size-3 text-emerald" />
+        ) : (
+          <AlertCircle className="size-3 text-destructive" />
+        )
+      }
+      title={`Test ${data.passed ? "passed" : "failed"}${data.summary ? ` — ${data.summary}` : ""}`}
+      tone={
+        data.passed ? "border-emerald/25 bg-emerald/5" : "border-destructive/25 bg-destructive/5"
+      }
+    >
+      <div className="space-y-2">
+        {steps.map((st) => (
+          <div key={st.step_id}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-[11px] text-foreground">{st.step_id}</span>
+              {st.name ? (
+                <span className="text-[10px] text-muted-foreground">{st.name}</span>
+              ) : null}
+              <Chip className={TEST_RESULT[st.result].cls}>{TEST_RESULT[st.result].label}</Chip>
+            </div>
+            {st.detail ? <p className="text-[10px] text-muted-foreground">{st.detail}</p> : null}
+            {st.result === "failed" && st.type === "tool" && data.workflow_name ? (
+              <RetryBuildButton workflowName={data.workflow_name} stepId={st.step_id} />
+            ) : null}
+          </div>
+        ))}
+      </div>
+      {issues.length > 0 ? (
+        <div className="mt-3 border-t border-border pt-2">
+          <p className="mb-1 text-[10px] tracking-wider text-destructive uppercase">
+            Validation errors ({issues.length})
+          </p>
+          {issues.map((i, n) => (
+            <p key={n} className="text-[11px] text-destructive">
+              {i.step_id ? <span className="font-mono">{i.step_id}: </span> : null}
+              {i.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </CardShell>
+  );
+}
+
+function WorkflowAcceptedCard({
+  data,
+}: {
+  data: { workflow_name?: string; tested?: boolean; passed?: boolean };
+}) {
+  return (
+    <CardShell
+      icon={<Check className="size-3 text-emerald" />}
+      tone="border-emerald/25 bg-emerald/5"
+    >
+      <p className="text-[11px] text-foreground">
+        Accepted <span className="font-mono">{data.workflow_name}</span>
+        {data.tested
+          ? data.passed
+            ? " after a passing test."
+            : " even though its last test failed."
+          : " without testing it."}
+      </p>
+    </CardShell>
+  );
+}
+
+export interface RollbackData {
+  reason?: string;
+  items?: Array<{ kind: string; id: string; name?: string; removed: boolean; detail?: string }>;
+}
+
+/** What a rollback removed (or could not), newest first. */
+export function RollbackReportCard({ data }: { data: RollbackData }) {
+  const items = data.items ?? [];
+  const left = items.filter((i) => !i.removed);
+  return (
+    <CardShell
+      icon={<RefreshCw className="size-3" />}
+      title={`Rolled back${data.reason ? ` — ${data.reason}` : ""}`}
+      tone={
+        left.length
+          ? "border-destructive/25 bg-destructive/5"
+          : "border-border bg-background-elevated/40"
+      }
+    >
+      {items.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">Nothing had been created yet.</p>
+      ) : (
+        <div className="space-y-1">
+          {items.map((i) => (
+            <p key={`${i.kind}-${i.id}`} className="text-[11px]">
+              <span className={i.removed ? "text-emerald" : "text-destructive"}>
+                {i.removed ? "Removed" : "Not removed"}
+              </span>{" "}
+              <span className="text-muted-foreground">{i.kind}</span>{" "}
+              <span className="font-mono text-foreground">{i.name || i.id}</span>
+              {i.detail ? <span className="text-muted-foreground"> — {i.detail}</span> : null}
+            </p>
+          ))}
+        </div>
+      )}
+      {left.length ? (
+        <p className="mt-2 text-[11px] text-destructive">
+          {left.length} item(s) could not be removed — delete them by hand.
+        </p>
+      ) : null}
     </CardShell>
   );
 }
@@ -1349,6 +1648,16 @@ export function renderPlannerCard(step: PlannerStep): ReactNode {
       return <WorkflowReadyCard data={c as WorkflowReadyData} />;
     case "compiled":
       return <CompiledCard data={c as CompiledData} />;
+    case "agents_failed":
+      return <AgentsFailedCard data={c as AgentsFailedData} />;
+    case "workflow_test":
+      return <WorkflowTestCard data={c as WorkflowTestData} />;
+    case "workflow_accepted":
+      return (
+        <WorkflowAcceptedCard
+          data={c as { workflow_name?: string; tested?: boolean; passed?: boolean }}
+        />
+      );
     case "registered":
       return <RegisteredCard data={c as RegisteredData} />;
     default:

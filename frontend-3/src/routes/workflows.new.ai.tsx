@@ -11,13 +11,14 @@ import {
   History,
   Layers,
   Loader2,
+  Play,
   Plus,
   Sparkles,
   Square,
   Zap,
 } from "lucide-react";
 import { parseEventData, type SSEEvent } from "@/api/sse";
-import { errorMessage, QK, runsApi, workflowsApi, type RunStatus } from "@/api";
+import { errorMessage, QK, runsApi, workflowsApi, type RunDecision, type RunStatus } from "@/api";
 import type { WorkflowDefinition } from "@/types";
 import { usePlannerHistory } from "@/stores/plannerHistory";
 import { useRunsStore } from "@/stores/runs";
@@ -27,6 +28,8 @@ import {
   PLANNER_CARD_OWNER,
   plannerLayerCards,
   plannerLayerRaw,
+  RollbackReportCard,
+  type RollbackData,
   type PlannerStep,
   type PlannerStepType,
 } from "@/components/workflows/PlannerCards";
@@ -36,6 +39,11 @@ import {
 } from "@/components/workflows/PlannerHistorySheet";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { BuildingBlockLegend } from "@/components/workflows/BuildingBlockLegend";
+import { PlanDecisionPanel } from "@/components/workflows/PlanDecisionPanel";
+import {
+  useWorkflowPrerequisites,
+  WorkflowPrerequisites,
+} from "@/components/workflows/WorkflowPrerequisites";
 import {
   applyPipelineEvent,
   EMPTY_PIPELINE,
@@ -88,9 +96,25 @@ interface PlannerView {
   steps: PlannerStep[];
   /** Set once the run's `run_end` has been replayed. */
   end: { status: RunStatus; error: string | null } | null;
+  /** Questions the run stopped to ask, by id, with the answer once given. */
+  decisions: Record<string, { question: RunDecision; choice?: string; by?: string }>;
+  /** Set when the user rolled the plan back. */
+  rolledBack: RollbackData | null;
 }
 
-const initPlannerView = (): PlannerView => ({ pipeline: EMPTY_PIPELINE, steps: [], end: null });
+const initPlannerView = (): PlannerView => ({
+  pipeline: EMPTY_PIPELINE,
+  steps: [],
+  end: null,
+  decisions: {},
+  rolledBack: null,
+});
+
+/** The question the run is waiting on, if any. */
+const pendingDecision = (view: PlannerView): RunDecision | null =>
+  view.end
+    ? null
+    : (Object.values(view.decisions).find((d) => d.choice === undefined)?.question ?? null);
 
 /**
  * The planner's event handling as a pure fold, so a run watched live, reopened
@@ -112,6 +136,27 @@ function reducePlanner(view: PlannerView, event: SSEEvent): PlannerView {
   }
 
   switch (event.type) {
+    case "decision_required": {
+      const q = parseEventData<RunDecision>(event);
+      if (typeof q === "string" || !q.id) return view;
+      return { ...view, decisions: { ...view.decisions, [q.id]: { question: q } } };
+    }
+    case "decision_made": {
+      const a = parseEventData<{ id?: string; choice?: string; by?: string }>(event);
+      const entry = typeof a === "string" || !a.id ? undefined : view.decisions[a.id];
+      if (typeof a === "string" || !a.id || !entry) return view;
+      return {
+        ...view,
+        decisions: {
+          ...view.decisions,
+          [a.id]: { question: entry.question, choice: a.choice ?? "", by: a.by ?? "user" },
+        },
+      };
+    }
+    case "plan_rolled_back": {
+      const r = parseEventData<RollbackData>(event);
+      return typeof r === "string" ? view : { ...view, rolledBack: r };
+    }
     case "error":
       return {
         ...view,
@@ -137,7 +182,10 @@ function reducePlanner(view: PlannerView, event: SSEEvent): PlannerView {
         return {
           ...view,
           end: { status, error },
-          pipeline: failPipeline(view.pipeline, "Stopped before it finished."),
+          pipeline: failPipeline(
+            view.pipeline,
+            view.rolledBack ? "Rolled back at your request." : "Stopped before it finished.",
+          ),
         };
       }
       // Failed or interrupted: make sure there is an error row to restart from.
@@ -315,6 +363,14 @@ function AiPlannerPage() {
     return step ? ((step.content as { workflow_name?: string }).workflow_name ?? null) : null;
   }, [steps]);
   const hasFailure = useMemo(() => steps.some(isErrorStep), [steps]);
+  const decision = replay ? null : pendingDecision(view);
+  // Once the workflow is saved: while it is reviewed, and after planning ends.
+  const showPrereqs =
+    Boolean(workflowName) &&
+    !replay &&
+    !view.rolledBack &&
+    (decision?.kind === "review_workflow" || (!running && !hasFailure));
+  const prereq = useWorkflowPrerequisites(showPrereqs ? workflowName : null);
   const layerCards = useMemo(() => plannerLayerCards(steps), [steps]);
   const layerRaw = useMemo(() => plannerLayerRaw(steps), [steps]);
   // A live run leaves only errors outside the chain; a run replayed without a
@@ -571,7 +627,9 @@ function AiPlannerPage() {
                 restartDisabled={busy}
               />
 
-              {view.end?.status === "cancelled" && !replay ? (
+              {view.rolledBack && !replay ? (
+                <RollbackReportCard data={view.rolledBack} />
+              ) : view.end?.status === "cancelled" && !replay ? (
                 <p className="text-xs text-muted-foreground">
                   Planning was stopped before it finished. Anything already created is kept.
                 </p>
@@ -586,8 +644,14 @@ function AiPlannerPage() {
             </div>
           </div>
 
+          {decision && runId ? <PlanDecisionPanel runId={runId} decision={decision} /> : null}
+
+          {showPrereqs && workflowName ? (
+            <WorkflowPrerequisites workflowName={workflowName} />
+          ) : null}
+
           {/* ── Final CTA ── */}
-          {workflowName && !running && !hasFailure ? (
+          {workflowName && !running && !hasFailure && !view.rolledBack ? (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -605,6 +669,20 @@ function AiPlannerPage() {
               >
                 <GitBranch className="size-5" /> View Workflow DAG
               </button>
+              <Button
+                variant="outline"
+                disabled={!prereq.data?.ready}
+                title={
+                  prereq.data?.ready ? undefined : "Complete the prerequisites above before running"
+                }
+                onClick={() =>
+                  navigate({ to: "/workflows/$workflowName/execute", params: { workflowName } })
+                }
+                className="h-auto rounded-xl px-5 py-4"
+              >
+                <Play className="size-4" />
+                {prereq.data?.ready ? "Run workflow" : "Run (prerequisites pending)"}
+              </Button>
               <Button variant="outline" asChild className="h-auto rounded-xl px-5 py-4">
                 <Link to="/workflows">Manage Workflows</Link>
               </Button>

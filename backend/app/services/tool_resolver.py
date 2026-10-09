@@ -274,6 +274,17 @@ class ToolResolver:
             logger.warning("Failed to list tools from Tool Service: %s: %s", type(e).__name__, e)
         return []
 
+    async def secrets_status(self, names: list[str]) -> dict | None:
+        """``{name: {"allowed", "set"}}`` from the tool service, or None if unreachable."""
+        try:
+            resp = await self._send("GET", "/secrets/status", read_only=True, wait=5,
+                                    params={"names": ",".join(names)})
+            if resp.status_code == 200:
+                return resp.json().get("secrets", {})
+        except Exception as e:
+            logger.warning("Secrets status lookup failed: %s", e)
+        return None
+
     async def get_pending_tools(self) -> list[dict]:
         """Fetch pending tools from the Docker Tool Service."""
         try:

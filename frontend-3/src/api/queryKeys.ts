@@ -9,6 +9,7 @@ export const QK = {
   workflows: () => ["workflows"] as const,
   workflow: (n: string) => ["workflows", n] as const,
   workflowScript: (n: string) => ["workflows", n, "script"] as const,
+  workflowPrerequisites: (n: string) => ["workflows", n, "prerequisites"] as const,
   builderCatalog: () => ["workflows", "builder", "catalog"] as const,
   executions: () => ["workflow-executions"] as const,
   execution: (id: string) => ["workflow-execution", id] as const,

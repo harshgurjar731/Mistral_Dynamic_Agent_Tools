@@ -561,10 +561,13 @@ export function WorkflowRunForm({
   definition,
   running,
   onRun,
+  blockedReason,
 }: {
   definition: WorkflowDefinition;
   running: boolean;
   onRun: (input: Record<string, unknown>) => void;
+  /** Set while the run must not start (e.g. unmet prerequisites); shown under the button. */
+  blockedReason?: string | null | undefined;
 }) {
   // Keyed on what the form is built from, so a refetch that returns the same
   // definition never resets what the user has typed.
@@ -687,7 +690,7 @@ export function WorkflowRunForm({
   };
 
   const submit = () => {
-    if (running) return;
+    if (running || blockedReason) return;
     if (mode === "json") {
       const parsed = parseJson();
       if (!parsed) return;
@@ -958,14 +961,16 @@ export function WorkflowRunForm({
       <div className="sticky bottom-0 border-t border-border bg-background/85 p-4 backdrop-blur">
         <Button
           className="w-full"
-          disabled={running || (mode === "json" && Boolean(jsonError))}
+          disabled={running || Boolean(blockedReason) || (mode === "json" && Boolean(jsonError))}
           onClick={submit}
         >
           {running ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
           {running ? "Starting…" : "Run workflow"}
         </Button>
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-          {blockers.length && (submitted || mode === "json") ? (
+          {blockedReason ? (
+            <span className="text-destructive">{blockedReason}</span>
+          ) : blockers.length && (submitted || mode === "json") ? (
             <span className="text-amber">{blockers.join(" · ")}</span>
           ) : canRun && !jsonFit?.missing.length ? (
             <>Ready · Ctrl + Enter to run</>

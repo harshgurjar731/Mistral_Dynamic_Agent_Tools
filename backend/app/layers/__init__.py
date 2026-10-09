@@ -52,6 +52,7 @@ from app.layers.workflow import (
     WorkflowGuardrailLayer,
     WorkflowPersistenceLayer,
     WorkflowRegistrationLayer,
+    WorkflowReviewLayer,
     WorkflowRuleSelectionLayer,
     WorkflowValidationLayer,
 )
@@ -124,4 +125,5 @@ workflow_pipeline.add(WorkflowRuleSelectionLayer())
 workflow_pipeline.add(WorkflowValidationLayer())
 workflow_pipeline.add(WorkflowPersistenceLayer())
 workflow_pipeline.add(WorkflowCompilationLayer())
+workflow_pipeline.add(WorkflowReviewLayer())
 workflow_pipeline.add(WorkflowRegistrationLayer())

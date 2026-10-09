@@ -5,6 +5,12 @@ A ``LiveRun`` is also the pipeline's event sink: it implements the one method
 ``PipelineContext.emit`` calls on its queue (``put_nowait``), so a pipeline runs
 inside a background run with no change to a single layer.
 
+A run can also stop and ask its user something (``LiveRun.ask``): it emits a
+``decision_required`` event, waits for ``POST /runs/{id}/decisions/{decision}``,
+and emits ``decision_made``. The run stays ``running`` while it waits — it is
+still alive and holding its work — and the pending question is recoverable from
+the event log alone, so a page opened later shows it.
+
 Every event gets a sequence number. Watchers receive events live; a watcher
 that connects late, or reconnects after a network blip, passes the last
 sequence it saw and is sent only what it missed. Events are written to SQLite
@@ -34,6 +40,8 @@ _FLUSH_INTERVAL_S = 0.75
 _RETAIN_FINISHED_S = 600
 #: Comment frame sent to idle watchers so proxies keep the connection open.
 _KEEPALIVE_S = 15
+#: How long a run waits for an answer before taking the question's default.
+DECISION_TIMEOUT_S = 6 * 3600
 
 
 def _payload(data: Any) -> str:
@@ -103,6 +111,9 @@ class LiveRun:
     _pending: list[tuple[int, str, str]] = field(default_factory=list)
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # Questions waiting for the user: decision id → (allowed choices, answer).
+    _decisions: dict[str, tuple[list[str], asyncio.Future]] = field(default_factory=dict)
+
     # ── Sink interface used by PipelineContext.emit ────────────────────
 
     def put_nowait(self, sse: SSEEvent) -> None:
@@ -126,6 +137,43 @@ class LiveRun:
     def payload(self, event: str) -> Any:
         raw = self.last_payloads.get(event)
         return _parse(raw) if raw is not None else None
+
+    # ── Decisions ───────────────────────────────────────────────────────
+
+    async def ask(self, kind: str, question: dict, *, options: list[str], default: str,
+                  timeout: float = DECISION_TIMEOUT_S) -> dict:
+        """Ask the user to choose one of ``options``; returns ``{"choice", ...}``.
+
+        Waits up to ``timeout`` seconds, then takes ``default``.
+        """
+        decision_id = uuid.uuid4().hex[:12]
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._decisions[decision_id] = (list(options), future)
+        self.emit("decision_required", {"id": decision_id, "kind": kind, "options": options,
+                                        "default": default, **question})
+        self.note = f"Waiting for your decision: {question.get('title') or kind}"[:300]
+        try:
+            answer = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+            by = "user"
+        except asyncio.TimeoutError:
+            answer, by = {"choice": default}, "timeout"
+        finally:
+            self._decisions.pop(decision_id, None)
+        self.note = None
+        self.emit("decision_made", {"id": decision_id, "kind": kind, "by": by, **answer})
+        return answer
+
+    def answer(self, decision_id: str, choice: str, data: Optional[dict] = None) -> Optional[str]:
+        """Resolve a pending question. Returns an error message, or None on success."""
+        pending = self._decisions.get(decision_id)
+        if pending is None:
+            return "This question is no longer waiting for an answer."
+        options, future = pending
+        if choice not in options:
+            return f"'{choice}' is not one of: {', '.join(options)}"
+        if not future.done():
+            future.set_result({**(data or {}), "choice": choice})
+        return None
 
     # ── Progress ────────────────────────────────────────────────────────
 
@@ -304,6 +352,14 @@ class RunManager:
                 asyncio.get_running_loop().call_later(
                     _RETAIN_FINISHED_S, self._runs.pop, run.id, None
                 )
+
+    def answer(self, run_id: str, decision_id: str, choice: str,
+               data: Optional[dict] = None) -> Optional[str]:
+        """Answer a running run's question. Returns an error message, or None."""
+        run = self._runs.get(run_id)
+        if not run or run.finished:
+            return "This run is not running."
+        return run.answer(decision_id, choice, data)
 
     async def cancel(self, run_id: str) -> bool:
         run = self._runs.get(run_id)

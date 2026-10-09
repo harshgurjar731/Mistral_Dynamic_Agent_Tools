@@ -1,9 +1,12 @@
 """
 The code-requirement pipeline — from a need to a usable tool or activity.
 
-    R1 → R2 → R3 ─┬─ reused ──────────────────────────────→ R8
-                  └─ create → [R4 → R5 → R6 → R7] ────────→ R8
-                               ↑_____ issues (≤ MAX_REAUTHORS) ___|
+    R1 → R2 → R3 ─┬─ reused ─────────────────────────────────────→ R8
+                  └─ create → [R4 → R5 → R6 → R7 → R7b] ─────────→ R8
+                               ↑________ issues (≤ MAX_REAUTHORS) ______|
+
+R7b executes what R7 built; a version that fails there is rolled back and its
+failures are re-authored against like any other issue.
 
 Everything that can cause code to be built calls :func:`resolve_code_need`:
 CapabilityGapLayer (chat), ActivityGapLayer (workflow planning), explicit
@@ -27,6 +30,7 @@ from app.layers.codegen.layers import (
     ReuseResolutionLayer,
     SpecAuthoringLayer,
     SpecPreflightLayer,
+    SmokeTestLayer,
     SubmitAndTrackLayer,
 )
 from app.layers.codegen.profiles import profile_for
@@ -35,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 _R1, _R2, _R3 = NeedNormalisationLayer(), PolicyGateLayer(), ReuseResolutionLayer()
 _R4, _R5, _R6 = SpecAuthoringLayer(), ContractBindingLayer(), SpecPreflightLayer()
-_R7, _R8 = SubmitAndTrackLayer(), BindAndRefreshLayer()
+_R7, _R7b, _R8 = SubmitAndTrackLayer(), SmokeTestLayer(), BindAndRefreshLayer()
 
 
 def _default_client():
@@ -85,9 +89,11 @@ async def _run(ctx: RequirementContext) -> CodeResolution:
         if ctx.issues:
             return ctx.finish("failed", "The stored requirement is no longer valid: "
                               + "; ".join(ctx.issues), issues=list(ctx.issues))
+        ctx.valid_requirement = ctx.requirement.as_request()
         await _R7.run(ctx)
+        await _R7b.run(ctx)
         await _R8.run(ctx)
-        return ctx.resolution
+        return _settle(ctx)
 
     for layer in (_R1, _R2, _R3):
         await layer.run(ctx)
@@ -97,22 +103,48 @@ async def _run(ctx: RequirementContext) -> CodeResolution:
             return ctx.resolution
 
     while True:
+        ctx.smoke_problems = []
         await _R4.run(ctx)
         if ctx.resolution:
             return ctx.resolution
         await _R5.run(ctx)
         await _R6.run(ctx)
         if not ctx.issues:
+            ctx.valid_requirement = ctx.requirement.as_request()
             await _R7.run(ctx)
+            if not ctx.issues:
+                await _R7b.run(ctx)
             if not ctx.issues:
                 break  # built, pending, or failed for a reason re-authoring cannot fix
         if ctx.reauthors >= MAX_REAUTHORS:
-            return ctx.finish("failed", "The specification could not be made implementable: "
-                              + "; ".join(ctx.issues), issues=list(ctx.issues))
+            if ctx.smoke_problems:
+                # The spec was sound every time; the code built from it was not.
+                await _R8.run(ctx)
+                return _settle(ctx)
+            ctx.finish("failed", "The specification could not be made implementable: "
+                       + "; ".join(ctx.issues), issues=list(ctx.issues))
+            return _settle(ctx)
         ctx.reauthors += 1
 
     await _R8.run(ctx)
-    return ctx.resolution
+    return _settle(ctx)
+
+
+def _settle(ctx: RequirementContext) -> CodeResolution:
+    """Record, on a failure, whether a run-time retry has anything to build from."""
+    resolution = ctx.resolution
+    if resolution is None or resolution.usable or resolution.status != "failed":
+        return resolution
+    resolution.rolled_back = bool((ctx.build or {}).get("rolled_back"))
+    if ctx.valid_requirement and not (ctx.issues and not ctx.smoke_problems):
+        # The last spec passed every check, so the failure was in building it
+        # (tool service down, timed out, or the code came out broken). Keep
+        # the latest corrected examples if the tool service supplied any.
+        retry = dict(ctx.valid_requirement)
+        if ctx.requirement is not None and ctx.requirement.name == retry.get("name"):
+            retry["examples"] = list(ctx.requirement.examples)
+        resolution.retry_requirement = retry
+    return resolution
 
 
 async def resolve_code_needs(

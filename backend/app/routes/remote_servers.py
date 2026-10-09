@@ -388,6 +388,37 @@ async def build_workflow(server_id: int, request: Request, db: Session = Depends
     return store.deployment_to_dict(dep)
 
 
+@router.post("/remote-servers/{server_id}/delete-workflow")
+async def delete_remote_workflow(server_id: int, request: Request, db: Session = Depends(get_db)):
+    """Delete a deployed workflow package from the server; poll the returned deployment.
+
+    Body: {workflow, confirm, stop_containers=true, remove_volumes=false,
+    remove_images=false} — ``confirm`` must repeat the workflow name.
+    """
+    db = _require_db(db)
+    server = _get_server(db, server_id)
+    _require_ssh(server)
+    body = await request.json()
+    workflow = str(body.get("workflow") or "").strip()
+    if not workflow:
+        raise HTTPException(status_code=422, detail="Choose a deployed workflow")
+    if str(body.get("confirm") or "").strip() != workflow:
+        raise HTTPException(status_code=422, detail="Type the workflow name to confirm the deletion")
+    try:
+        command = deployers.build_delete_command(
+            workflow,
+            stop_containers=body.get("stop_containers", True) is not False,
+            remove_volumes=bool(body.get("remove_volumes")),
+            remove_images=bool(body.get("remove_images")),
+        )
+        # Runs in the deploy directory: the workflow's own directory is what goes.
+        dep = deployers.start_remote_command(db, server, command=command, timeout=600,
+                                             action="delete", target=workflow)
+    except (deployers.DeployError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return store.deployment_to_dict(dep)
+
+
 @router.post("/remote-servers/{server_id}/run-workflow")
 async def run_workflow_on_server(server_id: int, request: Request, db: Session = Depends(get_db)):
     """Start a run of a deployed workflow on this server's worker.

@@ -39,6 +39,9 @@ export function errorMessage(err: unknown): string {
         )
         .join(", ");
     }
+    // Structured details, e.g. a 409 carrying a prerequisite report.
+    const nested = (data.detail as { message?: unknown } | null | undefined)?.message;
+    if (typeof nested === "string") return nested;
     if (data.message) return data.message;
     if (data.error) return data.error;
   }

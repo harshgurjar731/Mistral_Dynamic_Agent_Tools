@@ -26,15 +26,22 @@ GST_REQ = {
 
 
 class Stub:
-    """Scripted decide() answers per phase, and a fake tool service."""
+    """Scripted decide() answers per phase, and a fake tool service.
 
-    def __init__(self, answers=None, builds=None, catalogue=None):
+    An executed build answers its worked examples correctly, except the first
+    ``broken`` builds, which return an error envelope when run.
+    """
+
+    def __init__(self, answers=None, builds=None, catalogue=None, broken=0):
         self.answers = {k: list(v) if isinstance(v, list) else [v] for k, v in (answers or {}).items()}
         self.builds = list(builds or [{"status": "approved", "tool_id": 11, "version": 1}])
         self.catalogue = catalogue or []
         self.phases: list[str] = []
         self.prompts: list[str] = []
         self.submitted: list[dict] = []
+        self.broken = broken
+        self.executed: list[tuple] = []
+        self.rejected: list[int] = []
 
     async def decide(self, client, *, system, user, phase, route=None, **_):
         self.phases.append(phase)
@@ -56,6 +63,19 @@ class Stub:
     async def list_tools(self):
         return self.catalogue
 
+    async def execute_tool(self, name, arguments, version=None):
+        self.executed.append((name, arguments, version))
+        if len(self.submitted) <= self.broken:
+            return {"result": {"status": "error", "message": "NameError: round2"}}
+        for example in self.submitted[-1].get("examples") or []:
+            if example.get("input") == arguments:
+                return {"result": {"status": "success", "data": example.get("output")}}
+        return {"result": {"status": "success", "data": {}}}
+
+    async def reject_tool(self, tool_id):
+        self.rejected.append(tool_id)
+        return {"status": "rejected", "message": "Tool rejected"}
+
 
 @pytest.fixture
 def stub(monkeypatch):
@@ -67,6 +87,8 @@ def stub(monkeypatch):
 
         monkeypatch.setattr(tr.tool_resolver, "run_synthesis", s.run_synthesis)
         monkeypatch.setattr(tr.tool_resolver, "list_tools", s.list_tools)
+        monkeypatch.setattr(tr.tool_resolver, "execute_tool", s.execute_tool)
+        monkeypatch.setattr(tr.tool_resolver, "reject_tool", s.reject_tool)
 
         async def no_refresh():
             return None
@@ -211,3 +233,68 @@ def test_resolve_many_does_not_double_claim_a_name(stub):
 
     first, second = asyncio.run(go())
     assert {first.name, second.name} == {"apply_gst", "apply_gst_2"}
+
+
+# ── R7b: smoke test and rollback ────────────────────────────────────────────
+
+
+def test_built_activity_is_smoke_tested_against_its_examples(stub):
+    s = stub(answers={"policy gate": {"allowed": True}, "spec authoring": GST_REQ})
+    resolution = _run(_activity_need())
+    assert resolution.status == "built" and s.rejected == []
+    assert [e[1] for e in s.executed] == [ex["input"] for ex in GST_REQ["examples"]]
+    assert all(e[2] == 1 for e in s.executed), "the version just built is the one executed"
+
+
+def test_broken_build_is_rolled_back_and_rebuilt(stub):
+    s = stub(answers={"policy gate": {"allowed": True}, "spec authoring": GST_REQ},
+             builds=[{"status": "approved", "tool_id": 11, "version": 1},
+                     {"status": "approved", "tool_id": 12, "version": 2}], broken=1)
+    resolution = _run(_activity_need())
+    assert resolution.status == "built" and resolution.version == 2
+    assert s.rejected == [11], "the broken version is rolled back"
+    assert len(s.submitted) == 2
+    second_author_prompt = [p for ph, p in zip(s.phases, s.prompts) if ph == "spec authoring"][1]
+    assert "failed when executed" in second_author_prompt
+
+
+def test_build_that_stays_broken_fails_rolled_back_but_retryable(stub):
+    s = stub(answers={"policy gate": {"allowed": True}, "spec authoring": GST_REQ}, broken=99)
+    resolution = _run(_activity_need())
+    assert resolution.status == "failed" and resolution.rolled_back
+    assert "rolled back" in resolution.message
+    assert len(s.rejected) == layers.MAX_REAUTHORS + 1, "every broken version is rolled back"
+    assert resolution.retry_requirement and resolution.retry_requirement["name"] == "apply_gst"
+
+
+def test_tool_service_outage_keeps_the_checked_requirement(stub):
+    stub(answers={"policy gate": {"allowed": True}, "spec authoring": GST_REQ},
+         builds=[{"status": "error", "message": "Tool Service unreachable"}])
+    resolution = _run(_activity_need())
+    assert resolution.status == "failed" and not resolution.rolled_back
+    assert resolution.retry_requirement["examples"] == GST_REQ["examples"]
+
+
+def test_unsound_spec_has_nothing_to_retry_from(stub):
+    stub(answers={"policy gate": {"allowed": True}, "spec authoring": GST_REQ},
+         builds=[{"status": "spec_invalid", "issues": ["still wrong"]}])
+    resolution = _run(_activity_need())
+    assert resolution.status == "failed" and resolution.retry_requirement is None
+
+
+def test_only_pure_side_effect_free_code_is_executed_for_real():
+    from app.core.specs import CodeRequirement
+    from app.layers.codegen.smoke import smoke_testable
+
+    assert smoke_testable(CodeRequirement(kind="pure", side_effects="none"))
+    assert not smoke_testable(CodeRequirement(kind="http", side_effects="none"))
+    assert not smoke_testable(CodeRequirement(kind="pure", side_effects="write"))
+    assert not smoke_testable(None)
+
+
+def test_runtime_rebuild_that_comes_out_broken_is_rolled_back(stub):
+    s = stub(broken=1)
+    need = CodeNeed(purpose="activity", origin="runtime", name_hint="apply_gst",
+                    requirement={**GST_REQ, "purpose": "activity"})
+    resolution = _run(need)
+    assert resolution.status == "failed" and resolution.rolled_back and s.rejected == [11]

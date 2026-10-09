@@ -8,6 +8,7 @@ code is generated from and tested against.
     profiles.py    tool vs activity: authoring prompt, contract rules
     layers.py      R1–R8
     preflight.py   deterministic schema/example/name checks (R6)
+    smoke.py       post-build execution check and rollback (R7b)
     pipeline.py    resolve_code_need / resolve_code_needs
 """
 

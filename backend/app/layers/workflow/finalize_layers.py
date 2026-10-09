@@ -10,6 +10,7 @@ Order and policy:
     WorkflowValidationLayer   errors block registration, never block saving
     WorkflowPersistenceLayer  saves to SQLite and annotates the ontology
     WorkflowCompilationLayer  writes the Mistral SDK module; best effort
+    WorkflowReviewLayer       the user tests it, then accepts or rolls it back
     WorkflowRegistrationLayer registers on Mistral; skipped if validation failed
 
 The validation gate is the one behavioural change. Registering a workflow with
@@ -108,7 +109,13 @@ class WorkflowValidationLayer(WorkflowStepLayer):
 
         # Data-flow references to fields an activity does not return
         # (recorded by DataFlowLayer against each activity's output schema).
-        contract_issues = ctx.metadata.get("contract_issues") or []
+        # And activities or agents planning could not build: an error when the
+        # step has nothing to run, a warning when it is rebuilt on first run.
+        step_ids = {s.id for s in definition.steps}
+        contract_issues = [
+            *(ctx.metadata.get("contract_issues") or []),
+            *(i for i in ctx.metadata.get("build_issues") or [] if i.get("step_id") in step_ids),
+        ]
         if contract_issues:
             from app.services.workflow_engine.models import ValidationIssue
 
@@ -173,10 +180,21 @@ class WorkflowPersistenceLayer(WorkflowStepLayer):
 
         ctx.emit("status", "Saving the workflow…")
 
+        from app.layers.workflow import plan_control
+        from app.services.workflow_engine.engine import get_workflow
+
+        # A plan may reuse an existing workflow's name; a rollback restores
+        # what was there rather than deleting it.
+        previous = await asyncio.to_thread(get_workflow, spec.definition.name)
+
         # save_workflow does synchronous database work and an ontology
         # annotation pass; off the loop so it does not stall the SSE stream.
         workflow_name = await asyncio.to_thread(save_workflow, spec.definition)
         spec.workflow_name = workflow_name
+        plan_control.record_created(
+            ctx, "workflow", workflow_name, workflow_name,
+            previous=previous.model_dump(mode="json") if previous else None,
+        )
 
         ctx.emit("workflow_ready", json.dumps({
             "workflow_name": workflow_name,
@@ -395,3 +413,59 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
         }))
 
         return await next(ctx)
+
+
+class WorkflowReviewLayer(WorkflowStepLayer):
+    """Hand the built workflow to the user: test it, accept it, or roll it back.
+
+    Nothing is tested or rolled back without being asked. Accepting goes on to
+    registration; rolling back removes everything the plan created. While this
+    waits, the user may also rebuild a failed activity
+    (``POST /workflows/{name}/steps/{step}/rebuild-activity``) and test again,
+    so the definition is re-read from storage each time.
+
+    Without an interactive run there is nobody to ask, and the plan is
+    accepted as before.
+    """
+
+    name = "workflow_review"
+    label = "Review"
+    detail = "You test the built workflow, then accept it or roll back everything the plan created."
+
+    async def process(self, ctx: PipelineContext, next):
+        from app.layers.workflow import plan_control
+        from app.services.workflow_engine.engine import get_workflow
+        from app.services.workflow_engine.plan_test import test_workflow
+
+        spec = ctx.workflow_spec
+        if not spec.definition or not plan_control.can_ask(ctx):
+            return await next(ctx)
+
+        last_test = None
+        while True:
+            choice = await plan_control.ask_user(ctx, "review_workflow", {
+                "title": "The workflow is built — test it, accept it, or roll it back",
+                "workflow_name": spec.workflow_name,
+                "valid": not ctx.metadata.get(VALIDATION_FAILED_KEY),
+                "last_test": last_test and {"passed": last_test["passed"],
+                                            "summary": last_test["summary"]},
+            }, options=["test", "accept", "rollback"], default="accept")
+
+            stored = await asyncio.to_thread(get_workflow, spec.workflow_name)
+            if stored is not None:
+                spec.definition = stored
+
+            if choice == "test":
+                ctx.emit("status", "Testing the workflow…")
+                last_test = await test_workflow(spec.definition, ctx.client)
+                ctx.emit("workflow_test", json.dumps(last_test, default=str))
+                continue
+            if choice == "rollback":
+                await plan_control.roll_back_plan(ctx, "rolled back after review")
+                return await next(ctx)
+            ctx.emit("workflow_accepted", json.dumps({
+                "workflow_name": spec.workflow_name,
+                "tested": last_test is not None,
+                "passed": bool(last_test and last_test["passed"]),
+            }))
+            return await next(ctx)

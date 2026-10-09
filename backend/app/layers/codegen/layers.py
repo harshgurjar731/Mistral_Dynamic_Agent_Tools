@@ -8,7 +8,8 @@ The code-requirement layers, R1–R8.
     R4 SpecAuthoring       author the SynthesisSpec v2              ┐
     R5 ContractBinding     does it fit its neighbours?              │ loop, with
     R6 SpecPreflight       schemas, examples, names                 │ bounded
-    R7 SubmitAndTrack      build it on the tool service             ┘ re-authoring
+    R7 SubmitAndTrack      build it on the tool service             │ re-authoring
+    R7b SmokeTest          run it for real; roll back a broken build┘
     R8 BindAndRefresh      make it visible to the rest of the platform
 
 Each layer answers one question and records its answer on the context. A
@@ -48,6 +49,12 @@ class RequirementContext:
     reauthors: int = 0
     build: Optional[dict] = None             # the tool service's answer
     resolution: Optional[CodeResolution] = None
+    #: The last requirement that passed contract and pre-flight checks — kept
+    #: so a build that fails for reasons other than its spec can be retried
+    #: at run time from exactly this.
+    valid_requirement: Optional[dict] = None
+    #: Problems from the last smoke test, when the build itself was broken.
+    smoke_problems: list[str] = field(default_factory=list)
 
     def emit(self, stage: str, message: str, **data) -> None:
         logger.info("[codegen:%s] %s: %s", self.need.name_hint or self.need.purpose, stage, message)
@@ -308,6 +315,53 @@ class SubmitAndTrackLayer:
             ctx.issues.extend(ctx.build.get("issues") or [ctx.build.get("message", "spec rejected")])
 
 
+# ── R7b ─────────────────────────────────────────────────────────────────────
+
+
+class SmokeTestLayer:
+    """Run the version just built through the real execution path.
+
+    A broken build is rolled back (rejected, so the previous approved version
+    is active again and the next attempt rebuilds instead of reusing it), and
+    its failures go back to the author as issues like any other rejection.
+    """
+
+    name = "smoke_test"
+
+    async def run(self, ctx: RequirementContext) -> None:
+        from app.layers.codegen.smoke import roll_back, smoke_test, smoke_testable
+
+        build = ctx.build or {}
+        ctx.smoke_problems = []
+        if build.get("status") != "approved" or not build.get("tool_id"):
+            return  # nothing installed to run (pending approval, or failed)
+        if not smoke_testable(ctx.requirement):
+            return
+
+        try:
+            from app.services.tool_registry import refresh_dynamic_tools
+
+            await refresh_dynamic_tools()
+        except Exception as e:  # noqa: BLE001 — execution goes to the tool service directly
+            logger.debug("registry refresh before smoke test failed: %s", e)
+
+        ctx.emit("smoke", f"running '{build.get('tool_name')}' v{build.get('version')} "
+                          f"against its worked examples")
+        problems = await smoke_test(ctx.requirement, build)
+        if not problems:
+            ctx.emit("smoke", "passed")
+            return
+
+        rolled = await roll_back(build)
+        ctx.emit("rollback", f"built broken — rolled back: {rolled}")
+        ctx.smoke_problems = problems
+        ctx.issues.extend(f"The built code failed when executed ({p})" for p in problems)
+        ctx.build = {**build, "status": "failed", "rolled_back": True,
+                     "message": f"Built, but it failed when executed and was rolled back "
+                                f"({rolled}): " + "; ".join(problems),
+                     "issues": problems}
+
+
 # ── R8 ──────────────────────────────────────────────────────────────────────
 
 
@@ -337,7 +391,8 @@ class BindAndRefreshLayer:
         common = dict(name=build.get("tool_name") or ctx.requirement.name,
                       version=build.get("version"), tool_id=build.get("tool_id"),
                       output_schema=build.get("output_schema") or ctx.requirement.output_schema,
-                      review_required=bool(build.get("review_required")))
+                      review_required=bool(build.get("review_required")),
+                      created=status in ("approved", "pending_approval") and not build.get("reused"))
         if status == "approved":
             ctx.finish("built", build.get("message", "built"), **common)
         elif status == "pending_approval":

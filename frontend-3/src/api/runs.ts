@@ -47,7 +47,37 @@ export const runsApi = {
   startAgent: (body: AgentRunRequest) => post<BackgroundRun>("/api/runs/agent", body),
   startSynthesis: (task: string, purpose: "tool" | "activity") =>
     post<BackgroundRun>("/api/runs/synthesis", { task, purpose }),
+  /** Answer a question a running run is waiting on (its `decision_required` event). */
+  decide: (id: string, decisionId: string, choice: string) =>
+    post<{ accepted: boolean; choice: string }>(`/api/runs/${id}/decisions/${decisionId}`, {
+      choice,
+    }),
 };
+
+/** A question a run stopped to ask (`decision_required`). */
+export interface RunDecision {
+  id: string;
+  kind: "build_failed" | "review_workflow" | string;
+  options: string[];
+  default: string;
+  title?: string;
+  /** build_failed: what could not be built. */
+  entity?: "activity" | "agent" | string;
+  attempts?: number;
+  failures?: Array<{
+    id?: string;
+    name?: string;
+    step?: string;
+    error?: string;
+    rolled_back?: boolean;
+  }>;
+  /** review_workflow */
+  workflow_name?: string;
+  valid?: boolean;
+  last_test?: { passed: boolean; summary: string } | null;
+  /** Everything the plan has created so far — what a rollback removes. */
+  created?: Array<{ kind: string; id: string; name?: string }>;
+}
 
 export const eventsUrl = (id: string, after: number) => `/api/runs/${id}/events?after=${after}`;
 

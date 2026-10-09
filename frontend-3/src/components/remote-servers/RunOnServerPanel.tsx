@@ -18,9 +18,17 @@ import { RemoteWorkflowSelect } from "./remoteShared";
  * Run a deployed workflow on this server's worker. Uses the app's full run
  * form when the workflow is defined here; otherwise raw JSON input. The run
  * is routed by the DEPLOYMENT_NAME in the workflow's .env on the server.
+ * With ``workflow`` set the panel runs that workflow and hides its picker.
  */
-export function RunOnServerPanel({ server }: { server: RemoteServer }) {
-  const [workflow, setWorkflow] = useState("");
+export function RunOnServerPanel({
+  server,
+  workflow: fixedWorkflow,
+}: {
+  server: RemoteServer;
+  workflow?: string | undefined;
+}) {
+  const [pickedWorkflow, setWorkflow] = useState("");
+  const workflow = fixedWorkflow ?? pickedWorkflow;
   const [deploymentName, setDeploymentName] = useState("");
   const [jsonText, setJsonText] = useState("{}");
   const [result, setResult] = useState<RemoteRunResponse | null>(null);
@@ -64,17 +72,19 @@ export function RunOnServerPanel({ server }: { server: RemoteServer }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Workflow</Label>
-          <RemoteWorkflowSelect
-            server={server}
-            value={workflow}
-            onChange={(w) => {
-              setWorkflow(w);
-              setResult(null);
-            }}
-          />
-        </div>
+        {fixedWorkflow == null ? (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Workflow</Label>
+            <RemoteWorkflowSelect
+              server={server}
+              value={workflow}
+              onChange={(w) => {
+                setWorkflow(w);
+                setResult(null);
+              }}
+            />
+          </div>
+        ) : null}
         <div className="space-y-1.5">
           <Label className="text-xs">Worker queue (optional)</Label>
           <Input

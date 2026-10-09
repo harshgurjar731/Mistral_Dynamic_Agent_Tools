@@ -248,3 +248,20 @@ def get_tool(tool_id: int, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail="Tool not found")
     return _record_to_response(record)
+
+
+@router.get("/secrets/status")
+def secrets_status(names: str = ""):
+    """Whether each named secret can reach a tool: allowlisted and set.
+
+    Never returns a value — only the two booleans the workflow prerequisite
+    check needs to tell a user what to configure.
+    """
+    import os
+
+    from app.config import settings
+
+    allowed = settings.secrets_allowlist
+    wanted = [n.strip() for n in names.split(",") if n.strip()]
+    return {"secrets": {n: {"allowed": n in allowed, "set": bool(os.environ.get(n))}
+                        for n in wanted}}

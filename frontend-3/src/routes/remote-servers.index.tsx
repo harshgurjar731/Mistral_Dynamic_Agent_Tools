@@ -66,6 +66,8 @@ const SORTS: SortOption<RemoteServer>[] = [
 interface PurposeMeta {
   value: ServerPurpose | undefined;
   title: string;
+  /** Label in the filter. */
+  short: string;
   description: string;
   icon: LucideIcon;
   accent: string;
@@ -75,6 +77,7 @@ const PURPOSES: PurposeMeta[] = [
   {
     value: undefined,
     title: "All servers",
+    short: "All",
     description: "Every deployment target",
     icon: HardDrive,
     accent: "text-primary bg-primary/10 border-primary/25",
@@ -82,6 +85,7 @@ const PURPOSES: PurposeMeta[] = [
   {
     value: "workflow",
     title: "Workflow deployment",
+    short: "Workflows",
     description: "VMs and endpoints that run workflow packages",
     icon: Boxes,
     accent: "text-cyan bg-cyan/10 border-cyan/25",
@@ -89,6 +93,7 @@ const PURPOSES: PurposeMeta[] = [
   {
     value: "tool",
     title: "Tool deployment",
+    short: "Tools",
     description: "Endpoints that receive dynamic tool code",
     icon: Wrench,
     accent: "text-pink bg-pink/10 border-pink/25",
@@ -194,25 +199,52 @@ function RemoteServersPage() {
         <GetStarted />
       ) : (
         <>
-          {/* ── Purpose cards (also the filter) ── */}
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            {PURPOSES.map((p) => {
-              const rows = all.filter((s) => !p.value || s.purpose === p.value);
-              return (
-                <PurposeCard
-                  key={p.title}
-                  meta={p}
-                  count={rows.length}
-                  health={healthOf(rows)}
-                  selected={purpose === p.value}
-                  onSelect={() => navigate({ search: { purpose: p.value } })}
-                />
-              );
-            })}
+          {/* ── Toolbar: purpose filter, health, search ── */}
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div
+              role="tablist"
+              aria-label="Filter by purpose"
+              className="inline-flex rounded-xl border border-border/50 bg-surface/40 p-1 backdrop-blur-sm"
+            >
+              {PURPOSES.map((p) => {
+                const count = all.filter((s) => !p.value || s.purpose === p.value).length;
+                const selected = purpose === p.value;
+                const Icon = p.icon;
+                return (
+                  <button
+                    key={p.title}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => navigate({ search: { purpose: p.value } })}
+                    title={p.description}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition",
+                      selected
+                        ? "bg-primary/10 font-medium text-primary"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="size-3.5" />
+                    {p.short}
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 text-[10px] tabular-nums",
+                        selected ? "bg-primary/15" : "bg-muted/60",
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <HealthSummary
+              health={healthOf(all.filter((s) => !purpose || s.purpose === purpose))}
+            />
           </div>
 
-          {/* ── Toolbar ── */}
-          <div className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-border/40 bg-surface/20 px-4 py-3 backdrop-blur-sm">
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-border/40 bg-surface/20 px-4 py-3 backdrop-blur-sm">
             <div className="relative max-w-sm flex-1">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -338,7 +370,7 @@ function CardGrid({
   selection: BulkSelection;
 }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 [&>*]:min-w-0">
       {rows.map((s) => (
         <SelectableItem key={s.id} selection={selection} id={s.id} label={s.name}>
           <ServerCard server={s} />
@@ -349,72 +381,26 @@ function CardGrid({
   );
 }
 
-function PurposeCard({
-  meta,
-  count,
-  health,
-  selected,
-  onSelect,
-}: {
-  meta: PurposeMeta;
-  count: number;
-  health: Health;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const Icon = meta.icon;
-  const segments = [
-    { key: "healthy", n: health.healthy },
-    { key: "degraded", n: health.degraded },
-    { key: "unreachable", n: health.unreachable },
-    { key: "unknown", n: health.unknown },
-  ] as const;
-
+/** Dots with counts for each health state that has any servers. */
+function HealthSummary({ health }: { health: Health }) {
+  const segments = (
+    [
+      { key: "healthy", n: health.healthy },
+      { key: "degraded", n: health.degraded },
+      { key: "unreachable", n: health.unreachable },
+      { key: "unknown", n: health.unknown },
+    ] as const
+  ).filter((s) => s.n > 0);
+  if (segments.length === 0) return null;
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn(
-        "group relative flex flex-col rounded-2xl border p-5 text-left backdrop-blur-md transition-all duration-300",
-        selected
-          ? "border-primary/50 shadow-[0_0_28px_-10px_var(--primary)]"
-          : "border-border/60 hover:border-primary/30",
-      )}
-      style={{ background: "var(--surface)" }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className={cn("grid size-10 place-items-center rounded-xl border", meta.accent)}>
-          <Icon className="size-5" />
-        </div>
-        <span className="text-3xl font-semibold text-foreground tabular-nums">{count}</span>
-      </div>
-      <p className="mt-3 text-sm font-semibold text-foreground">{meta.title}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{meta.description}</p>
-
-      {/* Health bar */}
-      <div className="mt-4 flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted/50">
-        {count > 0
-          ? segments.map((seg) =>
-              seg.n > 0 ? (
-                <div
-                  key={seg.key}
-                  className={STATE_TONE[seg.key].dot}
-                  style={{ width: `${(seg.n / count) * 100}%` }}
-                />
-              ) : null,
-            )
-          : null}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-        {segments.map((seg) => (
-          <span key={seg.key} className="inline-flex items-center gap-1">
-            <span className={cn("size-1.5 rounded-full", STATE_TONE[seg.key].dot)} />
-            {seg.n} {seg.key === "unknown" ? "not checked" : seg.key}
-          </span>
-        ))}
-      </div>
-    </button>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
+      {segments.map((seg) => (
+        <span key={seg.key} className="inline-flex items-center gap-1.5">
+          <span className={cn("size-1.5 rounded-full", STATE_TONE[seg.key].dot)} />
+          {seg.n} {seg.key === "unknown" ? "not checked" : seg.key}
+        </span>
+      ))}
+    </div>
   );
 }
 

@@ -712,11 +712,13 @@ function ActivityPlanCard({ data }: { data: Record<string, unknown> }) {
       {failed.length > 0 && (
         <div className="mt-3 pt-3 border-t border-[var(--color-border-subtle)]">
           <p className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-1.5">
-            Could not be built ({failed.length}) — these fall back to runtime synthesis
+            Could not be built ({failed.length})
           </p>
           {failed.map((f, i) => (
             <p key={i} className="text-[11px] text-amber-300">
-              <span className="font-mono">{f.tool_name}</span>: {f.error}
+              <span className="font-mono">{f.tool_name}</span>
+              {f.deferred ? " (built on the first run)" : " (cannot run until rebuilt or re-planned)"}
+              {f.rolled_back ? " · broken build rolled back" : ""}: {f.error}
             </p>
           ))}
         </div>
