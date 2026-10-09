@@ -116,6 +116,34 @@ def export_knowledge(library_ids: Iterable[str]) -> dict:
     return data
 
 
+def export_rules(agent_ids: Iterable[str]) -> dict:
+    """The platform's rules and categories, and these agents' rule selections —
+    so a deployed agent is held to the same rules as on the platform."""
+    from app.database import SessionLocal
+
+    ids = sorted({i for i in agent_ids if i})
+    db = SessionLocal()
+    try:
+        tables = {t: [dict(r) for r in db.execute(text(f"SELECT * FROM {t}")).mappings()]
+                  for t in ("rule_categories", "rules")}
+        if ids:
+            params = {f"a{i}": aid for i, aid in enumerate(ids)}
+            marks = ", ".join(f":{k}" for k in params)
+            tables["rule_assignments"] = [dict(r) for r in db.execute(
+                text(f"SELECT * FROM rule_assignments WHERE agent_id IN ({marks})"), params).mappings()]
+        return {"tables": {t: [_jsonable(r) for r in rs] for t, rs in tables.items()}}
+    finally:
+        db.close()
+
+
+def import_rules(data: dict, agent_ids: dict[str, str] | None = None) -> str:
+    """Load an ``export_rules`` document, re-keyed to the deployed agents."""
+    tables = data.get("tables") or {}
+    loaded = _import_rows(data, agent_ids or {})
+    return (f"{len(tables.get('rules', []))} rules, "
+            f"{len(tables.get('rule_assignments', []))} agent selections ({loaded} rows)")
+
+
 def summary(data: dict) -> str:
     g = data.get("graph") or {}
     return (f"{len(g.get('entities', []))} entities, {len(g.get('relations', []))} relations, "
@@ -181,25 +209,36 @@ def _import_graph(data: dict, timeout: float) -> str:
     return summary(data)
 
 
-def _import_rows(data: dict, agent_ids: dict[str, str]) -> int:
-    from app.database import SessionLocal, create_tables
-    from app.ontology import (
-        models as _ontology_models,  # noqa: F401 — registers the tables
-    )
+def _rekey(table: str, row: dict, agent_ids: dict[str, str]) -> dict:
+    """The deployed agents can have new ids; what is attached to them follows."""
     from app.ontology.vocab import SubjectType
-    from app.rag import models as _rag_models  # noqa: F401
 
-    create_tables()
+    if (table == "ontology_annotations" and row.get("subject_type") == SubjectType.AGENT.value
+            and row.get("subject_id") in agent_ids):
+        row["subject_id"] = agent_ids[row["subject_id"]]
+    elif table == "rule_assignments" and row.get("agent_id") in agent_ids:
+        row["agent_id"] = agent_ids[row["agent_id"]]
+    elif table == "rules" and row.get("targets"):
+        try:
+            targets = json.loads(row["targets"])
+            if isinstance(targets, list):
+                row["targets"] = json.dumps([agent_ids.get(t, t) for t in targets])
+        except (TypeError, ValueError):
+            pass
+    return row
+
+
+def _import_rows(data: dict, agent_ids: dict[str, str]) -> int:
+    from app.database import SessionLocal
+    from app.db_setup import prepare_database
+
+    prepare_database(seed_rules=False)
     db = SessionLocal()
     loaded = 0
     try:
         for table, rows in (data.get("tables") or {}).items():
             for row in rows:
-                row = dict(row)
-                # The deployed agents can have new ids; their domains follow them.
-                if (table == "ontology_annotations" and row.get("subject_type") == SubjectType.AGENT.value
-                        and row.get("subject_id") in agent_ids):
-                    row["subject_id"] = agent_ids[row["subject_id"]]
+                row = _rekey(table, dict(row), agent_ids)
                 cols = list(row)
                 db.execute(text(
                     f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "

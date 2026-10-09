@@ -227,6 +227,16 @@ async def run() -> None:
         log.error("Failed to initialize Mistral client: %s", e)
         sys.exit(1)
 
+    # Steps read the backend's database (an agent's rules, the ontology). A
+    # deployed worker runs without the API server, so nothing else creates it.
+    try:
+        from app.db_setup import prepare_database
+        prepare_database()
+        log.info("Database ready.")
+    except Exception as e:
+        log.error("Failed to prepare the database: %s", e)
+        sys.exit(1)
+
     workflow_classes, activity_fns = discover_workflows_and_activities(workflows_dir)
 
     log.info(

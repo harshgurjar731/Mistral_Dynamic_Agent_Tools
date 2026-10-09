@@ -64,24 +64,11 @@ async def lifespan(app: FastAPI):
     from app.services.workflow_engine import execution_logs
     execution_logs.install()
 
-    # Create ORM tables (remote_servers, ontology, etc.)
-    from app.database import create_tables
-    import app.remote_server_model  # noqa: F401 — register model with Base
-    import app.ontology.models       # noqa: F401 — register ontology tables with Base
-    import app.rag.models            # noqa: F401 — register graph-RAG tables with Base
-    import app.rules.models          # noqa: F401 — register rules tables with Base
-    import app.runs.models           # noqa: F401 — register background-run tables with Base
-    create_tables()
-
-    # Before anything reads or seeds rules: the Rule model now has columns an
-    # older rules table lacks.
-    from app.rules import schema as rules_schema
-    rules_schema.ensure_schema()
-
-    # Remote servers gained purpose/provider/config/secrets columns.
-    from app.remote_servers import schema as remote_servers_schema
+    # ORM tables and their additive column migrations — shared with the
+    # worker, which prepares the same database when it runs on its own.
+    from app.db_setup import prepare_database
     from app.remote_servers.deployers import recover_interrupted
-    remote_servers_schema.ensure_schema()
+    prepare_database(seed_rules=False)
     recover_interrupted()
 
     # Runs a previous process left in flight died with it; say so rather than
@@ -109,13 +96,6 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Rules ready: %d recommended rule(s) added, %d old event(s) pruned", added, pruned)
     except Exception as e:
         logger.warning("⚠️ Rules seed skipped: %s", e)
-
-    # Additive column migrations for tables that predate a field.
-    from app.ontology import knowledge as ontology_knowledge
-    ontology_knowledge.ensure_schema()
-
-    from app.rag import schema as rag_schema
-    rag_schema.ensure_schema()
 
     # Knowledge-graph constraints and the entity full-text index that retrieval
     # runs on. Skipped without complaint when Neo4j is not up — the graph is

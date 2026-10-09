@@ -9,7 +9,9 @@ In order:
      created; credentials from .env are stored; each is activated. One that
      still needs an OAuth sign-in prints its authorization link.
   2. agents — created if missing, with their connectors attached by name.
-  3. knowledge — the agents' graph and domain knowledge (seed/knowledge.json),
+  3. rules — the platform's rules and the agents' selections (seed/rules.json),
+     re-keyed to the agents' ids here, so they are held to the same rules.
+  4. knowledge — the agents' graph and domain knowledge (seed/knowledge.json),
      loaded into this deployment's Neo4j and database.
 
 The tool and activity code needs no provisioning: it is bundled into this
@@ -197,7 +199,17 @@ def provision_agents(connector_ids: dict[str, str]) -> dict[str, str]:
     return mapping
 
 
-# ── 3. Knowledge ─────────────────────────────────────────────────────────
+# ── 3. Rules and knowledge ───────────────────────────────────────────────
+
+
+def load_rules(agent_ids: dict[str, str]) -> None:
+    seed = HERE / "seed" / "rules.json"
+    if not seed.exists():
+        return
+    from app.services import deploy_knowledge
+
+    print("Rules:")
+    print(f"  {deploy_knowledge.import_rules(json.loads(seed.read_text(encoding='utf-8')), agent_ids)}")
 
 
 def load_knowledge(agent_ids: dict[str, str]) -> None:
@@ -219,6 +231,7 @@ def main() -> None:
     connector_ids = setup_connectors()
     print("Agents:")
     agent_ids = provision_agents(connector_ids)
+    load_rules(agent_ids)
     load_knowledge(agent_ids)
     tools = manifest.get("dynamic_tools", [])
     if tools:

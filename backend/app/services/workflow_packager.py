@@ -11,6 +11,7 @@ databases its tools need:
                                  app/services/bundled_tools.py
       seed/knowledge.json        the agents' knowledge graph and domain
                                  knowledge (app/services/deploy_knowledge.py)
+      seed/rules.json            the rules and the agents' rule selections
       requirements-tools.txt     third-party packages that code imports, and
                                  the SQL driver
       bootstrap_deploy.py        connectors, agents, knowledge — on every start
@@ -708,6 +709,9 @@ def build_package_zip(workflow_def: WorkflowDefinition, manifest: DeploymentMani
                     "".join(f"{r}\n" for r in requirements) or "# none\n")
         if knowledge is not None:
             zf.writestr("backend/seed/knowledge.json", json.dumps(knowledge))
+        # The agents are held to the same rules as on the platform.
+        rules = deploy_knowledge.export_rules(a.source_agent_id for a in manifest.agents)
+        zf.writestr("backend/seed/rules.json", json.dumps(rules))
 
         # ── Tool and activity code, verbatim ──────────────────────────────
         for tool in manifest.dynamic_tools:
