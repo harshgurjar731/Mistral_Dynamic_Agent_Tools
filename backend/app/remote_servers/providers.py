@@ -22,6 +22,7 @@ PURPOSES = {
 
 # Post-deploy actions a workflow deployment can run on an SSH server.
 WORKFLOW_ACTIONS = {
+    "full": "Complete: upload, start services, bootstrap & start the worker",
     "upload_only": "Upload & extract only",
     "bootstrap": "Upload, extract & run bootstrap_deploy.py",
     "bootstrap_compose": "Bootstrap, then start with docker compose",

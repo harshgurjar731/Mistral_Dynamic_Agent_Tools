@@ -130,6 +130,10 @@ export interface WorkflowDeployOptions {
   action: string;
   mistral_api_key?: string | undefined;
   custom_command?: string | undefined;
+  /** Merged into the workflow's .env on the server (names only are recorded). */
+  env?: Record<string, string> | undefined;
+  /** "full" action: rebuild every image layer. */
+  no_cache?: boolean | undefined;
 }
 
 export type BuildService = "backend" | "tool-service" | "neo4j";

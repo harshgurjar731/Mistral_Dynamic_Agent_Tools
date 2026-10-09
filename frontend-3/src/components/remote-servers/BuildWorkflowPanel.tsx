@@ -43,27 +43,21 @@ function rowsToRecord(rows: KeyValueRow[]): Record<string, string> {
  * Build a deployed workflow's Docker stack on the server, with every
  * docker compose option the package supports, then optionally start it.
  * With ``workflow`` set the panel works on that workflow and hides its picker.
- * ``initialServices`` / ``initialBootstrap`` preselect a complete build (read
- * once on mount — remount with a ``key`` to apply new values).
  */
 export function BuildWorkflowPanel({
   server,
   workflow: fixedWorkflow,
-  initialServices,
-  initialBootstrap = false,
 }: {
   server: RemoteServer;
   workflow?: string | undefined;
-  initialServices?: BuildService[] | undefined;
-  initialBootstrap?: boolean | undefined;
 }) {
   const qc = useQueryClient();
   const [pickedWorkflow, setWorkflow] = useState("");
   const workflow = fixedWorkflow ?? pickedWorkflow;
-  const [services, setServices] = useState<BuildService[]>(initialServices ?? ["backend"]);
+  const [services, setServices] = useState<BuildService[]>(["backend"]);
   const [options, setOptions] = useState<Record<OptionKey, boolean>>({
     start: true,
-    run_bootstrap: initialBootstrap,
+    run_bootstrap: false,
     no_cache: false,
     pull: false,
     force_recreate: false,

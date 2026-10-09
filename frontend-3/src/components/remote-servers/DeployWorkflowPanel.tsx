@@ -35,7 +35,7 @@ export function DeployWorkflowPanel({
   const qc = useQueryClient();
   const [serverId, setServerId] = useState<string>(server ? String(server.id) : "");
   const [workflow, setWorkflow] = useState<string>(workflowName ?? "");
-  const [action, setAction] = useState("bootstrap");
+  const [action, setAction] = useState("full");
   const [apiKey, setApiKey] = useState("");
   const [customCommand, setCustomCommand] = useState("");
   const [deploymentId, setDeploymentId] = useState<number | null>(null);

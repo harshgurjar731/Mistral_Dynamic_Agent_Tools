@@ -1,31 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  Bot,
-  Download,
-  Hammer,
-  Loader2,
-  Package,
-  Plug,
-  Rocket,
-  Wrench,
-} from "lucide-react";
+import { AlertTriangle, Bot, Download, Loader2, Package, Plug, Rocket, Wrench } from "lucide-react";
 import { workflowsApi, QK } from "@/api";
-import { remoteServersApi, type BuildService } from "@/api/remoteServers";
-import { BuildWorkflowPanel } from "@/components/remote-servers/BuildWorkflowPanel";
-import { DeployWorkflowPanel } from "@/components/remote-servers/DeployWorkflowPanel";
+import { remoteServersApi } from "@/api/remoteServers";
 import { DeploymentHistory } from "@/components/remote-servers/Deployments";
-import { ServerStatusBadge } from "@/components/remote-servers/status";
+import { DeployAndRunPanel } from "@/components/workflows/DeployAndRunPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -57,91 +37,7 @@ interface DeploymentManifest {
   uses_knowledge_graph?: boolean;
 }
 
-type ModalTab = "download" | "deploy" | "build";
-
-/** The services a complete build of this workflow needs, from its manifest. */
-function servicesFor(manifest: DeploymentManifest | undefined): BuildService[] {
-  const services: BuildService[] = [];
-  if (manifest?.dynamic_tools.length) services.push("tool-service");
-  if (manifest?.uses_knowledge_graph) services.push("neo4j");
-  services.push("backend");
-  return services;
-}
-
-/**
- * Complete build of an already-deployed package on an SSH server: supporting
- * services first, then bootstrap_deploy.py (imports the dynamic tools and
- * provisions the agents), then the worker.
- */
-function BuildOnServer({
-  workflowName,
-  manifest,
-}: {
-  workflowName: string;
-  manifest: DeploymentManifest | undefined;
-}) {
-  const [serverId, setServerId] = useState("");
-  const servers = useQuery({
-    queryKey: [...QK.remoteServers(), "workflow"],
-    queryFn: () => remoteServersApi.list("workflow"),
-  });
-  // Building runs docker compose over SSH; HTTP deploy endpoints can't.
-  const sshServers = (servers.data ?? []).filter((s) => s.transport === "ssh");
-  const target = sshServers.find((s) => String(s.id) === serverId);
-
-  if (servers.data && sshServers.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
-        No SSH workflow servers — building needs one (e.g. a Brev VM or SSH host).
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Server</Label>
-        <Select value={serverId} onValueChange={setServerId}>
-          <SelectTrigger>
-            <SelectValue
-              placeholder={servers.isLoading ? "Loading servers…" : "Choose a server…"}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {sshServers.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                <span className="flex items-center gap-2">
-                  {s.name}
-                  <span className="text-[10px] text-muted-foreground">{s.provider_label}</span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {target ? (
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <ServerStatusBadge state={target.last_status ?? "unknown"} size="xs" />
-            <span className="truncate font-mono">{target.url}</span>
-          </div>
-        ) : null}
-        <p className="text-[11px] text-muted-foreground">
-          Deploy the package to this server first (Deploy to server tab). The services this workflow
-          needs and bootstrap are preselected.
-        </p>
-      </div>
-
-      {target ? (
-        <BuildWorkflowPanel
-          key={target.id}
-          server={target}
-          workflow={workflowName}
-          initialServices={servicesFor(manifest)}
-          initialBootstrap
-        />
-      ) : null}
-    </div>
-  );
-}
+type ModalTab = "download" | "deploy";
 
 export function DeployPackageModal({
   workflowName,
@@ -180,7 +76,7 @@ export function DeployPackageModal({
           <DialogDescription>
             Bundle <span className="font-mono text-foreground font-semibold">{workflowName}</span>{" "}
             and all its dependent agents, dynamic tools, and connector configs — download it, or
-            send it straight to one of your remote servers.
+            deploy it to a server, start its worker and run it there.
           </DialogDescription>
         </DialogHeader>
 
@@ -194,10 +90,7 @@ export function DeployPackageModal({
               <Download className="size-3.5" /> Download
             </TabsTrigger>
             <TabsTrigger value="deploy" className="gap-1.5">
-              <Rocket className="size-3.5" /> Deploy to server
-            </TabsTrigger>
-            <TabsTrigger value="build" className="gap-1.5">
-              <Hammer className="size-3.5" /> Build on server
+              <Rocket className="size-3.5" /> Deploy & run
             </TabsTrigger>
           </TabsList>
           <TabsContent
@@ -302,7 +195,18 @@ export function DeployPackageModal({
             value="deploy"
             className="flex-1 overflow-y-auto custom-scrollbar py-3 space-y-5 text-sm"
           >
-            <DeployWorkflowPanel workflowName={workflowName} />
+            {isLoading ? (
+              <div className="flex items-center justify-center py-10 gap-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>Analyzing deployment dependencies…</span>
+              </div>
+            ) : (
+              <DeployAndRunPanel
+                workflowName={workflowName}
+                usesDynamicTools={Boolean(manifest?.dynamic_tools.length)}
+                usesKnowledgeGraph={Boolean(manifest?.uses_knowledge_graph)}
+              />
+            )}
             <div>
               <p className="eyebrow mb-2">Recent deployments of this workflow</p>
               <DeploymentHistory
@@ -312,20 +216,6 @@ export function DeployPackageModal({
                 emptyTitle="Not deployed to any server yet"
               />
             </div>
-          </TabsContent>
-
-          <TabsContent
-            value="build"
-            className="flex-1 overflow-y-auto custom-scrollbar py-3 space-y-5 text-sm"
-          >
-            {isLoading ? (
-              <div className="flex items-center justify-center py-10 gap-2 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span>Analyzing deployment dependencies…</span>
-              </div>
-            ) : (
-              <BuildOnServer workflowName={workflowName} manifest={manifest} />
-            )}
           </TabsContent>
         </Tabs>
 

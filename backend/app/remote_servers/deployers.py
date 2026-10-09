@@ -213,11 +213,14 @@ def start_workflow_deployment(db, server: RemoteServer, workflow_name: str, opti
     action = options.get("action") or "upload_only"
     if action not in WORKFLOW_ACTIONS:
         raise DeployError(f"Unknown action '{action}'")
-    # Secrets never land in the row.
+    options = {**options, "env": clean_env(options.get("env") or {})}
+    # Secrets never land in the row: .env values are recorded by name only.
     stored_options = {
         "action": action,
         "custom_command": options.get("custom_command") or None,
         "api_key_provided": bool(options.get("mistral_api_key")),
+        "env_keys": sorted(options["env"]),
+        "no_cache": bool(options.get("no_cache")),
     }
     dep = RemoteDeployment(server_id=server.id, kind="workflow", target=workflow_name,
                            status="queued", options=json.dumps(stored_options), log="")
@@ -266,6 +269,7 @@ async def _run_workflow_deployment(dep_id: int, server_id: int, workflow_name: s
                   f"{len(manifest.dynamic_tools)} dynamic tools · {len(manifest.connectors)} connectors\n")
 
         env_overrides = store.parse_env_lines(secrets.get("env_vars"))
+        env_overrides.update(options.get("env") or {})
         if options.get("mistral_api_key"):
             env_overrides["MISTRAL_API_KEY"] = options["mistral_api_key"]
 
@@ -412,13 +416,20 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
             log.write("Created .env from .env.template\n")
         for warning in _env_typo_warnings(base_env, env_overrides):
             log.write(warning)
-        _write_remote_file(client, env_path, _merge_env(base_env, env_overrides))
+        env_text = _merge_env(base_env, env_overrides)
+        _write_remote_file(client, env_path, env_text)
         if env_overrides:
             log.write(f"Set: {', '.join(sorted(env_overrides))}\n")
 
         action = options.get("action") or "upload_only"
         commands: list[tuple[str, str, int]] = []
-        if action == "bootstrap":
+        if action == "full":
+            # Fail before a long build rather than with a worker that can't log in.
+            _check_worker_env(log, env_text)
+            cmd = _full_stack_command(manifest, no_cache=bool(options.get("no_cache")))
+            commands.append(("Starting services, running bootstrap and starting the worker",
+                             f"{_PLAIN_OUTPUT} bash -lc {shlex.quote(cmd)}", 3600))
+        elif action == "bootstrap":
             commands.append(("Running bootstrap_deploy.py", _BOOTSTRAP, 900))
         elif action == "bootstrap_compose":
             if manifest.dynamic_tools or manifest.uses_knowledge_graph:
@@ -441,8 +452,77 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
             code, _ = ssh.run(client, f"cd {qdir} && {cmd}", timeout=timeout, on_output=log.write)
             if code != 0:
                 raise DeployError(f"{label} exited with status {code}")
+        if action == "full":
+            _wait_for_worker(log, client, qdir)
     finally:
         client.close()
+
+
+def _env_value(env_text: str, key: str) -> str:
+    """The last value of ``key`` in .env text, without surrounding quotes."""
+    value = ""
+    for line in env_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"{key}="):
+            value = stripped.split("=", 1)[1].strip().strip("\"'")
+    return value
+
+
+def _check_worker_env(log: _DeployLog, env_text: str) -> None:
+    """What the worker needs from .env to be reachable by runs from this app."""
+    from app.config import settings
+
+    key = _env_value(env_text, "MISTRAL_API_KEY")
+    if not key:
+        raise DeployError("MISTRAL_API_KEY is empty in the workflow's .env — enter it in the API key "
+                          "field (it is written to the server's .env, never stored here)")
+    deployment = _env_value(env_text, "DEPLOYMENT_NAME")
+    if not deployment:
+        raise DeployError("DEPLOYMENT_NAME is missing from the workflow's .env — set the worker queue")
+    log.write(f"Worker queue (DEPLOYMENT_NAME): {deployment}\n")
+    if settings.MISTRAL_API_KEY and key != settings.MISTRAL_API_KEY:
+        log.write("⚠ MISTRAL_API_KEY on the server is not this app's key: the worker will poll another "
+                  "workspace, and runs started from here won't reach it.\n")
+    if settings.MISTRAL_WORKER_ENABLED and deployment == (settings.DEPLOYMENT_NAME or "default"):
+        log.write(f"⚠ This app's own worker also polls '{deployment}', so it may take runs meant for "
+                  "the server. Give the server its own worker queue.\n")
+
+
+def _full_stack_command(manifest, *, no_cache: bool) -> str:
+    """Everything the workflow needs, in order: supporting services, bootstrap
+    (agents + dynamic tools into the tool service), then a fresh worker so it
+    reads the .env just written."""
+    services = [*(["tool-service"] if manifest.dynamic_tools else []),
+                *(["neo4j"] if manifest.uses_knowledge_graph else []),
+                "backend"]
+    return build_compose_command(services=services, no_cache=no_cache, run_bootstrap=True,
+                                 start=True, force_recreate=True)
+
+
+_WORKER_READY = "Starting Temporal worker"
+_WORKER_FAILED = ("Inner worker crashed", "Failed to initialize Mistral client",
+                  "Traceback (most recent call last)")
+
+
+def _wait_for_worker(log: _DeployLog, client, qdir: str, timeout: float = 180.0) -> None:
+    """Follow the fresh worker container's log until it polls its task queue."""
+    log.step("Waiting for the worker to start polling")
+    cmd = (f'cd {qdir} && DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"; '
+           "$DC -f docker-compose.deploy.yml logs --no-color --tail 400 backend 2>&1")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _, out = ssh.run(client, cmd, timeout=60)
+        ready = next((line for line in out.splitlines() if _WORKER_READY in line), None)
+        if ready:
+            queue = re.search(r"task_queue=(\S+)", ready)
+            log.write(f"✔ Worker is up and polling task queue '{queue.group(1) if queue else '?'}'\n")
+            return
+        if any(marker in out for marker in _WORKER_FAILED):
+            log.write("\n".join(out.strip().splitlines()[-40:]) + "\n")
+            raise DeployError("The worker failed to start — see its log above")
+        time.sleep(5)
+    log.write(f"⚠ The worker hasn't reported ready within {int(timeout)}s — check Worker logs "
+              "before running.\n")
 
 
 async def _deploy_over_http(log: _DeployLog, config: dict, secrets: dict, workflow_name: str,
@@ -900,8 +980,11 @@ def remote_env_info(config: dict, secrets: dict, workflow: str) -> dict:
     script = (
         f"cd {base}/{shlex.quote(workflow)} 2>/dev/null || {{ echo MISSING; exit 0; }}; "
         "[ -f .env ] || { echo NOENV; exit 0; }; "
-        "echo \"name=$(sed -n 's/^DEPLOYMENT_NAME=//p' .env | tail -1)\"; "
-        "printf %s \"$(sed -n 's/^MISTRAL_API_KEY=//p' .env | tail -1)\" | sha256sum | cut -c1-64"
+        # Quotes and CRs are dropped, as docker compose does when it reads .env —
+        # MISTRAL_API_KEY="sk-…" must hash like the bare key.
+        "echo \"name=$(sed -n 's/^DEPLOYMENT_NAME=//p' .env | tail -1 | tr -d \"\\\"'\\r\")\"; "
+        "key=$(sed -n 's/^MISTRAL_API_KEY=//p' .env | tail -1 | tr -d \"\\\"'\\r\"); "
+        "printf %s \"$key\" | sha256sum | cut -c1-64"
     )
     client = ssh.connect(config, secrets, expected_fingerprint=config.get("host_fingerprint") or None)
     try:
