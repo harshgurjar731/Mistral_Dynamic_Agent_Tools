@@ -1188,8 +1188,12 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         result = await execute_tool(tool_name, arguments, version=version)
 
         # The activity is gone (deleted, or a fresh tool service): rebuild it
-        # from the requirement the planner stored on this step.
-        if _is_missing_tool(result):
+        # from the requirement the planner stored on this step. Never in a
+        # deployed worker — it runs the package's tested code or fails, rather
+        # than generating unreviewed code at run time.
+        from app.services import bundled_tools
+
+        if _is_missing_tool(result) and not bundled_tools.enabled():
             logger.info("Activity '%s' not found — attempting recovery", tool_name)
             rebuilt, message = await _recover_missing_activity(step, tool_name)
             logger.info("Recovery of '%s': %s", tool_name, message)

@@ -14,19 +14,22 @@ import {
   type KeyValueRow,
 } from "./remoteShared";
 
+// A package runs one service: tool and activity code is bundled into the worker.
 const SERVICES: { id: BuildService; label: string; hint: string }[] = [
-  { id: "backend", label: "Worker", hint: "The workflow's backend + Mistral worker" },
   {
-    id: "tool-service",
-    label: "Tool service",
-    hint: "Needed when the workflow uses dynamic tools",
+    id: "backend",
+    label: "Worker",
+    hint: "Mistral worker with the workflow's bundled tool & activity code",
   },
-  { id: "neo4j", label: "Neo4j", hint: "Needed when the workflow uses the knowledge graph" },
 ];
 
 const OPTIONS = [
   { key: "start", label: "Start after building", hint: "docker compose up -d" },
-  { key: "run_bootstrap", label: "Run bootstrap", hint: "Provision agents & tools first" },
+  {
+    key: "run_bootstrap",
+    label: "Run bootstrap on the host",
+    hint: "Create the agents first (the worker also does this on start)",
+  },
   { key: "no_cache", label: "No cache", hint: "Rebuild every layer (--no-cache)" },
   { key: "pull", label: "Pull base images", hint: "--pull; also refreshes neo4j" },
   { key: "force_recreate", label: "Force recreate", hint: "Recreate containers even if unchanged" },

@@ -134,9 +134,18 @@ export interface WorkflowDeployOptions {
   env?: Record<string, string> | undefined;
   /** "full" action: rebuild every image layer. */
   no_cache?: boolean | undefined;
+  /** Where the SQL tools' database comes from, when an agent uses them. */
+  sql?:
+    | {
+        mode: "container" | "external";
+        url?: string | undefined;
+        seed_sql?: string | undefined;
+      }
+    | undefined;
 }
 
-export type BuildService = "backend" | "tool-service" | "neo4j";
+/** A workflow package runs one service: the worker, with its tool code bundled in. */
+export type BuildService = "backend";
 
 export interface WorkflowBuildOptions {
   workflow: string;

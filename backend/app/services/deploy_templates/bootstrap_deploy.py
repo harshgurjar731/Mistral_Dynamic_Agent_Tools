@@ -1,226 +1,233 @@
 """
-bootstrap_deploy.py — Provision this workflow's dependencies on a fresh
-Mistral workspace and stage it for the worker to pick up.
+bootstrap_deploy.py — Set up this workflow on the target Mistral workspace.
+Runs before the worker on every start (the Docker image and run.sh both do
+this); safe to repeat — connectors and agents are matched by name, and the
+knowledge graph is loaded once.
 
-Run this once after filling in `.env` (copy `.env.template` to `.env` first
-and set MISTRAL_API_KEY to the *target* workspace's key). Safe to re-run:
-agents are matched by name and tools by content hash, so nothing is
-duplicated.
+In order:
+  1. connectors — found by name; a custom one missing on the target is
+     created; credentials from .env are stored; each is activated. One that
+     still needs an OAuth sign-in prints its authorization link.
+  2. agents — created if missing, with their connectors attached by name.
+  3. knowledge — the agents' graph and domain knowledge (seed/knowledge.json),
+     loaded into this deployment's Neo4j and database.
 
-Deliberately dependency-light — this script only needs `mistralai`,
-`httpx` and `python-dotenv` (all already in backend/requirements.txt), so it
-can run before the rest of the backend's dependencies are installed.
+The tool and activity code needs no provisioning: it is bundled into this
+backend (app/bundled_tools/) and runs inside the worker.
 
-    pip install mistralai httpx python-dotenv
-    python bootstrap_deploy.py
-
-What it does, in order:
-  1. Load .env, fail fast if MISTRAL_API_KEY is missing.
-  2. Read manifest.json.
-  3. Resolve-or-create every agent the workflow calls, by name.
-  4. Import every dynamic tool's bundled source into the Tool Service.
-  5. Print a checklist of connectors that need manual authorization.
-  6. Copy the compiled workflow module into MISTRAL_WORKFLOWS_DIR.
-  7. Print the command to start the worker.
+Reads its settings from the environment, or from .env here or one level up.
 """
 
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+
+def fail(message: str) -> None:
+    # The deploy flow watches the worker's log for this marker.
+    print(f"Bootstrap failed: {message}", flush=True)
+    sys.exit(1)
+
+
 try:
     from dotenv import load_dotenv
+
+    for env_file in (HERE / ".env", HERE.parent / ".env"):
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
 except ImportError:
-    print("Missing dependency: pip install mistralai httpx python-dotenv")
-    sys.exit(1)
+    pass
 
-HERE = Path(__file__).resolve().parent
-load_dotenv(HERE / ".env")
 
-MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "").strip()
+def env(key: str) -> str:
+    return os.environ.get(key, "").strip().strip("\"'") if key else ""
+
+
+MISTRAL_API_KEY = env("MISTRAL_API_KEY")
 if not MISTRAL_API_KEY or MISTRAL_API_KEY == "your_mistral_api_key_here":
-    print("MISTRAL_API_KEY is not set. Copy .env.template to .env and fill it in.")
-    sys.exit(1)
+    fail("MISTRAL_API_KEY is not set — put it in .env")
 
-TOOL_SERVICE_URL = os.environ.get("TOOL_SERVICE_URL", "http://localhost:9000").rstrip("/")
-# Matches the env var mistral_worker.py itself reads (WORKFLOWS_DIR, not
-# MISTRAL_WORKFLOWS_DIR — that name is the FastAPI app's own setting and is
-# irrelevant here since this script never imports the app). Both default to
-# `<package root>/mistral_workflows`, so leaving it unset just works.
-WORKFLOWS_DIR = Path(os.environ.get("WORKFLOWS_DIR", "./mistral_workflows"))
-
-MANIFEST_PATH = HERE / "manifest.json"
+MANIFEST_PATH = HERE / "deploy_manifest.json"
 if not MANIFEST_PATH.exists():
-    print(f"manifest.json not found next to this script ({MANIFEST_PATH}).")
-    sys.exit(1)
-
+    fail(f"{MANIFEST_PATH.name} not found next to this script")
 manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-workflow_name = manifest["workflow_name"]
 
 import httpx
-from mistralai.client import Mistral
 
-client = Mistral(api_key=MISTRAL_API_KEY, timeout_ms=120000)
 http = httpx.Client(
     base_url="https://api.mistral.ai",
     headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"},
-    timeout=30.0,
+    timeout=60.0,
 )
 
-
-# ── Step 3: agents ──────────────────────────────────────────────────────────
-
-def _existing_agents() -> dict[str, str]:
-    """name -> id, for every agent already on this workspace."""
-    resp = http.get("/v1/agents", params={"page": 0, "page_size": 200})
-    resp.raise_for_status()
-    data = resp.json()
-    agent_list = data if isinstance(data, list) else data.get("data", data)
-    return {a["name"]: a["id"] for a in agent_list if a.get("name") and a.get("id")}
+#: Scope the deployment's connector credentials and activation live at.
+SCOPE = "workspace"
 
 
-def provision_agents() -> None:
+def api(method: str, path: str, what: str, **kwargs):
+    resp = http.request(method, path, **kwargs)
+    if resp.status_code == 401:
+        fail("MISTRAL_API_KEY was rejected (401)")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"{what} returned {resp.status_code}: {resp.text[:300]}")
+    return resp.json() if resp.content else None
+
+
+def items(payload) -> list:
+    if isinstance(payload, list):
+        return payload
+    for key in ("data", "items", "connectors"):
+        if isinstance(payload, dict) and isinstance(payload.get(key), list):
+            return payload[key]
+    return []
+
+
+# ── 1. Connectors ────────────────────────────────────────────────────────
+
+
+def setup_connectors() -> dict[str, str]:
+    """Name → id on this workspace, for every connector the workflow uses."""
+    wanted = manifest.get("connectors", [])
+    if not wanted:
+        return {}
+    existing = {c.get("name"): c for c in items(api("GET", "/v1/connectors", "listing connectors",
+                                                     params={"page_size": 200}))}
+    ids: dict[str, str] = {}
+    problems: list[str] = []
+    for spec in wanted:
+        name = spec["connector_name"]
+        keys = spec.get("env_keys") or {}
+        connector = existing.get(name)
+        if connector:
+            print(f"  [reuse]  connector '{name}' -> {connector.get('id')}")
+        elif spec.get("is_directory"):
+            problems.append(f"'{name}' is a directory connector — install it from Studio on this "
+                            "workspace, then restart")
+            continue
+        elif not spec.get("server"):
+            problems.append(f"'{name}' has no server URL to create it with")
+            continue
+        else:
+            body = {"name": name, "description": spec.get("description") or name,
+                    "server": spec["server"]}
+            if env(keys.get("client_id", "")) and env(keys.get("client_secret", "")):
+                body["auth_data"] = {"client_id": env(keys["client_id"]),
+                                     "client_secret": env(keys["client_secret"])}
+            connector = api("POST", "/v1/connectors", f"creating connector '{name}'", json=body)
+            print(f"  [create] connector '{name}' -> {connector.get('id')}")
+        cid = connector.get("id")
+        ids[name] = cid
+
+        token = env(keys.get("token", ""))
+        if token:
+            api("POST", f"/v1/connectors/{cid}/{SCOPE}/credentials", f"storing credentials for '{name}'",
+                json={"name": spec.get("credentials_name") or "default",
+                      "credentials": {"bearer_token": token}, "is_default": True})
+            print(f"           credentials stored ({spec.get('credentials_name') or 'default'})")
+        try:
+            api("POST", f"/v1/connectors/{cid}/{SCOPE}/activate", f"activating '{name}'", json={})
+        except RuntimeError as e:
+            print(f"           WARNING: could not activate: {e}")
+
+        fresh = api("GET", f"/v1/connectors/{cid}", f"reading '{name}'") or {}
+        if spec.get("auth") != "none" and not fresh.get("is_authenticated"):
+            if spec.get("auth") == "oauth2":
+                params = {"credentials_name": spec["credentials_name"]} if spec.get("credentials_name") else None
+                link = (api("GET", f"/v1/connectors/{cid}/auth_url", f"auth link for '{name}'",
+                            params=params) or {}).get("auth_url")
+                print(f"  ACTION   '{name}' needs a sign-in — open this link once: {link}")
+            else:
+                print(f"  ACTION   '{name}' has no credentials — set {keys.get('token')} in .env and restart")
+    if problems:
+        fail("; ".join(problems))
+    return ids
+
+
+# ── 2. Agents ────────────────────────────────────────────────────────────
+
+
+def existing_agents() -> dict[str, str]:
+    """name → id, for every agent already on this workspace."""
+    found: dict[str, str] = {}
+    page = 0
+    while True:
+        batch = items(api("GET", "/v1/agents", "listing agents", params={"page": page, "page_size": 100}))
+        found.update({a["name"]: a["id"] for a in batch if a.get("name") and a.get("id")})
+        if len(batch) < 100:
+            return found
+        page += 1
+
+
+def provision_agents(connector_ids: dict[str, str]) -> dict[str, str]:
+    """Source agent id → id on this workspace."""
     agents = manifest.get("agents", [])
     if not agents:
-        print("No agents to provision.")
-        return
-
-    existing = _existing_agents()
+        print("  none")
+        return {}
+    existing = existing_agents()
+    mapping: dict[str, str] = {}
     for spec in agents:
         name = spec["name"]
         if name in existing:
             print(f"  [reuse]  agent '{name}' -> {existing[name]}")
+            mapping[spec["source_agent_id"]] = existing[name]
             continue
-
-        create_kwargs = {
-            "model": spec["model"],
-            "name": name,
-            "instructions": spec["instructions"],
-        }
+        tools = list(spec.get("tool_defs") or [])
+        for c in spec.get("connectors") or []:
+            cid = connector_ids.get(c.get("connector_name"))
+            if cid:
+                tool = {"type": "connector", "connector_id": cid}
+                if c.get("tool_configuration"):
+                    tool["tool_configuration"] = c["tool_configuration"]
+                tools.append(tool)
+        body = {"model": spec["model"], "name": name, "instructions": spec["instructions"]}
         if spec.get("description"):
-            create_kwargs["description"] = spec["description"]
+            body["description"] = spec["description"]
         if spec.get("tier"):
-            create_kwargs["metadata"] = {"tier": spec["tier"]}
-        if spec.get("tool_defs"):
-            create_kwargs["tools"] = spec["tool_defs"]
-
-        agent = client.beta.agents.create(**create_kwargs)
-        print(f"  [create] agent '{name}' -> {agent.id}")
-
-        if spec.get("connector_ids"):
-            print(
-                f"           NOTE: '{name}' used connectors {spec['connector_ids']} on the "
-                "source workspace — reattach these from the agent's page once authorized "
-                "(see the connector checklist below)."
-            )
+            body["metadata"] = {"tier": spec["tier"]}
+        if tools:
+            body["tools"] = tools
+        created = api("POST", "/v1/agents", f"creating agent '{name}'", json=body)
+        print(f"  [create] agent '{name}' -> {created.get('id')}")
+        mapping[spec["source_agent_id"]] = created.get("id")
+    return mapping
 
 
-# ── Step 4: dynamic tools ────────────────────────────────────────────────────
+# ── 3. Knowledge ─────────────────────────────────────────────────────────
 
-def import_dynamic_tools() -> None:
-    tools = manifest.get("dynamic_tools", [])
-    if not tools:
+
+def load_knowledge(agent_ids: dict[str, str]) -> None:
+    seed = HERE / "seed" / "knowledge.json"
+    if not seed.exists():
         return
+    from app.services import deploy_knowledge
 
-    try:
-        health = httpx.get(f"{TOOL_SERVICE_URL}/health", timeout=5.0)
-        health.raise_for_status()
-    except Exception as e:
-        print(
-            f"Tool Service unreachable at {TOOL_SERVICE_URL} ({e}). "
-            "Start it (e.g. `docker compose -f docker-compose.deploy.yml --profile tools up -d tool-service`) "
-            "and re-run this script to import the tools below."
-        )
-        return
-
-    for tool in tools:
-        resp = httpx.post(
-            f"{TOOL_SERVICE_URL}/tools/import",
-            json={
-                "name": tool["name"],
-                "schema": tool["schema"],
-                "source_code": tool["source_code"],
-                "hash": tool["hash"],
-                "version": tool.get("version", "1.0.0"),
-                # Keeps pinned workflow steps resolvable on this tool service.
-                "version_no": tool.get("version_no"),
-                "purpose": tool.get("purpose", "tool"),
-            },
-            timeout=30.0,
-        )
-        if resp.status_code == 200:
-            print(f"  [tool]   '{tool['name']}' -> {resp.json().get('status')}")
-        else:
-            print(f"  [tool]   '{tool['name']}' FAILED: {resp.status_code} {resp.text[:200]}")
-
-
-# ── Step 5: connectors (manual) ──────────────────────────────────────────────
-
-def print_connector_checklist() -> bool:
-    connectors = manifest.get("connectors", [])
-    if not connectors:
-        return True
-
-    print("\nThis workflow uses the following Mistral Connectors:")
-    for c in connectors:
-        label = c.get("connector_name") or c.get("connector_id") or "unknown"
-        print(f"  - {label}")
-    print(
-        "\nConnector credentials are workspace-bound and cannot be provisioned by this "
-        "script. Authorize each one in the target workspace's Mistral console before "
-        "the workflow's connector steps will work."
-    )
-    # Remote deploys run this over a non-interactive SSH channel — prompting
-    # there would block until the deploy step times out.
-    if not sys.stdin or not sys.stdin.isatty():
-        print("(non-interactive run — skipping confirmation)")
-        return False
-    try:
-        answer = input("\nHave you authorized these connectors? [y/N] ").strip().lower()
-    except EOFError:
-        return False
-    return answer == "y"
-
-
-# ── Step 6: stage the compiled workflow ──────────────────────────────────────
-
-def stage_workflow_module() -> None:
-    WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
-    src = HERE / "mistral_workflows" / f"workflow_{workflow_name}.py"
-    dst = WORKFLOWS_DIR / f"workflow_{workflow_name}.py"
-    # The default WORKFLOWS_DIR is the package's own mistral_workflows/, where
-    # the module already lives — copyfile would raise SameFileError.
-    if dst.resolve() == src.resolve():
-        print(f"\nWorkflow module already in place at {dst}")
-        return
-    shutil.copyfile(src, dst)
-    print(f"\nStaged {dst}")
+    print("Knowledge:")
+    data = json.loads(seed.read_text(encoding="utf-8"))
+    print(f"  {deploy_knowledge.import_knowledge(data, agent_ids)}")
 
 
 def main() -> None:
-    print(f"Provisioning workflow '{workflow_name}' on the target workspace...\n")
-
+    name = manifest["workflow_name"]
+    print(f"Bootstrapping '{name}' — queue {env('DEPLOYMENT_NAME') or '(DEPLOYMENT_NAME unset)'}")
+    if manifest.get("connectors"):
+        print("Connectors:")
+    connector_ids = setup_connectors()
     print("Agents:")
-    provision_agents()
-
-    print("\nDynamic tools:")
-    import_dynamic_tools()
-
-    confirmed = print_connector_checklist()
-
-    stage_workflow_module()
-
-    print("\nDone. Start the worker to begin serving this workflow:")
-    print("  python -m app.services.mistral_worker")
-    print("  (or: docker compose -f docker-compose.deploy.yml up backend)")
-    if manifest.get("connectors") and not confirmed:
-        print(
-            "\nWARNING: connector authorization was not confirmed — connector-dependent "
-            "steps will fail until you authorize them and reattach them to the agent."
-        )
+    agent_ids = provision_agents(connector_ids)
+    load_knowledge(agent_ids)
+    tools = manifest.get("dynamic_tools", [])
+    if tools:
+        print(f"Bundled code: {', '.join(t['name'] for t in tools)}")
+    print("Bootstrap complete.", flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (httpx.HTTPError, RuntimeError) as e:
+        fail(str(e))

@@ -213,14 +213,26 @@ def start_workflow_deployment(db, server: RemoteServer, workflow_name: str, opti
     action = options.get("action") or "upload_only"
     if action not in WORKFLOW_ACTIONS:
         raise DeployError(f"Unknown action '{action}'")
-    options = {**options, "env": clean_env(options.get("env") or {})}
-    # Secrets never land in the row: .env values are recorded by name only.
+    from app.services.workflow_engine.models import DeploymentSqlSetup
+
+    # Blank answers keep what the server's .env already has.
+    options = {**options, "env": {k: v for k, v in clean_env(options.get("env") or {}).items() if v}}
+    sql = options.get("sql")
+    if sql is not None:
+        try:
+            options["sql"] = DeploymentSqlSetup.model_validate(sql)
+        except ValueError as e:
+            raise DeployError(f"Invalid SQL database settings: {e}") from e
+    # Secrets never land in the row: .env values are recorded by name only, and
+    # of the SQL database only the mode (its URL holds a password).
     stored_options = {
         "action": action,
         "custom_command": options.get("custom_command") or None,
         "api_key_provided": bool(options.get("mistral_api_key")),
         "env_keys": sorted(options["env"]),
         "no_cache": bool(options.get("no_cache")),
+        "sql_mode": options["sql"].mode if options.get("sql") else None,
+        "sql_seeded": bool(options.get("sql") and options["sql"].seed_sql),
     }
     dep = RemoteDeployment(server_id=server.id, kind="workflow", target=workflow_name,
                            status="queued", options=json.dumps(stored_options), log="")
@@ -234,7 +246,7 @@ def start_workflow_deployment(db, server: RemoteServer, workflow_name: str, opti
     return dep
 
 
-async def _build_package(workflow_name: str):
+async def _build_package(workflow_name: str, setup=None):
     from app.dependencies import get_mistral_client
     from app.services import workflow_packager
     from app.services.workflow_engine.engine import get_workflow
@@ -242,9 +254,13 @@ async def _build_package(workflow_name: str):
     workflow = get_workflow(workflow_name)
     if not workflow:
         raise DeployError(f"Workflow '{workflow_name}' not found")
-    manifest = await workflow_packager.build_deployment_manifest(workflow, get_mistral_client())
-    zip_bytes = await asyncio.to_thread(workflow_packager.build_package_zip, workflow, manifest)
-    return manifest, zip_bytes
+    try:
+        manifest = await workflow_packager.build_deployment_manifest(workflow, get_mistral_client())
+        zip_bytes = await asyncio.to_thread(workflow_packager.build_package_zip, workflow, manifest, setup)
+        sql = workflow_packager._sql_setup(manifest, setup)
+    except workflow_packager.PackagingError as e:
+        raise DeployError(str(e)) from e
+    return manifest, zip_bytes, sql
 
 
 async def _run_workflow_deployment(dep_id: int, server_id: int, workflow_name: str, options: dict) -> None:
@@ -264,12 +280,22 @@ async def _run_workflow_deployment(dep_id: int, server_id: int, workflow_name: s
         if provider.get("provisioned") and not config.get("host"):
             raise DeployError("This server has not been provisioned yet — provision it first")
         log.step(f"Building deployment package for '{workflow_name}'")
-        manifest, zip_bytes = await _build_package(workflow_name)
+        from app.services.workflow_engine.models import DeploymentSetup
+
+        setup = DeploymentSetup(env=options.get("env") or {}, sql=options.get("sql"))
+        manifest, zip_bytes, sql = await _build_package(workflow_name, setup)
         log.write(f"Package: {len(zip_bytes) / 1024 / 1024:.2f} MB · {len(manifest.agents)} agents · "
                   f"{len(manifest.dynamic_tools)} dynamic tools · {len(manifest.connectors)} connectors\n")
+        if manifest.uses_knowledge_graph:
+            log.write("Knowledge graph: Neo4j container, loaded with the agents' graph on first start\n")
+        if sql is not None:
+            log.write("SQL tools database: " + ("PostgreSQL container" + (" (seeded)" if sql.seed_sql else "")
+                                               if sql.mode == "container" else "existing database") + "\n")
 
         env_overrides = store.parse_env_lines(secrets.get("env_vars"))
         env_overrides.update(options.get("env") or {})
+        if sql is not None and sql.mode == "external":
+            env_overrides["SQL_TOOLS_DATABASE_URL"] = sql.url
         if options.get("mistral_api_key"):
             env_overrides["MISTRAL_API_KEY"] = options["mistral_api_key"]
 
@@ -306,6 +332,19 @@ def _merge_env(base: str, overrides: dict[str, str]) -> str:
     if extra:
         lines += ["", "# Added by remote deployment", *extra]
     return "\n".join(lines) + "\n"
+
+
+def _missing_env(base: str, template: str) -> dict[str, str]:
+    """Template entries whose key ``base`` does not have, with the template's value."""
+    have = _env_keys(base)
+    out: dict[str, str] = {}
+    for line in template.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key, value = stripped.split("=", 1)
+            if key.strip() not in have:
+                out[key.strip()] = value.strip()
+    return out
 
 
 def _env_keys(text: str) -> set[str]:
@@ -357,15 +396,6 @@ def _write_remote_file(client, path: str, content: str) -> None:
         raise DeployError(f"Could not write {path}: {out.strip() or f'exit status {code}'}")
 
 
-def _compose_command(manifest) -> str:
-    parts = ['DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"']
-    if manifest.dynamic_tools:
-        parts.append("$DC -f docker-compose.deploy.yml --profile tools up -d --build tool-service")
-    if manifest.uses_knowledge_graph:
-        parts.append("$DC -f docker-compose.deploy.yml --profile knowledge-graph up -d neo4j")
-    return " && ".join(parts)
-
-
 _BOOTSTRAP = BOOTSTRAP_COMMAND
 
 
@@ -396,7 +426,10 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
         log.step("Extracting package")
         code, out = ssh.run(
             client,
-            f"cd {qdir} && (python3 -m zipfile -e package.zip . 2>/dev/null || unzip -o -q package.zip)"
+            # The bundled code and compiled module are replaced, not merged: a
+            # tool dropped from the workflow must not linger in the worker.
+            f"cd {qdir} && rm -rf backend/app/bundled_tools mistral_workflows"
+            " && (python3 -m zipfile -e package.zip . 2>/dev/null || unzip -o -q package.zip)"
             " && rm -f package.zip && ls -1",
             timeout=300, on_output=log.write,
         )
@@ -406,11 +439,20 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
         log.step("Writing .env")
         env_path = posixpath.join(workdir, ".env")
         base_env = _read_remote_file(client, env_path)
+        template_env = _read_remote_file(client, posixpath.join(workdir, ".env.template"))
         if base_env is not None:
-            log.write("Keeping existing .env\n")
+            # Keys this package adds (a database password generated at build
+            # time, a new tool's secret) join the existing .env; values already
+            # there are never replaced from the template — a database keeps the
+            # password it was created with.
+            added = _missing_env(base_env, template_env or "")
+            if added:
+                base_env = _merge_env(base_env, added)
+                log.write(f"Keeping existing .env; added {', '.join(sorted(added))}\n")
+            else:
+                log.write("Keeping existing .env\n")
         else:
-            template = posixpath.join(workdir, ".env.template")
-            base_env = _read_remote_file(client, template)
+            base_env = template_env
             if base_env is None:
                 raise DeployError(f"Neither .env nor .env.template exists in {workdir}")
             log.write("Created .env from .env.template\n")
@@ -426,21 +468,15 @@ def _deploy_over_ssh(log: _DeployLog, config: dict, secrets: dict, workflow_name
         if action == "full":
             # Fail before a long build rather than with a worker that can't log in.
             _check_worker_env(log, env_text)
-            cmd = _full_stack_command(manifest, no_cache=bool(options.get("no_cache")))
-            commands.append(("Starting services, running bootstrap and starting the worker",
+            cmd = _start_worker_command(no_cache=bool(options.get("no_cache")))
+            commands.append(("Building and starting the worker (creates the agents first)",
                              f"{_PLAIN_OUTPUT} bash -lc {shlex.quote(cmd)}", 3600))
         elif action == "bootstrap":
             commands.append(("Running bootstrap_deploy.py", _BOOTSTRAP, 900))
         elif action == "bootstrap_compose":
-            if manifest.dynamic_tools or manifest.uses_knowledge_graph:
-                commands.append(("Starting supporting services", _compose_command(manifest), 1800))
-            commands.append(("Running bootstrap_deploy.py", _BOOTSTRAP, 900))
-            commands.append((
-                "Starting backend with docker compose",
-                'DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose";'
-                " $DC -f docker-compose.deploy.yml up -d --build backend && $DC -f docker-compose.deploy.yml ps",
-                1800,
-            ))
+            commands.append(("Building and starting the worker (creates the agents first)",
+                             f"{_PLAIN_OUTPUT} bash -lc {shlex.quote(_start_worker_command(no_cache=False))}",
+                             3600))
         elif action == "custom":
             cmd = (options.get("custom_command") or config.get("post_deploy_command") or "").strip()
             if not cmd:
@@ -488,19 +524,17 @@ def _check_worker_env(log: _DeployLog, env_text: str) -> None:
                   "the server. Give the server its own worker queue.\n")
 
 
-def _full_stack_command(manifest, *, no_cache: bool) -> str:
-    """Everything the workflow needs, in order: supporting services, bootstrap
-    (agents + dynamic tools into the tool service), then a fresh worker so it
-    reads the .env just written."""
-    services = [*(["tool-service"] if manifest.dynamic_tools else []),
-                *(["neo4j"] if manifest.uses_knowledge_graph else []),
-                "backend"]
-    return build_compose_command(services=services, no_cache=no_cache, run_bootstrap=True,
-                                 start=True, force_recreate=True)
+def _start_worker_command(*, no_cache: bool) -> str:
+    """The package's only service: the worker, which creates the agents on
+    start and runs the bundled tool code in-process. Recreated so it reads the
+    .env just written; orphans are containers of an older package layout (its
+    tool service, Neo4j)."""
+    return build_compose_command(services=["backend"], no_cache=no_cache, start=True,
+                                 force_recreate=True, remove_orphans=True)
 
 
 _WORKER_READY = "Starting Temporal worker"
-_WORKER_FAILED = ("Inner worker crashed", "Failed to initialize Mistral client",
+_WORKER_FAILED = ("Bootstrap failed:", "Inner worker crashed", "Failed to initialize Mistral client",
                   "Traceback (most recent call last)")
 
 
@@ -885,46 +919,34 @@ def _merge_remote_env(log: _DeployLog, client, where: str, env: dict[str, str]) 
     log.write(f"Updated .env: {', '.join(sorted(env))}\n")
 
 
-BUILD_SERVICES = ("backend", "tool-service", "neo4j")
+# A package runs one service; tool and activity code is bundled into it.
+BUILD_SERVICES = ("backend",)
 
 
 def build_compose_command(*, services: list[str], no_cache: bool = False, pull: bool = False,
                           run_bootstrap: bool = False, start: bool = True, force_recreate: bool = False,
                           remove_orphans: bool = False, build_args: dict[str, str] | None = None) -> str:
-    """The shell for building (and optionally starting) a deployed workflow's stack.
+    """The shell for building (and optionally starting) a deployed workflow's worker.
 
-    Order matters: supporting services come up before bootstrap_deploy.py,
-    which imports dynamic tools into the tool service; the worker starts last.
+    ``run_bootstrap`` also runs bootstrap_deploy.py on the host first; the
+    worker image runs it on every start anyway.
     """
     unknown = [s for s in services if s not in BUILD_SERVICES]
     if unknown or not services:
         raise DeployError(f"Choose services from: {', '.join(BUILD_SERVICES)}")
-    profiles = []
-    if "tool-service" in services:
-        profiles += ["--profile", "tools"]
-    if "neo4j" in services:
-        profiles += ["--profile", "knowledge-graph"]
-    dc = " ".join(["$DC", "-f", "docker-compose.deploy.yml", *profiles])
+    dc = "$DC -f docker-compose.deploy.yml"
     args = " ".join(f"--build-arg {shlex.quote(f'{k}={v}')}"
                     for k, v in clean_env(build_args, "build arg").items())
 
     steps = ['DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"']
-    buildable = [s for s in services if s != "neo4j"]  # neo4j is a stock image
-    if buildable:
-        flags = " ".join(f for f, on in (("--no-cache", no_cache), ("--pull", pull)) if on)
-        steps.append(" ".join(x for x in (dc, "build", flags, args, *buildable) if x))
-    if "neo4j" in services and pull:
-        steps.append(f"{dc} pull neo4j")
-    up_flags = " ".join(f for f, on in (("--force-recreate", force_recreate),
-                                        ("--remove-orphans", remove_orphans)) if on)
-    supporting = [s for s in services if s != "backend"]
-    if start and supporting:
-        steps.append(" ".join(x for x in (dc, "up -d", up_flags, *supporting) if x))
+    flags = " ".join(f for f, on in (("--no-cache", no_cache), ("--pull", pull)) if on)
+    steps.append(" ".join(x for x in (dc, "build", flags, args, *services) if x))
     if run_bootstrap:
         steps.append(BOOTSTRAP_COMMAND)
-    if start and "backend" in services:
-        steps.append(" ".join(x for x in (dc, "up -d", up_flags, "backend") if x))
     if start:
+        up_flags = " ".join(f for f, on in (("--force-recreate", force_recreate),
+                                            ("--remove-orphans", remove_orphans)) if on)
+        steps.append(" ".join(x for x in (dc, "up -d", up_flags, *services) if x))
         steps.append(f"{dc} ps")
     return steps[0] + "; " + " && ".join(steps[1:])
 

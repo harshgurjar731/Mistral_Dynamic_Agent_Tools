@@ -1,8 +1,11 @@
 """
 Tool Registry — 3-tier routing: native → dynamic (Docker) → MCP (Docker).
-Native tools execute locally. Dynamic and MCP tools proxy to Docker Tool Service.
+Native tools execute locally. Dynamic and MCP tools proxy to Docker Tool Service,
+except in a deployed worker, where the package's bundled code runs in-process
+(app/services/bundled_tools.py).
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -159,16 +162,36 @@ _mcp_tool_schemas: dict[str, dict] = {}  # key: "server:tool_name"
 # ── Native Tool Execution (wired to real APIs) ──────────────────────────────
 
 
-def _execute_sql_query(arguments: dict) -> str:
-    """Execute SQL against the local SQLite database."""
-    query = arguments.get("query", "")
+_sql_engine = None
+
+
+def _sql_tools_session():
+    """A session on the SQL tools' database (SQL_TOOLS_DATABASE_URL, else DATABASE_URL)."""
+    global _sql_engine
     from app.database import SessionLocal
+
+    if not settings.SQL_TOOLS_DATABASE_URL:
+        return SessionLocal()
+    if _sql_engine is None:
+        from sqlalchemy import create_engine
+
+        url = settings.SQL_TOOLS_DATABASE_URL
+        args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _sql_engine = create_engine(url, connect_args=args, pool_pre_ping=True)
+    from sqlalchemy.orm import Session
+
+    return Session(bind=_sql_engine)
+
+
+def _execute_sql_query(arguments: dict) -> str:
+    """Execute SQL against the SQL tools' database."""
+    query = arguments.get("query", "")
     from sqlalchemy import text
 
-    db = SessionLocal()
+    db = _sql_tools_session()
     try:
         result = db.execute(text(query))
-        if query.strip().upper().startswith("SELECT"):
+        if result.returns_rows:
             rows = [dict(row) for row in result.mappings()]
             return json.dumps(rows, default=str)
         db.commit()
@@ -181,22 +204,25 @@ def _execute_sql_query(arguments: dict) -> str:
 
 
 def _execute_get_database_schema(arguments: dict) -> str:
-    """Get database schema from SQLite."""
-    from app.database import SessionLocal
-    from sqlalchemy import text
+    """Tables and columns of the SQL tools' database, for any SQL dialect."""
+    from sqlalchemy import inspect, text
 
-    db = SessionLocal()
+    db = _sql_tools_session()
     try:
-        result = db.execute(text("SELECT sql FROM sqlite_master WHERE type='table';"))
-        schemas = [row[0] for row in result if row[0]]
+        if db.bind.dialect.name == "sqlite":
+            result = db.execute(text("SELECT sql FROM sqlite_master WHERE type='table';"))
+            schemas = [row[0] for row in result if row[0]]
+        else:
+            inspector = inspect(db.bind)
+            schemas = []
+            for table in inspector.get_table_names():
+                cols = ", ".join(f"{c['name']} {c['type']}" for c in inspector.get_columns(table))
+                schemas.append(f"TABLE {table} ({cols})")
         return "\n".join(schemas) if schemas else "No tables found in database."
     except Exception as e:
         return f"Database error: {str(e)}"
     finally:
         db.close()
-
-
-
 
 
 async def _execute_domain_search(arguments: dict) -> str:
@@ -305,7 +331,18 @@ _mcp_published_tools: dict[str, str] = {}
 async def refresh_dynamic_tools():
     """Fetch dynamic tool schemas from Docker Tool Service."""
     global _dynamic_tool_schemas, _mcp_published_tools
+    from app.services import bundled_tools
     from app.services.tool_resolver import tool_resolver
+
+    # A deployed worker carries its tools in the package; there is no Tool
+    # Service to ask, and waiting on one would stall every step.
+    if bundled_tools.enabled():
+        for name, schema in bundled_tools.schemas().items():
+            _dynamic_tool_schemas[name] = schema
+            ALL_TOOLS[name] = schema
+            if name not in AVAILABLE_TOOL_KEYS:
+                AVAILABLE_TOOL_KEYS.append(name)
+        return
 
     tools = await tool_resolver.list_tools()
 
@@ -520,6 +557,16 @@ async def _route_tool(tool_name: str, arguments: dict, version: int | None = Non
         if inspect.isawaitable(result):
             result = await result
         return result
+
+    # Tier 2a: a deployment package's own tool and activity code, in-process.
+    from app.services import bundled_tools
+
+    if bundled_tools.enabled() and ":" not in tool_name:
+        logger.info("Executing bundled tool: %s", tool_name)
+        result = await asyncio.to_thread(bundled_tools.execute, tool_name, arguments, version)
+        if "error" in result:
+            return f"Error: {result['error']}"
+        return json.dumps(result.get("result", result))
 
     # Tier 2: Dynamic tools (Docker Tool Service)
     if tool_name in _dynamic_tool_schemas or tool_name not in ALL_TOOLS:

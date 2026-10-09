@@ -29,6 +29,11 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = f"sqlite:///{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sql_app.db')}"
+    # The database the SQL tools (execute_sql_query, get_database_schema) work
+    # on. Empty: DATABASE_URL. A deployed workflow points it at its own
+    # database — a PostgreSQL container or an existing one — so agents never
+    # query the worker's bookkeeping.
+    SQL_TOOLS_DATABASE_URL: str = ""
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"

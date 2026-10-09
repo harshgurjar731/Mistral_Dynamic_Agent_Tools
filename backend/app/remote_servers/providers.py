@@ -22,18 +22,20 @@ PURPOSES = {
 
 # Post-deploy actions a workflow deployment can run on an SSH server.
 WORKFLOW_ACTIONS = {
-    "full": "Complete: upload, start services, bootstrap & start the worker",
+    "full": "Complete: upload, start the worker & wait until it polls",
     "upload_only": "Upload & extract only",
-    "bootstrap": "Upload, extract & run bootstrap_deploy.py",
-    "bootstrap_compose": "Bootstrap, then start with docker compose",
+    "bootstrap": "Upload, extract & create the agents (no worker)",
+    "bootstrap_compose": "Upload & start the worker (don't wait)",
     "custom": "Upload, extract & run a custom command",
 }
 
-# Provisions the package's agents/tools and stages the workflow (bootstrap_deploy.py).
+# Sets up the package's connectors, agents and knowledge (backend/bootstrap_deploy.py)
+# in a one-off worker container — it needs the backend code and the databases the
+# compose file starts. The worker does the same on every start.
 BOOTSTRAP_COMMAND = (
-    "python3 -m venv .deploy-venv"
-    " && .deploy-venv/bin/pip install -q --disable-pip-version-check mistralai httpx python-dotenv"
-    " && .deploy-venv/bin/python bootstrap_deploy.py"
+    'DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose";'
+    " $DC -f docker-compose.deploy.yml build backend"
+    " && $DC -f docker-compose.deploy.yml run --rm backend python bootstrap_deploy.py"
 )
 
 _DC = 'DC="docker compose"; docker compose version >/dev/null 2>&1 || DC="docker-compose"; '

@@ -298,9 +298,9 @@ class DeploymentAgentSpec(BaseModel):
     """A workflow's agent, captured with enough fidelity to recreate it.
 
     ``tool_defs`` holds only function/builtin tool schemas (portable across
-    workspaces). ``connector_ids`` is informational — connector ids are
-    workspace-bound, so they are never fed back into agent creation; the
-    deploy checklist surfaces them for manual authorization instead.
+    workspaces). Connectors are workspace-bound, so they travel by name in
+    ``connectors`` and are re-attached by bootstrap to the target's connector
+    of that name; ``connector_ids`` keeps the source ids for reference.
     """
     source_agent_id: str
     name: str
@@ -310,6 +310,8 @@ class DeploymentAgentSpec(BaseModel):
     tier: Optional[str] = None
     tool_defs: list[dict] = Field(default_factory=list)
     connector_ids: list[str] = Field(default_factory=list)
+    #: ``{"connector_name", "tool_configuration"}`` per attached connector.
+    connectors: list[dict] = Field(default_factory=list)
 
 
 class DeploymentDynamicTool(BaseModel):
@@ -326,14 +328,47 @@ class DeploymentDynamicTool(BaseModel):
     #: The version number steps pin (``tool_version``). The target keeps it on
     #: import when free, so the pinned steps resolve there too.
     version_no: Optional[int] = None
+    #: "activity" — a workflow step on its own; "tool" — called by an agent.
     purpose: str = "tool"
+    #: Checked against a success envelope's ``data``, as the Tool Service does.
+    output_schema: Optional[dict] = None
+    #: Environment variable names the code receives as ``_secrets``.
+    secrets: list[str] = Field(default_factory=list)
+    #: Packages beyond the standard library the code imports (pip names).
+    requirements: list[str] = Field(default_factory=list)
 
 
 class DeploymentConnectorRef(BaseModel):
-    """A Mistral Connector a workflow step depends on — never auto-provisioned."""
+    """A Mistral Connector the workflow depends on — a CONNECTOR step's, or an
+    agent's. Bootstrap finds it on the target workspace by name, creates it
+    there when it is a custom connector, stores the credentials given at
+    deploy time and activates it."""
     connector_id: Optional[str] = None
     connector_name: Optional[str] = None
     credentials_name: Optional[str] = None
+    #: Directory connectors are installed from Studio; they cannot be created by API.
+    is_directory: bool = False
+    #: The MCP server URL a custom connector is created with.
+    server: Optional[str] = None
+    description: Optional[str] = None
+    #: "bearer" | "oauth2" | "none" — what credentials the setup form asks for.
+    auth: str = "none"
+    #: Where it is used, for the setup form.
+    used_by: list[str] = Field(default_factory=list)
+    #: The .env keys bootstrap reads this connector's credentials from.
+    env_keys: dict[str, str] = Field(default_factory=dict)
+
+
+class DeploymentSetupField(BaseModel):
+    """One value the deploy needs from the operator, written to the server's .env."""
+    key: str
+    label: str
+    help: str = ""
+    secret: bool = False
+    required: bool = False
+    default: Optional[str] = None
+    #: "worker" | "tool" | "connector" | "database" — groups the setup form.
+    group: str = "worker"
 
 
 class DeploymentManifest(BaseModel):
@@ -348,8 +383,31 @@ class DeploymentManifest(BaseModel):
     native_tools: list[str] = Field(default_factory=list)
     dynamic_tools: list[DeploymentDynamicTool] = Field(default_factory=list)
     connectors: list[DeploymentConnectorRef] = Field(default_factory=list)
+    #: An agent searches the knowledge graph: the package brings a Neo4j and a
+    #: copy of these libraries' graph.
     uses_knowledge_graph: bool = False
+    graph_library_ids: list[str] = Field(default_factory=list)
+    #: An agent uses the SQL tools: the deploy chooses their database.
+    uses_sql_tools: bool = False
+    #: What the operator is asked for before the package can run.
+    setup: list[DeploymentSetupField] = Field(default_factory=list)
     generated_at: str
+
+
+class DeploymentSqlSetup(BaseModel):
+    """Where the SQL tools' database comes from on the server."""
+    #: "container" — a PostgreSQL started with the worker; "external" — ``url``.
+    mode: str = "container"
+    url: Optional[str] = None
+    #: SQL run once into a new container database (schema and data).
+    seed_sql: Optional[str] = None
+
+
+class DeploymentSetup(BaseModel):
+    """The operator's answers to a manifest's ``setup``, given at build time."""
+    #: Written to the package's .env (download) or merged into the server's (deploy).
+    env: dict[str, str] = Field(default_factory=dict)
+    sql: Optional[DeploymentSqlSetup] = None
 
 
 class BuilderCatalogResponse(BaseModel):

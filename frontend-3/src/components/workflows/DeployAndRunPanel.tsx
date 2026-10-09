@@ -31,26 +31,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { DeploySetupForm } from "./deploySetup";
+import {
+  emptySetup,
+  setupProblems,
+  setupRequest,
+  type DeploymentManifest,
+  type SetupState,
+} from "./deploySetupModel";
 
 const ACTIVE = new Set(["queued", "running"]);
 
 /** A deploy stage, recognised by the log line the backend writes when it starts. */
 type Stage = { label: string; marker: string };
 
-function stagesFor(usesDynamicTools: boolean, usesKnowledgeGraph: boolean): Stage[] {
-  const services = [
-    usesDynamicTools ? "tool service" : null,
-    usesKnowledgeGraph ? "Neo4j" : null,
-  ].filter(Boolean);
+function stagesFor(bundledCount: number): Stage[] {
   return [
-    { label: "Package the workflow", marker: "▶ Building deployment package" },
+    {
+      label: bundledCount
+        ? `Package the workflow with its ${bundledCount} tool & activity module${bundledCount === 1 ? "" : "s"}`
+        : "Package the workflow",
+      marker: "▶ Building deployment package",
+    },
     { label: "Upload & extract on the server", marker: "▶ Uploading package" },
     { label: "Write .env (API key, worker queue)", marker: "▶ Writing .env" },
     {
-      label: services.length
-        ? `Start ${services.join(" & ")}, bootstrap agents & tools, start the worker`
-        : "Bootstrap agents, start the worker",
-      marker: "▶ Starting services, running bootstrap",
+      label: "Build & start the worker (creates the agents first)",
+      marker: "▶ Building and starting the worker",
     },
     { label: "Wait for the worker to poll its queue", marker: "▶ Waiting for the worker" },
   ];
@@ -122,23 +129,20 @@ function rowsToRecord(rows: KeyValueRow[]): Record<string, string> {
 }
 
 /**
- * End to end on an SSH server, from the workflow page: upload the package,
- * write .env, start the services it needs, bootstrap, start the worker and
- * wait for it to poll — then run the workflow on that worker.
+ * End to end on an SSH server, from the workflow page: upload the package
+ * (tool and activity code bundled into the worker), write .env, start the
+ * worker and wait for it to poll — then run the workflow on that worker.
  */
 export function DeployAndRunPanel({
   workflowName,
-  usesDynamicTools,
-  usesKnowledgeGraph,
+  manifest,
 }: {
   workflowName: string;
-  usesDynamicTools: boolean;
-  usesKnowledgeGraph: boolean;
+  manifest: DeploymentManifest;
 }) {
   const qc = useQueryClient();
   const [serverId, setServerId] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [queue, setQueue] = useState("");
+  const [setup, setSetup] = useState<SetupState>(emptySetup);
   const [noCache, setNoCache] = useState(false);
   const [extraEnv, setExtraEnv] = useState<KeyValueRow[]>([]);
   const [advanced, setAdvanced] = useState(false);
@@ -152,7 +156,15 @@ export function DeployAndRunPanel({
   // The whole flow runs docker compose over SSH; HTTP deploy endpoints can't.
   const sshServers = (servers.data ?? []).filter((s) => s.transport === "ssh");
   const target = sshServers.find((s) => String(s.id) === serverId);
-  const hasStoredEnv = Boolean(target?.secrets_set.includes("env_vars"));
+  // Already on that server: its .env holds earlier answers, so blanks keep them.
+  const onServer = useQuery({
+    queryKey: QK.remoteServerWorkflows(serverId),
+    queryFn: () => remoteServersApi.remoteWorkflows(serverId),
+    enabled: Boolean(target),
+  });
+  const redeploy = Boolean(onServer.data?.items.some((w) => w.name === workflowName && w.env));
+  const keptOnServer = redeploy ? (manifest.setup ?? []).map((f) => f.key) : [];
+  const problems = setupProblems(manifest, setup, keptOnServer);
 
   const deployment = useQuery({
     queryKey: QK.remoteDeployment(deploymentId ?? 0),
@@ -169,18 +181,17 @@ export function DeployAndRunPanel({
       remoteServersApi.deployWorkflow(target!.id, {
         workflow_name: workflowName,
         action: "full",
-        mistral_api_key: apiKey || undefined,
-        env: {
-          ...rowsToRecord(extraEnv),
-          ...(queue.trim() ? { DEPLOYMENT_NAME: queue.trim() } : {}),
-        },
+        ...(() => {
+          const req = setupRequest(manifest, setup);
+          return { env: { ...rowsToRecord(extraEnv), ...req.env }, sql: req.sql };
+        })(),
         no_cache: noCache,
       }),
     onSuccess: (dep) => {
       setDeploymentId(dep.id);
       setRunWithoutDeploy(false);
       // Values may be secrets; don't keep them in the form after sending.
-      setApiKey("");
+      setSetup((s) => ({ ...s, env: {}, sqlUrl: "" }));
       setExtraEnv((rows) => rows.map((r) => ({ ...r, value: "" })));
       toast.success(`Deploying "${workflowName}" to ${target!.name}…`);
       qc.invalidateQueries({ queryKey: QK.workflowRemoteDeployments(workflowName) });
@@ -206,7 +217,7 @@ export function DeployAndRunPanel({
     );
   }
 
-  const stages = stagesFor(usesDynamicTools, usesKnowledgeGraph);
+  const stages = stagesFor(manifest.dynamic_tools.length);
 
   return (
     <div className="space-y-5">
@@ -257,40 +268,15 @@ export function DeployAndRunPanel({
           ) : null}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label className="text-xs">MISTRAL_API_KEY</Label>
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={
-                hasStoredEnv
-                  ? "Server's stored env — enter to override"
-                  : "Required on first deploy"
-              }
-              autoComplete="new-password"
-              disabled={busy}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Use this app's key, or runs won't reach the worker. Written to the server's .env only.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Worker queue (DEPLOYMENT_NAME)</Label>
-            <Input
-              value={queue}
-              onChange={(e) => setQueue(e.target.value)}
-              placeholder={`${workflowName}-worker`}
-              className="font-mono text-xs"
-              spellCheck={false}
-              disabled={busy}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Blank keeps the server's value. Must differ from this app's own worker queue.
-            </p>
-          </div>
-        </div>
+        {target ? (
+          <DeploySetupForm
+            manifest={manifest}
+            value={setup}
+            onChange={setSetup}
+            keptOnServer={keptOnServer}
+            disabled={busy}
+          />
+        ) : null}
 
         <button
           type="button"
@@ -342,7 +328,8 @@ export function DeployAndRunPanel({
           ) : null}
           <Button
             onClick={() => deploy.mutate()}
-            disabled={!target || deploy.isPending || busy}
+            disabled={!target || deploy.isPending || busy || problems.length > 0}
+            title={problems.join("; ") || undefined}
             className="gap-2"
           >
             {deploy.isPending || busy ? (
@@ -353,6 +340,9 @@ export function DeployAndRunPanel({
             {deployed || status === "failed" ? "Deploy again" : "Deploy & start worker"}
           </Button>
         </div>
+        {target && problems.length ? (
+          <p className="text-right text-[11px] text-amber">{problems.join(" · ")}</p>
+        ) : null}
         {deploymentId != null ? <DeploymentLog deploymentId={deploymentId} /> : null}
       </section>
 
