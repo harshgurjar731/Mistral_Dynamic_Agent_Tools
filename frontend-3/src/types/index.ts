@@ -138,6 +138,135 @@ export interface ValidationResult {
   warning_count: number;
 }
 
+/* ── Workflow revisions ─────────────────────────────────────────────── */
+/** One edit a revision is made of — see backend `workflow_revisions/operations.py`. */
+export interface RevisionOperation {
+  op:
+    | "add_step"
+    | "remove_step"
+    | "update_step"
+    | "rename_step"
+    | "move_step"
+    | "set_next_steps"
+    | "set_parallel_group"
+    | "set_entry_step"
+    | "update_workflow"
+    | "upsert_input"
+    | "remove_input";
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface RevisionFieldChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface RevisionDiff {
+  changed: boolean;
+  steps_added: string[];
+  steps_removed: string[];
+  steps_modified: Array<{ step_id: string; changes: RevisionFieldChange[] }>;
+  edges_added: Array<[string, string]>;
+  edges_removed: Array<[string, string]>;
+  entry_step: { before: string | null; after: string | null } | null;
+  description: { before: string | null; after: string | null } | null;
+  inputs: { added: string[]; removed: string[]; modified: string[] };
+  stats: { added: number; removed: number; modified: number; edges: number; inputs: number };
+}
+
+export interface RevisionValidation extends ValidationResult {
+  /** Issues the change creates… */
+  introduced: ValidationIssue[];
+  /** …and ones it clears. */
+  resolved: ValidationIssue[];
+}
+
+export type RevisionStatus =
+  "proposed" | "needs_clarification" | "applied" | "discarded" | "superseded" | "failed";
+
+export interface RevisionTraceRow {
+  name: string;
+  label: string;
+  state: "completed" | "skipped" | "failed";
+  summary?: string | null;
+  ms?: number | null;
+}
+
+export interface WorkflowRevision {
+  id: string;
+  workflow_name: string;
+  status: RevisionStatus;
+  origin: "editor" | "planner";
+  instruction: string;
+  focus_step_ids: string[];
+  base_hash: string | null;
+  summary: string | null;
+  clarification: string | null;
+  reasoning: string | null;
+  operations: RevisionOperation[];
+  /** Edits that could not be made, and repairs made around the ones that were. */
+  notes: string[];
+  diff: RevisionDiff | null;
+  validation: RevisionValidation | null;
+  proposed_definition?: WorkflowDefinition | null;
+  trace: RevisionTraceRow[];
+  error: string | null;
+  applied_version: number | null;
+  created_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface ProposeRevisionRequest {
+  instruction?: string;
+  focus_step_ids?: string[];
+  operations?: RevisionOperation[];
+  origin?: "editor" | "planner";
+}
+
+export interface ApplyRevisionResult {
+  revision: WorkflowRevision;
+  version_no: number | null;
+  workflow: WorkflowDefinition | null;
+  valid: boolean;
+}
+
+export interface WorkflowVersion {
+  version_no: number;
+  workflow_name: string;
+  semantic_hash: string;
+  source: "baseline" | "revision" | "builder" | "restore";
+  label: string;
+  revision_id: string | null;
+  step_count: number;
+  created_at: string | null;
+  is_current: boolean;
+  is_published: boolean;
+}
+
+export interface WorkflowVersionList {
+  workflow_name: string;
+  current_hash: string;
+  versions: WorkflowVersion[];
+  can_undo: boolean;
+}
+
+export interface RestoreVersionResult {
+  restored_version: number;
+  version_no: number | null;
+  workflow: WorkflowDefinition | null;
+}
+
+export interface RevisionSuggestion {
+  kind: "fix" | "improve" | "simplify";
+  severity: IssueSeverity | null;
+  code: string | null;
+  step_id: string | null;
+  title: string | null;
+  prompt: string;
+}
+
 /** Where a prerequisite is fixed: a page, an in-place build, or an approval. */
 export type PrerequisiteAction =
   | { type: "link"; to: string; label: string }

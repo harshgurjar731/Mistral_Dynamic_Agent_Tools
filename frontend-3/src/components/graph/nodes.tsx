@@ -3,6 +3,10 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   AlertTriangle,
   Bot,
+  Crosshair,
+  Minus,
+  PencilLine,
+  Plus,
   Braces,
   Code,
   Flag,
@@ -28,8 +32,31 @@ const TYPE_ICON: Record<StepType, typeof Bot> = {
 
 const MAX_CHIPS = 4;
 
+/** How a proposed revision marks a step. */
+const DIFF_STYLE = {
+  added: {
+    ring: "border-emerald/70 ring-2 ring-emerald/30",
+    badge: "border-emerald/40 bg-emerald/15 text-emerald",
+    icon: Plus,
+    label: "New",
+  },
+  modified: {
+    ring: "border-amber/70 ring-2 ring-amber/25",
+    badge: "border-amber/40 bg-amber/15 text-amber",
+    icon: PencilLine,
+    label: "Changed",
+  },
+  removed: {
+    ring: "border-red/60 border-dashed opacity-55",
+    badge: "border-red/40 bg-red/15 text-red",
+    icon: Minus,
+    label: "Removed",
+  },
+} as const;
+
 function StepNodeImpl({ data, selected }: NodeProps<StepFlowNode>) {
-  const { step, isEntry, errorCount, warningCount } = data;
+  const { step, isEntry, errorCount, warningCount, diff, focused } = data;
+  const diffStyle = diff ? DIFF_STYLE[diff] : null;
   const catalog = useStepCatalog();
   const identity = STEP_TYPE_IDENTITY[step.type];
   const summary = summarizeStep(step, catalog);
@@ -39,12 +66,34 @@ function StepNodeImpl({ data, selected }: NodeProps<StepFlowNode>) {
   return (
     <div
       className={cn(
-        "w-[280px] cursor-pointer rounded-2xl border backdrop-blur-xl transition glass hover:border-border-strong",
+        "relative w-[280px] cursor-pointer rounded-2xl border backdrop-blur-xl transition glass hover:border-border-strong",
         selected ? "glow-ring border-primary/60" : "border-border",
         errorCount > 0 && "border-red/50",
+        diffStyle?.ring,
+        focused && !diffStyle && "border-primary/70 ring-2 ring-primary/30",
       )}
     >
       <Handle type="target" position={Position.Left} className="!bg-primary" />
+
+      {diffStyle || focused ? (
+        <div className="pointer-events-none absolute -top-2.5 left-3 flex gap-1">
+          {diffStyle ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide backdrop-blur-sm",
+                diffStyle.badge,
+              )}
+            >
+              <diffStyle.icon className="size-2.5" /> {diffStyle.label}
+            </span>
+          ) : null}
+          {focused ? (
+            <span className="inline-flex items-center gap-0.5 rounded-full border border-primary/40 bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary backdrop-blur-sm">
+              <Crosshair className="size-2.5" /> Focus
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Type, entry flag and validation counts */}
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">

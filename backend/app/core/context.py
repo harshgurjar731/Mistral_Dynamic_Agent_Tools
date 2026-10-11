@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.core.events import SSEEvent
-from app.core.specs import AgentSpec, RequirementSpec, WorkflowSpec
+from app.core.specs import AgentSpec, RequirementSpec, WorkflowRevisionSpec, WorkflowSpec
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class PipelineContext:
     requirements: Optional[RequirementSpec] = None
     agent_spec: AgentSpec = field(default_factory=AgentSpec)
     workflow_spec: Optional[WorkflowSpec] = None
+    revision_spec: Optional[WorkflowRevisionSpec] = None
 
     # ── Output ──────────────────────────────────────────────────────────
     events: list[SSEEvent] = field(default_factory=list)
@@ -163,6 +164,8 @@ class PipelineContext:
             self.requirements = other.requirements
         if other.workflow_spec is not None:
             self.workflow_spec = other.workflow_spec
+        if other.revision_spec is not None:
+            self.revision_spec = other.revision_spec
 
         # Merge accumulated state (only overwrite if the other ctx set it)
         if other.agent_config is not None:

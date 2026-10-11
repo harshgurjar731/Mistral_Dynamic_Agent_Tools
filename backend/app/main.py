@@ -448,6 +448,13 @@ except ImportError:
     logger.exception("Workflow routes could not be loaded")
 
 try:
+    from app.routes import workflow_revisions
+    app.include_router(workflow_revisions.router, prefix=settings.API_PREFIX)
+    logger.info("Workflow revision routes loaded")
+except ImportError:
+    logger.exception("Workflow revision routes could not be loaded")
+
+try:
     from app.routes import workflow_deployment
     app.include_router(workflow_deployment.router, prefix=settings.API_PREFIX)
     logger.info("Workflow deployment routes loaded")

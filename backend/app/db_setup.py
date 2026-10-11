@@ -22,7 +22,8 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     import app.rag.models
     import app.remote_server_model
     import app.rules.models
-    import app.runs.models  # noqa: F401
+    import app.runs.models
+    import app.workflow_revisions.models  # noqa: F401
     from app.database import create_tables
 
     create_tables()

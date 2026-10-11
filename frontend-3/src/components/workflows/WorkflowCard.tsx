@@ -249,6 +249,18 @@ export function WorkflowCard({
                   </Link>
                 </IconAction>
               ) : null}
+              {!remoteOnly ? (
+                <IconAction label="Refine with AI">
+                  <Link
+                    to="/workflows/$workflowName/refine"
+                    params={{ workflowName: workflow.name }}
+                    aria-label="Refine with AI"
+                    className={actionClass()}
+                  >
+                    <Sparkles />
+                  </Link>
+                </IconAction>
+              ) : null}
               {onPublish && !remoteOnly ? (
                 <IconAction label={publishLabel}>
                   <button

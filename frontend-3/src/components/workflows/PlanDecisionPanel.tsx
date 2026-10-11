@@ -102,6 +102,9 @@ export function PlanDecisionPanel({ runId, decision }: { runId: string; decision
             ? `Last test: ${decision.last_test.passed ? "passed" : "failed"} — ${decision.last_test.summary}. `
             : "It has not been tested. "}
           A failed activity can be rebuilt from the test results above before testing again.
+          {decision.revisable
+            ? " To change the workflow itself, describe it in Refine your workflow below — accepting registers the latest version."
+            : ""}
         </p>
       ) : null}
 

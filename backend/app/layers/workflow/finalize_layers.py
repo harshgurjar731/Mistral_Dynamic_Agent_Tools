@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 #: Set when validation found blocking errors; read by the registration layer.
 VALIDATION_FAILED_KEY = "workflow_validation_failed"
+#: The definition the review step last validated — changed by a revision or rebuild.
+_REVIEWED_HASH_KEY = "workflow_reviewed_hash"
 
 #: Warnings for a hand-built draft — a builder user may add a node before
 #: wiring it — but defects in a finished plan: each one means a step, and the
@@ -224,9 +226,6 @@ class WorkflowCompilationLayer(WorkflowStepLayer):
     detail = "Generates the Mistral Workflows SDK module."
 
     async def process(self, ctx: PipelineContext, next):
-        from app.config import settings
-        from app.services.mistral_workflows_compiler import compile_workflow_to_python
-
         spec = ctx.workflow_spec
         if not spec.definition:
             return await next(ctx)
@@ -243,33 +242,34 @@ class WorkflowCompilationLayer(WorkflowStepLayer):
             return await next(ctx)
 
         ctx.emit("status", "Compiling to the Mistral SDK…")
-
-        try:
-            workflows_dir = os.path.abspath(
-                os.path.join(os.getcwd(), settings.MISTRAL_WORKFLOWS_DIR)
-            )
-            os.makedirs(workflows_dir, exist_ok=True)
-
-            python_code = compile_workflow_to_python(spec.definition)
-            file_path = os.path.join(workflows_dir, f"workflow_{spec.workflow_name}.py")
-
-            await asyncio.to_thread(
-                lambda: open(file_path, "w", encoding="utf-8").write(python_code)
-            )
-
-            logger.info("Compiled workflow '%s' → %s", spec.workflow_name, file_path)
-            ctx.emit("compiled", json.dumps({
-                "workflow_name": spec.workflow_name,
-                "file_path": file_path,
-            }))
-        except Exception as e:
-            logger.error("Workflow compilation failed: %s", e)
-            ctx.emit("compiled", json.dumps({
-                "workflow_name": spec.workflow_name,
-                "error": str(e),
-            }))
-
+        ctx.emit("compiled", json.dumps(await compile_to_disk(spec.definition, spec.workflow_name)))
         return await next(ctx)
+
+
+async def compile_to_disk(definition, workflow_name: str) -> dict:
+    """Write the definition's SDK module where the worker loads it. Never raises.
+
+    Returns the ``compiled`` event payload: the file path, or the error.
+    """
+    from app.config import settings
+    from app.services.mistral_workflows_compiler import compile_workflow_to_python
+
+    try:
+        workflows_dir = os.path.abspath(os.path.join(os.getcwd(), settings.MISTRAL_WORKFLOWS_DIR))
+        os.makedirs(workflows_dir, exist_ok=True)
+        python_code = compile_workflow_to_python(definition)
+        file_path = os.path.join(workflows_dir, f"workflow_{workflow_name}.py")
+
+        def _write():
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(python_code)
+
+        await asyncio.to_thread(_write)
+        logger.info("Compiled workflow '%s' → %s", workflow_name, file_path)
+        return {"workflow_name": workflow_name, "file_path": file_path}
+    except Exception as e:
+        logger.error("Workflow compilation failed: %s", e)
+        return {"workflow_name": workflow_name, "error": str(e)}
 
 
 class WorkflowRegistrationLayer(WorkflowStepLayer):
@@ -416,13 +416,16 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
 
 
 class WorkflowReviewLayer(WorkflowStepLayer):
-    """Hand the built workflow to the user: test it, accept it, or roll it back.
+    """Hand the built workflow to the user: test it, refine it, accept it, or roll it back.
 
     Nothing is tested or rolled back without being asked. Accepting goes on to
     registration; rolling back removes everything the plan created. While this
     waits, the user may also rebuild a failed activity
-    (``POST /workflows/{name}/steps/{step}/rebuild-activity``) and test again,
-    so the definition is re-read from storage each time.
+    (``POST /workflows/{name}/steps/{step}/rebuild-activity``) or apply a
+    revision (``POST /workflows/{name}/revisions/{id}/apply``) and test again,
+    so the definition is re-read from storage each time — and, when it has
+    changed, validated and compiled again, so what gets registered is what the
+    user last saw rather than what the planner first built.
 
     Without an interactive run there is nobody to ask, and the plan is
     accepted as before.
@@ -430,30 +433,32 @@ class WorkflowReviewLayer(WorkflowStepLayer):
 
     name = "workflow_review"
     label = "Review"
-    detail = "You test the built workflow, then accept it or roll back everything the plan created."
+    detail = ("You test and refine the built workflow, then accept it or roll back "
+              "everything the plan created.")
 
     async def process(self, ctx: PipelineContext, next):
         from app.layers.workflow import plan_control
-        from app.services.workflow_engine.engine import get_workflow
         from app.services.workflow_engine.plan_test import test_workflow
 
         spec = ctx.workflow_spec
         if not spec.definition or not plan_control.can_ask(ctx):
             return await next(ctx)
 
+        # Per run, not per layer: one layer instance serves every concurrent plan.
+        ctx.metadata[_REVIEWED_HASH_KEY] = spec.definition.semantic_hash()
         last_test = None
         while True:
+            await self._sync(ctx)
             choice = await plan_control.ask_user(ctx, "review_workflow", {
-                "title": "The workflow is built — test it, accept it, or roll it back",
+                "title": "The workflow is built — test it, refine it, then accept it or roll it back",
                 "workflow_name": spec.workflow_name,
                 "valid": not ctx.metadata.get(VALIDATION_FAILED_KEY),
+                "revisable": True,
                 "last_test": last_test and {"passed": last_test["passed"],
                                             "summary": last_test["summary"]},
             }, options=["test", "accept", "rollback"], default="accept")
 
-            stored = await asyncio.to_thread(get_workflow, spec.workflow_name)
-            if stored is not None:
-                spec.definition = stored
+            await self._sync(ctx)
 
             if choice == "test":
                 ctx.emit("status", "Testing the workflow…")
@@ -469,3 +474,47 @@ class WorkflowReviewLayer(WorkflowStepLayer):
                 "passed": bool(last_test and last_test["passed"]),
             }))
             return await next(ctx)
+
+    async def _sync(self, ctx: PipelineContext) -> None:
+        """Adopt the stored definition; re-check and recompile it if it changed."""
+        from app.services.workflow_engine.engine import get_workflow
+        from app.services.workflow_engine.models import ValidationIssue
+        from app.services.workflow_engine.rule_validation import validate_with_rules
+
+        spec = ctx.workflow_spec
+        stored = await asyncio.to_thread(get_workflow, spec.workflow_name)
+        if stored is None:
+            return
+        spec.definition = stored
+        digest = stored.semantic_hash()
+        if digest == ctx.metadata.get(_REVIEWED_HASH_KEY):
+            return
+        ctx.metadata[_REVIEWED_HASH_KEY] = digest
+
+        result = await validate_with_rules(stored, client=ctx.client)
+        # An activity planning could not build is still missing, whatever else changed.
+        step_ids = {s.id for s in stored.steps}
+        issues = [*result.issues, *(
+            ValidationIssue(**i) for i in ctx.metadata.get("build_issues") or []
+            if i.get("step_id") in step_ids
+        )]
+        blocking = [i for i in issues if i.severity == "error" or i.code in _PLANNER_BLOCKING]
+        if blocking:
+            ctx.metadata[VALIDATION_FAILED_KEY] = True
+        else:
+            ctx.metadata.pop(VALIDATION_FAILED_KEY, None)
+
+        ctx.emit("validation", json.dumps({
+            "valid": not blocking,
+            "error_count": len(blocking),
+            "warning_count": len(issues) - len(blocking),
+            "issues": [{"severity": "error" if i in blocking else i.severity, "code": i.code,
+                        "message": i.message, "step_id": i.step_id} for i in issues],
+        }))
+        ctx.emit("workflow_revised", json.dumps({
+            "workflow_name": spec.workflow_name,
+            "step_count": len(stored.steps),
+            "valid": not blocking,
+        }))
+        if not blocking:
+            ctx.emit("compiled", json.dumps(await compile_to_disk(stored, spec.workflow_name)))

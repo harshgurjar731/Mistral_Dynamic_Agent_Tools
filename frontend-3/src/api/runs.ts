@@ -74,6 +74,8 @@ export interface RunDecision {
   /** review_workflow */
   workflow_name?: string;
   valid?: boolean;
+  /** The workflow can be changed by revision while this waits. */
+  revisable?: boolean;
   last_test?: { passed: boolean; summary: string } | null;
   /** Everything the plan has created so far — what a rollback removes. */
   created?: Array<{ kind: string; id: string; name?: string }>;

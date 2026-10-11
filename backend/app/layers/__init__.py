@@ -1,10 +1,11 @@
 """
 Layers — Pipeline assembly and registration.
 
-Defines two standard pipelines:
+Defines three standard pipelines:
 
 - ``chat_pipeline``     — used by ``/api/orchestrate`` and ``/api/orchestrate/stream``
 - ``workflow_pipeline`` — used by ``/api/workflows/plan``
+- ``revision_pipeline`` — used by ``/api/workflows/{name}/revisions``
 
 Both were previously one monolithic layer doing all the design work in a single
 LLM call. They are now chains of single-decision layers: each layer answers one
@@ -37,6 +38,15 @@ from app.layers.agent import (
 )
 from app.layers.cleanup_layer import CleanupLayer
 from app.layers.execution_layer import ExecutionLayer
+from app.layers.revision import (
+    RevisionApplyLayer,
+    RevisionContextLayer,
+    RevisionDiffLayer,
+    RevisionIntentLayer,
+    RevisionNormaliseLayer,
+    RevisionProposalLayer,
+    RevisionValidationLayer,
+)
 from app.layers.workflow import (
     ActivityGapLayer,
     AgentDesignLayer,
@@ -127,3 +137,20 @@ workflow_pipeline.add(WorkflowPersistenceLayer())
 workflow_pipeline.add(WorkflowCompilationLayer())
 workflow_pipeline.add(WorkflowReviewLayer())
 workflow_pipeline.add(WorkflowRegistrationLayer())
+
+# ── Revision Pipeline ───────────────────────────────────────────────────────
+#
+# Changes a saved workflow from an instruction, producing a proposal — never a
+# saved change. Sequential, and only RevisionIntentLayer calls a model; it is
+# skipped when the edit operations were chosen directly in the UI. The
+# proposal layer runs last and always, so a failed or ambiguous request is
+# still recorded and answered.
+
+revision_pipeline = Pipeline("workflow_revision")
+revision_pipeline.add(RevisionContextLayer())
+revision_pipeline.add(RevisionIntentLayer())
+revision_pipeline.add(RevisionApplyLayer())
+revision_pipeline.add(RevisionNormaliseLayer())
+revision_pipeline.add(RevisionValidationLayer())
+revision_pipeline.add(RevisionDiffLayer())
+revision_pipeline.add(RevisionProposalLayer())

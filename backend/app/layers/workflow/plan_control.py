@@ -132,6 +132,9 @@ async def _remove(ctx: PipelineContext, item: dict) -> str:
             await asyncio.to_thread(save_workflow, WorkflowDefinition(**item["previous"]))
             return "restored the previous definition"
         await asyncio.to_thread(delete_workflow, ref)
+        from app.workflow_revisions import store as revision_store
+
+        await asyncio.to_thread(revision_store.forget_workflow, ref)
         compiled = os.path.join(settings.MISTRAL_WORKFLOWS_DIR, f"workflow_{ref}.py")
         if os.path.exists(compiled):
             os.remove(compiled)

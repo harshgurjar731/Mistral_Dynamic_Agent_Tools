@@ -19,6 +19,7 @@ import {
   Rocket,
   Rows,
   ShieldCheck,
+  Sparkles,
   Tag,
   type LucideIcon,
 } from "lucide-react";
@@ -259,6 +260,14 @@ function WorkflowDetailPage() {
           {!remoteOnly ? (
             <>
               <Link
+                to="/workflows/$workflowName/refine"
+                params={{ workflowName }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition hover:border-primary/60 hover:bg-primary/15"
+                title="Describe changes in words, review them on the graph, then apply"
+              >
+                <Sparkles className="size-3.5" /> Refine with AI
+              </Link>
+              <Link
                 to="/workflows/$workflowName/edit"
                 params={{ workflowName }}
                 className={secondaryButton}
@@ -466,7 +475,18 @@ function WorkflowDetailPage() {
               title="Validation"
               description="Errors block publishing; warnings do not."
               actions={
-                <ValidationSummary result={validation.data} pending={validation.isFetching} />
+                <>
+                  <ValidationSummary result={validation.data} pending={validation.isFetching} />
+                  {validation.data && validation.data.issues.length > 0 ? (
+                    <Link
+                      to="/workflows/$workflowName/refine"
+                      params={{ workflowName }}
+                      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-primary transition hover:bg-primary/10"
+                    >
+                      <Sparkles className="size-3" /> Fix with AI
+                    </Link>
+                  ) : null}
+                </>
               }
             >
               <div className="p-4">

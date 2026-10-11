@@ -38,6 +38,7 @@ import { Route as OntologyLibrariesLibraryIdRouteImport } from './routes/ontolog
 import { Route as WorkflowsWorkflowNameIndexRouteImport } from './routes/workflows.$workflowName.index'
 import { Route as WorkflowsWorkflowNameEditRouteImport } from './routes/workflows.$workflowName.edit'
 import { Route as WorkflowsWorkflowNameExecuteRouteImport } from './routes/workflows.$workflowName.execute'
+import { Route as WorkflowsWorkflowNameRefineRouteImport } from './routes/workflows.$workflowName.refine'
 import { Route as WorkflowsActivitiesIndexRouteImport } from './routes/workflows.activities.index'
 import { Route as WorkflowsActivitiesIdRouteImport } from './routes/workflows.activities.$id'
 import { Route as WorkflowsNewIndexRouteImport } from './routes/workflows.new.index'
@@ -194,6 +195,12 @@ const WorkflowsWorkflowNameExecuteRoute =
     path: '/workflows/$workflowName/execute',
     getParentRoute: () => rootRouteImport,
   } as any)
+const WorkflowsWorkflowNameRefineRoute =
+  WorkflowsWorkflowNameRefineRouteImport.update({
+    id: '/workflows/$workflowName/refine',
+    path: '/workflows/$workflowName/refine',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const WorkflowsActivitiesIndexRoute =
   WorkflowsActivitiesIndexRouteImport.update({
     id: '/workflows/activities/',
@@ -250,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/$workflowName/refine': typeof WorkflowsWorkflowNameRefineRoute
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
@@ -285,6 +293,7 @@ export interface FileRoutesByTo {
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/$workflowName/refine': typeof WorkflowsWorkflowNameRefineRoute
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
@@ -322,6 +331,7 @@ export interface FileRoutesById {
   '/ontology_/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
   '/workflows/$workflowName/execute': typeof WorkflowsWorkflowNameExecuteRoute
+  '/workflows/$workflowName/refine': typeof WorkflowsWorkflowNameRefineRoute
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
@@ -360,6 +370,7 @@ export interface FileRouteTypes {
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/$workflowName/refine'
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
@@ -395,6 +406,7 @@ export interface FileRouteTypes {
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/$workflowName/refine'
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
@@ -431,6 +443,7 @@ export interface FileRouteTypes {
     | '/ontology_/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
     | '/workflows/$workflowName/execute'
+    | '/workflows/$workflowName/refine'
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
@@ -466,6 +479,7 @@ export interface RootRouteChildren {
   OntologyLibrariesLibraryIdRoute: typeof OntologyLibrariesLibraryIdRoute
   WorkflowsWorkflowNameEditRoute: typeof WorkflowsWorkflowNameEditRoute
   WorkflowsWorkflowNameExecuteRoute: typeof WorkflowsWorkflowNameExecuteRoute
+  WorkflowsWorkflowNameRefineRoute: typeof WorkflowsWorkflowNameRefineRoute
   WorkflowsActivitiesIdRoute: typeof WorkflowsActivitiesIdRoute
   WorkflowsNewAiRoute: typeof WorkflowsNewAiRoute
   WorkflowsNewVisualRoute: typeof WorkflowsNewVisualRoute
@@ -679,6 +693,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkflowsWorkflowNameExecuteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workflows/$workflowName/refine': {
+      id: '/workflows/$workflowName/refine'
+      path: '/workflows/$workflowName/refine'
+      fullPath: '/workflows/$workflowName/refine'
+      preLoaderRoute: typeof WorkflowsWorkflowNameRefineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/workflows/activities/': {
       id: '/workflows/activities/'
       path: '/workflows/activities'
@@ -758,6 +779,7 @@ const rootRouteChildren: RootRouteChildren = {
   OntologyLibrariesLibraryIdRoute: OntologyLibrariesLibraryIdRoute,
   WorkflowsWorkflowNameEditRoute: WorkflowsWorkflowNameEditRoute,
   WorkflowsWorkflowNameExecuteRoute: WorkflowsWorkflowNameExecuteRoute,
+  WorkflowsWorkflowNameRefineRoute: WorkflowsWorkflowNameRefineRoute,
   WorkflowsActivitiesIdRoute: WorkflowsActivitiesIdRoute,
   WorkflowsNewAiRoute: WorkflowsNewAiRoute,
   WorkflowsNewVisualRoute: WorkflowsNewVisualRoute,

@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
   GitBranch,
   History,
   Layers,
@@ -15,6 +16,7 @@ import {
   Plus,
   Sparkles,
   Square,
+  Wand2,
   Zap,
 } from "lucide-react";
 import { parseEventData, type SSEEvent } from "@/api/sse";
@@ -40,6 +42,7 @@ import {
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { BuildingBlockLegend } from "@/components/workflows/BuildingBlockLegend";
 import { PlanDecisionPanel } from "@/components/workflows/PlanDecisionPanel";
+import { RefineWorkspace } from "@/components/workflows/refine/RefineWorkspace";
 import {
   useWorkflowPrerequisites,
   WorkflowPrerequisites,
@@ -284,6 +287,7 @@ function AiPlannerPage() {
   const [goal, setGoal] = useState("");
   const [starting, setStarting] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(true);
   /** A locally saved history entry being replayed, instead of a live run. */
   const [replay, setReplay] = useState<PlannerHistoryEntry | null>(null);
 
@@ -371,6 +375,12 @@ function AiPlannerPage() {
     !view.rolledBack &&
     (decision?.kind === "review_workflow" || (!running && !hasFailure));
   const prereq = useWorkflowPrerequisites(showPrereqs ? workflowName : null);
+  const reviewing = decision?.kind === "review_workflow";
+  // Once the workflow is saved it can be refined: while it is under review
+  // (applied changes are re-checked and compiled when it is accepted) and
+  // after planning ends.
+  const showRefine =
+    Boolean(workflowName) && !replay && !view.rolledBack && (reviewing || !running);
   const layerCards = useMemo(() => plannerLayerCards(steps), [steps]);
   const layerRaw = useMemo(() => plannerLayerRaw(steps), [steps]);
   // A live run leaves only errors outside the chain; a run replayed without a
@@ -453,11 +463,19 @@ function AiPlannerPage() {
   const busy = running || starting;
 
   return (
-    <div className="relative mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-3xl flex-col px-5 py-6">
+    <div
+      className={cn(
+        "relative mx-auto flex min-h-[calc(100vh-6rem)] w-full flex-col px-5 py-6 transition-[max-width] duration-500",
+        showRefine ? "max-w-6xl" : "max-w-3xl",
+      )}
+    >
       {/* ── Hero / goal ── */}
       <motion.div
         layout
-        className={cn("w-full transition-all duration-500", started ? "mb-10" : "mt-[10vh]")}
+        className={cn(
+          "mx-auto w-full max-w-3xl transition-all duration-500",
+          started ? "mb-10" : "mt-[10vh]",
+        )}
       >
         <div className="mb-4 flex items-center justify-between">
           <Link
@@ -573,81 +591,141 @@ function AiPlannerPage() {
       {/* ── Timeline ── */}
       {started ? (
         <div className="space-y-5 pb-24">
-          <div className="rounded-2xl border border-border/50 bg-surface/40 p-5 backdrop-blur-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <Zap className="size-3.5 text-primary" />
-              <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                {replay ? "Planning Timeline" : "Planning Pipeline"}
-              </span>
-              {running ? (
-                <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                  <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-                  Planning
-                  {elapsed != null ? (
-                    <span className="font-mono tabular-nums opacity-80">
-                      {formatElapsed(elapsed)}
-                    </span>
-                  ) : null}
+          <div className="mx-auto w-full max-w-3xl space-y-5">
+            <div className="rounded-2xl border border-border/50 bg-surface/40 p-5 backdrop-blur-sm">
+              <div className={cn("flex items-center gap-2", timelineOpen && "mb-4")}>
+                <Zap className="size-3.5 text-primary" />
+                <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  {replay ? "Planning Timeline" : "Planning Pipeline"}
                 </span>
-              ) : null}
-            </div>
+                {showRefine ? (
+                  <button
+                    type="button"
+                    onClick={() => setTimelineOpen((o) => !o)}
+                    aria-expanded={timelineOpen}
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+                  >
+                    {timelineOpen ? "Hide details" : "Show details"}
+                    <ChevronDown
+                      className={cn("size-3 transition-transform", !timelineOpen && "-rotate-90")}
+                    />
+                  </button>
+                ) : null}
+                {running ? (
+                  <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+                    Planning
+                    {elapsed != null ? (
+                      <span className="font-mono tabular-nums opacity-80">
+                        {formatElapsed(elapsed)}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
+              </div>
 
-            {running ? (
-              <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-                <Layers className="mt-0.5 size-3 shrink-0 text-primary" />
-                Planning runs in the background. You can leave this page — it keeps going, and this
-                timeline picks up where it is when you come back.
-              </p>
-            ) : null}
-
-            <div className="space-y-5">
-              {missing ? (
-                <p className="text-xs text-muted-foreground">
-                  This planning run is no longer available — it may have been cleared from the
-                  server’s run log.
-                </p>
-              ) : pipeline.manifest.length > 0 ? (
+              {timelineOpen ? (
                 <>
-                  <BuildingBlockLegend />
-                  <PipelineTimeline
-                    manifest={pipeline.manifest}
-                    runtime={pipeline.runtime}
-                    activeNote={pipeline.activeNote}
-                    cards={layerCards}
-                    raw={layerRaw}
-                  />
+                  {running ? (
+                    <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                      <Layers className="mt-0.5 size-3 shrink-0 text-primary" />
+                      Planning runs in the background. You can leave this page — it keeps going, and
+                      this timeline picks up where it is when you come back.
+                    </p>
+                  ) : null}
+
+                  <div className="space-y-5">
+                    {missing ? (
+                      <p className="text-xs text-muted-foreground">
+                        This planning run is no longer available — it may have been cleared from the
+                        server’s run log.
+                      </p>
+                    ) : pipeline.manifest.length > 0 ? (
+                      <>
+                        <BuildingBlockLegend />
+                        <PipelineTimeline
+                          manifest={pipeline.manifest}
+                          runtime={pipeline.runtime}
+                          activeNote={pipeline.activeNote}
+                          cards={layerCards}
+                          raw={layerRaw}
+                        />
+                      </>
+                    ) : busy || (runId && !view.end) ? (
+                      <div className="shimmer h-16 rounded-xl border border-border/50" />
+                    ) : null}
+
+                    <LegacyPlannerTimeline
+                      steps={unowned}
+                      onRestart={() => void submit(tracked?.title ?? goal)}
+                      restartDisabled={busy}
+                    />
+
+                    {view.rolledBack && !replay ? (
+                      <RollbackReportCard data={view.rolledBack} />
+                    ) : view.end?.status === "cancelled" && !replay ? (
+                      <p className="text-xs text-muted-foreground">
+                        Planning was stopped before it finished. Anything already created is kept.
+                      </p>
+                    ) : null}
+
+                    {bareReplay ? (
+                      <p className="text-xs text-muted-foreground">
+                        This run was recorded before timelines were kept, so only its outcome is
+                        available.
+                      </p>
+                    ) : null}
+                  </div>
                 </>
-              ) : busy || (runId && !view.end) ? (
-                <div className="shimmer h-16 rounded-xl border border-border/50" />
-              ) : null}
-
-              <LegacyPlannerTimeline
-                steps={unowned}
-                onRestart={() => void submit(tracked?.title ?? goal)}
-                restartDisabled={busy}
-              />
-
-              {view.rolledBack && !replay ? (
-                <RollbackReportCard data={view.rolledBack} />
-              ) : view.end?.status === "cancelled" && !replay ? (
-                <p className="text-xs text-muted-foreground">
-                  Planning was stopped before it finished. Anything already created is kept.
-                </p>
-              ) : null}
-
-              {bareReplay ? (
-                <p className="text-xs text-muted-foreground">
-                  This run was recorded before timelines were kept, so only its outcome is
-                  available.
-                </p>
               ) : null}
             </div>
+
+            {decision && runId ? <PlanDecisionPanel runId={runId} decision={decision} /> : null}
+
+            {showPrereqs && workflowName ? (
+              <WorkflowPrerequisites workflowName={workflowName} />
+            ) : null}
           </div>
 
-          {decision && runId ? <PlanDecisionPanel runId={runId} decision={decision} /> : null}
-
-          {showPrereqs && workflowName ? (
-            <WorkflowPrerequisites workflowName={workflowName} />
+          {/* ── Refine ── */}
+          {showRefine && workflowName ? (
+            <motion.section
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-3"
+              aria-labelledby="refine-heading"
+            >
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2
+                    id="refine-heading"
+                    className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground"
+                  >
+                    <Wand2 className="size-4 text-primary" /> Refine your workflow
+                  </h2>
+                  <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+                    Something missing, wrong, or not needed? Say what to change — each request is
+                    previewed on the graph before you apply it.
+                    {reviewing
+                      ? " Applied changes are checked and compiled again when you accept the workflow above."
+                      : " Publish when you are happy with it."}
+                  </p>
+                </div>
+                <Link
+                  to="/workflows/$workflowName/refine"
+                  params={{ workflowName }}
+                  className="text-xs font-medium text-primary transition hover:underline"
+                >
+                  Open full screen
+                </Link>
+              </div>
+              <RefineWorkspace
+                workflowName={workflowName}
+                origin={reviewing ? "planner" : "editor"}
+                allowPublish={!reviewing}
+                className="h-[640px]"
+              />
+            </motion.section>
           ) : null}
 
           {/* ── Final CTA ── */}
@@ -655,7 +733,7 @@ function AiPlannerPage() {
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="flex flex-wrap gap-3"
+              className="mx-auto flex w-full max-w-3xl flex-wrap gap-3"
             >
               <button
                 type="button"

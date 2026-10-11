@@ -354,6 +354,47 @@ class WorkflowSpec:
     rationale: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class WorkflowRevisionSpec:
+    """A change to a saved workflow, accumulated across the revision layers.
+
+    Nothing here is written to the stored workflow — the pipeline produces a
+    proposal, and applying it is a separate, explicit step.
+    """
+
+    workflow_name: str = ""
+    instruction: str = ""
+    focus_step_ids: list[str] = field(default_factory=list)
+    origin: str = "editor"                       # editor | planner
+
+    # RevisionContextLayer
+    base: dict = field(default_factory=dict)     # the stored definition, as JSON
+    base_hash: Optional[str] = None
+    catalog: dict = field(default_factory=dict)  # agents, activities, connectors
+    base_issues: list[dict] = field(default_factory=list)
+    history: list[dict] = field(default_factory=list)   # earlier turns
+
+    # RevisionIntentLayer — or given directly, for a deterministic edit.
+    operations: list[dict] = field(default_factory=list)
+    operations_given: bool = False
+    summary: str = ""
+    clarification: str = ""
+    reasoning: str = ""
+
+    # RevisionApplyLayer / RevisionNormaliseLayer
+    proposed: Optional[dict] = None
+    outcomes: list[dict] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    # RevisionValidationLayer / RevisionDiffLayer
+    validation: Optional[dict] = None
+    diff: Optional[dict] = None
+
+    # RevisionProposalLayer
+    revision_id: Optional[str] = None
+    status: str = "proposed"
+
+
 # ── Code requirements (tools and activities) ────────────────────────────────
 
 

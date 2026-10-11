@@ -222,6 +222,13 @@ async def update_workflow(workflow_name: str, request: UpdateWorkflowRequest):
 
     save_workflow(definition)
 
+    # Every builder save is a version, so a revision can be undone past it and
+    # it can be undone itself.
+    from app.services.workflow_revision_service import record_external_change
+
+    record_external_change(workflow_name, existing, definition, source="builder",
+                           label="Edited in the visual builder")
+
     return {
         "workflow_name": workflow_name,
         "message": "Workflow saved",
@@ -271,61 +278,10 @@ async def rebuild_step_activity_endpoint(workflow_name: str, step_id: str):
 # ── Builder support ───────────────────────────────────────────────────────────
 
 async def _validate_with_rules(definition, *, record: bool = False) -> ValidationResponse:
-    """Structural validation plus the workflow rules (see ``app.rules``).
+    """Structural validation plus the workflow rules — see ``rule_validation``."""
+    from app.services.workflow_engine.rule_validation import validate_with_rules
 
-    The two are separate because they need different things: structural checks
-    read only the definition, while rules need live inventory to know what each
-    agent can actually reach. Inventory failures degrade to the structural
-    result rather than failing the request — a validator that goes down when
-    the Connectors API hiccups would block saving.
-
-    ``record`` stores each rule's outcome as a rule event. Only publish sets it:
-    live validation runs on every builder keystroke, and recording those would
-    bury the history people actually want to read.
-    """
-    result = validate_workflow(definition)
-
-    try:
-        from app.rules import engine as rules_engine, runtime as rules_runtime, store as rules_store
-        from app.services import agent_service, connector_service
-
-        client = get_mistral_client()
-        agents_resp, connectors_resp = await asyncio.gather(
-            agent_service.list_agents(client, page=0, page_size=200),
-            connector_service.list_connectors(),
-            return_exceptions=True,
-        )
-
-        agents_by_id = (
-            {a["id"]: a for a in agents_resp.get("items", []) if a.get("id")}
-            if not isinstance(agents_resp, Exception) else {}
-        )
-        connectors_by_id = (
-            {c["id"]: c for c in connectors_resp.get("items", []) if c.get("id")}
-            if not isinstance(connectors_resp, Exception) else {}
-        )
-
-        rules = rules_store.effective_rules(
-            "workflow", [r.rule_id for r in definition.rules], subject_id=definition.name
-        )
-        extra = rules_engine.check_workflow(definition, agents_by_id, connectors_by_id, rules)
-        if record:
-            rules_runtime.record(
-                rules_engine.workflow_validation_outcomes(rules, extra),
-                scope="workflow", subject_id=definition.name,
-            )
-        if extra:
-            issues = [*result.issues, *extra]
-            return ValidationResponse(
-                valid=not any(i.severity == "error" for i in issues),
-                issues=issues,
-                error_count=sum(1 for i in issues if i.severity == "error"),
-                warning_count=sum(1 for i in issues if i.severity == "warning"),
-            )
-    except Exception as e:
-        logger.warning("Workflow rules skipped: %s", e)
-
-    return result
+    return await validate_with_rules(definition, record=record)
 
 
 @router.post("/workflows/validate", response_model=ValidationResponse)
@@ -769,6 +725,11 @@ async def delete_workflow_endpoint(workflow_name: str):
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
 
     delete_workflow(workflow_name)
+    # Its revision history goes with it, so a workflow planned again under
+    # the same name starts clean.
+    from app.workflow_revisions import store as revision_store
+
+    revision_store.forget_workflow(workflow_name)
     py_file = os.path.join(settings.MISTRAL_WORKFLOWS_DIR, f"workflow_{workflow_name}.py")
     if os.path.exists(py_file):
         try:
