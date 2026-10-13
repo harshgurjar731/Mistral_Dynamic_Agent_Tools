@@ -98,6 +98,36 @@ export interface InputField {
   max?: number | undefined;
   /** Element type for arrays: string | number | object. */
   items?: string | undefined;
+  /* Document inputs (`type: "file"`) only. */
+  /** Kinds of file accepted: pdf | docx | pptx | xlsx | csv | text | image. */
+  accept?: string[] | undefined;
+  /** Several documents of the same kind, up to `max_files`. */
+  multiple?: boolean | undefined;
+  max_files?: number | undefined;
+  max_size_mb?: number | undefined;
+}
+
+/** A document uploaded for a document input — the value a run sends for it. */
+export interface DocumentRef {
+  $document: {
+    library_id: string;
+    document_id: string;
+    name: string;
+    mime: string;
+    size: number;
+  };
+}
+
+export interface InputDocumentUpload {
+  ref: DocumentRef;
+  name: string;
+  mime: string;
+  size: number;
+  /** Characters of text Mistral read from it. */
+  chars: number;
+  preview: string;
+  library_id: string;
+  agent_ids: string[];
 }
 
 export interface WorkflowDefinition {

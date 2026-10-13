@@ -320,6 +320,72 @@ def _validate_parallel_groups(steps: list[WorkflowStep]) -> Iterable[ValidationI
 # ── Entry point ────────────────────────────────────────────────────────────
 
 
+def _validate_input_schema(definition: WorkflowDefinition) -> Iterable[ValidationIssue]:
+    """The declared run inputs — what the run form is built from and a run is checked against."""
+    from app.workflow_inputs import schema
+
+    seen: set[str] = set()
+    for field in definition.input_schema or []:
+        if not isinstance(field, dict):
+            continue
+        name = str(field.get("name") or "").strip()
+        if not schema.valid_name(name):
+            yield _issue(
+                "error", "input.bad_name",
+                f"Input name '{name}' is not valid — steps reference it as {{{{name}}}}, so use "
+                "letters, digits and underscores, starting with a letter.",
+                None, "input_schema",
+            )
+            continue
+        if name in seen:
+            yield _issue("error", "input.duplicate", f"Input '{name}' is declared twice.",
+                         None, "input_schema")
+        seen.add(name)
+
+        kind = schema.normalise_type(field.get("type"))
+        if kind not in schema.INPUT_TYPES:
+            yield _issue(
+                "warning", "input.bad_type",
+                f"Input '{name}' has type '{field.get('type')}'; the run form treats it as text. "
+                f"Use one of: {', '.join(schema.INPUT_TYPES)}.",
+                None, "input_schema",
+            )
+
+        readers = schema.readers_of(definition, name)
+        if not readers:
+            yield _issue(
+                "warning", "input.unused",
+                f"Input '{name}' is asked for on the run form, but no step reads {{{{{name}}}}}.",
+                None, "input_schema",
+            )
+        if kind != "file":
+            continue
+
+        unknown = schema.unknown_accept(field)
+        if unknown:
+            yield _issue(
+                "error", "input.bad_accept",
+                f"Document input '{name}' accepts unknown file kinds: {', '.join(unknown)}. "
+                f"Use: {', '.join(schema.ACCEPT_GROUPS)}.",
+                None, "input_schema",
+            )
+        if readers and not schema.consumer_agent_ids(definition, name):
+            yield _issue(
+                "warning", "input.document_no_agent",
+                f"Document input '{name}' is read only by non-agent steps. They receive its text, "
+                "but no agent has its library to search.",
+                None, "input_schema",
+            )
+
+    for name in schema.implicit_inputs(definition):
+        yield _issue(
+            "warning", "input.undeclared",
+            f"The entry step reads {{{{{name}}}}}, which is not a declared input. Declare it so "
+            "the run form asks for it with the right control.",
+            definition.entry_step, "input_schema",
+        )
+
+
 def validate_workflow(definition: WorkflowDefinition) -> ValidationResponse:
     """Run every structural check and return the collected issues."""
     issues: list[ValidationIssue] = []
@@ -434,6 +500,9 @@ def validate_workflow(definition: WorkflowDefinition) -> ValidationResponse:
                 "Workflow contains a cycle: " + " -> ".join(cycle),
                 cycle[0],
             ))
+
+    # ── Run inputs ─────────────────────────────────────────────────────
+    issues.extend(_validate_input_schema(definition))
 
     # ── Terminal steps ─────────────────────────────────────────────────
     terminals = [s for s in steps if not _outgoing(s)]

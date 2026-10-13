@@ -5,9 +5,11 @@
  * `required`, sometimes with richer hints (`format`, `enum`, `example`…). When
  * a hint is missing the control is inferred from the type and the name, so an
  * input called `loss_date` gets a date picker and `claim_description` a
- * multi-line box without anyone having annotated them.
+ * multi-line box without anyone having annotated them. Inference only picks
+ * between controls for the declared type — a name never changes what type an
+ * input is, and a document input (`type: "file"`) is always an upload.
  */
-import type { InputField, WorkflowDefinition, WorkflowStep } from "@/types";
+import type { DocumentRef, InputField, WorkflowDefinition, WorkflowStep } from "@/types";
 
 export type Control =
   | "text"
@@ -24,7 +26,8 @@ export type Control =
   | "select"
   | "choice"
   | "list"
-  | "json";
+  | "json"
+  | "file";
 
 export interface ResolvedField {
   field: InputField;
@@ -35,7 +38,7 @@ export interface ResolvedField {
   description: string;
   options: string[];
   placeholder: string;
-  /** Declared type, normalised: string | number | integer | boolean | object | array. */
+  /** Declared type, normalised: string | number | integer | boolean | object | array | file. */
   type: string;
   /** For list controls: what each entry is. */
   itemType: "string" | "number";
@@ -57,6 +60,8 @@ const LONG_TEXT =
 function inferControl(f: InputField): { control: Control; inferred: boolean } {
   const type = normaliseType(f.type);
   const name = f.name ?? "";
+
+  if (type === "file") return { control: "file", inferred: false };
 
   if (Array.isArray(f.enum) && f.enum.length > 0) {
     return { control: f.enum.length <= 4 ? "choice" : "select", inferred: false };
@@ -127,6 +132,7 @@ function inferControl(f: InputField): { control: Control; inferred: boolean } {
 
 export function normaliseType(type: string | undefined): string {
   const t = (type ?? "string").toLowerCase();
+  if (["file", "document", "upload", "attachment"].includes(t)) return "file";
   if (["int", "integer"].includes(t)) return "integer";
   if (["float", "double", "decimal", "number"].includes(t)) return "number";
   if (["bool", "boolean"].includes(t)) return "boolean";
@@ -265,14 +271,106 @@ export function wrappedCollection(
   return othersScalar ? { field, rows } : null;
 }
 
+/* ── Document inputs ──────────────────────────────────────────────────── */
+
+/** The kinds of file a document input may accept — mirrors the backend's groups. */
+export const ACCEPT_GROUPS: Record<string, { label: string; ext: string[]; mime: string[] }> = {
+  pdf: { label: "PDF", ext: [".pdf"], mime: ["application/pdf"] },
+  docx: {
+    label: "Word",
+    ext: [".docx"],
+    mime: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  },
+  pptx: {
+    label: "PowerPoint",
+    ext: [".pptx"],
+    mime: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  },
+  xlsx: {
+    label: "Excel",
+    ext: [".xlsx"],
+    mime: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  },
+  csv: { label: "CSV", ext: [".csv"], mime: ["text/csv"] },
+  text: { label: "Text", ext: [".txt", ".md"], mime: ["text/plain", "text/markdown"] },
+  image: {
+    label: "Image",
+    ext: [".png", ".jpg", ".jpeg", ".webp"],
+    mime: ["image/png", "image/jpeg", "image/webp"],
+  },
+};
+const DEFAULT_ACCEPT = ["pdf", "docx", "text"];
+
+export function acceptOf(f: InputField): string[] {
+  const known = (f.accept ?? []).map((g) => g.toLowerCase()).filter((g) => g in ACCEPT_GROUPS);
+  return known.length ? known : DEFAULT_ACCEPT;
+}
+
+/** The `accept` attribute for the file picker. */
+export function acceptAttribute(f: InputField): string {
+  return acceptOf(f)
+    .flatMap((g) => [...(ACCEPT_GROUPS[g]?.ext ?? []), ...(ACCEPT_GROUPS[g]?.mime ?? [])])
+    .join(",");
+}
+
+export function acceptsFile(f: InputField, file: File): boolean {
+  const dot = file.name.lastIndexOf(".");
+  const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
+  return acceptOf(f).some((g) => {
+    const spec = ACCEPT_GROUPS[g];
+    if (!spec) return false;
+    return ext ? spec.ext.includes(ext) : spec.mime.includes(file.type);
+  });
+}
+
+export function maxSizeMb(f: InputField): number {
+  return Math.max(1, Math.min(f.max_size_mb ?? 20, 50));
+}
+
+export function maxFiles(f: InputField): number {
+  return f.multiple ? Math.max(1, Math.min(f.max_files ?? 5, 10)) : 1;
+}
+
+/** One uploaded document, as the run form shows it. */
+export interface UploadedDocument {
+  ref: DocumentRef;
+  name: string;
+  size: number;
+  chars: number;
+  preview: string;
+}
+
+/** A document input's state: uploaded documents, or the document's text pasted in. */
+export interface DocumentValue {
+  kind: "documents";
+  mode: "upload" | "paste";
+  docs: UploadedDocument[];
+  text: string;
+  /** Uploads still in flight — the run cannot start until they land. */
+  pending: number;
+}
+
+export function isDocumentValue(v: unknown): v is DocumentValue {
+  return Boolean(v) && typeof v === "object" && (v as DocumentValue).kind === "documents";
+}
+
+export function emptyDocuments(): DocumentValue {
+  return { kind: "documents", mode: "upload", docs: [], text: "", pending: 0 };
+}
+
+function isDocumentRef(v: unknown): v is DocumentRef {
+  return Boolean(v) && typeof v === "object" && Boolean((v as DocumentRef).$document?.document_id);
+}
+
 /* ── Values ───────────────────────────────────────────────────────────── */
 
-/** Form state: strings for text-like controls, booleans, string lists. */
-export type FieldValue = string | boolean | string[];
+/** Form state: strings for text-like controls, booleans, string lists, documents. */
+export type FieldValue = string | boolean | string[] | DocumentValue;
 export type FormValues = Record<string, FieldValue>;
 
 export function initialValue(r: ResolvedField): FieldValue {
   const d = r.field.default;
+  if (r.control === "file") return emptyDocuments();
   if (r.control === "boolean") return d === true || d === "true";
   if (r.control === "list") return Array.isArray(d) ? d.map(String) : [];
   if (d === undefined || d === null) return "";
@@ -281,6 +379,7 @@ export function initialValue(r: ResolvedField): FieldValue {
 
 export function isEmpty(v: FieldValue | undefined): boolean {
   if (v === undefined) return true;
+  if (isDocumentValue(v)) return v.mode === "paste" ? v.text.trim() === "" : v.docs.length === 0;
   if (typeof v === "boolean") return false;
   if (Array.isArray(v)) return v.length === 0;
   return v.trim() === "";
@@ -290,7 +389,15 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** A human message when the value cannot be sent, else null. */
 export function validate(r: ResolvedField, v: FieldValue | undefined): string | null {
+  if (isDocumentValue(v) && v.mode === "upload" && v.pending > 0)
+    return "Wait for the upload to finish";
   if (v === undefined || isEmpty(v)) return r.required ? "Required" : null;
+  if (isDocumentValue(v)) {
+    const limit = maxFiles(r.field);
+    if (v.mode === "upload" && v.docs.length > limit)
+      return `At most ${limit} document${limit === 1 ? "" : "s"}`;
+    return null;
+  }
   if (typeof v === "boolean") return null;
   if (Array.isArray(v)) {
     if (r.itemType === "number" && v.some((x) => Number.isNaN(Number(x))))
@@ -342,6 +449,11 @@ export function validate(r: ResolvedField, v: FieldValue | undefined): string | 
 
 /** The value as the workflow expects to receive it. */
 export function toPayload(r: ResolvedField, v: FieldValue | undefined): unknown {
+  if (isDocumentValue(v)) {
+    if (v.mode === "paste") return v.text.trim();
+    const refs = v.docs.map((d) => d.ref);
+    return r.field.multiple ? refs : refs[0];
+  }
   if (typeof v === "boolean") return v;
   if (Array.isArray(v)) return r.itemType === "number" ? v.map(Number) : v;
   const s = (v ?? "").trim();
@@ -389,6 +501,22 @@ export function valuesFromPayload(
     const v = payload[r.name];
     if (v === undefined || v === null) {
       out[r.name] = initialValue(r);
+    } else if (r.control === "file") {
+      if (typeof v === "string") {
+        out[r.name] = { ...emptyDocuments(), mode: "paste", text: v };
+      } else {
+        const refs = (Array.isArray(v) ? v : [v]).filter(isDocumentRef);
+        out[r.name] = {
+          ...emptyDocuments(),
+          docs: refs.map((ref) => ({
+            ref,
+            name: ref.$document.name,
+            size: ref.$document.size,
+            chars: 0,
+            preview: "",
+          })),
+        };
+      }
     } else if (r.control === "boolean") {
       out[r.name] = v === true || v === "true";
     } else if (r.control === "list") {
@@ -411,6 +539,8 @@ function toLocalDateTime(iso: string): string {
 
 /** A plausible value, for "Fill example" — the declared example wins. */
 export function exampleValue(r: ResolvedField): FieldValue {
+  // A document cannot be made up: it has to be uploaded.
+  if (r.control === "file") return emptyDocuments();
   const ex = r.field.example ?? r.field.default;
   if (ex !== undefined && ex !== null) {
     if (r.control === "boolean") return ex === true || ex === "true";

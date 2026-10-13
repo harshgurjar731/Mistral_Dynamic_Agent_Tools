@@ -101,8 +101,13 @@ class DataFlowLayer(WorkflowDecisionLayer):
                 "config": config,
             })
 
+        from app.workflow_inputs.schema import normalise_input_schema
+
         input_schema = data.get("input_schema")
-        input_schema = [s for s in input_schema if isinstance(s, dict)] if isinstance(input_schema, list) else []
+        input_schema = normalise_input_schema(
+            input_schema if isinstance(input_schema, list) else [],
+            merged_steps, topology.get("entry_step"),
+        )
 
         variables = data.get("variables")
         variables = variables if isinstance(variables, dict) else {}

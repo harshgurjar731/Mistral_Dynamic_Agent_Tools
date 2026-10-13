@@ -773,7 +773,7 @@ Never omit Tier-1 steps — they are mandatory in every workflow.
   "entry_step": "<id of the first step>",
   "steps": [ /* see Step Types below */ ],
   "input_schema": [
-    {{"name": "variable_name", "type": "string | integer | boolean", "description": "What the user must provide"}}
+    {{"name": "variable_name", "type": "string | integer | boolean | file", "description": "What the user must provide"}}
   ],
   "output_step": "<id of the final step whose output is the workflow result>",
   "variables": {{}}
@@ -861,6 +861,12 @@ SOURCE 1 — User inputs
   Variables declared in input_schema are available directly as:
   {{{{variable_name}}}}
   Example: if input_schema has name "city", use {{{{city}}}}
+  A document the user hands over each run (claim form, invoice, contract to
+  review) is an input of type "file" with "accept" (pdf, docx, pptx, xlsx, csv,
+  text, image): the run form asks for an upload, the document goes into a
+  library attached to the agent steps that reference it, and {{{{name}}}}
+  resolves to the document's text. Reference it only in the agent steps that
+  must read it.
 
 SOURCE 2 — Previous step outputs
   When a step completes, its output is stored as:

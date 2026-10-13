@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { IssueList, ValidationSummary } from "./ValidationPanel";
 import { StepInspector } from "./StepInspector";
 import { MAX_STEPS, WORKFLOW_NAME_RE } from "./builderModel";
+import { ACCEPT_GROUPS } from "./runForm/fieldModel";
 import {
   BuilderPalette,
   PALETTE_MIME,
@@ -1122,13 +1123,27 @@ function WorkflowSettings({
                     <select
                       className="h-8 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground"
                       value={f.type}
-                      onChange={(e) => setField(i, { type: e.target.value })}
+                      onChange={(e) =>
+                        setField(
+                          i,
+                          e.target.value === "file"
+                            ? {
+                                type: "file",
+                                accept: f.accept?.length ? f.accept : ["pdf", "docx", "text"],
+                                format: undefined,
+                                enum: undefined,
+                              }
+                            : { type: e.target.value },
+                        )
+                      }
                     >
-                      {["string", "number", "integer", "boolean", "object", "array"].map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
+                      {["string", "number", "integer", "boolean", "object", "array", "file"].map(
+                        (t) => (
+                          <option key={t} value={t}>
+                            {t === "file" ? "file (document)" : t}
+                          </option>
+                        ),
+                      )}
                     </select>
                     <button
                       type="button"
@@ -1152,62 +1167,145 @@ function WorkflowSettings({
                     onChange={(e) => setField(i, { description: e.target.value })}
                     className="mt-2 h-8 text-xs"
                   />
-                  {/* Presentation hints for the run form; inferred when left blank. */}
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Input
-                      value={f.label ?? ""}
-                      placeholder="Form label"
-                      onChange={(e) => setField(i, { label: e.target.value || undefined })}
-                      className="h-8 text-xs"
-                    />
-                    <select
-                      title="How the run form collects this input"
-                      className="h-8 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground"
-                      value={f.format ?? ""}
-                      onChange={(e) => setField(i, { format: e.target.value || undefined })}
-                    >
-                      <option value="">Format: auto</option>
-                      {[
-                        "text",
-                        "long_text",
-                        "email",
-                        "url",
-                        "date",
-                        "datetime",
-                        "integer",
-                        "currency",
-                        "percent",
-                      ].map((fmt) => (
-                        <option key={fmt} value={fmt}>
-                          {fmt.replace("_", " ")}
-                        </option>
-                      ))}
-                    </select>
-                    <Input
-                      value={(f.enum ?? []).join(", ")}
-                      placeholder="Allowed values (a, b, c)"
-                      onChange={(e) => {
-                        const opts = e.target.value
-                          .split(",")
-                          .map((o) => o.trim())
-                          .filter(Boolean);
-                        setField(i, { enum: opts.length ? opts : undefined });
-                      }}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      value={
-                        f.example === undefined || f.example === null
-                          ? ""
-                          : typeof f.example === "string"
-                            ? f.example
-                            : JSON.stringify(f.example)
-                      }
-                      placeholder="Example value"
-                      onChange={(e) => setField(i, { example: e.target.value || undefined })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
+                  {f.type === "file" ? (
+                    /* A document input: what may be uploaded, and how much. */
+                    <div className="mt-2 space-y-2">
+                      <Input
+                        value={f.label ?? ""}
+                        placeholder="Form label"
+                        onChange={(e) => setField(i, { label: e.target.value || undefined })}
+                        className="h-8 text-xs"
+                      />
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.entries(ACCEPT_GROUPS).map(([group, spec]) => {
+                          const on = (f.accept ?? []).includes(group);
+                          return (
+                            <button
+                              key={group}
+                              type="button"
+                              title={spec.ext.join(", ")}
+                              onClick={() =>
+                                setField(i, {
+                                  accept: on
+                                    ? (f.accept ?? []).filter((g) => g !== group)
+                                    : [...(f.accept ?? []), group],
+                                })
+                              }
+                              className={cn(
+                                "rounded border px-2 py-0.5 text-[11px] transition",
+                                on
+                                  ? "border-primary/50 bg-primary/10 text-primary"
+                                  : "border-border text-muted-foreground hover:text-foreground",
+                              )}
+                            >
+                              {spec.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                        <label className="flex cursor-pointer items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(f.multiple)}
+                            onChange={(e) => setField(i, { multiple: e.target.checked })}
+                          />
+                          Several files
+                        </label>
+                        {f.multiple ? (
+                          <label className="flex items-center gap-1">
+                            up to
+                            <Input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={f.max_files ?? 5}
+                              onChange={(e) =>
+                                setField(i, { max_files: Number(e.target.value) || undefined })
+                              }
+                              className="h-7 w-14 text-xs"
+                            />
+                          </label>
+                        ) : null}
+                        <label className="ml-auto flex items-center gap-1">
+                          max
+                          <Input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={f.max_size_mb ?? 20}
+                            onChange={(e) =>
+                              setField(i, { max_size_mb: Number(e.target.value) || undefined })
+                            }
+                            className="h-7 w-14 text-xs"
+                          />
+                          MB
+                        </label>
+                      </div>
+                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                        Uploads go to a library attached to the agent steps that reference{" "}
+                        <span className="font-mono">{`{{${f.name || "name"}}}`}</span>; there the
+                        reference reads as the document&apos;s text.
+                      </p>
+                    </div>
+                  ) : (
+                    /* Presentation hints for the run form; inferred when left blank. */
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <Input
+                        value={f.label ?? ""}
+                        placeholder="Form label"
+                        onChange={(e) => setField(i, { label: e.target.value || undefined })}
+                        className="h-8 text-xs"
+                      />
+                      <select
+                        title="How the run form collects this input"
+                        className="h-8 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground"
+                        value={f.format ?? ""}
+                        onChange={(e) => setField(i, { format: e.target.value || undefined })}
+                      >
+                        <option value="">Format: auto</option>
+                        {[
+                          "text",
+                          "long_text",
+                          "email",
+                          "url",
+                          "date",
+                          "datetime",
+                          "integer",
+                          "currency",
+                          "percent",
+                        ].map((fmt) => (
+                          <option key={fmt} value={fmt}>
+                            {fmt.replace("_", " ")}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        value={(f.enum ?? []).join(", ")}
+                        placeholder="Allowed values (a, b, c)"
+                        onChange={(e) => {
+                          const opts = e.target.value
+                            .split(",")
+                            .map((o) => o.trim())
+                            .filter(Boolean);
+                          setField(i, { enum: opts.length ? opts : undefined });
+                        }}
+                        className="h-8 text-xs"
+                      />
+                      <Input
+                        value={
+                          f.example === undefined || f.example === null
+                            ? ""
+                            : typeof f.example === "string"
+                              ? f.example
+                              : JSON.stringify(f.example)
+                        }
+                        placeholder="Example value"
+                        onChange={(e) => setField(i, { example: e.target.value || undefined })}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  )}
                   <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
                     <input
                       type="checkbox"

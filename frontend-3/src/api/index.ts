@@ -1,4 +1,4 @@
-import { del, get, patch, post, put } from "./client";
+import { api, del, get, patch, post, put } from "./client";
 import type {
   BuilderCatalog,
   Connector,
@@ -12,6 +12,7 @@ import type {
   GraphSnapshot,
   GraphStatus,
   HealthResponse,
+  InputDocumentUpload,
   KnowledgeEntry,
   Library,
   LibraryCard,
@@ -410,6 +411,21 @@ export const workflowsApi = {
     if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
     return unwrapJson(await res.json());
   },
+  /** Store a document for a document input in its library; resolves once Mistral has read it. */
+  uploadInputDocument: async (name: string, field: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await api.post<InputDocumentUpload>(
+      `/api/workflows/${encodeURIComponent(name)}/inputs/${encodeURIComponent(field)}/documents`,
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
+    );
+    return res.data;
+  },
+  deleteInputDocument: (name: string, field: string, documentId: string) =>
+    del<{ deleted: boolean }>(
+      `/api/workflows/${encodeURIComponent(name)}/inputs/${encodeURIComponent(field)}/documents/${encodeURIComponent(documentId)}`,
+    ),
   catalog: () => get<BuilderCatalog>("/api/workflows/builder/catalog"),
   archive: (name: string) => put<unknown>(`/api/workflows/${name}/archive`),
   unarchive: (name: string) => put<unknown>(`/api/workflows/${name}/unarchive`),

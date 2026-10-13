@@ -127,12 +127,34 @@ def _validation_items(definition: WorkflowDefinition, builder: dict) -> list[dic
 def _input_items(definition: WorkflowDefinition) -> list[dict]:
     fields = [f for f in (definition.input_schema or []) if isinstance(f, dict) and f.get("name")]
     required = [f["name"] for f in fields if f.get("required", True) is not False]
-    if not required:
-        return []
-    return [_item("inputs.required", "inputs", "Inputs to provide when running", "info",
-                  detail=", ".join(required),
-                  instructions=["You will be asked for these when you start the run; "
-                                "a run without them is refused."])]
+    items = []
+    if required:
+        items.append(_item("inputs.required", "inputs", "Inputs to provide when running", "info",
+                           detail=", ".join(required),
+                           instructions=["You will be asked for these when you start the run; "
+                                         "a run without them is refused."]))
+
+    from app.workflow_inputs import documents as input_documents, schema as input_schema
+
+    for f in input_schema.file_fields(definition):
+        name = f["name"]
+        library = input_documents.library_for(definition.name, name)
+        readers = input_schema.consumer_agent_ids(definition, name)
+        detail = (f"Accepts {input_schema.describe_accept(f)}, up to "
+                  f"{input_schema.max_size_mb(f)} MB. ")
+        if library:
+            detail += (f"Uploads go to library {library['library_id']}, attached to "
+                       f"{len(library['agent_ids'])} agent(s).")
+        else:
+            detail += "Its library is created with the first upload."
+        items.append(_item(
+            f"inputs.document.{name}", "inputs", f"Document input '{name}'", "info",
+            detail=detail,
+            instructions=[f"Read by {len(readers)} agent step(s), which can search every "
+                          "document uploaded for it.",
+                          "Uploaded documents are kept until the workflow, the agent or "
+                          "the library is deleted."]))
+    return items
 
 
 # ── Activity steps ─────────────────────────────────────────────────────────

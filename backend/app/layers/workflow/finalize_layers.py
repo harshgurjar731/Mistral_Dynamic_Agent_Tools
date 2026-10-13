@@ -198,6 +198,21 @@ class WorkflowPersistenceLayer(WorkflowStepLayer):
             previous=previous.model_dump(mode="json") if previous else None,
         )
 
+        # Each document input gets its library now, attached to the agents
+        # that read it — the plan knows which those are. Best effort: the run
+        # form's first upload does the same if this could not.
+        from app.workflow_inputs import documents as input_documents, schema as input_schema
+
+        if input_schema.file_fields(spec.definition):
+            ctx.emit("status", "Preparing document inputs…")
+            had = {lib["field"] for lib in await asyncio.to_thread(
+                input_documents.libraries_of, workflow_name)}
+            for lib in await input_documents.ensure_all(spec.definition):
+                if lib.get("library_id") and lib["field"] not in had:
+                    plan_control.record_created(ctx, "library", lib["library_id"],
+                                                f"{lib['field']} inputs")
+                ctx.emit("input_library", json.dumps(lib))
+
         ctx.emit("workflow_ready", json.dumps({
             "workflow_name": workflow_name,
             "description": spec.definition.description or spec.goal,

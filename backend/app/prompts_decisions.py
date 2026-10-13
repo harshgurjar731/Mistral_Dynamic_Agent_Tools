@@ -1176,7 +1176,22 @@ transform steps — `transform_code`:
   - `example`: one realistic value.
   - `min` / `max`: bounds for numbers, when they exist.
   - `items`: for an array, the type of each entry (string, number, object).
-  `type` stays one of string, number, integer, boolean, object, array.
+  `type` stays one of string, number, integer, boolean, object, array, file.
+
+  Document inputs — `type: "file"`. When the person running the workflow
+  hands over a document each run (a claim form, an invoice, a bank statement,
+  a contract to review, an ID scan, a CV), declare it as a file, not as
+  long_text: the run form then asks for an upload. The document is stored in a
+  library attached to every agent step whose template references the input,
+  and the reference resolves to the document's text — so reference the file
+  input directly in the template of each agent step that must read it, and
+  only in those. Give:
+  - `accept`: the kinds of file, from pdf, docx, pptx, xlsx, csv, text, image.
+  - `multiple`: true only when several documents of the same kind are handed
+    over together (e.g. three payslips); then `max_files`.
+  - `max_size_mb`: optional; 20 when omitted.
+  A document library an agent already searches (policies, reference material
+  uploaded once) is not a run input — that stays on the agent.
 - `variables`: seed values available before the first step. Usually empty.
 
 ## Rules
@@ -1196,7 +1211,7 @@ transform steps — `transform_code`:
   "input_schema": [
     {
       "name": "string",
-      "type": "string|number|integer|boolean|object|array",
+      "type": "string|number|integer|boolean|object|array|file",
       "description": "string",
       "required": true,
       "label": "string",
@@ -1205,7 +1220,9 @@ transform steps — `transform_code`:
       "example": "<a realistic value>",
       "min": 0,
       "max": 0,
-      "items": "string|number|object"
+      "items": "string|number|object",
+      "accept": ["pdf|docx|pptx|xlsx|csv|text|image — file inputs only"],
+      "multiple": false
     }
   ],
   "variables": {},

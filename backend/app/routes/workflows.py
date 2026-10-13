@@ -13,7 +13,7 @@ import os
 import time
 from collections import Counter
 import httpx
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -742,9 +742,20 @@ async def delete_workflow_endpoint(workflow_name: str):
         resp = _mistral_put(f"/v1/workflows/{remote_id}/archive")
         remote_archived = bool(resp is not None and resp.status_code < 300)
 
+    # Documents uploaded for its document inputs go with it: their libraries
+    # exist only for this workflow.
+    from app.workflow_inputs import documents as input_documents
+
+    try:
+        inputs_cleanup = await input_documents.forget_workflow(workflow_name)
+    except Exception as e:
+        logging.warning("Could not remove the input libraries of %s: %s", workflow_name, e)
+        inputs_cleanup = {"error": str(e)}
+
     from app.services import delete_rules
 
     return {"deleted": True, "workflow_name": workflow_name, "remote_archived": remote_archived,
+            "input_documents": inputs_cleanup,
             # Only the workflow: its agents, tools and activities stay.
             "graph": delete_rules.forget_in_graph("workflow", workflow_name)}
 
@@ -780,23 +791,52 @@ async def unarchive_workflow_endpoint(workflow_name: str):
 # ── Execute ───────────────────────────────────────────────────────────────────
 
 def _check_required_inputs(workflow, payload: dict) -> None:
-    """Raise 422 when the payload lacks a required input the workflow declares."""
-    fields = [f for f in (workflow.input_schema or []) if isinstance(f, dict) and f.get("name")]
-    missing = [
-        f["name"] for f in fields
-        if f.get("required", True) is not False and f["name"] not in payload
-    ]
-    if not missing:
-        return
-    declared = ", ".join(f["name"] for f in fields)
-    received = ", ".join(k for k in payload if not k.startswith("_")) or "nothing"
-    raise HTTPException(
-        status_code=422,
-        detail=(
-            f"Missing required input{'s' if len(missing) > 1 else ''}: {', '.join(missing)}. "
-            f"This workflow expects: {declared}. Received: {received}."
-        ),
-    )
+    """Raise 422 unless the payload is exactly what the workflow's inputs declare.
+
+    Required inputs present, every value of its declared type, no inputs the
+    workflow does not have, and every document reference one uploaded for that
+    input — see ``app.workflow_inputs.run_input``.
+    """
+    from app.workflow_inputs import run_input
+
+    problems = run_input.check(workflow, payload)
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems) + ".")
+
+
+# ── Document inputs ───────────────────────────────────────────────────────
+
+
+@router.post("/workflows/{workflow_name}/inputs/{field}/documents")
+async def upload_input_document(workflow_name: str, field: str, file: UploadFile = File(...)):
+    """Upload a document for one of the workflow's document inputs.
+
+    The file goes into that input's library, attached to the agents that read
+    the input, and is read before this returns. The response's ``ref`` is the
+    value to send for the input when starting the run.
+    """
+    from app.workflow_inputs import documents
+
+    workflow = get_workflow(workflow_name)
+    if not workflow:
+        raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
+    content = await file.read()
+    try:
+        return await documents.upload(workflow, field, file.filename or "document",
+                                      content, file.content_type)
+    except documents.DocumentInputError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+
+@router.delete("/workflows/{workflow_name}/inputs/{field}/documents/{document_id}")
+async def delete_input_document(workflow_name: str, field: str, document_id: str):
+    """Take back a document uploaded on the run form."""
+    from app.workflow_inputs import documents
+
+    try:
+        return await documents.remove_upload(workflow_name, field, document_id)
+    except documents.DocumentInputError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
 @router.get("/workflows/{workflow_name}/prerequisites")

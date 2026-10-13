@@ -771,14 +771,24 @@ async def delete_agent(client: Mistral, agent_id: str) -> dict:
 
     try:
         await asyncio.to_thread(client.beta.agents.delete, agent_id=agent_id)
-        return {"deleted": True, "agent_id": agent_id}
+        result = {"deleted": True, "agent_id": agent_id}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "404" in err_str:
             raise AgentNotFoundError(agent_id)
         if "permission" in err_str or "403" in err_str:
             raise MistralAPIError(
-                "Permission denied: You cannot delete this agent. It may be a system or built-in agent.", 
+                "Permission denied: You cannot delete this agent. It may be a system or built-in agent.",
                 status_code=403
             )
         raise MistralAPIError(f"Failed to delete agent: {str(e)}")
+
+    # Documents uploaded for workflow runs, held in libraries that existed
+    # only for this agent, go with it.
+    try:
+        from app.workflow_inputs import documents as input_documents
+
+        result["input_documents"] = await input_documents.forget_agent(agent_id)
+    except Exception as e:
+        logger.warning("Could not remove input libraries of agent %s: %s", agent_id, e)
+    return result

@@ -1556,7 +1556,12 @@ async def run_step(step: WorkflowStep, variables: dict) -> StepResult:
         if not runner:
             result = StepResult(step_id=step.id, status="failed", error=f"Unknown step type: {step.type}")
         else:
-            result = await runner(step, variables)
+            # A document input arrives as a reference to its library; the step
+            # reads the document's text. After the span's attributes are set,
+            # so traces carry the reference rather than the document.
+            from app.workflow_inputs import documents as input_documents
+
+            result = await runner(step, await input_documents.materialise(variables))
 
         tracing.set_attrs(span, {
             "app.step.status": result.status,

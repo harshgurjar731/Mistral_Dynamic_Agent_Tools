@@ -4,7 +4,8 @@
  * Every declared input gets the control its type and meaning call for, is
  * checked as it is filled in, and says which steps read it. Inputs the first
  * step reads but the workflow never declared are surfaced too, because a run
- * without them fails on its first step. Switch to JSON for a raw payload.
+ * without them fails on its first step. A document input is an upload (see
+ * DocumentInput). Switch to JSON for a raw payload.
  */
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
@@ -15,6 +16,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  FileText,
   History,
   Link2,
   List,
@@ -35,15 +37,19 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { BLOCK, blockForMode } from "@/lib/terminology";
 import { cn } from "@/lib/utils";
+import { DocumentInput } from "./DocumentInput";
 import {
   buildPayload,
+  emptyDocuments,
   exampleValue,
   initialValue,
+  isDocumentValue,
   isEmpty,
   resolveFields,
   validate,
   valuesFromPayload,
   type Control,
+  type DocumentValue,
   type FieldValue,
   type FormValues,
   type ResolvedField,
@@ -105,6 +111,7 @@ const CONTROL_BADGE: Record<Control, { label: string; icon: typeof Type }> = {
   choice: { label: "Choice", icon: List },
   list: { label: "List", icon: List },
   json: { label: "JSON", icon: Braces },
+  file: { label: "Document", icon: FileText },
 };
 
 /* ── Controls ──────────────────────────────────────────────────────────── */
@@ -218,16 +225,20 @@ function ListInput({
 function FieldControl({
   r,
   id,
+  workflowName,
   value,
   invalid,
   onChange,
+  onUpdateDocuments,
   onBlur,
 }: {
   r: ResolvedField;
   id: string;
+  workflowName: string;
   value: FieldValue | undefined;
   invalid: boolean;
   onChange: (v: FieldValue) => void;
+  onUpdateDocuments: (fn: (prev: DocumentValue) => DocumentValue) => void;
   onBlur: () => void;
 }) {
   const text = typeof value === "string" ? value : "";
@@ -238,6 +249,18 @@ function FieldControl({
   };
 
   switch (r.control) {
+    case "file":
+      return (
+        <DocumentInput
+          r={r}
+          id={id}
+          workflowName={workflowName}
+          value={value}
+          invalid={invalid}
+          update={onUpdateDocuments}
+          onBlur={onBlur}
+        />
+      );
     case "boolean":
       return (
         <label htmlFor={id} className="flex h-9 cursor-pointer items-center gap-2.5">
@@ -465,17 +488,21 @@ function FieldControl({
 
 function FieldRow({
   r,
+  workflowName,
   value,
   error,
   showError,
   onChange,
+  onUpdateDocuments,
   onBlur,
 }: {
   r: ResolvedField;
+  workflowName: string;
   value: FieldValue | undefined;
   error: string | null;
   showError: boolean;
   onChange: (v: FieldValue) => void;
+  onUpdateDocuments: (fn: (prev: DocumentValue) => DocumentValue) => void;
   onBlur: () => void;
 }) {
   const id = `run-input-${r.name}`;
@@ -510,9 +537,11 @@ function FieldRow({
       <FieldControl
         r={r}
         id={id}
+        workflowName={workflowName}
         value={value}
         invalid={showError && Boolean(error)}
         onChange={onChange}
+        onUpdateDocuments={onUpdateDocuments}
         onBlur={onBlur}
       />
 
@@ -622,6 +651,11 @@ export function WorkflowRunForm({
   const canRun = mode === "json" ? !jsonError : invalidCount === 0 && missingCount === 0;
 
   const set = (name: string, v: FieldValue) => setValues((prev) => ({ ...prev, [name]: v }));
+  const updateDocuments = (name: string, fn: (prev: DocumentValue) => DocumentValue) =>
+    setValues((prev) => {
+      const current = prev[name];
+      return { ...prev, [name]: fn(isDocumentValue(current) ? current : emptyDocuments()) };
+    });
   const touch = (name: string) =>
     setTouched((prev) => (prev[name] ? prev : { ...prev, [name]: true }));
 
@@ -674,7 +708,7 @@ export function WorkflowRunForm({
     return {
       payload,
       missing: fields.filter((r) => r.required && !keys.includes(r.name)).map((r) => r.name),
-      unknown: keys.filter((k) => !declared.has(k) && !k.startsWith("_")),
+      unknown: keys.filter((k) => !declared.has(k)),
       wrapped: fields
         .filter((r) => r.type === "array" && keys.includes(r.name))
         .map((r) => ({ name: r.name, found: wrappedCollection(payload[r.name]) }))
@@ -694,7 +728,7 @@ export function WorkflowRunForm({
     if (mode === "json") {
       const parsed = parseJson();
       if (!parsed) return;
-      if (jsonFit && jsonFit.missing.length > 0) {
+      if (jsonFit && (jsonFit.missing.length > 0 || jsonFit.unknown.length > 0)) {
         setSubmitted(true);
         return;
       }
@@ -717,7 +751,10 @@ export function WorkflowRunForm({
   const fillExample = () => {
     setValues((prev) => {
       const next = { ...prev };
-      for (const r of fields) if (isEmpty(prev[r.name])) next[r.name] = exampleValue(r);
+      // Documents are left alone: an example cannot stand in for one, and an
+      // upload in flight must not be reset.
+      for (const r of fields)
+        if (r.control !== "file" && isEmpty(prev[r.name])) next[r.name] = exampleValue(r);
       return next;
     });
   };
@@ -751,10 +788,12 @@ export function WorkflowRunForm({
     <FieldRow
       key={r.name}
       r={r}
+      workflowName={definition.name}
       value={values[r.name]}
       error={errors[r.name] ?? null}
       showError={submitted || Boolean(touched[r.name])}
       onChange={(v) => set(r.name, v)}
+      onUpdateDocuments={(fn) => updateDocuments(r.name, fn)}
       onBlur={() => touch(r.name)}
     />
   );
@@ -768,6 +807,9 @@ export function WorkflowRunForm({
     blockers.push("Fix the JSON payload");
   } else if (jsonFit && jsonFit.missing.length > 0) {
     blockers.push(`Missing ${jsonFit.missing.join(", ")}`);
+  }
+  if (mode === "json" && jsonFit && jsonFit.unknown.length > 0) {
+    blockers.push(`Remove ${jsonFit.unknown.join(", ")}`);
   }
 
   return (
@@ -901,10 +943,10 @@ export function WorkflowRunForm({
               />
             ))}
             {jsonFit && jsonFit.unknown.length > 0 ? (
-              <p className="mt-1 flex items-start gap-1 text-[11px] text-amber">
+              <p className="mt-1 flex items-start gap-1 text-[11px] text-red">
                 <AlertCircle className="mt-0.5 size-3 shrink-0" />
                 <span>
-                  Not inputs of this workflow — no step reads them:{" "}
+                  Not inputs of this workflow, so the run would be refused:{" "}
                   <span className="font-mono">{jsonFit.unknown.join(", ")}</span>
                   {jsonFit.missing.length > 0
                     ? ". Put this data under the expected input instead."
@@ -972,7 +1014,7 @@ export function WorkflowRunForm({
             <span className="text-destructive">{blockedReason}</span>
           ) : blockers.length && (submitted || mode === "json") ? (
             <span className="text-amber">{blockers.join(" · ")}</span>
-          ) : canRun && !jsonFit?.missing.length ? (
+          ) : canRun && !jsonFit?.missing.length && !jsonFit?.unknown.length ? (
             <>Ready · Ctrl + Enter to run</>
           ) : (
             <>{blockers.join(" · ")} · Ctrl + Enter to run</>

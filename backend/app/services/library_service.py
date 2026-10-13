@@ -121,6 +121,10 @@ async def delete_library(library_id: str) -> dict:
         with _http_client() as client:
             resp = client.delete(f"/v1/libraries/{library_id}")
             resp.raise_for_status()
+            # A workflow's document-input library: its upload records go too.
+            from app.workflow_inputs import documents as input_documents
+
+            input_documents.forget_library(library_id)
             return {
                 "deleted": True,
                 "library_id": library_id,
