@@ -33,7 +33,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal
 from app.remote_server_model import RemoteServer, RemoteDeployment
-from app.remote_servers import brev, checks, ssh, store
+from app.remote_servers import accounts, brev, checks, ssh, store
 from app.remote_servers import secrets as secret_box
 from app.remote_servers.checks import http_auth
 from app.remote_servers.providers import (
@@ -632,7 +632,15 @@ def _resolve_brev(log: _DeployLog, instance: str, token: str | None,
         log.step("Logging in to Brev")
         brev.login(token)
     log.step(f"Checking Brev instance '{instance}'")
-    brev.require_running(instance)
+    try:
+        brev.require_running(instance)
+    except brev.BrevLoginRequired:
+        saved = accounts.remembered_token("brev")
+        if token or not saved:
+            raise
+        log.write("The Brev CLI is logged out — logging in with the saved account token\n")
+        brev.login(saved)
+        brev.require_running(instance)
     log.write("RUNNING\n")
 
     log.step("Resolving SSH access (brev refresh)")

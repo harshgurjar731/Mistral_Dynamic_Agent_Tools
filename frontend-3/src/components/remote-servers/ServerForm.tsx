@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { CheckReportView } from "./CheckReportView";
+import { AccountNotice, InstancePicker } from "./ProviderAccounts";
 import { PURPOSE_LABEL, ServerStatusBadge, providerIcon } from "./status";
 import { cn } from "@/lib/utils";
 
@@ -93,11 +94,14 @@ function isVisible(field: ProviderField, values: Values): boolean {
  * Whether a field belongs up front or under "Advanced settings": required
  * fields and how you connect stay visible; the rest has sensible defaults.
  * Provisioned providers (Brev) fill the connection in themselves, so only
- * what identifies the instance is shown.
+ * what identifies the instance is shown — plus the key's status, so it is
+ * clear whether provisioning stored one.
  */
 function isPrimary(field: ProviderField, provider: ServerProvider): boolean {
   if (field.required) return true;
-  if (provider.provisioned) return field.group === "provider" && field.secret;
+  if (provider.provisioned) {
+    return (field.group === "provider" && field.secret) || field.key === "private_key";
+  }
   return field.group === "connection";
 }
 
@@ -254,25 +258,33 @@ export function ServerForm({
     save.mutate();
   };
 
-  const renderField = (f: ProviderField) => (
-    <FieldInput
-      key={f.key}
-      field={f}
-      value={valueOf(f)}
-      stored={isStored(f)}
-      error={showErrors && missing.has(f.key) ? `${f.label} is required` : undefined}
-      onChange={(v) => {
-        if (f.secret) {
-          setSecrets((prev) => ({ ...prev, [f.key]: v }));
-          setReport(null);
-        } else setValue(f.key, v);
-      }}
-      onClear={() => {
-        setCleared((prev) => new Set(prev).add(f.key));
-        setSecrets((prev) => ({ ...prev, [f.key]: "" }));
-      }}
-    />
-  );
+  const renderField = (f: ProviderField) =>
+    provider?.provisioned && f.key === "private_key" ? (
+      <ProvisionedKey
+        key={f.key}
+        stored={isStored(f)}
+        certificates={Boolean(values["brev_env"])}
+        editing={editing}
+      />
+    ) : (
+      <FieldInput
+        key={f.key}
+        field={f}
+        value={valueOf(f)}
+        stored={isStored(f)}
+        error={showErrors && missing.has(f.key) ? `${f.label} is required` : undefined}
+        onChange={(v) => {
+          if (f.secret) {
+            setSecrets((prev) => ({ ...prev, [f.key]: v }));
+            setReport(null);
+          } else setValue(f.key, v);
+        }}
+        onClear={() => {
+          setCleared((prev) => new Set(prev).add(f.key));
+          setSecrets((prev) => ({ ...prev, [f.key]: "" }));
+        }}
+      />
+    );
 
   // ── Connection details (wizard step 3, and the body of the edit dialog) ──
   const details = provider ? (
@@ -298,6 +310,20 @@ export function ServerForm({
           />
         </Field>
       </div>
+
+      <AccountNotice provider={provider} />
+      <InstancePicker
+        provider={provider}
+        config={values}
+        onPick={(picked) => {
+          const known = new Set(provider.fields.map((f) => f.key));
+          setValues((prev) => ({
+            ...prev,
+            ...Object.fromEntries(Object.entries(picked).filter(([k]) => known.has(k))),
+          }));
+          setReport(null);
+        }}
+      />
 
       {provider.hints?.length ? (
         <div className="flex gap-2.5 rounded-xl border border-blue/20 bg-blue/5 px-3.5 py-3 text-xs text-muted-foreground">
@@ -676,6 +702,49 @@ export function ServerForm({
 
       <SecretsNote className="mt-3 justify-center" />
     </form>
+  );
+}
+
+/** A provisioned server's SSH key: provisioning fills it in, so show its state, not a textarea. */
+function ProvisionedKey({
+  stored,
+  certificates,
+  editing,
+}: {
+  stored: boolean;
+  certificates: boolean;
+  editing: boolean;
+}) {
+  return (
+    <div className="space-y-1.5 sm:col-span-2">
+      <Label className="text-xs">
+        SSH key <KeyRound className="ml-1 inline size-3 text-muted-foreground" />
+      </Label>
+      <div
+        className={cn(
+          "flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs",
+          stored
+            ? "border-emerald/25 bg-emerald/10 text-emerald"
+            : "border-border/60 bg-background-elevated/40 text-muted-foreground",
+        )}
+      >
+        {stored ? (
+          <Check className="mt-0.5 size-3.5 shrink-0" />
+        ) : (
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+        )}
+        <span>
+          {stored
+            ? "Saved by provisioning (encrypted)."
+            : editing
+              ? "Not stored yet — log in to the provider account, then Re-provision."
+              : "Filled in by provisioning when you add the server."}
+          {certificates
+            ? " Logins use short-lived Brev certificates minted for each connection."
+            : ""}
+        </span>
+      </div>
+    </div>
   );
 }
 

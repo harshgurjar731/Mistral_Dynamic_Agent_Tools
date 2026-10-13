@@ -34,6 +34,9 @@ export const QK = {
   remoteServers: () => ["remote-servers"] as const,
   remoteServer: (id: string) => ["remote-servers", id] as const,
   remoteServerProviders: () => ["remote-servers", "providers"] as const,
+  // Outside the "remote-servers" prefix: each fetch runs the provider's CLI,
+  // so refreshing the server list must not refetch it.
+  remoteServerAccounts: () => ["remote-server-accounts"] as const,
   remoteServerDeployments: (id: string) => ["remote-servers", id, "deployments"] as const,
   remoteServerWorkflows: (id: string) => ["remote-servers", id, "remote-workflows"] as const,
   remoteDeployment: (id: number) => ["remote-deployments", id] as const,

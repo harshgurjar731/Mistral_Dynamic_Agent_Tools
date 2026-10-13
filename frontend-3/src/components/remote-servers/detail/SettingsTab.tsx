@@ -8,7 +8,7 @@ import type {
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/shared/SectionCard";
 import { CheckReportView, HostFacts } from "../CheckReportView";
-import { BrevInstanceCard, ConfigurationCard } from "./ServerPanels";
+import { BrevInstanceCard, CloudInstanceCard, ConfigurationCard } from "./ServerPanels";
 import { cn } from "@/lib/utils";
 
 /** How the server is set up and how it checks out — plus removing it. */
@@ -33,7 +33,8 @@ export function SettingsTab({
   onEdit: () => void;
   onRemove: () => void;
 }) {
-  const provisioned = catalog?.providers.find((p) => p.id === server.provider)?.provisioned;
+  const provider = catalog?.providers.find((p) => p.id === server.provider);
+  const provisioned = provider?.provisioned;
 
   return (
     <div className="space-y-4">
@@ -84,7 +85,11 @@ export function SettingsTab({
         </SectionCard>
       </div>
 
-      {provisioned ? <BrevInstanceCard server={server} deployments={deployments} /> : null}
+      {provisioned ? (
+        <BrevInstanceCard server={server} provider={provider} deployments={deployments} />
+      ) : provider?.account?.kind === "api" ? (
+        <CloudInstanceCard server={server} provider={provider} />
+      ) : null}
 
       <section className="flex flex-wrap items-center gap-4 rounded-2xl border border-red/25 bg-red/5 px-5 py-4">
         <TriangleAlert className="size-5 shrink-0 text-red" />

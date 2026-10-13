@@ -106,6 +106,8 @@ function RemoteServerDetailPage() {
   useEffect(() => {
     if (wasProvisioning.current && !provisioning) {
       qc.invalidateQueries({ queryKey: QK.remoteServers() });
+      // A run may have found the Brev CLI logged out (or logged it back in).
+      qc.invalidateQueries({ queryKey: QK.remoteServerAccounts() });
     }
     wasProvisioning.current = provisioning;
   }, [provisioning, qc]);

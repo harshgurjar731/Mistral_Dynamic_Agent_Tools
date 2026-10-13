@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.remote_server_model import RemoteServer, RemoteDeployment
-from app.remote_servers import checks, deployers, store
+from app.remote_servers import accounts, checks, deployers, store
 from app.remote_servers import secrets as secret_box
 from app.remote_servers.providers import catalog, get_provider
 
@@ -71,6 +71,65 @@ def _parse_body(body: dict) -> tuple[str, str, dict, dict]:
 async def list_providers():
     """Server kinds, the fields each needs, and workflow post-deploy actions."""
     return catalog()
+
+
+# ── Provider accounts (e.g. the Brev CLI login) ──────────────────────────
+
+@router.get("/remote-servers/accounts")
+async def list_accounts():
+    """Login state of every provider that has an account — checked in parallel,
+    since each one calls a CLI or a cloud API."""
+    return await asyncio.gather(*(asyncio.to_thread(accounts.status, p["id"])
+                                  for p in accounts.account_providers()))
+
+
+@router.get("/remote-servers/accounts/{provider}")
+async def get_account(provider: str):
+    try:
+        return await asyncio.to_thread(accounts.status, provider)
+    except accounts.AccountError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/remote-servers/accounts/{provider}/login")
+async def account_login(provider: str, request: Request):
+    """Body: {values: {field: value}, remember?} — the fields of the provider's
+    account spec. Cloud credentials are always stored (encrypted); a CLI token
+    only with ``remember``."""
+    body = await request.json()
+    values = body.get("values") or {k: body[k] for k in ("token", "org") if k in body}
+    try:
+        return await asyncio.to_thread(accounts.login, provider, dict(values),
+                                       remember=bool(body.get("remember")))
+    except accounts.AccountError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/remote-servers/accounts/{provider}/start")
+async def account_start_instance(provider: str, request: Request):
+    """Start a stopped cloud VM. Body: {ref} — an instance's ``ref`` from the account status."""
+    body = await request.json()
+    try:
+        return await asyncio.to_thread(accounts.start_instance, provider, str(body.get("ref") or ""))
+    except accounts.AccountError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/remote-servers/accounts/{provider}/org")
+async def account_set_org(provider: str, request: Request):
+    body = await request.json()
+    try:
+        return await asyncio.to_thread(accounts.set_org, provider, str(body.get("org") or ""))
+    except accounts.AccountError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/remote-servers/accounts/{provider}/logout")
+async def account_logout(provider: str):
+    try:
+        return await asyncio.to_thread(accounts.logout, provider)
+    except accounts.AccountError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 # ── List / create ────────────────────────────────────────────────────────

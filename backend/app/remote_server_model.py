@@ -51,3 +51,17 @@ class RemoteDeployment(Base):
     error = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     finished_at = Column(DateTime, nullable=True)
+
+
+class ProviderAccount(Base):
+    """A login shared by every server of one provider (e.g. the Brev CLI's).
+
+    The login itself lives with the provider's CLI on the backend host; a row
+    exists only when the user asked to remember the token, so provisioning
+    can log in again after the CLI's session expires.
+    """
+    __tablename__ = "remote_provider_accounts"
+
+    provider = Column(String, primary_key=True)
+    secrets = Column(Text, nullable=True)         # Fernet-encrypted JSON
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -121,6 +121,15 @@ _HTTP_AUTH_FIELDS = [
 ]
 
 
+def _cloud_account(label, console_url, match, description, fields) -> dict:
+    """A cloud API login (app/remote_servers/cloud.py). ``match`` names the
+    server fields that identify its instance in the account's listing."""
+    return {"kind": "api", "label": label, "console_url": console_url, "match": match,
+            "description": f"{description} Stored encrypted; used to list VMs, fill in their "
+                           "address and start stopped ones.",
+            "fields": fields}
+
+
 PROVIDERS: list[dict] = [
     {
         "id": "mcp_code_endpoint",
@@ -160,6 +169,18 @@ PROVIDERS: list[dict] = [
                 _f("instance_id", "Instance ID", placeholder="i-0abc123...", group="provider"),
             ],
         ),
+        "account": _cloud_account(
+            "AWS", "https://console.aws.amazon.com/iam/home#/security_credentials", ["instance_id"],
+            "An IAM access key that may call ec2:DescribeInstances and ec2:StartInstances.",
+            [
+                _f("access_key_id", "Access key ID", required=True, placeholder="AKIA…"),
+                _f("secret_access_key", "Secret access key", "password", required=True, secret=True),
+                _f("session_token", "Session token", "password", secret=True,
+                   help_="Only for temporary (STS) credentials."),
+                _f("regions", "Regions", default="us-east-1", placeholder="us-east-1, eu-west-1",
+                   help_="Comma-separated regions to list instances from."),
+            ],
+        ),
         "hints": [
             "Default user: 'ubuntu' for Ubuntu AMIs, 'ec2-user' for Amazon Linux, 'admin' for Debian.",
             "Private key: the .pem file of the key pair chosen at launch.",
@@ -181,6 +202,17 @@ PROVIDERS: list[dict] = [
                 _f("instance_name", "Instance name", group="provider"),
             ],
         ),
+        "account": _cloud_account(
+            "Google Cloud", "https://console.cloud.google.com/iam-admin/serviceaccounts",
+            ["instance_name", "zone"],
+            "A service account key with Compute Instance Admin (or Compute Viewer to only list VMs).",
+            [
+                _f("service_account_json", "Service account key (JSON)", "textarea", required=True,
+                   secret=True, placeholder='{"type": "service_account", …}',
+                   help_="IAM → Service accounts → Keys → Add key → JSON. Paste the whole file."),
+                _f("project_id", "Project ID", placeholder="Defaults to the key's project"),
+            ],
+        ),
         "hints": [
             "Username is the one attached to the SSH key in the VM's metadata (the part before '@' in the public key comment).",
         ],
@@ -200,6 +232,17 @@ PROVIDERS: list[dict] = [
                 _f("vm_name", "VM name", group="provider"),
             ],
         ),
+        "account": _cloud_account(
+            "Azure", "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps", ["vm_name", "resource_group"],
+            "A service principal (app registration) with Reader on the subscription — "
+            "Virtual Machine Contributor to also start VMs.",
+            [
+                _f("tenant_id", "Tenant (directory) ID", required=True),
+                _f("client_id", "Client (application) ID", required=True),
+                _f("client_secret", "Client secret", "password", required=True, secret=True),
+                _f("subscription_id", "Subscription ID", required=True),
+            ],
+        ),
     },
     {
         "id": "digitalocean",
@@ -213,6 +256,11 @@ PROVIDERS: list[dict] = [
             host_help="The Droplet's ipv4 address.",
             extra=[_f("droplet_id", "Droplet ID", group="provider")],
         ),
+        "account": _cloud_account(
+            "DigitalOcean", "https://cloud.digitalocean.com/account/api/tokens", ["droplet_id"],
+            "A personal access token (read scope lists Droplets; write scope also starts them).",
+            [_f("token", "API token", "password", required=True, secret=True, placeholder="dop_v1_…")],
+        ),
     },
     {
         "id": "brev",
@@ -222,13 +270,31 @@ PROVIDERS: list[dict] = [
         "icon": "cloud",
         # Connection details are filled in by provisioning, not by the user.
         "provisioned": True,
+        # One CLI login on the backend host serves every Brev server
+        # (app/remote_servers/accounts.py).
+        "account": {
+            "kind": "cli",
+            "label": "NVIDIA Brev",
+            "match": ["instance_name"],
+            "description": "The Brev CLI on this backend's host. Log it in once; every Brev server uses it.",
+            "console_url": "https://brev.nvidia.com",
+            "fields": [
+                _f("token", "CLI token", "password", required=True, secret=True,
+                   placeholder="brev login --token …",
+                   help_="In the Brev console: your profile → CLI / API token. Paste the token or the "
+                         "whole `brev login --token …` command."),
+                _f("org", "Organization", placeholder="Leave blank for your default org",
+                   help_="The org that owns your instances, if you belong to more than one."),
+            ],
+        },
         "description": "A running Brev instance. Adding it resolves SSH access with the Brev CLI, "
                        "installs python3-venv and Docker, and checks the connection.",
         "fields": [
             _f("instance_name", "Instance name", required=True, group="provider", placeholder="wf-worker",
                help_="As listed by `brev ls`. The instance must already be RUNNING."),
             _f("brev_token", "Brev token", "password", secret=True, group="provider",
-               help_="Optional — for `brev login --token` when the backend host's CLI is not logged in."),
+               help_="Optional — usually log in once under Provider accounts instead. Set here, "
+                     "provisioning this server runs `brev login --token` with it first."),
             _f("public_host", "Public IP override", group="provider", placeholder="203.0.113.10",
                help_="Brev's SSH config points at a private 100.x address that only the Brev CLI's "
                      "network reaches. Expose TCP port 22 in the instance's Access tab and enter the "

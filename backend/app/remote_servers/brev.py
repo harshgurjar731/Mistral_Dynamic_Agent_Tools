@@ -55,6 +55,22 @@ class BrevError(RuntimeError):
     pass
 
 
+class BrevNotInstalled(BrevError):
+    pass
+
+
+class BrevLoginRequired(BrevError):
+    pass
+
+
+# Different CLI versions word it differently; `ssh -G` also surfaces it from
+# the `brev mint-cert` that Brev's ssh_config runs.
+_LOGGED_OUT = re.compile(r"currently logged out|not logged in|please log ?in", re.I)
+LOGIN_ADVICE = ("The Brev CLI on the backend host is not logged in — log in under Remote servers → "
+                "Provider accounts (or run `brev login` there; Docker: "
+                "docker compose exec -it backend brev login)")
+
+
 def cli_prefix() -> list[str]:
     if sys.platform != "win32" or os.environ.get("BREV_NATIVE") == "1":
         return []
@@ -76,41 +92,88 @@ def _brev_binary() -> str:
     return r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "brev"
 
 
-def run(*args: str, input: str | None = None, check: bool = True, timeout: int = 900) -> str:
-    """Run a command where the Brev CLI lives. Returns stdout+stderr, ANSI-stripped."""
-    if args and args[0] == "brev":
+def run(*args: str, input: str | None = None, check: bool = True, timeout: int = 900,
+        login_check: bool = True) -> str:
+    """Run a command where the Brev CLI lives. Returns stdout+stderr, ANSI-stripped.
+
+    stdin is closed unless ``input`` is given: a CLI that wants to prompt
+    (login, org choice) then fails at once instead of waiting for a terminal
+    that is not there until the timeout.
+    """
+    is_brev = bool(args) and args[0] == "brev"
+    if is_brev:
         args = (_brev_binary(), *args[1:])
+    where = " inside WSL" if cli_prefix() else ""
+    stdin = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
-        r = subprocess.run([*cli_prefix(), *args], input=input, capture_output=True,
-                           text=True, timeout=timeout, encoding="utf-8", errors="replace")
+        r = subprocess.run([*cli_prefix(), *args], capture_output=True, text=True,
+                           timeout=timeout, encoding="utf-8", errors="replace", **stdin)
     except FileNotFoundError as e:
-        where = " inside WSL" if cli_prefix() else ""
-        raise BrevError(f"'{args[0]}' not found — install the Brev CLI{where} on the backend host") from e
+        raise BrevNotInstalled(f"'{args[0]}' not found — install the Brev CLI{where} on the backend host") from e
     except subprocess.TimeoutExpired as e:
         raise BrevError(f"`{' '.join(args[:2])}` timed out after {timeout}s") from e
     out = ANSI.sub("", r.stdout + r.stderr)
-    if "currently logged out" in out:
-        raise BrevError("The Brev CLI on the backend host is logged out — run `brev login` there "
-                        "(Docker: docker compose exec -it backend brev login)")
+    # 127 from a shell, "execvpe" from `wsl -e`: the binary is not there.
+    if is_brev and r.returncode and (r.returncode == 127 or "execvpe" in out):
+        raise BrevNotInstalled(f"The Brev CLI is not installed{where} on the backend host")
+    if login_check and _LOGGED_OUT.search(out):
+        raise BrevLoginRequired(LOGIN_ADVICE)
     if check and r.returncode:
         raise BrevError(f"`{' '.join(args[:3])}` failed (exit {r.returncode}):\n{out.strip()}")
     return out
 
 
+def clean_token(token: str) -> str:
+    """Accept the bare token or the whole `brev login --token …` command the console shows."""
+    token = token.strip()
+    m = re.search(r"--token[=\s]+(\S+)", token)
+    return m.group(1) if m else token
+
+
 def login(token: str) -> None:
-    run("brev", "login", "--token", token)
+    run("brev", "login", "--token", clean_token(token), timeout=120, login_check=False)
 
 
-def instance_status(name: str) -> str | None:
-    """STATUS column of `brev ls` for this instance, located by its header row."""
-    status_col = None
-    for line in run("brev", "ls").splitlines():
+def logout() -> None:
+    run("brev", "logout", check=False, timeout=60, login_check=False)
+
+
+def set_org(org: str) -> None:
+    run("brev", "set", org, timeout=60)
+
+
+def orgs() -> list[dict]:
+    """Organizations from `brev org ls`; the active one is marked with '*'."""
+    rows, header = [], False
+    for line in run("brev", "org", "ls", timeout=60).splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        cols = text.lstrip("* ").split()
+        if cols and cols[0] == "NAME":
+            header = True
+        elif header and cols:
+            rows.append({"name": cols[0], "active": text.startswith("*")})
+    return rows
+
+
+def list_instances() -> list[dict]:
+    """[{name, status}] from `brev ls`, columns located by its header row."""
+    rows, status_col = [], None
+    for line in run("brev", "ls", timeout=90).splitlines():
         cols = line.split()
         if "NAME" in cols and "STATUS" in cols:
             status_col = cols.index("STATUS")
-        elif status_col is not None and cols and cols[0] == name and len(cols) > status_col:
-            return cols[status_col].upper()
-    return None
+        elif status_col is not None and not cols and rows:
+            break  # the table ends at a blank line; hints follow it
+        elif status_col is not None and len(cols) > status_col:
+            rows.append({"name": cols[0], "status": cols[status_col].upper()})
+    return rows
+
+
+def instance_status(name: str) -> str | None:
+    """STATUS column of `brev ls` for this instance."""
+    return next((i["status"] for i in list_instances() if i["name"] == name), None)
 
 
 def require_running(name: str) -> None:
@@ -156,14 +219,20 @@ def ssh_details(name: str) -> dict:
     proxied = (opts.get("proxycommand", ["none"])[0] != "none"
                or opts.get("proxyjump", ["none"])[0] != "none")
 
+    details = {"host": host, "port": int(opts.get("port", ["22"])[0]),
+               "username": opts.get("user", ["ubuntu"])[0], "proxied": proxied}
     home = run("sh", "-c", "echo $HOME").strip()
     candidates = sorted(opts.get("identityfile", []), key=lambda p: "brev" not in p)
     for path in candidates:
         key = run("cat", re.sub(r"^~", home, path), check=False)
         if "PRIVATE KEY" in key:
-            return {"host": host, "port": int(opts.get("port", ["22"])[0]),
-                    "username": opts.get("user", ["ubuntu"])[0], "private_key": key,
-                    "proxied": proxied}
+            return {**details, "private_key": key}
+    # Certificate logins need no key file on disk (a fresh host has none until
+    # the first `brev mint-cert`): mint one so there is a key to store.
+    cert = cert_params(name)
+    if cert:
+        key, _ = mint_cert(cert["brev_env"], cert["brev_port_id"], cert["brev_linux_user"])
+        return {**details, "private_key": key}
     raise BrevError(f"Could not read a private key for '{name}' (tried: {', '.join(candidates) or 'none'})")
 
 

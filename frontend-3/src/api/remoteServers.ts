@@ -33,6 +33,51 @@ export interface ServerProvider {
   hints?: string[];
   /** Connection details come from provisioning (e.g. Brev), not the form. */
   provisioned?: boolean;
+  /** A login shared by every server of this provider (e.g. the Brev CLI's). */
+  account?: ProviderAccountSpec;
+}
+
+export interface ProviderAccountSpec {
+  /** "cli": a CLI on the backend host holds the login (Brev); "api": stored cloud credentials. */
+  kind: "cli" | "api";
+  label: string;
+  description: string;
+  console_url?: string;
+  /** Server config keys that identify a server's instance in the account's listing. */
+  match: string[];
+  fields: ProviderField[];
+}
+
+export interface CloudInstance {
+  /** Identifies the instance to the start call. */
+  ref: string;
+  name: string;
+  state: string;
+  public_ip: string;
+  private_ip: string;
+  location: string;
+  /** Server fields this instance fills in (host, username, its identifiers). */
+  config: Record<string, string>;
+}
+
+export type AccountState = "logged_in" | "logged_out" | "not_installed" | "error";
+
+export interface ProviderAccountStatus {
+  provider: string;
+  label: string;
+  kind: "cli" | "api";
+  state: AccountState;
+  detail: string;
+  /** Who the credentials belong to (cloud accounts). */
+  identity: string | null;
+  org: string | null;
+  orgs: { name: string; active: boolean }[];
+  instances: CloudInstance[];
+  /** Non-secret account values (e.g. AWS regions), to prefill the login form. */
+  settings: Record<string, string>;
+  /** Credentials are stored — for Brev, so provisioning can log in again by itself. */
+  token_saved: boolean;
+  checked_at: string;
 }
 
 export interface CommandPreset {
@@ -234,6 +279,18 @@ export const remoteServersApi = {
       deployment_name?: string | undefined;
     },
   ) => post<RemoteRunResponse>(`/api/remote-servers/${id}/run-workflow`, body),
+
+  /** Login state of every provider account (e.g. the Brev CLI on the backend host). */
+  accounts: () => get<ProviderAccountStatus[]>("/api/remote-servers/accounts"),
+  accountLogin: (provider: string, body: { values: Record<string, string>; remember: boolean }) =>
+    post<ProviderAccountStatus>(`/api/remote-servers/accounts/${provider}/login`, body),
+  /** Start a stopped cloud VM by its `ref` from the account status. */
+  accountStart: (provider: string, ref: string) =>
+    post<ProviderAccountStatus>(`/api/remote-servers/accounts/${provider}/start`, { ref }),
+  accountSetOrg: (provider: string, org: string) =>
+    post<ProviderAccountStatus>(`/api/remote-servers/accounts/${provider}/org`, { org }),
+  accountLogout: (provider: string) =>
+    post<ProviderAccountStatus>(`/api/remote-servers/accounts/${provider}/logout`),
 
   /** Re-resolve a Brev server's SSH access and prepare the VM. */
   provision: (id: string | number) => post<RemoteDeployment>(`/api/remote-servers/${id}/provision`),

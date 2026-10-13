@@ -18,6 +18,7 @@ import {
 import { QK, errorMessage } from "@/api";
 import { remoteServersApi, type RemoteServer, type ServerPurpose } from "@/api/remoteServers";
 import { AddServerCard, ServerCard } from "@/components/remote-servers/ServerCard";
+import { ProviderAccountsPanel } from "@/components/remote-servers/ProviderAccounts";
 import { STATE_TONE } from "@/components/remote-servers/status";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
@@ -116,6 +117,11 @@ function RemoteServersPage() {
   const [sort, setSort] = useSortKey("remote-servers", "name_asc");
 
   const query = useQuery({ queryKey: QK.remoteServers(), queryFn: () => remoteServersApi.list() });
+  const catalog = useQuery({
+    queryKey: QK.remoteServerProviders(),
+    queryFn: remoteServersApi.providers,
+    staleTime: Infinity,
+  });
   const all = useMemo(() => query.data ?? [], [query.data]);
 
   const filtered = useMemo(() => {
@@ -186,6 +192,8 @@ function RemoteServersPage() {
           Add Server
         </Link>
       </div>
+
+      <ProviderAccountsPanel catalog={catalog.data} className="mt-6" />
 
       {query.isLoading ? (
         <div className="mt-8">
