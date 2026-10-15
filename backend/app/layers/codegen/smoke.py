@@ -82,6 +82,25 @@ async def smoke_test(requirement: CodeRequirement, build: dict) -> list[str]:
     return problems
 
 
+async def must_run(build: dict, inputs: list[dict]) -> list[str]:
+    """Problems running ``build`` on each of ``inputs``, which must not error."""
+    from app.services.tool_resolver import tool_resolver
+
+    problems = []
+    for i, arguments in enumerate(inputs, 1):
+        response = await tool_resolver.execute_tool(build.get("tool_name"), arguments,
+                                                    version=build.get("version"))
+        label = "the input it failed on" if len(inputs) == 1 else f"failing input {i}"
+        if "error" in response and "result" not in response:
+            problems.append(f"{label}: execution failed — {str(response['error'])[:300]}")
+            continue
+        result = response.get("result")
+        if isinstance(result, dict) and str(result.get("status", "")).lower() == "error":
+            detail = result.get("message") or result.get("error") or result
+            problems.append(f"{label}: it still returns an error — {str(detail)[:300]}")
+    return problems
+
+
 async def roll_back(build: dict) -> str:
     """Reject the version in ``build``. Returns what the tool service did."""
     from app.services.tool_resolver import tool_resolver

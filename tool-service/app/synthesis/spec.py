@@ -123,6 +123,11 @@ class SynthesisSpec:
     #: ConnectionError, which still exercises the error paths.
     http_fixtures: list[dict] = field(default_factory=list)
     origin: str = "explicit"
+    #: A rebuild after the previous version failed at run time:
+    #: ``{"previous_code", "runtime_error", "comment", "failing_input"}``. The
+    #: generator is shown the code that failed and what went wrong, so the new
+    #: version fixes that failure rather than starting from nothing.
+    feedback: dict = field(default_factory=dict)
 
     # ── Construction ────────────────────────────────────────────────────
 
@@ -160,6 +165,7 @@ class SynthesisSpec:
             side_effects=side_effects,
             http_fixtures=[f for f in (kw.get("http_fixtures") or []) if isinstance(f, dict)],
             origin=str(kw.get("origin") or "explicit"),
+            feedback=_feedback(kw.get("feedback")),
         )
 
     @classmethod
@@ -194,6 +200,8 @@ class SynthesisSpec:
                 "output_schema": self.output_schema,
                 "examples": [asdict(e) for e in self.examples],
                 "api_details": self.api_details,
+                # Only when present, so every spec without it keeps its identity.
+                **({"feedback": self.feedback} if self.feedback else {}),
             },
             sort_keys=True,
             default=str,
@@ -325,3 +333,21 @@ class Candidate:
 
 # Retained name: earlier modules imported ``CodeSpec``.
 CodeSpec = SynthesisSpec
+
+
+#: Bounds on what a rebuild request may carry into the generation prompt.
+_FEEDBACK_LIMITS = {"previous_code": 12000, "runtime_error": 4000, "comment": 2000}
+
+
+def _feedback(raw) -> dict:
+    """The rebuild feedback, with only the known keys and bounded lengths."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    for key, limit in _FEEDBACK_LIMITS.items():
+        text = str(raw.get(key) or "").strip()
+        if text:
+            out[key] = text[:limit]
+    if isinstance(raw.get("failing_input"), dict) and raw["failing_input"]:
+        out["failing_input"] = raw["failing_input"]
+    return out if (out.get("runtime_error") or out.get("comment")) else {}

@@ -22,7 +22,7 @@ import {
   Server,
   XCircle,
 } from "lucide-react";
-import { executionsApi, errorMessage } from "@/api";
+import { executionsApi, errorMessage, QK, workflowsApi } from "@/api";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -38,6 +38,7 @@ import {
 import { Markdown } from "@/components/chat/Markdown";
 import { useExecutionStream, type ExecutionMonitorState } from "./useExecutionStream";
 import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
+import { fixStepActions } from "./FixStepButton";
 import { cn } from "@/lib/utils";
 
 const TABS = ["steps", "result", "logs", "events", "trace", "history", "control"] as const;
@@ -59,6 +60,15 @@ export function ExecutionMonitor({
   const own = useExecutionStream(stream ? null : executionId);
   const { detail, steps, events, phase, error, finalStatus, reconnect } = stream ?? own;
   const [tab, setTab] = useState<TabId>("steps");
+  // The definition maps a failed step to the activity it ran, for "Fix this activity".
+  const workflowName = detail?.workflow_name;
+  const definition = useQuery({
+    queryKey: QK.workflow(workflowName ?? ""),
+    queryFn: () => workflowsApi.get(workflowName ?? ""),
+    enabled: Boolean(workflowName),
+    retry: false,
+  });
+  const stepActions = useMemo(() => fixStepActions(definition.data), [definition.data]);
 
   if (!executionId) {
     return (
@@ -120,6 +130,7 @@ export function ExecutionMonitor({
             <TabsContent value="steps" className="h-full">
               <ExecutionStepTimeline
                 steps={steps}
+                renderActions={stepActions}
                 emptyHint={
                   phase === "live" || phase === "connecting"
                     ? "Waiting for the first step to report…"

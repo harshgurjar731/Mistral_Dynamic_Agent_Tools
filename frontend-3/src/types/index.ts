@@ -433,6 +433,35 @@ export interface Tool {
   report?: ToolReport | null;
 }
 
+/** The verdict of running one version by hand (`POST /api/tools/{id}/test`). */
+export interface ToolTestResult {
+  tool_id: number;
+  tool_name: string;
+  version: number | null;
+  arguments: Record<string, unknown>;
+  duration_ms: number;
+  /** passed: matched the example · succeeded: ran, nothing to compare · the rest are failures. */
+  outcome: "passed" | "succeeded" | "wrong_output" | "returned_error" | "call_failed";
+  ok: boolean;
+  error: string | null;
+  expected: unknown;
+  mismatch?: string | null;
+  missing_fields?: string[];
+  result: unknown;
+  data?: unknown;
+}
+
+/** What to rebuild a version from (`POST /api/runs/rebuild`). */
+export interface RebuildRequest {
+  tool_id: number;
+  error: string;
+  comment: string;
+  failing_input?: Record<string, unknown> | null;
+  /** What the failing input should have produced — kept as a worked example. */
+  expected_output?: unknown;
+  update_workflows?: boolean;
+}
+
 export interface ToolSpecExample {
   input: Record<string, unknown>;
   output?: unknown;

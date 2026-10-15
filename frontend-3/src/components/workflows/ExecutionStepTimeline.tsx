@@ -124,6 +124,7 @@ function StepRow({
   defaultExpanded,
   dotSize = "size-[22px]",
   dotOffset = "-left-7",
+  renderActions,
 }: {
   step: ExecutionStep;
   index: number;
@@ -132,6 +133,7 @@ function StepRow({
   defaultExpanded: boolean;
   dotSize?: string;
   dotOffset?: string;
+  renderActions?: StepActions | undefined;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const state = rowState(step.status);
@@ -150,8 +152,13 @@ function StepRow({
     [step.attributes],
   );
 
+  const actions = renderActions?.(step) ?? null;
   const hasDetail =
-    !!step.input_preview || !!step.output_preview || !!step.error || extraAttributes.length > 0;
+    !!step.input_preview ||
+    !!step.output_preview ||
+    !!step.error ||
+    extraAttributes.length > 0 ||
+    actions != null;
 
   // Relative bar width, so a 20s step reads as visibly longer than a 200ms one.
   const barPercent =
@@ -237,6 +244,7 @@ function StepRow({
               className="overflow-hidden"
             >
               <div className="space-y-2 px-3 pb-3">
+                {actions}
                 {step.error ? (
                   <p className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 font-mono text-[11px] break-words text-red">
                     {step.error}
@@ -293,12 +301,17 @@ function useNow(active: boolean): number {
   return now;
 }
 
+/** Extra controls for one step's expanded detail (e.g. "Fix this activity"). */
+export type StepActions = (step: ExecutionStep) => ReactNode;
+
 export function ExecutionStepTimeline({
   steps,
   emptyHint,
+  renderActions,
 }: {
   steps: ExecutionStep[];
   emptyHint?: string;
+  renderActions?: StepActions | undefined;
 }) {
   const anyRunning = steps.some((s) => rowState(s.status) === "running");
   const now = useNow(anyRunning);
@@ -375,6 +388,7 @@ export function ExecutionStepTimeline({
                 now={now}
                 maxDuration={maxDuration}
                 defaultExpanded={rowState(first.status) === "failed"}
+                renderActions={renderActions}
               />
             );
           }
@@ -401,6 +415,7 @@ export function ExecutionStepTimeline({
                       defaultExpanded={false}
                       dotSize="size-[18px]"
                       dotOffset="-left-[33px]"
+                      renderActions={renderActions}
                     />
                   ))}
                 </ul>

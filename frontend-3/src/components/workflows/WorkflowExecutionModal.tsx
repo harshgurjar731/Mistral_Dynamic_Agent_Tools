@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Markdown } from "@/components/chat/Markdown";
 import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
+import { fixStepActions } from "./FixStepButton";
 import { rememberRunInput } from "./runForm/fieldModel";
 import { WorkflowRunForm } from "./runForm/WorkflowRunForm";
 import { useWorkflowPrerequisites, WorkflowPrerequisites } from "./WorkflowPrerequisites";
@@ -191,6 +192,7 @@ export function WorkflowExecutionModal({
                   duration_ms: st.duration_ms ?? null,
                   error: st.error ?? null,
                 }))}
+                renderActions={fixStepActions(workflow)}
               />
             </div>
           )}

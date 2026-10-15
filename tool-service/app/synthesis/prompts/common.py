@@ -141,7 +141,28 @@ def spec_block(spec: SynthesisSpec) -> str:
                      + ", ".join(spec.secrets))
     if spec.side_effects not in ("none", ""):
         parts.append(f"## Side effects\n{spec.side_effects}")
+    if spec.feedback:
+        parts.append(feedback_block(spec.feedback))
     return "\n\n".join(parts)
+
+
+def feedback_block(feedback: dict) -> str:
+    """The previous version's failure, for a rebuild: fix this, keep the contract."""
+    lines = ["## The previous version failed — fix it",
+             "Write a corrected module. Keep the same name, input schema and output "
+             "schema; change the implementation so the failure below cannot happen, and "
+             "follow the user's comment."]
+    if feedback.get("runtime_error"):
+        lines.append("### Error seen at run time\n" + feedback["runtime_error"])
+    if feedback.get("failing_input"):
+        lines.append("### Input it failed on (must now succeed)\n"
+                     + json.dumps(feedback["failing_input"], indent=2, default=str))
+    if feedback.get("comment"):
+        lines.append("### What the user wants changed\n" + feedback["comment"])
+    if feedback.get("previous_code"):
+        lines.append("### The code that failed (for reference — do not copy its bug)\n"
+                     + feedback["previous_code"])
+    return "\n\n".join(lines)
 
 
 OUTPUT_ONLY = "Return ONLY the complete Python module — no fences, no explanation."

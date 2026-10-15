@@ -412,7 +412,7 @@ class CodeNeed:
     """
 
     purpose: str = "tool"               # tool | activity
-    origin: str = "explicit"            # chat | workflow | explicit | runtime
+    origin: str = "explicit"            # chat | workflow | explicit | runtime | feedback
     intent: str = ""                    # what is needed, in words
     name_hint: str = ""
     goal: str = ""                      # the wider goal, for context
@@ -447,9 +447,12 @@ class CodeRequirement:
     side_effects: str = "none"
     http_fixtures: list[dict] = field(default_factory=list)
     origin: str = "explicit"
+    #: A rebuild after a run-time failure: the failed code, the error, the
+    #: user's comment and the failing input (see the tool service's spec).
+    feedback: dict = field(default_factory=dict)
 
     def as_request(self) -> dict:
-        return {
+        request = {
             "name": self.name, "description": self.description, "purpose": self.purpose,
             "kind": self.kind, "input_schema": self.input_schema,
             "output_schema": self.output_schema, "examples": self.examples,
@@ -457,6 +460,9 @@ class CodeRequirement:
             "side_effects": self.side_effects, "http_fixtures": self.http_fixtures,
             "origin": self.origin,
         }
+        if self.feedback:
+            request["feedback"] = self.feedback
+        return request
 
     @classmethod
     def from_dict(cls, data: dict) -> "CodeRequirement":

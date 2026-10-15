@@ -1,3 +1,4 @@
+import type { RebuildRequest } from "@/types";
 import { get, post } from "./client";
 
 /**
@@ -48,6 +49,8 @@ export const runsApi = {
   startSynthesis: (task: string, purpose: "tool" | "activity") =>
     post<BackgroundRun>("/api/runs/synthesis", { task, purpose }),
   /** Answer a question a running run is waiting on (its `decision_required` event). */
+  /** Rebuild a tool/activity version from a failure; tracked like a synthesis run. */
+  startRebuild: (body: RebuildRequest) => post<BackgroundRun>("/api/runs/rebuild", body),
   /** `message` only counts for a choice the question lists in `message_options`. */
   decide: (id: string, decisionId: string, choice: string, message?: string) =>
     post<{ accepted: boolean; choice: string }>(`/api/runs/${id}/decisions/${decisionId}`, {

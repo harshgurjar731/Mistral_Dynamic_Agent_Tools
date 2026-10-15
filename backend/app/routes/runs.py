@@ -15,7 +15,7 @@ a run; only the cancel endpoint does.
 """
 
 from functools import partial
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -125,6 +125,41 @@ async def cancel_run(run_id: str):
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
         return {"cancelled": False, "status": run["status"]}
     return {"cancelled": True, "status": "cancelling"}
+
+
+class RebuildRun(BaseModel):
+    """Rebuild a tool or activity version from a failure seen while running it."""
+    tool_id: int
+    error: str = Field(default="", max_length=8000)
+    comment: str = Field(default="", max_length=4000)
+    failing_input: Optional[dict] = None
+    #: What the failing input should have produced; becomes a worked example.
+    expected_output: Optional[Any] = None
+    #: Re-pin workflow steps that ran the failed version to the rebuilt one.
+    update_workflows: bool = True
+
+
+@router.post("/runs/rebuild", status_code=202)
+async def start_rebuild(body: RebuildRun):
+    from app.services.code_rebuild import RebuildError, build_request
+    from app.services.tool_resolver import tool_resolver
+
+    record = await tool_resolver.get_tool(body.tool_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Version {body.tool_id} not found.")
+    try:
+        build_request(record, error=body.error, comment=body.comment,
+                      failing_input=body.failing_input, expected_output=body.expected_output)
+    except RebuildError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    purpose = record.get("purpose") or "tool"
+    kind = "activity_synthesis" if purpose == "activity" else "tool_synthesis"
+    title = f"Rebuild {record['name']} (v{record.get('version_no')}) from a failure"
+    run = await manager.start(
+        kind, title, {**body.model_dump(), "mode": "rebuild", "purpose": purpose},
+        partial(runners.rebuild, **body.model_dump(), name=record["name"], purpose=purpose),
+    )
+    return run.snapshot()
 
 
 class DecisionAnswer(BaseModel):

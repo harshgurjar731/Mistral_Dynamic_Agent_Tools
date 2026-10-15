@@ -35,6 +35,7 @@ import type {
   TimelineEvent,
   TimelineTrace,
   Tool,
+  ToolTestResult,
   TraceSummary,
   UploadResult,
   ValidationResult,
@@ -143,8 +144,15 @@ export const toolsApi = {
     post<{ status?: string; message?: string }>(`/api/tools/${id}/activate`),
   remove: (id: string | number) => del<unknown>(`/api/tools/${id}`),
   delete: (id: string | number) => del<unknown>(`/api/tools/${id}`),
-  execute: (name: string, args: Record<string, unknown> = {}) =>
-    post<unknown>(`/api/tools/execute/${name}`, { arguments: args }),
+  /** Run this exact version and judge the result; `exampleIndex` compares to that example. */
+  test: (
+    id: string | number,
+    body: {
+      arguments: Record<string, unknown>;
+      example_index?: number;
+      allow_side_effects?: boolean;
+    },
+  ) => post<ToolTestResult>(`/api/tools/${id}/test`, body),
   byHash: (hash: string) => get<Tool>(`/api/tools/by-hash/${hash}`),
   publishMcp: (id: string | number, serverName: string) =>
     post<unknown>(`/api/tools/${id}/publish-mcp`, { server_name: serverName }),

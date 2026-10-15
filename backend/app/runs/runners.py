@@ -133,3 +133,47 @@ async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
     except Exception:
         pass  # the registry refreshes itself on the next read anyway
     return RunOutcome(result=result)
+
+
+async def rebuild(run: LiveRun, *, tool_id: int, name: str, purpose: str, error: str = "",
+                  comment: str = "", failing_input: Optional[dict] = None,
+                  expected_output: Any = None, update_workflows: bool = True) -> RunOutcome:
+    """Rebuild a tool or activity from a failure (see ``app.services.code_rebuild``)."""
+    from app.services.code_rebuild import RebuildError, rebuild_from_failure
+
+    noun = "activity" if purpose == "activity" else "agent tool"
+    run.emit("pipeline", {"layers": [{
+        "name": "synthesis",
+        "label": f"Rebuild the {noun}",
+        "detail": "Fixes the code from the error and your comment, then checks the new version "
+                  "against its examples and the input it failed on.",
+        "hidden": False,
+    }]})
+    run.emit("layer", {"name": "synthesis", "state": "active"})
+    run.emit("status", f"Rebuilding {name} from the failure you reported…")
+
+    def relay(event: dict) -> None:
+        message = str(event.get("message") or "").strip()
+        if message and (event.get("stage") != "build" or event.get("build_stage") in (
+                "verify", "arbitrate", "test_plan", "review", "done")):
+            run.emit("status", message[:300])
+
+    started = time.monotonic()
+    try:
+        result = await rebuild_from_failure(
+            tool_id, error=error, comment=comment, failing_input=failing_input,
+            expected_output=expected_output, update_workflows=update_workflows, on_event=relay)
+    except RebuildError as e:
+        result = {"status": "failed", "tool_name": name, "message": str(e)}
+    ms = round((time.monotonic() - started) * 1000)
+
+    if result.get("status") in ("failed", "error", "blocked"):
+        message = str(result.get("message") or "Rebuild failed")
+        run.emit("layer", {"name": "synthesis", "state": "failed", "ms": ms, "error": message})
+        run.emit("synthesis_result", result)
+        return RunOutcome(status="failed", result=result, error=message)
+
+    run.emit("layer", {"name": "synthesis", "state": "completed", "ms": ms,
+                       "summary": f"Built {name} v{result.get('version')}"})
+    run.emit("synthesis_result", result)
+    return RunOutcome(result=result)

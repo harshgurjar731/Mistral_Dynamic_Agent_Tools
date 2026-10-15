@@ -57,11 +57,16 @@ async def resolve_code_need(
     client: Any = None,
     on_event: Optional[Callable[[dict], None]] = None,
     catalogue: Optional[list[dict]] = None,
+    must_succeed: Optional[list[dict]] = None,
 ) -> CodeResolution:
-    """Run the pipeline for one need. Never raises."""
+    """Run the pipeline for one need. Never raises.
+
+    ``must_succeed``: inputs the built version must run without error — for a
+    rebuild, the input the previous version failed on.
+    """
     ctx = RequirementContext(need=need, profile=profile_for(need.purpose),
                              client=client or _default_client(), on_event=on_event,
-                             catalogue=catalogue)
+                             catalogue=catalogue, must_succeed=list(must_succeed or []))
     try:
         if ctx.catalogue is None:
             from app.services.tool_resolver import tool_resolver
@@ -77,6 +82,8 @@ async def resolve_code_need(
 
 async def _run(ctx: RequirementContext) -> CodeResolution:
     need = ctx.need
+    if need.origin == "feedback" and need.requirement:
+        return await _run_feedback(ctx)
     if need.requirement:
         # Runtime recovery: the requirement was authored and screened when the
         # workflow was planned. Rebuild exactly that; do not re-author it.
@@ -125,6 +132,55 @@ async def _run(ctx: RequirementContext) -> CodeResolution:
                        + "; ".join(ctx.issues), issues=list(ctx.issues))
             return _settle(ctx)
         ctx.reauthors += 1
+
+    await _R8.run(ctx)
+    return _settle(ctx)
+
+
+#: Builds a rebuild-from-failure gets: the first, and one more told why it failed.
+MAX_FEEDBACK_BUILDS = 2
+
+
+async def _run_feedback(ctx: RequirementContext) -> CodeResolution:
+    """Rebuild an existing tool or activity after it failed at run time.
+
+    The stored specification is kept — same name, same contract — and the
+    tool service is given the failed code, the error and the user's comment
+    (``requirement.feedback``). Unlike a runtime recovery, the request is
+    screened again: it now carries text the user typed. A build that still
+    fails (its examples, or the input it failed on) is rolled back, and the
+    generator gets one more attempt told why.
+    """
+    need = ctx.need
+    ctx.requirement = CodeRequirement.from_dict(need.requirement)
+    ctx.requirement.origin = "feedback"
+    await _R2.run(ctx)
+    if ctx.resolution:
+        return ctx.resolution
+
+    for attempt in range(1, MAX_FEEDBACK_BUILDS + 1):
+        ctx.issues, ctx.smoke_problems = [], []
+        await _R6.run(ctx)
+        if ctx.issues:
+            ctx.finish("failed", "The rebuild request is not a valid specification: "
+                       + "; ".join(ctx.issues), issues=list(ctx.issues))
+            return _settle(ctx)
+        ctx.valid_requirement = ctx.requirement.as_request()
+        await _R7.run(ctx)
+        if ctx.issues:  # the tool service rejected the specification itself
+            ctx.finish("failed", "The tool service rejected the rebuild: " + "; ".join(ctx.issues),
+                       issues=list(ctx.issues))
+            return _settle(ctx)
+        await _R7b.run(ctx)
+        if not ctx.smoke_problems:
+            break
+        if attempt < MAX_FEEDBACK_BUILDS:
+            ctx.emit("author", "the rebuilt version still failed — trying once more")
+            feedback = dict(ctx.requirement.feedback or {})
+            feedback["runtime_error"] = (
+                f"{feedback.get('runtime_error', '')}\n\nThe last rebuilt version also failed: "
+                + "; ".join(ctx.smoke_problems)).strip()[:4000]
+            ctx.requirement.feedback = feedback
 
     await _R8.run(ctx)
     return _settle(ctx)

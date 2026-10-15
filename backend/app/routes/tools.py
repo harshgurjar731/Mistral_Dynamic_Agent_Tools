@@ -186,6 +186,35 @@ async def activate_tool_version(tool_id: str):
     return result
 
 
+@router.post("/tools/{tool_id}/test")
+async def test_tool_version(tool_id: str, request: Request):
+    """Run this exact version with the given arguments, and judge the result.
+
+    Body: ``{arguments, example_index?, allow_side_effects?}``. With
+    ``example_index`` the output is compared to that worked example. The
+    outcome is one of ``passed`` · ``succeeded`` · ``wrong_output`` ·
+    ``returned_error`` · ``call_failed`` (the call never reached the code).
+    """
+    from fastapi import HTTPException
+
+    from app.services.tool_testing import TestRefused, run_test
+
+    if not tool_id.isdigit():
+        raise HTTPException(status_code=400, detail="Only synthesized tools and activities can be "
+                                                    "tested here.")
+    body = await request.json()
+    arguments = body.get("arguments") or {}
+    if not isinstance(arguments, dict):
+        raise HTTPException(status_code=422, detail="arguments must be an object")
+    index = body.get("example_index")
+    try:
+        return await run_test(int(tool_id), arguments,
+                              example_index=int(index) if index is not None else None,
+                              allow_side_effects=bool(body.get("allow_side_effects")))
+    except TestRefused as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
 # ── Synthesis ──────────────────────────────────────────────────────────────
 
 @router.post("/tools/synthesize")

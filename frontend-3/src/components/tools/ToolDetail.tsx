@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -7,6 +7,7 @@ import {
   Check,
   Code2,
   FileCode,
+  Hammer,
   Hash,
   Loader2,
   Pencil,
@@ -49,6 +50,9 @@ import {
   VerificationReportPanel,
   VersionHistoryPanel,
 } from "@/components/tools/VerificationPanels";
+import { ToolTestDialog, type RebuildPrefill } from "@/components/tools/ToolTestDialog";
+import { RebuildFromErrorDialog } from "@/components/tools/RebuildFromErrorDialog";
+import { takeRebuildHandoff } from "@/lib/rebuildHandoff";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
 export type ToolDetailVariant = "tool" | "activity";
@@ -118,11 +122,15 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   const [remoteServerId, setRemoteServerId] = useState("");
   const [remoteResponse, setRemoteResponse] = useState<unknown>(null);
 
-  // Test state
-  const [testArgs, setTestArgs] = useState("{}");
-  const [testResult, setTestResult] = useState<unknown>(null);
-  const [isTesting, setIsTesting] = useState(false);
-  const [testError, setTestError] = useState<string | null>(null);
+  // Rebuild from an error: opened from a failed test, the header, or a
+  // failed workflow step handed over from a run (see lib/rebuildHandoff).
+  const [rebuildOpen, setRebuildOpen] = useState(false);
+  const [rebuildPrefill, setRebuildPrefill] = useState<RebuildPrefill | null>(null);
+  const openRebuild = (prefill: RebuildPrefill | null) => {
+    setRebuildPrefill(prefill);
+    setTestOpen(false);
+    setRebuildOpen(true);
+  };
 
   const invalidateLists = () => {
     qc.invalidateQueries({ queryKey: QK.tools() });
@@ -217,29 +225,12 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   });
   const remoteList = remoteServers ?? [];
 
-  const handleRunTest = async () => {
-    if (!tool) return;
-    setIsTesting(true);
-    setTestError(null);
-    try {
-      let parsed = {};
-      try {
-        parsed = testArgs.trim() ? JSON.parse(testArgs) : {};
-      } catch {
-        setTestError("Arguments must be valid JSON.");
-        setIsTesting(false);
-        return;
-      }
-      const res = await toolsApi.execute(tool.name, parsed);
-      setTestResult(res);
-      toast.success("Execution completed.");
-    } catch (err) {
-      setTestError(errorMessage(err));
-      toast.error(errorMessage(err));
-    } finally {
-      setIsTesting(false);
-    }
-  };
+  const toolName = tool?.name;
+  useEffect(() => {
+    if (!toolName || !editable) return;
+    const handed = takeRebuildHandoff(toolName);
+    if (handed) openRebuild(handed);
+  }, [toolName, editable]);
 
   const startEditing = () => {
     if (!tool) return;
@@ -318,9 +309,22 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
           )}
           {!isPending && (
             <>
-              <Button size="sm" variant="outline" onClick={() => setTestOpen(true)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setTestOpen(true)}
+                disabled={!editable}
+                title={
+                  editable ? undefined : "Only synthesized tools and activities can be tested here"
+                }
+              >
                 <Play className="size-3.5 text-primary" /> Test
               </Button>
+              {editable && (
+                <Button size="sm" variant="outline" onClick={() => openRebuild(null)}>
+                  <Hammer className="size-3.5" /> Rebuild from error
+                </Button>
+              )}
               {editable && !editing && (
                 <Button size="sm" variant="outline" onClick={startEditing}>
                   <Pencil className="size-3.5" /> Edit
@@ -590,58 +594,24 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
         </DialogContent>
       </Dialog>
 
-      <Dialog open={testOpen} onOpenChange={setTestOpen}>
-        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto custom-scrollbar">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Play className="size-4 text-primary" /> Test Execution: "{tool.name}"
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Arguments (JSON)</label>
-              <Textarea
-                value={testArgs}
-                onChange={(e) => setTestArgs(e.target.value)}
-                rows={4}
-                className="mt-1 font-mono text-xs"
-                placeholder='{ "param": "value" }'
-              />
-            </div>
-            {testError && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red">
-                {testError}
-              </div>
-            )}
-            {testResult !== null && (
-              <div>
-                <p className="eyebrow mb-1.5">Execution Result</p>
-                <CodeBlock
-                  code={
-                    typeof testResult === "string"
-                      ? testResult
-                      : JSON.stringify(testResult, null, 2)
-                  }
-                  language="json"
-                />
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setTestOpen(false)}>
-              Close
-            </Button>
-            <Button onClick={handleRunTest} disabled={isTesting}>
-              {isTesting ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Play className="size-3.5" />
-              )}
-              {isTesting ? "Executing…" : "Execute"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {editable ? (
+        <>
+          <ToolTestDialog
+            key={`test-${tool.id}`}
+            tool={tool}
+            open={testOpen}
+            onOpenChange={setTestOpen}
+            onRebuild={openRebuild}
+          />
+          <RebuildFromErrorDialog
+            tool={tool}
+            open={rebuildOpen}
+            onOpenChange={setRebuildOpen}
+            prefill={rebuildPrefill}
+            detailPath={detailPath}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

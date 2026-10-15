@@ -55,6 +55,8 @@ class RequirementContext:
     valid_requirement: Optional[dict] = None
     #: Problems from the last smoke test, when the build itself was broken.
     smoke_problems: list[str] = field(default_factory=list)
+    #: Inputs a rebuilt version must run without error (the input it failed on).
+    must_succeed: list[dict] = field(default_factory=list)
 
     def emit(self, stage: str, message: str, **data) -> None:
         logger.info("[codegen:%s] %s: %s", self.need.name_hint or self.need.purpose, stage, message)
@@ -285,7 +287,8 @@ class SpecPreflightLayer:
 
     async def run(self, ctx: RequirementContext) -> None:
         taken = {str(t.get("name")) for t in (ctx.catalogue or []) if t.get("name")}
-        keep = ctx.need.origin == "runtime"
+        # A runtime recovery or a rebuild replaces a version of this very name.
+        keep = ctx.need.origin in ("runtime", "feedback")
         preflight.normalise(ctx.requirement, taken, keep_name=keep)
         issues = preflight.check(ctx.requirement) + ctx.profile.preflight(ctx.requirement)
         if issues:
@@ -348,6 +351,11 @@ class SmokeTestLayer:
         ctx.emit("smoke", f"running '{build.get('tool_name')}' v{build.get('version')} "
                           f"against its worked examples")
         problems = await smoke_test(ctx.requirement, build)
+        if ctx.must_succeed:
+            from app.layers.codegen.smoke import must_run
+
+            ctx.emit("smoke", "running it on the input it failed on before")
+            problems += await must_run(build, ctx.must_succeed)
         if not problems:
             ctx.emit("smoke", "passed")
             return
