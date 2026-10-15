@@ -144,7 +144,7 @@ class PolicyGateLayer:
         from app.prompts_codegen import POLICY_GATE_SYSTEM
 
         text = json.dumps({"intent": need.intent, "normalised": ctx.normalised,
-                           "draft": need.draft}, default=str)
+                           "draft": need.draft, "user_guidance": need.guidance}, default=str)
         try:
             raw = await decide(ctx.client, route="policy_gate", system=POLICY_GATE_SYSTEM,
                                user=text, phase="policy gate")

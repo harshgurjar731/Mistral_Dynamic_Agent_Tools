@@ -288,9 +288,14 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                     {"id": cap.id, "name": _agent_name(cap), "step": cap.name,
                      "error": f"{type(err).__name__}: {err}"}
                     for cap, err in failures])
-                choice = await plan_control.ask_build_failed(ctx, "agent", rows, attempts=attempts)
+                choice, message = await plan_control.ask_build_failed(ctx, "agent", rows,
+                                                                      attempts=attempts)
                 if choice == "retry":
-                    ctx.emit("status", f"Retrying {len(pending)} agent(s) at your request…")
+                    if message:
+                        for cap in pending:
+                            _add_guidance(cap, message)
+                    ctx.emit("status", f"Retrying {len(pending)} agent(s) at your request"
+                                       + (" with your changes…" if message else "…"))
                     continue
                 if choice == "rollback":
                     await plan_control.roll_back_plan(ctx, "agents could not be created")
@@ -318,6 +323,15 @@ class AgentProvisioningLayer(WorkflowStepLayer):
         )
 
         return await next(ctx)
+
+
+def _add_guidance(cap, message: str) -> None:
+    """Fold what the user asked for into the agent's instructions before a retry."""
+    spec = cap.spec
+    if spec is None:
+        return
+    base = (spec.agent_instructions or "").rstrip()
+    spec.agent_instructions = f"{base}\n\n## Additional guidance from the user\n{message}".strip()
 
 
 def _agent_name(cap) -> str:

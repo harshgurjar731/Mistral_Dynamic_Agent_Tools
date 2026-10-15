@@ -138,13 +138,19 @@ class ActivityGapLayer(WorkflowStepLayer):
             failing = [i for i, r in enumerate(resolutions) if not _resolved(r)]
             if not failing:
                 break
-            choice = await plan_control.ask_build_failed(ctx, "activity", plan_control.failure_rows([
+            choice, message = await plan_control.ask_build_failed(ctx, "activity", plan_control.failure_rows([
                 {"id": activity_caps[i].id, "name": resolutions[i].name or activity_caps[i].name,
                  "step": activity_caps[i].name, "error": resolutions[i].message,
                  "rolled_back": resolutions[i].rolled_back}
                 for i in failing]), attempts=attempts)
             if choice == "retry":
-                ctx.emit("status", f"Retrying {len(failing)} activity(ies) at your request…")
+                if message:
+                    # What the user wants changed: the spec author follows it,
+                    # and the safety screen sees it.
+                    for i in failing:
+                        needs[i].guidance.append(message)
+                ctx.emit("status", f"Retrying {len(failing)} activity(ies) at your request"
+                                   + (" with your changes…" if message else "…"))
                 await _retry(resolutions, needs, failing, ctx, relay)
                 attempts += 1
                 continue

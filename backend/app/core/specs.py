@@ -421,6 +421,9 @@ class CodeNeed:
     #: Neighbouring capabilities — what feeds this step and what reads its output.
     upstream: list[dict] = field(default_factory=list)
     downstream: list[dict] = field(default_factory=list)
+    #: What the user said when asking for a retry, oldest first — instructions
+    #: the specification must follow.
+    guidance: list[str] = field(default_factory=list)
     #: A partial specification a caller already has (e.g. the chat gap
     #: decision's parameters). Refined, not trusted.
     draft: dict = field(default_factory=dict)

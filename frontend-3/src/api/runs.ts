@@ -48,9 +48,11 @@ export const runsApi = {
   startSynthesis: (task: string, purpose: "tool" | "activity") =>
     post<BackgroundRun>("/api/runs/synthesis", { task, purpose }),
   /** Answer a question a running run is waiting on (its `decision_required` event). */
-  decide: (id: string, decisionId: string, choice: string) =>
+  /** `message` only counts for a choice the question lists in `message_options`. */
+  decide: (id: string, decisionId: string, choice: string, message?: string) =>
     post<{ accepted: boolean; choice: string }>(`/api/runs/${id}/decisions/${decisionId}`, {
       choice,
+      ...(message ? { message } : {}),
     }),
 };
 
@@ -76,6 +78,8 @@ export interface RunDecision {
   valid?: boolean;
   /** The workflow can be changed by revision while this waits. */
   revisable?: boolean;
+  /** Choices that accept a typed message (e.g. retry: what to change first). */
+  message_options?: string[];
   last_test?: { passed: boolean; summary: string } | null;
   /** Everything the plan has created so far — what a rollback removes. */
   created?: Array<{ kind: string; id: string; name?: string }>;

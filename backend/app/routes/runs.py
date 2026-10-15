@@ -129,12 +129,16 @@ async def cancel_run(run_id: str):
 
 class DecisionAnswer(BaseModel):
     choice: str = Field(min_length=1)
+    #: For a choice the question lists in ``message_options`` (e.g. retry):
+    #: what to change before trying again.
+    message: Optional[str] = Field(default=None, max_length=4000)
 
 
 @router.post("/runs/{run_id}/decisions/{decision_id}")
 async def answer_decision(run_id: str, decision_id: str, body: DecisionAnswer):
     """Answer a question a running run is waiting on (``decision_required`` event)."""
-    error = manager.answer(run_id, decision_id, body.choice)
+    data = {"message": body.message.strip()} if body.message and body.message.strip() else None
+    error = manager.answer(run_id, decision_id, body.choice, data)
     if error:
         if manager.live(run_id) is None and await manager.get(run_id) is None:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")

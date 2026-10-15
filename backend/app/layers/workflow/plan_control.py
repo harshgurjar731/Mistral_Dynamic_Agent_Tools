@@ -31,6 +31,10 @@ ROLLED_BACK_KEY = "plan_rolled_back"
 
 #: Choices offered when something could not be built.
 BUILD_FAILED_OPTIONS = ["retry", "rollback", "manual"]
+#: Choices that may carry a typed message (what to change before retrying).
+MESSAGE_OPTIONS = ["retry"]
+#: Longest message kept from an answer.
+MAX_MESSAGE_CHARS = 2000
 
 
 def record_created(ctx: PipelineContext, kind: str, ref: str, name: str, **extra) -> None:
@@ -50,29 +54,43 @@ def can_ask(ctx: PipelineContext) -> bool:
 async def ask_user(ctx: PipelineContext, kind: str, question: dict, *,
                    options: list[str], default: str) -> str:
     """The user's choice, or ``default`` when there is no one to ask."""
+    choice, _ = await ask_user_with_message(ctx, kind, question, options=options, default=default)
+    return choice
+
+
+async def ask_user_with_message(ctx: PipelineContext, kind: str, question: dict, *,
+                                options: list[str], default: str,
+                                message_options: Optional[list[str]] = None) -> tuple[str, str]:
+    """``(choice, message)``; the message is empty unless the user typed one."""
     if not can_ask(ctx):
         logger.info("No interactive run — taking '%s' for %s", default, kind)
-        return default
-    answer = await ctx.event_queue.ask(kind, {**question, "created": created(ctx)},
-                                       options=options, default=default)
-    return str(answer.get("choice") or default)
+        return default, ""
+    answer = await ctx.event_queue.ask(
+        kind, {**question, "created": created(ctx), "message_options": message_options or []},
+        options=options, default=default)
+    choice = str(answer.get("choice") or default)
+    message = str(answer.get("message") or "").strip()[:MAX_MESSAGE_CHARS]
+    return choice, (message if choice in (message_options or []) else "")
 
 
 async def ask_build_failed(ctx: PipelineContext, entity: str, failures: list[dict],
-                           *, attempts: int) -> str:
+                           *, attempts: int) -> tuple[str, str]:
     """Ask what to do about ``failures`` (rows with ``name`` and ``error``).
 
-    retry    — try building the failed entities again
+    Returns ``(choice, message)``:
+
+    retry    — try building the failed entities again; ``message`` is what the
+               user wants changed first (may be empty)
     rollback — remove everything this plan created and stop
     manual   — finish the workflow without them; build or write them later
     """
     noun = {"activity": "activity(ies)", "agent": "agent(s)"}.get(entity, entity)
-    return await ask_user(ctx, "build_failed", {
+    return await ask_user_with_message(ctx, "build_failed", {
         "entity": entity,
         "title": f"{len(failures)} {noun} could not be built after {attempts} attempt(s)",
         "failures": failures,
         "attempts": attempts,
-    }, options=BUILD_FAILED_OPTIONS, default="manual")
+    }, options=BUILD_FAILED_OPTIONS, default="manual", message_options=MESSAGE_OPTIONS)
 
 
 # ── Rollback ────────────────────────────────────────────────────────────────

@@ -44,6 +44,9 @@ class RequirementProfile:
     def author_user(self, *, need, normalised: dict, issues: list[str],
                     previous: Optional[CodeRequirement]) -> str:
         parts = [f"## Need\n{need.intent or normalised.get('summary', '')}"]
+        if need.guidance:
+            parts.append("## Guidance from the user (follow it; it overrides the need where they conflict)\n"
+                         + "\n".join(f"- {g}" for g in need.guidance))
         if need.goal:
             parts.append(f"## Wider goal\n{need.goal}")
         if normalised:

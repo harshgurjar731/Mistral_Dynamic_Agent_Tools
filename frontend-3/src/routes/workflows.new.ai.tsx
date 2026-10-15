@@ -41,7 +41,7 @@ import {
 } from "@/components/workflows/PlannerHistorySheet";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { BuildingBlockLegend } from "@/components/workflows/BuildingBlockLegend";
-import { PlanDecisionPanel } from "@/components/workflows/PlanDecisionPanel";
+import { PlanDecisionDialog } from "@/components/workflows/PlanDecisionPanel";
 import { RefineWorkspace } from "@/components/workflows/refine/RefineWorkspace";
 import {
   useWorkflowPrerequisites,
@@ -680,7 +680,7 @@ function AiPlannerPage() {
               ) : null}
             </div>
 
-            {decision && runId ? <PlanDecisionPanel runId={runId} decision={decision} /> : null}
+            {decision && runId ? <PlanDecisionDialog runId={runId} decision={decision} /> : null}
 
             {showPrereqs && workflowName ? (
               <WorkflowPrerequisites workflowName={workflowName} />

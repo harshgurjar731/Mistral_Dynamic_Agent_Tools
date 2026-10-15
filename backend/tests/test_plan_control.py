@@ -30,7 +30,11 @@ class FakeRun:
 
     async def ask(self, kind, question, *, options, default):
         self.questions.append({"kind": kind, "options": options, "default": default, **question})
-        return {"choice": self.choices.pop(0)}
+        answer = self.choices.pop(0)
+        # A (choice, message) pair answers with a typed message.
+        if isinstance(answer, tuple):
+            return {"choice": answer[0], "message": answer[1]}
+        return {"choice": answer}
 
     def payloads(self, event):
         return [json.loads(d) for e, d in self.events if e == event]
@@ -201,3 +205,64 @@ def test_without_an_interactive_run_nothing_is_asked(monkeypatch):
     ctx.event_queue = None
     asyncio.run(finalize_layers.WorkflowReviewLayer().process(ctx, _done))
     assert ctx.error is None and not any(e.event == "decision_required" for e in ctx.events)
+
+
+# ── Retry with a message ────────────────────────────────────────────────────
+
+
+def test_retry_message_becomes_guidance_for_the_failed_activity(monkeypatch):
+    seen = []
+    queue = [[_built("a1", 1), _failing("b1")], [_failing("b1")], [_built("b1", 2)]]
+
+    async def fake(needs, **kw):
+        seen.append([(n.capability["id"], list(n.guidance)) for n in needs])
+        return queue.pop(0)[: len(needs)]
+
+    import app.layers.codegen as codegen
+    monkeypatch.setattr(codegen, "resolve_code_needs", fake)
+    run = FakeRun(("retry", "Take the rate as a parameter instead of hard-coding 18%"))
+    asyncio.run(tool_gap_layer.ActivityGapLayer().process(_ctx(run, "a", "b"), _done))
+    assert run.questions[0]["message_options"] == ["retry"]
+    assert seen[-1] == [("b", ["Take the rate as a parameter instead of hard-coding 18%"])]
+    assert seen[0] == [("a", []), ("b", [])], "only the failed activity is changed"
+
+
+def test_a_message_with_another_choice_is_ignored(monkeypatch):
+    _resolver(monkeypatch, [_failing()], [_failing()])
+    run = FakeRun(("manual", "ignore me"))
+    ctx = asyncio.run(tool_gap_layer.ActivityGapLayer().process(_ctx(run, "gst"), _done))
+    assert ctx.error is None and run.payloads("activity_plan")[0]["failed"][0]["manual"]
+
+
+def test_guidance_reaches_the_spec_author():
+    from app.core.specs import CodeNeed
+    from app.layers.codegen.profiles import profile_for
+
+    need = CodeNeed(purpose="activity", intent="apply GST", guidance=["round half up"])
+    prompt = profile_for("activity").author_user(need=need, normalised={}, issues=[], previous=None)
+    assert "Guidance from the user" in prompt and "round half up" in prompt
+
+
+def test_agent_retry_message_is_added_to_its_instructions():
+    from app.core.specs import AgentSpec
+    from app.layers.workflow.provisioning_layer import _add_guidance
+
+    cap = CapabilitySpec(id="letter", name="letter")
+    cap.spec = AgentSpec(agent_name="Writer", agent_instructions="Write letters.")
+    _add_guidance(cap, "Use a formal tone")
+    assert cap.spec.agent_instructions.endswith("Use a formal tone")
+    assert cap.spec.agent_instructions.startswith("Write letters.")
+
+
+def test_live_run_answer_carries_the_message():
+    async def go():
+        run = LiveRun(id="r3", kind="workflow_plan", title="t", request={})
+        task = asyncio.create_task(run.ask("build_failed", {}, options=["retry", "manual"],
+                                           default="manual"))
+        await asyncio.sleep(0)
+        run.answer(run.payload("decision_required")["id"], "retry", {"message": "use v2 API"})
+        return run, await task
+
+    run, answer = asyncio.run(go())
+    assert answer == {"choice": "retry", "message": "use v2 API"}
+    assert run.payload("decision_made")["message"] == "use v2 API"
