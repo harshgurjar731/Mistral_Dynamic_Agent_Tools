@@ -3,6 +3,7 @@ import { Blocks, Bot, GripVertical, Plus, Search, Sparkles, X } from "lucide-rea
 import type { BuilderCatalog, CatalogAgent, CatalogTool, StepType } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ResizeHandle, useResizablePanel } from "@/components/shared/ResizeHandle";
 import { STEP_TYPE_IDENTITY } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { MAX_STEPS } from "./builderModel";
@@ -82,6 +83,13 @@ export function BuilderPalette({
 }) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const panel = useResizablePanel({
+    storageKey: "builder-palette",
+    defaultWidth: 288,
+    min: 240,
+    max: 520,
+    edge: "right",
+  });
 
   useEffect(() => {
     if (open) searchRef.current?.focus({ preventScroll: true });
@@ -118,12 +126,16 @@ export function BuilderPalette({
         }
       }}
       className={cn(
-        "glass-elevated pointer-events-auto absolute bottom-3 left-3 top-16 flex w-72 origin-top-left flex-col overflow-hidden rounded-xl border border-border-strong shadow-2xl backdrop-blur-xl transition-all duration-200 ease-out",
+        "glass-elevated pointer-events-auto absolute bottom-3 left-3 top-16 flex origin-top-left flex-col overflow-hidden rounded-xl border border-border-strong shadow-2xl backdrop-blur-xl ease-out",
+        !panel.dragging && "transition-all duration-200",
         open
           ? "translate-x-0 scale-100 opacity-100"
           : "pointer-events-none -translate-x-2 scale-95 opacity-0",
       )}
+      style={{ width: panel.width ?? 288 }}
     >
+      {/* Inset: the panel clips its overflow for the rounded corners. */}
+      <ResizeHandle panel={panel} label="Resize palette" inset />
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
         <div className="min-w-0">
           <p className="font-display text-sm font-bold text-foreground">Palette</p>

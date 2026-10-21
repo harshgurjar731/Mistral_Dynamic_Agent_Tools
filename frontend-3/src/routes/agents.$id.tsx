@@ -33,6 +33,14 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
 import { Slider } from "@/components/ui/slider";
+import {
+  ModelCapabilities,
+  ModelPicker,
+  findModel,
+  modelSupports,
+} from "@/components/shared/ModelPicker";
+import { ResizeHandle, useResizablePanel } from "@/components/shared/ResizeHandle";
+import { useModelConfig } from "@/lib/models";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import type { ChatMessagePayload } from "@/api";
@@ -136,6 +144,15 @@ function AgentsIdPage() {
   const [configOpen, setConfigOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  // Config and Rules open one at a time, in the same slot, so they share a width.
+  const sidePanel = useResizablePanel({
+    storageKey: "agent-side-panel",
+    defaultWidth: 384,
+    min: 320,
+    max: 760,
+    edge: "left",
+  });
+  const { choices: modelChoices, allModels } = useModelConfig();
 
   /* ── rules ───────────────────────────────────────────────────────── */
   const agentRulesQuery = useQuery({
@@ -465,6 +482,24 @@ function AgentsIdPage() {
   const connectorOptions = connectorsQuery.data?.items ?? [];
   const libraryOptions = librariesQuery.data ?? [];
 
+  // What the chosen model can do decides which agent features are on offer.
+  const canUseTools = modelSupports(allModels, form.model, "function_calling");
+  const attachedTooling = form.toolNames.length + form.connectorIds.length + form.libraryIds.length;
+  const modelWarnings = [
+    ...(!canUseTools && attachedTooling
+      ? [
+          `${form.model} has no tool use — the attached tools, connectors and libraries will not be called. Pick a model with tool use, or detach them.`,
+        ]
+      : []),
+    ...(form.model !== agent.model && !modelSupports(allModels, form.model, "vision")
+      ? [`${form.model} has no vision — image attachments will be turned off for this agent.`]
+      : []),
+  ];
+  const noToolUseHint = `${form.model} has no tool use — choose a model with tool use to attach one.`;
+  // Chat goes to the saved agent, so the saved model decides image support.
+  const savedModelHasVision = modelSupports(allModels, agent.model, "vision");
+  const contextWindow = findModel(allModels, form.model)?.max_context_length ?? null;
+
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col md:h-dvh">
       {/* ── Top Bar ── */}
@@ -634,17 +669,26 @@ function AgentsIdPage() {
                     onClear={() => setAttachment(null)}
                     uploading={uploading}
                     setUploading={setUploading}
-                    disabled={isProcessing}
+                    disabled={isProcessing || !savedModelHasVision}
                   />
                 }
               />
+              {!savedModelHasVision ? (
+                <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">
+                  Image attachments are off — {agent.model} has no vision.
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
 
         {configOpen ? (
-          <aside className="hidden w-96 shrink-0 overflow-y-auto border-l border-border bg-background/40 backdrop-blur-md custom-scrollbar lg:block">
-            <div className="space-y-4 p-5">
+          <aside
+            className="relative hidden shrink-0 border-l border-border bg-background/40 backdrop-blur-md lg:block"
+            style={{ width: sidePanel.width ?? 384 }}
+          >
+            <ResizeHandle panel={sidePanel} label="Resize configuration" />
+            <div className="custom-scrollbar h-full space-y-4 overflow-y-auto p-5">
               <GlassPanel tone="raised">
                 <GlassPanelHeader
                   title="Agent Configuration"
@@ -676,10 +720,20 @@ function AgentsIdPage() {
                     />
                   </Field>
                   <Field label="Model">
-                    <input
+                    <ModelPicker
                       value={form.model}
-                      onChange={(e) => setForm({ ...form, model: e.target.value })}
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      onChange={(model) => setForm({ ...form, model })}
+                      models={allModels}
+                      pinned={modelChoices}
+                      capability="function_calling"
+                      allowListOnly
+                      className="mt-1 rounded-lg"
+                    />
+                    <ModelCapabilities
+                      model={form.model}
+                      models={allModels}
+                      warnings={modelWarnings}
+                      className="mt-2"
                     />
                   </Field>
                   <Field label="Instructions">
@@ -770,8 +824,13 @@ function AgentsIdPage() {
                   />
                   <NumberField
                     label="Max Tokens"
-                    placeholder="Default (model limit)"
+                    placeholder={
+                      contextWindow
+                        ? `Default (model limit · ${contextWindow.toLocaleString()})`
+                        : "Default (model limit)"
+                    }
                     value={form.max_tokens}
+                    max={contextWindow ?? undefined}
                     onChange={(v) => setForm({ ...form, max_tokens: v })}
                   />
                   <NumberField
@@ -824,15 +883,19 @@ function AgentsIdPage() {
                   )}
                   <select
                     value=""
+                    disabled={!canUseTools}
+                    title={canUseTools ? undefined : noToolUseHint}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v && !form.toolNames.includes(v)) {
                         setForm({ ...form, toolNames: [...form.toolNames, v] });
                       }
                     }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="">Attach a tool…</option>
+                    <option value="">
+                      {canUseTools ? "Attach a tool…" : "Needs a model with tool use"}
+                    </option>
                     {toolOptions
                       .filter((t) => !form.toolNames.includes(t.name))
                       .map((t) => (
@@ -871,15 +934,19 @@ function AgentsIdPage() {
                   )}
                   <select
                     value=""
+                    disabled={!canUseTools}
+                    title={canUseTools ? undefined : noToolUseHint}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v && !form.connectorIds.includes(v)) {
                         setForm({ ...form, connectorIds: [...form.connectorIds, v] });
                       }
                     }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="">Attach a connector…</option>
+                    <option value="">
+                      {canUseTools ? "Attach a connector…" : "Needs a model with tool use"}
+                    </option>
                     {connectorOptions
                       .filter((c) => !form.connectorIds.includes(c.id))
                       .map((c) => (
@@ -917,15 +984,19 @@ function AgentsIdPage() {
                   )}
                   <select
                     value=""
+                    disabled={!canUseTools}
+                    title={canUseTools ? undefined : noToolUseHint}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v && !form.libraryIds.includes(v)) {
                         setForm({ ...form, libraryIds: [...form.libraryIds, v] });
                       }
                     }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="">Attach a library…</option>
+                    <option value="">
+                      {canUseTools ? "Attach a library…" : "Needs a model with tool use"}
+                    </option>
                     {libraryOptions
                       .filter((l) => !form.libraryIds.includes(l.id))
                       .map((l) => (
@@ -974,8 +1045,12 @@ function AgentsIdPage() {
         ) : null}
 
         {activityOpen ? (
-          <aside className="hidden w-96 shrink-0 overflow-y-auto border-l border-border bg-background/40 backdrop-blur-md custom-scrollbar lg:block">
-            <div className="space-y-4 p-5">
+          <aside
+            className="relative hidden shrink-0 border-l border-border bg-background/40 backdrop-blur-md lg:block"
+            style={{ width: sidePanel.width ?? 384 }}
+          >
+            <ResizeHandle panel={sidePanel} label="Resize rule activity" />
+            <div className="custom-scrollbar h-full space-y-4 overflow-y-auto p-5">
               <GlassPanel tone="raised">
                 <GlassPanelHeader
                   title="Rule activity"
@@ -1082,11 +1157,13 @@ function NumberField({
   label,
   placeholder,
   value,
+  max,
   onChange,
 }: {
   label: string;
   placeholder: string;
   value: number | null;
+  max?: number | undefined;
   onChange: (v: number | null) => void;
 }) {
   return (
@@ -1094,6 +1171,8 @@ function NumberField({
       <label className="text-xs font-medium text-muted-foreground">{label}</label>
       <input
         type="number"
+        min={0}
+        max={max}
         value={value ?? ""}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}

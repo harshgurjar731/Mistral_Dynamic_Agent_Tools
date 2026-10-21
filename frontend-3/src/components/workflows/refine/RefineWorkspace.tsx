@@ -6,9 +6,10 @@
  * plan has produced one — where `origin="planner"` marks the turns and
  * publishing is left to the planner's own Accept step.
  */
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { History, Loader2, Rocket, Undo2 } from "lucide-react";
 import { ValidationSummary } from "@/components/workflows/ValidationPanel";
+import { ResizeHandle, useResizablePanel } from "@/components/shared/ResizeHandle";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,13 @@ export function RefineWorkspace({
 }) {
   const refine = useWorkflowRefine(workflowName, origin);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const conversationPanel = useResizablePanel({
+    storageKey: "refine-conversation",
+    defaultWidth: 400,
+    min: 320,
+    max: 820,
+    edge: "right",
+  });
   const { definition, validation, versions } = refine;
 
   if (refine.workflow.isError) {
@@ -130,12 +138,22 @@ export function RefineWorkspace({
       </div>
 
       {/* ── Conversation | Canvas ── */}
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(280px,45%)_1fr] lg:grid-cols-[minmax(340px,420px)_1fr] lg:grid-rows-1">
-        <RefineConversation
-          refine={refine}
-          className="order-2 min-h-0 border-t border-border/40 lg:order-1 lg:border-t-0 lg:border-r"
-        />
-        <RefineCanvas refine={refine} className="order-1 lg:order-2" />
+      <div
+        className="grid min-h-0 flex-1 grid-rows-[minmax(280px,45%)_1fr] lg:grid-cols-[var(--refine-w)_minmax(0,1fr)] lg:grid-rows-1"
+        style={{ "--refine-w": `${conversationPanel.width ?? 400}px` } as CSSProperties}
+      >
+        <div className="relative order-2 flex min-h-0 min-w-0 lg:order-1">
+          <RefineConversation
+            refine={refine}
+            className="min-w-0 flex-1 border-t border-border/40 lg:border-t-0 lg:border-r"
+          />
+          <ResizeHandle
+            panel={conversationPanel}
+            label="Resize conversation"
+            className="hidden lg:flex"
+          />
+        </div>
+        <RefineCanvas refine={refine} className="order-1 min-w-0 lg:order-2" />
       </div>
 
       <VersionHistorySheet refine={refine} open={versionsOpen} onOpenChange={setVersionsOpen} />

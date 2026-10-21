@@ -6,7 +6,16 @@
  * one-click prompts drawn from what is wrong with the workflow right now.
  */
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Crosshair, Lightbulb, Loader2, MessageSquareText, Wrench, X } from "lucide-react";
+import {
+  ArrowUp,
+  Crosshair,
+  Lightbulb,
+  Loader2,
+  MessageSquareText,
+  Sparkles,
+  Wrench,
+  X,
+} from "lucide-react";
 import type { RevisionSuggestion, WorkflowRevision } from "@/types";
 import { cn } from "@/lib/utils";
 import { AssistantTurn, PendingTurn, UserTurn } from "./RevisionMessages";
@@ -68,11 +77,34 @@ export function RefineConversation({
       ? `What should change about ${focus.join(", ")}?`
       : "Describe what to change — e.g. “drop the weather check and send the report to legal first”";
 
+  const openProposals = revisions.filter((r) => r.status === "proposed").length;
+
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
+      {/* ── Header ── */}
+      <div className="flex items-center gap-2.5 border-b border-border/40 px-4 py-2.5">
+        <span className="grid size-7 place-items-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+          <Sparkles className="size-3.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-tight text-foreground">Refine with AI</p>
+          <p className="truncate text-[10px] text-muted-foreground">
+            {revisions.length
+              ? `${revisions.length} request${revisions.length === 1 ? "" : "s"}` +
+                (openProposals ? ` · ${openProposals} waiting for review` : "")
+              : "Describe a change; review it before it is saved"}
+          </p>
+        </div>
+        {busy ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
+            <Loader2 className="size-2.5 animate-spin" /> Thinking
+          </span>
+        ) : null}
+      </div>
+
       <div
         ref={scrollRef}
-        className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4"
+        className="custom-scrollbar min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-5"
       >
         {refine.revisionsLoading ? (
           <div className="space-y-3">
@@ -83,7 +115,7 @@ export function RefineConversation({
           <EmptyConversation suggestions={suggestions} onPick={(p) => setDraft(p)} />
         ) : (
           revisions.map((rev, i) => (
-            <div key={rev.id} className="space-y-3">
+            <div key={rev.id} className="space-y-4">
               <UserTurn
                 instruction={rev.instruction}
                 focus={rev.focus_step_ids}
@@ -107,7 +139,7 @@ export function RefineConversation({
           ))
         )}
         {pending ? (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <UserTurn instruction={pending.instruction} focus={pending.focus} />
             <PendingTurn />
           </div>

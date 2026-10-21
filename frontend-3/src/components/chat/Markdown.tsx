@@ -15,17 +15,22 @@ export const Markdown = memo(function Markdown({
   return (
     <div
       className={cn(
-        "prose-invert max-w-none text-sm leading-relaxed text-foreground/90",
+        "max-w-none min-w-0 text-sm leading-relaxed break-words text-foreground/90",
+        // The bubble already pads its content; outer margins would double it.
+        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
-        "[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
-        "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
-        "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold",
-        "[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5",
-        "[&_li]:my-1",
+        "[&_strong]:font-semibold [&_strong]:text-foreground [&_em]:italic",
+        "[&_h1]:mt-5 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-foreground",
+        "[&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:border-b [&_h2]:border-border/60 [&_h2]:pb-1 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground",
+        "[&_h3]:mt-4 [&_h3]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-foreground",
+        "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-sm [&_h4]:font-medium [&_h4]:text-foreground",
+        "[&_p]:my-2.5 [&_ul]:my-2.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2.5 [&_ol]:list-decimal [&_ol]:pl-5",
+        "[&_li]:my-1 [&_li]:pl-0.5 [&_li::marker]:text-muted-foreground [&_li>p]:my-1",
+        "[&_li_ul]:my-1 [&_li_ol]:my-1",
         "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
-        "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
-        "[&_th]:border [&_th]:border-border [&_th]:bg-surface [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left",
-        "[&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5",
+        "[&_table]:w-full [&_table]:border-collapse [&_table]:text-xs",
+        "[&_th]:border [&_th]:border-border [&_th]:bg-surface [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
+        "[&_td]:border [&_td]:border-border [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:align-top",
         "[&_hr]:my-4 [&_hr]:border-border",
         className,
       )}
@@ -33,6 +38,14 @@ export const Markdown = memo(function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          // Wide tables scroll inside the bubble instead of stretching it.
+          table({ children }) {
+            return (
+              <div className="custom-scrollbar my-3 overflow-x-auto">
+                <table>{children}</table>
+              </div>
+            );
+          },
           code({ className: codeClass, children, ...props }) {
             const match = /language-(\w+)/.exec(codeClass ?? "");
             const text = String(children).replace(/\n$/, "");

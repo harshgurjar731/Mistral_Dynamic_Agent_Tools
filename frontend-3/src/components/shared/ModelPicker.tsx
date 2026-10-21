@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronsUpDown, PencilLine } from "lucide-react";
+import { AlertTriangle, Check, ChevronsUpDown, PencilLine, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -59,10 +59,19 @@ function Facts({ m }: { m: PickerModel }) {
   );
 }
 
+/** A catalog card by id or alias. */
+export function findModel(models: PickerModel[], id: string): PickerModel | undefined {
+  return models.find((m) => m.id === id || m.aliases.includes(id));
+}
+
 /**
  * Searchable model dropdown. Lists pinned models first, then every model the
  * account can call — the ones suited to ``capability`` before the rest — and
  * accepts any typed model id.
+ *
+ * With ``allowListOnly`` it offers the pinned models (the Settings page's
+ * allow list) and nothing else; a current value outside the list is still
+ * shown, flagged, so it is never silently swapped out.
  */
 export function ModelPicker({
   value,
@@ -71,6 +80,7 @@ export function ModelPicker({
   pinned = [],
   capability,
   allowNone = false,
+  allowListOnly = false,
   disabled = false,
   className,
   placeholder = "Choose a model",
@@ -81,6 +91,7 @@ export function ModelPicker({
   pinned?: { value: string; label: string }[];
   capability?: string | null;
   allowNone?: boolean;
+  allowListOnly?: boolean;
   disabled?: boolean;
   className?: string;
   placeholder?: string;
@@ -94,6 +105,7 @@ export function ModelPicker({
       byId.set(m.id, m);
       for (const a of m.aliases) if (!byId.has(a)) byId.set(a, m);
     }
+    if (allowListOnly) return { byId, pinnedRows: pinned, suited: [], other: [] };
     const pinnedIds = new Set(pinned.map((p) => p.value));
     const rest = models.filter((m) => !pinnedIds.has(m.id));
     return {
@@ -102,7 +114,10 @@ export function ModelPicker({
       suited: rest.filter((m) => fits(m, capability) && !m.deprecation),
       other: rest.filter((m) => !fits(m, capability) || m.deprecation),
     };
-  }, [models, pinned, capability]);
+  }, [models, pinned, capability, allowListOnly]);
+
+  const outsideAllowList =
+    allowListOnly && !!value && value !== "none" && !pinned.some((p) => p.value === value);
 
   const pick = (v: string) => {
     onChange(v);
@@ -111,7 +126,8 @@ export function ModelPicker({
   };
 
   const typed = search.trim();
-  const isKnown = typed === "" || byId.has(typed) || pinned.some((p) => p.value === typed);
+  const isKnown =
+    allowListOnly || typed === "" || byId.has(typed) || pinned.some((p) => p.value === typed);
   const pinnedLabel = pinned.find((p) => p.value === value)?.label;
   const capLabel = capability ? CAPABILITY_LABEL[capability] : null;
 
@@ -135,6 +151,9 @@ export function ModelPicker({
               {pinnedLabel && pinnedLabel !== value ? (
                 <span className="ml-2 text-muted-foreground">{pinnedLabel}</span>
               ) : null}
+              {outsideAllowList ? (
+                <span className="ml-2 text-[10px] text-amber">not on allow list</span>
+              ) : null}
             </span>
           ) : (
             <span className="flex-1 text-muted-foreground">{placeholder}</span>
@@ -151,10 +170,22 @@ export function ModelPicker({
           <CommandInput
             value={search}
             onValueChange={setSearch}
-            placeholder="Search models or type any model id…"
+            placeholder={
+              allowListOnly ? "Search allowed models…" : "Search models or type any model id…"
+            }
           />
           <CommandList className="max-h-[320px]">
             <CommandEmpty>No models match.</CommandEmpty>
+            {outsideAllowList ? (
+              <CommandGroup heading="Current">
+                <CommandItem value={value} onSelect={() => pick(value)}>
+                  <Check className="size-3.5 opacity-100" />
+                  <span className="font-mono">{value}</span>
+                  <span className="text-[10px] text-amber">not on allow list</span>
+                  {byId.get(value) ? <Facts m={byId.get(value)!} /> : null}
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
             {!isKnown ? (
               <CommandGroup heading="Custom">
                 <CommandItem value={`custom:${typed}`} onSelect={() => pick(typed)}>
@@ -174,7 +205,7 @@ export function ModelPicker({
               </CommandGroup>
             ) : null}
             {pinnedRows.length ? (
-              <CommandGroup heading="Pinned">
+              <CommandGroup heading={allowListOnly ? "Allowed models" : "Pinned"}>
                 {pinnedRows.map((p) => {
                   const card = byId.get(p.value);
                   return (
@@ -243,8 +274,99 @@ export function ModelPicker({
         </Command>
         <p className="border-t border-border/60 px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
           R reasoning · T tool use · V vision · context window
+          {allowListOnly ? (
+            <span className="mt-0.5 block font-sans">
+              Allow list is set on Settings → Models → Pinned models.
+            </span>
+          ) : null}
         </p>
       </PopoverContent>
     </Popover>
   );
+}
+
+const CAPABILITY_ROWS: { flag: string; label: string }[] = [
+  { flag: "completion_chat", label: "Chat" },
+  { flag: "function_calling", label: "Tool use" },
+  { flag: "vision", label: "Vision" },
+  { flag: "reasoning", label: "Reasoning" },
+  { flag: "ocr", label: "OCR" },
+];
+
+/**
+ * What the selected model can do, read from the catalog — so a model change
+ * shows at once which agent features it gains or loses. ``warnings`` are the
+ * caller's own consequences (e.g. "tools are attached but…").
+ */
+export function ModelCapabilities({
+  model,
+  models,
+  warnings = [],
+  className,
+}: {
+  model: string;
+  models: PickerModel[];
+  warnings?: string[];
+  className?: string;
+}) {
+  const card = findModel(models, model);
+  return (
+    <div className={cn("space-y-2", className)}>
+      {card ? (
+        <div className="flex flex-wrap items-center gap-1">
+          {CAPABILITY_ROWS.map(({ flag, label }) => {
+            const on = Boolean(card.capabilities[flag]);
+            return (
+              <span
+                key={flag}
+                title={
+                  on ? `${model} supports ${label.toLowerCase()}` : `No ${label.toLowerCase()}`
+                }
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+                  on
+                    ? "border-emerald/30 bg-emerald/10 text-emerald"
+                    : "border-border/60 text-muted-foreground/60 line-through decoration-muted-foreground/40",
+                )}
+              >
+                {on ? <Check className="size-2.5" /> : <X className="size-2.5" />}
+                {label}
+              </span>
+            );
+          })}
+          {card.max_context_length ? (
+            <span className="rounded-full border border-border/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {ctx(card.max_context_length)} context
+            </span>
+          ) : null}
+          {card.deprecation ? (
+            <span className="rounded-full border border-amber/30 bg-amber/10 px-1.5 py-0.5 text-[10px] text-amber">
+              deprecated
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground">
+          {models.length
+            ? `${model} is not in the Mistral model catalog — capabilities unknown.`
+            : "Capabilities unknown until the model catalog is fetched (Settings → Models)."}
+        </p>
+      )}
+      {warnings.map((w) => (
+        <p
+          key={w}
+          className="flex gap-1.5 rounded-lg border border-amber/25 bg-amber/5 px-2 py-1.5 text-[10px] leading-relaxed text-amber"
+        >
+          <AlertTriangle className="mt-px size-3 shrink-0" />
+          {w}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** Whether ``model`` has ``flag``; unknown models are given the benefit of the doubt. */
+export function modelSupports(models: PickerModel[], model: string, flag: string): boolean {
+  const card = findModel(models, model);
+  return card ? Boolean(card.capabilities[flag]) : true;
 }

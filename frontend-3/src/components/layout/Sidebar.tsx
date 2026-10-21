@@ -16,17 +16,22 @@ import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import { useUiConfig } from "@/lib/uiConfig";
+import { ResizeHandle, type ResizablePanel } from "@/components/shared/ResizeHandle";
 
+/** Width comes from `--nav-w`, set by the app shell from `collapsed` and `resize`. */
 export function Sidebar({
   collapsed,
   onToggleCollapsed,
   mobileOpen,
   onCloseMobile,
+  resize,
 }: {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** Present while expanded: the rail can then be dragged wider or narrower. */
+  resize?: ResizablePanel | undefined;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const ui = useUiConfig();
@@ -37,15 +42,14 @@ export function Sidebar({
   const removeSession = useSessionStore((s) => s.removeSession);
   const renameSession = useSessionStore((s) => s.renameSession);
 
-  const generalSessions = useMemo(
-    () => sessions.filter((s) => s.type === "general"),
-    [sessions],
-  );
+  const generalSessions = useMemo(() => sessions.filter((s) => s.type === "general"), [sessions]);
 
   const matches = (to: string) =>
     to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
   // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
-  const activeTo = NAV_ITEMS.filter((i) => matches(i.to)).sort((a, b) => b.to.length - a.to.length)[0]?.to;
+  const activeTo = NAV_ITEMS.filter((i) => matches(i.to)).sort(
+    (a, b) => b.to.length - a.to.length,
+  )[0]?.to;
   const isActive = (to: string) => to === activeTo;
 
   const showLabels = !collapsed;
@@ -63,11 +67,16 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-sidebar backdrop-blur-xl transition-[width,transform] duration-300 ease-out",
-          collapsed ? "w-16" : "w-[248px]",
+          "fixed inset-y-0 left-0 z-50 flex w-[var(--nav-w)] flex-col border-r border-border bg-sidebar backdrop-blur-xl",
+          resize?.dragging
+            ? "transition-transform duration-300 ease-out"
+            : "transition-[width,transform] duration-300 ease-out",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
+        {resize ? (
+          <ResizeHandle panel={resize} label="Resize navigation" className="hidden md:flex" />
+        ) : null}
         <div className="flex h-[73px] items-center gap-2.5 border-b border-border px-4">
           <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary shadow-sm">
             <Boxes className="size-5 text-primary-foreground" />

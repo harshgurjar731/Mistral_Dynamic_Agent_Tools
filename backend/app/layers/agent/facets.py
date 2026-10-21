@@ -314,8 +314,9 @@ class IdentityLayer(AgentDecisionLayer):
         if tier not in _VALID_TIERS:
             tier = "domain"
 
-        # An explicit user choice outranks the model's classification — the
-        # tier selector in the UI exists precisely to override this.
+        # An explicit tier from an API caller outranks the model's
+        # classification. The orchestrator UI no longer sends one: the tier is
+        # this layer's decision.
         if ctx.tier:
             tier = ctx.tier
 

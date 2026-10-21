@@ -22,6 +22,9 @@ import { useSessionStore } from "@/stores/sessions";
 import type { ChatMessagePayload } from "@/api";
 import type { Message, UploadResult } from "@/types";
 import { ModelPicker } from "@/components/shared/ModelPicker";
+import { ResizeHandle, useResizablePanel } from "@/components/shared/ResizeHandle";
+
+const SETTINGS_WIDTH = 288;
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -69,8 +72,12 @@ function PlaygroundPage() {
   );
 
   const [input, setInput] = useState("");
-  const { choices: modelChoices, allModels, chatDefaultModel, isLoaded: modelsLoaded } =
-    useModelConfig();
+  const {
+    choices: modelChoices,
+    allModels,
+    chatDefaultModel,
+    isLoaded: modelsLoaded,
+  } = useModelConfig();
   const [model, setModel] = useState(chatDefaultModel);
   // Adopt the configured default once it arrives, unless the user already picked.
   const modelTouched = useRef(false);
@@ -85,6 +92,14 @@ function PlaygroundPage() {
   const [topP, setTopP] = useState(1.0);
   const [safePrompt, setSafePrompt] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsPanel = useResizablePanel({
+    storageKey: "playground-settings",
+    defaultWidth: SETTINGS_WIDTH,
+    min: 260,
+    max: 560,
+    edge: "left",
+  });
+  const settingsWidth = settingsPanel.width ?? SETTINGS_WIDTH;
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [attachment, setAttachment] = useState<UploadResult | null>(null);
@@ -344,11 +359,14 @@ function PlaygroundPage() {
         {/* ── Settings Panel ── */}
         <aside
           className={cn(
-            "hidden shrink-0 border-l border-border transition-all duration-300 ease-out lg:block",
-            settingsOpen ? "w-72 opacity-100" : "w-0 overflow-hidden opacity-0",
+            "relative hidden shrink-0 border-l border-border lg:block",
+            !settingsPanel.dragging && "transition-all duration-300 ease-out",
+            settingsOpen ? "opacity-100" : "overflow-hidden opacity-0",
           )}
+          style={{ width: settingsOpen ? settingsWidth : 0 }}
         >
-          <div className="flex h-full w-72 flex-col p-4">
+          {settingsOpen ? <ResizeHandle panel={settingsPanel} label="Resize settings" /> : null}
+          <div className="flex h-full flex-col p-4" style={{ width: settingsWidth }}>
             <div className="glass-elevated flex-1 rounded-2xl p-4">
               {/* Header */}
               <div className="flex items-center justify-between">

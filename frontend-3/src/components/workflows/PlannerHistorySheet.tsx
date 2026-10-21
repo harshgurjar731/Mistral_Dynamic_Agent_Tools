@@ -73,7 +73,10 @@ export function PlannerHistorySheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-[400px] max-w-[100vw] flex-col gap-0 p-0 sm:max-w-[400px]">
+      <SheetContent
+        resizeKey="planner-history"
+        className="flex w-[400px] max-w-[100vw] flex-col gap-0 p-0 sm:max-w-[400px]"
+      >
         <div className="flex items-center gap-2 border-b border-border px-6 py-4">
           <Clock className="size-4 text-primary" />
           <SheetTitle className="text-sm font-semibold text-foreground">

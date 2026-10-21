@@ -8,7 +8,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
@@ -19,6 +19,11 @@ import { BackgroundRuns } from "@/components/runs/BackgroundRuns";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { AppConfigApplier } from "@/components/layout/AppConfigApplier";
 import { useUiConfig } from "@/lib/uiConfig";
+import { useResizablePanel } from "@/components/shared/ResizeHandle";
+import { cn } from "@/lib/utils";
+
+const NAV_COLLAPSED_WIDTH = 64;
+const NAV_DEFAULT_WIDTH = 248;
 
 function NotFoundComponent() {
   return (
@@ -146,9 +151,22 @@ function AppShell() {
     if (!touched) setCollapsed(ui.UI_SIDEBAR_COLLAPSED);
   }, [ui.UI_SIDEBAR_COLLAPSED, touched]);
 
+  const navPanel = useResizablePanel({
+    storageKey: "nav",
+    defaultWidth: NAV_DEFAULT_WIDTH,
+    min: 200,
+    max: 400,
+    edge: "right",
+  });
+  // One variable drives both the rail's width and the content's offset.
+  const navWidth = collapsed ? NAV_COLLAPSED_WIDTH : (navPanel.width ?? NAV_DEFAULT_WIDTH);
+
   return (
     <>
-      <div className="relative min-h-screen bg-background">
+      <div
+        className="relative min-h-screen bg-background"
+        style={{ "--nav-w": `${navWidth}px` } as CSSProperties}
+      >
         {ui.UI_BACKGROUND_EFFECTS ? (
           <>
             <div className="app-atmosphere" aria-hidden />
@@ -164,9 +182,16 @@ function AppShell() {
           }}
           mobileOpen={mobileOpen}
           onCloseMobile={() => setMobileOpen(false)}
+          resize={collapsed ? undefined : navPanel}
         />
 
-        <div className={cnMain(collapsed)}>
+        <div
+          className={cn(
+            "relative z-10 flex min-h-screen flex-col md:pl-[var(--nav-w)]",
+            // Follow the pointer exactly while dragging; ease only on toggle.
+            !navPanel.dragging && "transition-[padding] duration-300 ease-out",
+          )}
+        >
           <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur-xl md:hidden">
             <button
               type="button"
@@ -193,17 +218,7 @@ function AppShell() {
         </div>
       </div>
       <BackgroundRuns />
-      <Toaster
-        position={ui.UI_TOAST_POSITION as "top-right"}
-        theme="dark"
-      />
+      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme="dark" />
     </>
   );
-}
-
-function cnMain(collapsed: boolean) {
-  return [
-    "relative z-10 flex min-h-screen flex-col transition-[padding] duration-300 ease-out",
-    collapsed ? "md:pl-[64px]" : "md:pl-[248px]",
-  ].join(" ");
 }

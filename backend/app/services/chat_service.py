@@ -9,6 +9,7 @@ import logging
 from functools import partial
 from typing import AsyncGenerator
 from mistralai.client import Mistral
+from app.core.events import SSEEvent
 from app.exceptions import MistralAPIError
 from app.services.sdk_offload import iter_sync_stream
 from app.services.tool_registry import execute_tool
@@ -193,10 +194,15 @@ async def stream_chat_completion(client: Mistral, data: dict) -> AsyncGenerator[
             kwargs["model"] = settings.CHAT_DEFAULT_MODEL
         if data.get("temperature") is not None:
             kwargs["temperature"] = data["temperature"]
+        if data.get("top_p") is not None:
+            kwargs["top_p"] = data["top_p"]
         if data.get("max_tokens") is not None:
             kwargs["max_tokens"] = data["max_tokens"]
         if data.get("tools"):
             kwargs["tools"] = data["tools"]
+        # Agents carry their own system prompt, so safe_prompt is chat-only.
+        if data.get("safe_prompt") and "agent_id" not in kwargs:
+            kwargs["safe_prompt"] = True
 
         # Both opening the stream and pulling each chunk block. Iterating the
         # SDK stream directly stalled the event loop once per token, which is
@@ -215,12 +221,13 @@ async def stream_chat_completion(client: Mistral, data: dict) -> AsyncGenerator[
                             content += c
             
             if content:
-                # Replace newlines with a literal '\n' string to avoid breaking SSE 'data:' parsing
-                content = content.replace("\n", "\\n")
-                yield f"event: text_chunk\ndata: {content}\n\n"
+                # Multi-line `data:` frames, which the client joins back with
+                # "\n". Escaping newlines to a literal "\n" instead left the
+                # Markdown on one line, and mangled any "\n" the model wrote.
+                yield SSEEvent("text_chunk", content).serialize()
 
-        yield "event: done\ndata: {}\n\n"
+        yield SSEEvent("done", {}).serialize()
 
     except Exception as e:
         logger.error(f"Stream chat completion failed: {e}")
-        yield f"event: error\ndata: {str(e)}\n\n"
+        yield SSEEvent("error", str(e)).serialize()

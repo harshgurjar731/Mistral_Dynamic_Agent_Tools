@@ -22,7 +22,7 @@ import { parseEventData, type SSEEvent } from "@/api/sse";
 import { errorMessage, runsApi, type RunStatus } from "@/api";
 import { Composer } from "@/components/chat/Composer";
 import { Markdown } from "@/components/chat/Markdown";
-import { TierSelector } from "@/components/chat/TierSelector";
+import { AutoTierChip } from "@/components/chat/TierSelector";
 import {
   AGENT_DECISION_EVENTS,
   agentLayerCards,
@@ -203,7 +203,6 @@ function OrchestratorChat() {
   const { run: runId } = Route.useSearch();
 
   const [input, setInput] = useState("");
-  const [tier, setTier] = useState("domain");
   const [starting, setStarting] = useState(false);
   /** The prompt of a run being started, shown before the run exists. */
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
@@ -333,9 +332,9 @@ function OrchestratorChat() {
       setReplay(null);
       if (override === undefined) setInput("");
       try {
+        // No tier: the orchestrator's identity layer classifies the agent.
         const started = await runsApi.startAgent({
           query,
-          tier,
           ...(conversationId ? { conversation_id: conversationId } : {}),
         });
         trackStartedRun(started);
@@ -348,7 +347,7 @@ function OrchestratorChat() {
         setStarting(false);
       }
     },
-    [conversationId, input, isProcessing, navigate, tier],
+    [conversationId, input, isProcessing, navigate],
   );
 
   const loadHistoryEntry = (entry: OrchestratorRunEntry) => {
@@ -574,7 +573,7 @@ function OrchestratorChat() {
               if (runId) void stopRun(runId);
             }}
             isProcessing={isProcessing}
-            leading={<TierSelector value={tier} onChange={setTier} disabled={isProcessing} />}
+            leading={<AutoTierChip tier={decisions.agent_config?.tier} pending={isProcessing} />}
           />
         </div>
       </div>

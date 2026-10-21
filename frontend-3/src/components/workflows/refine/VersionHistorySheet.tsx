@@ -59,7 +59,10 @@ export function VersionHistorySheet({
         onOpenChange(o);
       }}
     >
-      <SheetContent className="flex w-full flex-col gap-0 border-border bg-background-elevated/95 p-0 backdrop-blur-xl sm:max-w-md">
+      <SheetContent
+        resizeKey="version-history"
+        className="flex w-full flex-col gap-0 border-border bg-background-elevated/95 p-0 backdrop-blur-xl sm:max-w-md"
+      >
         <div className="border-b border-border/60 px-5 py-4">
           <SheetTitle className="flex items-center gap-2 text-base">
             <History className="size-4 text-primary" /> Version history

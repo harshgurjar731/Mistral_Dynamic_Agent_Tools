@@ -1,9 +1,44 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Layers } from "lucide-react";
+import { ChevronDown, Layers, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ontologyApi, QK } from "@/api";
 import { tierIdentity } from "@/lib/status";
 import { cn } from "@/lib/utils";
+
+/**
+ * The tier the orchestrator decided, in place of a manual picker. The
+ * identity layer classifies every new agent as foundation, domain or use-case
+ * from the request itself; ``tier`` is that decision for the run on screen.
+ */
+export function AutoTierChip({
+  tier,
+  pending,
+}: {
+  tier?: string | null | undefined;
+  pending?: boolean | undefined;
+}) {
+  const decided = tier ? tierIdentity(tier) : null;
+  return (
+    <span
+      title="Tier is decided by the orchestrator: it classifies the agent as Foundation, Domain or Use-Case from your request."
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium select-none",
+        decided
+          ? [decided.bg, decided.border, decided.text]
+          : "border-border/60 text-muted-foreground",
+      )}
+    >
+      {pending && !decided ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : decided ? (
+        <Layers className="size-3.5" />
+      ) : (
+        <Sparkles className="size-3.5" />
+      )}
+      {decided ? `Auto · ${decided.label}` : pending ? "Deciding tier…" : "Auto tier"}
+    </span>
+  );
+}
 
 const FALLBACK_TIERS = [
   { value: "foundation", label: "Foundation" },
