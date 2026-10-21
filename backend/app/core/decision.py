@@ -262,6 +262,11 @@ class DecisionLayer(Layer):
     #: Emitted before the call, so the UI can name the decision in flight.
     status_message: str = ""
 
+    #: Which view of the run's process knowledge this decision reads (see
+    #: ``app.process_knowledge.context.render``). None: it reads none. When the
+    #: feature is off for a run the block is empty and the prompt is unchanged.
+    process_view: Optional[str] = None
+
     def model_for(self, ctx: PipelineContext) -> str:
         from app.config import settings
 
@@ -270,6 +275,14 @@ class DecisionLayer(Layer):
     def build_prompt(self, ctx: PipelineContext) -> tuple[str, str]:
         """Return ``(system_prompt, user_prompt)`` for this decision."""
         raise NotImplementedError
+
+    def process_block(self, ctx: PipelineContext) -> str:
+        """Process knowledge appended to the user prompt; "" when there is none."""
+        if not self.process_view:
+            return ""
+        from app.process_knowledge import pipeline as process_knowledge
+
+        return process_knowledge.block(ctx, self.process_view)
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:
         """Write the parsed decision onto the context."""
@@ -285,6 +298,9 @@ class DecisionLayer(Layer):
 
         try:
             system, user = self.build_prompt(ctx)
+            process_block = self.process_block(ctx)
+            if process_block:
+                user = user + process_block
             raw = await decide(
                 ctx.client,
                 model=self.model_for(ctx),
@@ -298,6 +314,10 @@ class DecisionLayer(Layer):
             if not isinstance(data, dict):
                 raise ValueError(f"{self.phase} returned non-object JSON")
             self.apply(ctx, data)
+            if process_block:
+                from app.process_knowledge import pipeline as process_knowledge
+
+                process_knowledge.record_refs(ctx, self.name, data)
             # Shown under this layer's row in the timeline. Every decision
             # prompt is required to justify itself, and this is where that
             # justification surfaces to the user.

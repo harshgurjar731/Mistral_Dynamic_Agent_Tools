@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from collections import Counter
+from typing import Optional
 import httpx
 from fastapi import APIRouter, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import StreamingResponse
@@ -103,6 +104,8 @@ def _get_mistral_workflow_id(workflow_name: str) -> str | None:
 
 class PlanWorkflowRequest(BaseModel):
     goal: str
+    #: {"enabled": bool, "document_ids": [int]} — see ProcessKnowledgeLayer.
+    process_knowledge: Optional[dict] = None
 
 
 @router.post("/workflows/plan")
@@ -114,7 +117,8 @@ async def plan_workflow_endpoint(request: PlanWorkflowRequest):
     """
     client = get_mistral_client()
     return StreamingResponse(
-        workflow_planner.plan_workflow_stream(client=client, goal=request.goal),
+        workflow_planner.plan_workflow_stream(
+            client=client, goal=request.goal, process_knowledge=request.process_knowledge),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

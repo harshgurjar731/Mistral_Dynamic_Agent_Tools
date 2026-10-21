@@ -33,6 +33,15 @@ schemes:
       Sensitivity of the data flowing through a step. Governs what may reach a
       third-party connector.
 
+  # No concepts are seeded: processes are defined on the Processes page, each
+  # linked to the domain or subdomain it belongs to.
+  - id: process
+    label: Business process
+    description: >-
+      The processes and subprocesses a line of business runs. Each process is
+      linked to its domain or subdomain; process documents attached here ground
+      agent and workflow design.
+
 concepts:
   # ── Agent tier — mirrors AgentTier in vocab.py ──────────────────────────
   - id: agent_tier.foundation

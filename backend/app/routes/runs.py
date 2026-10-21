@@ -30,8 +30,15 @@ router = APIRouter(tags=["Runs"])
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
+class ProcessKnowledgeRequest(BaseModel):
+    """The orchestration page's process-knowledge toggle and attachments."""
+    enabled: bool = False
+    document_ids: list[int] = Field(default_factory=list)
+
+
 class WorkflowPlanRun(BaseModel):
     goal: str = Field(min_length=1)
+    process_knowledge: Optional[ProcessKnowledgeRequest] = None
 
 
 class AgentRun(BaseModel):
@@ -41,6 +48,7 @@ class AgentRun(BaseModel):
     tier: Optional[str] = None
     image_base64: Optional[str] = None
     image_mime: Optional[str] = None
+    process_knowledge: Optional[ProcessKnowledgeRequest] = None
 
 
 class SynthesisRun(BaseModel):
@@ -51,9 +59,10 @@ class SynthesisRun(BaseModel):
 @router.post("/runs/workflow-plan", status_code=202)
 async def start_workflow_plan(body: WorkflowPlanRun, client=Depends(get_mistral_client)):
     goal = body.goal.strip()
+    process = body.process_knowledge.model_dump() if body.process_knowledge else None
     run = await manager.start(
-        "workflow_plan", goal, {"goal": goal},
-        partial(runners.workflow_plan, client=client, goal=goal),
+        "workflow_plan", goal, {"goal": goal, "process_knowledge": process},
+        partial(runners.workflow_plan, client=client, goal=goal, process_knowledge=process),
     )
     return run.snapshot()
 
@@ -69,6 +78,8 @@ async def start_agent(body: AgentRun, client=Depends(get_mistral_client)):
             runners.agent, client=client, query=query,
             agent_id=body.agent_id, conversation_id=body.conversation_id, tier=body.tier,
             image_base64=body.image_base64, image_mime=body.image_mime,
+            process_knowledge=(body.process_knowledge.model_dump()
+                               if body.process_knowledge else None),
         ),
     )
     return run.snapshot()

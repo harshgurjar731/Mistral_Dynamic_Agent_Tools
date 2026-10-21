@@ -32,6 +32,8 @@ import {
 import { kindColor, kindLabel } from "./graphTones";
 
 const EMPTY_PARAMS = {};
+/** Once the graph is narrowed, processes and their documents are drawn too. */
+const WITH_PROCESSES = { include_processes: true };
 
 /**
  * The levels this graph draws, outermost last: an industry holds domains, a
@@ -39,7 +41,16 @@ const EMPTY_PARAMS = {};
  * off whichever level they are annotated against. Tools, connectors,
  * libraries and the rest are left out — they belong to their own pages.
  */
-const LEVELS = ["industry", "domain", "subdomain", "agent", "workflow"];
+const LEVELS = [
+  "industry",
+  "domain",
+  "subdomain",
+  "process",
+  "subprocess",
+  "process_document",
+  "agent",
+  "workflow",
+];
 
 /** The radial layout colours by ring, innermost first, rather than by kind. */
 const RING_COLORS = [
@@ -54,8 +65,16 @@ interface HierarchyFilter {
   industry: string;
   domain: string;
   subdomain: string;
+  process: string;
+  subprocess: string;
 }
-const NO_FILTER: HierarchyFilter = { industry: "", domain: "", subdomain: "" };
+const NO_FILTER: HierarchyFilter = {
+  industry: "",
+  domain: "",
+  subdomain: "",
+  process: "",
+  subprocess: "",
+};
 
 /** Which level a node sits on; anything unknown sorts last. */
 const levelOf = (kind: string) => {
@@ -63,20 +82,25 @@ const levelOf = (kind: string) => {
   return i < 0 ? LEVELS.length : i;
 };
 
-export function OverviewTab() {
+export function OverviewTab({ focus }: { focus?: string | undefined } = {}) {
   const [layout, setLayout] = useState<GraphLayout>("network");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusIds, setFocusIds] = useState<string[] | null>(null);
   /** When set, only this node's branch — its parents and everything under it — is drawn. */
-  const [branch, setBranch] = useState<string | null>(null);
+  const [branch, setBranch] = useState<string | null>(focus ?? null);
   /** Cascading filter; an empty string means "All" at that level. */
   const [filter, setFilter] = useState<HierarchyFilter>(NO_FILTER);
 
+  // Processes appear only once the graph is narrowed: the unfiltered view is
+  // the platform at a glance, and they would roughly double it.
+  const narrowed = Boolean(branch || filter.industry || filter.domain || filter.subdomain);
+  const params = narrowed ? WITH_PROCESSES : EMPTY_PARAMS;
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: QK.ontologyGraph(EMPTY_PARAMS),
-    queryFn: () => ontologyApi.graph(EMPTY_PARAMS),
+    queryKey: QK.ontologyGraph(params),
+    queryFn: () => ontologyApi.graph(params),
+    placeholderData: (prev) => prev,
   });
 
   const rawNodes = useMemo(
@@ -184,13 +208,22 @@ export function OverviewTab() {
       subdomain: ofKind("subdomain", (id) =>
         filter.domain ? isUnder(id, filter.domain) : inIndustry(id),
       ),
+      process: ofKind("process", (id) => {
+        const within = filter.subdomain || filter.domain || filter.industry;
+        return within ? isUnder(id, within) : false;
+      }),
+      subprocess: ofKind(
+        "subprocess",
+        (id) => Boolean(filter.process) && isUnder(id, filter.process),
+      ),
     };
     // isUnder reads `tree`, which is derived from the same nodes and edges.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawNodes, tree, filter.industry, filter.domain]);
+  }, [rawNodes, tree, filter.industry, filter.domain, filter.subdomain, filter.process]);
 
   /** The most specific filter picked; the graph shrinks to its branch. */
-  const filterRoot = filter.subdomain || filter.domain || filter.industry;
+  const filterRoot =
+    filter.subprocess || filter.process || filter.subdomain || filter.domain || filter.industry;
 
   const visible = useMemo(() => {
     const inBranch = branch ? branchOf(branch) : null;
@@ -459,6 +492,7 @@ export function OverviewTab() {
             branched={branch === selected.id}
             onBranch={() => setBranch((current) => (current === selected.id ? null : selected.id))}
             below={tree.children.get(selected.id)?.length ?? 0}
+            processesHidden={!narrowed}
           />
         ) : null
       }
@@ -496,9 +530,26 @@ function HierarchyFilterBar({
     all: string;
     clears: (keyof HierarchyFilter)[];
   }[] = [
-    { key: "industry", label: "industry", all: "All industries", clears: ["domain", "subdomain"] },
-    { key: "domain", label: "domain", all: "All domains", clears: ["subdomain"] },
-    { key: "subdomain", label: "subdomain", all: "All subdomains", clears: [] },
+    {
+      key: "industry",
+      label: "industry",
+      all: "All industries",
+      clears: ["domain", "subdomain", "process", "subprocess"],
+    },
+    {
+      key: "domain",
+      label: "domain",
+      all: "All domains",
+      clears: ["subdomain", "process", "subprocess"],
+    },
+    {
+      key: "subdomain",
+      label: "subdomain",
+      all: "All subdomains",
+      clears: ["process", "subprocess"],
+    },
+    { key: "process", label: "process", all: "All processes", clears: ["subprocess"] },
+    { key: "subprocess", label: "subprocess", all: "All subprocesses", clears: [] },
   ];
   const active = Boolean(value.industry || value.domain || value.subdomain);
   return (
@@ -511,6 +562,11 @@ function HierarchyFilterBar({
       <Filter className="mx-1.5 size-3.5 text-muted-foreground" aria-hidden />
       {levels.map(({ key, label, all, clears }) => {
         const list = options[key];
+        // The process levels exist only once the graph is narrowed and the
+        // narrowed branch actually holds some.
+        if ((key === "process" || key === "subprocess") && list.length === 0 && !value[key]) {
+          return null;
+        }
         return (
           <select
             key={key}
@@ -647,6 +703,7 @@ function NodeInspector({
   onBranch,
   branched,
   below,
+  processesHidden,
 }: {
   node: OntologyGraphNode;
   nodes: OntologyGraphNode[];
@@ -658,6 +715,7 @@ function NodeInspector({
   onBranch: () => void;
   branched: boolean;
   below: number;
+  processesHidden?: boolean | undefined;
 }) {
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -841,6 +899,29 @@ function NodeInspector({
           </div>
         ) : null}
 
+        {node.process_count ? (
+          <div className="rounded-lg border border-indigo/25 bg-indigo/5 p-2.5 text-[11px]">
+            <p className="text-foreground">
+              {node.process_count} business process{node.process_count === 1 ? "" : "es"} filed at
+              or below {node.label}.
+            </p>
+            {processesHidden ? (
+              <button
+                type="button"
+                onClick={onBranch}
+                className="mt-1 font-medium text-indigo hover:underline"
+              >
+                Show them — narrow the graph to this branch
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {node.kind === "process" || node.kind === "subprocess" ? (
+          <ProcessFacts node={node} />
+        ) : null}
+        {node.kind === "process_document" ? <DocumentFacts node={node} /> : null}
+
         <dl className="space-y-1.5 text-xs">
           <InspectorRow label="Level" value={kindLabel(node.kind)} />
           {node.tier ? <InspectorRow label="Tier" value={node.tier} /> : null}
@@ -892,6 +973,51 @@ function NodeInspector({
         </div>
       </div>
     </aside>
+  );
+}
+
+function ProcessFacts({ node }: { node: OntologyGraphNode }) {
+  const doc = node.document;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-border/60 p-2.5 text-[11px]">
+      <p className="text-muted-foreground">
+        {doc ? (
+          <>
+            Document <span className="text-foreground">{doc.title}</span> v{doc.version} —{" "}
+            <span className={doc.status === "valid" ? "text-emerald" : "text-amber"}>
+              {doc.status}
+            </span>
+          </>
+        ) : (
+          "No process document yet."
+        )}
+      </p>
+      <Link
+        to="/processes"
+        className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
+      >
+        <ExternalLink className="size-3" />
+        Manage on the Processes page
+      </Link>
+    </div>
+  );
+}
+
+function DocumentFacts({ node }: { node: OntologyGraphNode }) {
+  const stats = node.stats ?? {};
+  const parts = ["stages", "controls", "risks", "exceptions"]
+    .filter((k) => stats[k])
+    .map((k) => `${stats[k]} ${k}`);
+  return (
+    <div className="rounded-lg border border-border/60 p-2.5 text-[11px] text-muted-foreground">
+      <p>
+        Version {node.version} ·{" "}
+        <span className={node.status === "valid" ? "text-emerald" : "text-amber"}>
+          {node.status}
+        </span>
+      </p>
+      {parts.length ? <p className="mt-0.5">{parts.join(" · ")}</p> : null}
+    </div>
   );
 }
 

@@ -23,6 +23,8 @@ class OrchestrateRequest(BaseModel):
     tier: Optional[str] = None
     image_base64: Optional[str] = None
     image_mime: Optional[str] = None
+    #: {"enabled": bool, "document_ids": [int]} — see ProcessKnowledgeLayer.
+    process_knowledge: Optional[dict] = None
 
 
 @router.post("/orchestrate")
@@ -37,6 +39,7 @@ async def orchestrate_endpoint(request: OrchestrateRequest, client=Depends(get_m
         tier=request.tier,
         image_base64=request.image_base64,
         image_mime=request.image_mime,
+        process_knowledge=request.process_knowledge,
     )
     return result
 
@@ -54,6 +57,7 @@ async def orchestrate_stream_endpoint(request: OrchestrateRequest, client=Depend
             tier=request.tier,
             image_base64=request.image_base64,
             image_mime=request.image_mime,
+            process_knowledge=request.process_knowledge,
         ),
         media_type="text/event-stream",
     )

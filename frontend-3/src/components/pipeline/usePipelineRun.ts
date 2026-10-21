@@ -11,6 +11,7 @@
  * can rebuild the same state by replaying its event log.
  */
 import { useCallback, useState } from "react";
+import type { ProcessUse } from "@/api/processes";
 import type { LayerManifestEntry, LayerRuntime, LayerState } from "./PipelineTimeline";
 
 export interface PipelineRun {
@@ -35,6 +36,8 @@ interface LayerEvent {
   ms?: number;
   summary?: string;
   error?: string;
+  /** What this layer used from the run's process knowledge. */
+  process?: ProcessUse[];
 }
 
 function mapRunning(
@@ -81,6 +84,7 @@ export function applyPipelineEvent(
             // Keep an earlier summary if this update carries none.
             summary: p.summary || prev.runtime[p.name]?.summary,
             error: p.error,
+            process: p.process ?? prev.runtime[p.name]?.process,
           },
         },
       };

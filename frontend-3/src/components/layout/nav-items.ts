@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Terminal,
+  Workflow,
   Wrench,
   Zap,
   type LucideIcon,
@@ -39,6 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "MCP Servers", to: "/mcp", icon: Server },
   { label: "Remote Servers", to: "/remote-servers", icon: HardDrive },
   { label: "Libraries", to: "/libraries", icon: Library },
+  { label: "Processes", to: "/processes", icon: Workflow },
   { label: "Health", to: "/health", icon: Activity },
   { label: "Settings", to: "/settings", icon: Settings },
 ];

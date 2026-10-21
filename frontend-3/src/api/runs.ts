@@ -1,4 +1,5 @@
 import type { RebuildRequest } from "@/types";
+import type { ProcessKnowledgeRequest } from "./processes";
 import { get, post } from "./client";
 
 /**
@@ -37,6 +38,8 @@ export interface AgentRunRequest {
   conversation_id?: string | undefined;
   image_base64?: string | undefined;
   image_mime?: string | undefined;
+  /** The orchestration page's process-knowledge toggle and attachments. */
+  process_knowledge?: ProcessKnowledgeRequest | undefined;
 }
 
 export const runsApi = {
@@ -44,7 +47,11 @@ export const runsApi = {
     get<{ runs: BackgroundRun[] }>("/api/runs", params),
   get: (id: string) => get<BackgroundRun>(`/api/runs/${id}`),
   cancel: (id: string) => post<{ cancelled: boolean; status: string }>(`/api/runs/${id}/cancel`),
-  startWorkflowPlan: (goal: string) => post<BackgroundRun>("/api/runs/workflow-plan", { goal }),
+  startWorkflowPlan: (goal: string, processKnowledge?: ProcessKnowledgeRequest) =>
+    post<BackgroundRun>("/api/runs/workflow-plan", {
+      goal,
+      ...(processKnowledge ? { process_knowledge: processKnowledge } : {}),
+    }),
   startAgent: (body: AgentRunRequest) => post<BackgroundRun>("/api/runs/agent", body),
   startSynthesis: (task: string, purpose: "tool" | "activity") =>
     post<BackgroundRun>("/api/runs/synthesis", { task, purpose }),

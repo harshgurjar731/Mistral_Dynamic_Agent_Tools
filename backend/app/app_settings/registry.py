@@ -43,6 +43,10 @@ SECTIONS = [
             "activity", "platform"),
     Section("platform", "Platform & security", "API, database, CORS and uploads.",
             "shield", "platform"),
+    # ── Process knowledge ──────────────────────────────────────────────
+    Section("process_knowledge", "Process knowledge",
+            "How business-process documents are checked and matched to a request when the "
+            "orchestration pages build with process knowledge.", "workflow", "process"),
     # ── Frontend ───────────────────────────────────────────────────────
     Section("ui_design", "Theme & design",
             "Colours, shape and typography of the whole interface. Applied the moment you save.",
@@ -371,6 +375,22 @@ DEFS: list[SettingDef] = [
                "Largest file accepted by the upload endpoint (chat attachments, documents).",
                type="int", minimum=1, maximum=500, unit="MB",
                impact=("Chat attachments", "Document uploads"), used_in=("routes/uploads.py",)),
+
+    # ── Process knowledge ──────────────────────────────────────────────
+    SettingDef("PROCESS_KNOWLEDGE_DEFAULT", "process_knowledge", "On by default",
+               "Whether the Process knowledge toggle starts on for a new visitor to the agent and "
+               "workflow orchestration pages. Each page then remembers its own choice.",
+               type="bool", impact=("Orchestrator", "Workflow planner"),
+               used_in=("routes/processes.py — config",)),
+    SettingDef("PROCESS_DOC_MAX_KB", "process_knowledge", "Max process document size",
+               "Largest process document accepted on the Processes page and the orchestration "
+               "pages.", type="int", minimum=16, maximum=10240, unit="KB",
+               impact=("Process uploads",), used_in=("process_knowledge/validation.py",)),
+    SettingDef("PROCESS_MATCH_MIN_SCORE", "process_knowledge", "Minimum match score",
+               "When no document is attached, how well a process must match the request before "
+               "it is used. Higher: fewer, surer matches. The Ontology → Scope tab shows the "
+               "scores for any goal.", type="float", minimum=0, maximum=50,
+               impact=("Process matching",), used_in=("process_knowledge/resolver.py",)),
 
     # ── Frontend: theme & design ───────────────────────────────────────
     SettingDef("UI_ACCENT", "ui_design", "Accent colour",

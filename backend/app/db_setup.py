@@ -19,6 +19,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     # Imported for their side effect: each registers its tables with Base,
     # and create_all() creates only the tables it knows about.
     import app.ontology.models
+    import app.process_knowledge.models
     import app.rag.models
     import app.remote_server_model
     import app.rules.models
@@ -40,6 +41,12 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     remote_servers_schema.ensure_schema()
     ontology_knowledge.ensure_schema()
     rag_schema.ensure_schema()
+
+    # The built-in process template, so process documents can be checked
+    # before anyone uploads a template of their own.
+    from app.process_knowledge import templates as process_templates
+
+    process_templates.ensure_builtin()
 
     if seed_rules:
         # The recommended starter rules. Insert-if-missing, so edits made on

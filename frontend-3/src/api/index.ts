@@ -1,4 +1,5 @@
 import { api, del, get, patch, post, put } from "./client";
+import type { ProcessCandidate } from "./processes";
 import type {
   BuilderCatalog,
   Connector,
@@ -53,6 +54,8 @@ export { runsApi, isTerminal } from "./runs";
 export { revisionsApi } from "./revisions";
 export { observabilityApi } from "./observability";
 export { settingsApi } from "./settings";
+export { processesApi } from "./processes";
+export type * from "./processes";
 export type * from "./settings";
 export type * from "./observability";
 export type { BackgroundRun, RunDecision, RunKind, RunProgress, RunStatus } from "./runs";
@@ -322,6 +325,9 @@ export const ontologyApi = {
       label: string;
       concepts: Concept[];
       scores: Array<[string, number]>;
+      /** What the process-knowledge layer would choose from, best first. */
+      processes?: ProcessCandidate[];
+      process_threshold?: number | null;
     }>("/api/ontology/scope", { goal }),
   scopeGraph: (goal: string) => get<OntologyGraph>("/api/ontology/scope/graph", { goal }),
   classify: (body: {

@@ -27,6 +27,7 @@ class AgentRuleSelectionLayer(AgentDecisionLayer):
     """Choose the optional agent rules that fit this agent."""
 
     name = "rule_selection"
+    process_view = "agent_rules"
     label = "Choose rules"
     detail = "Decides which of your optional agent rules this agent must follow."
     phase = "rule selection"

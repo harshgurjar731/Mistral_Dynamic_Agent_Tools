@@ -23,7 +23,7 @@ import logging
 from typing import Any, Iterable, Optional
 
 from app.ontology import store
-from app.ontology.vocab import Predicate, Scheme, SubjectType
+from app.ontology.vocab import ConceptLinkPredicate, Predicate, Scheme, SubjectType
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,18 @@ _EDGE_LABELS = {
     Predicate.PROVIDES_CAPABILITY.value: "provides",
     Predicate.HANDLES_DATA_CLASS.value: "handles",
     Predicate.EGRESSES_TO.value: "egresses",
+    Predicate.IMPLEMENTS_PROCESS.value: "implements",
 }
+
+#: Kinds that only appear once the graph is filtered. The unfiltered view is
+#: the platform at a glance; processes, subprocesses and their documents would
+#: double its size, so they are revealed by narrowing to where they live.
+PROCESS_KINDS = frozenset({"process", "subprocess", "process_document"})
 
 #: Node kinds the client can filter on. Concept kinds are the *level names* of
 #: the domain tree so "industry" and "subdomain" are filterable separately.
 NODE_KINDS = (
-    "industry", "domain", "subdomain",
+    "industry", "domain", "subdomain", "process", "subprocess", "process_document",
     "capability", "data_class", "agent_tier",
     "agent", "tool", "connector", "workflow", "library",
 )
@@ -59,6 +65,8 @@ def _concept_kind(concept: dict) -> str:
     scheme = concept.get("scheme_id")
     if scheme == Scheme.DOMAIN.value:
         return concept.get("level_name") or "domain"
+    if scheme == Scheme.PROCESS.value:
+        return concept.get("level_name") or "process"
     if scheme == Scheme.CAPABILITY.value:
         return "capability"
     if scheme == Scheme.DATA_CLASS.value:
@@ -349,6 +357,45 @@ def _composition_edges(
     return edges
 
 
+def _attach_process_counts(nodes: dict[str, dict], concepts: list[dict],
+                           links: list[dict]) -> None:
+    domain_concepts = [c for c in concepts if c["scheme_id"] == Scheme.DOMAIN.value]
+    if not domain_concepts or not links:
+        return
+    parent = {c["id"]: c.get("parent_id") for c in domain_concepts}
+    direct: dict[str, int] = {}
+    for link in links:
+        direct[link["target"]] = direct.get(link["target"], 0) + 1
+    totals: dict[str, int] = {}
+    for concept_id, count in direct.items():
+        cursor, guard = concept_id, 0
+        while cursor and guard < 16:
+            totals[cursor] = totals.get(cursor, 0) + count
+            cursor = parent.get(cursor)
+            guard += 1
+    for concept_id, total in totals.items():
+        if concept_id in nodes:
+            nodes[concept_id]["process_count"] = total
+
+
+def _process_documents(concept_ids: list[str]) -> dict[str, dict]:
+    """Each process's active document, or its newest when none is active."""
+    if not concept_ids:
+        return {}
+    try:
+        from app.process_knowledge import store as process_store
+
+        out: dict[str, dict] = {}
+        for doc in process_store.list_documents(concept_ids=concept_ids):
+            current = out.get(doc["concept_id"])
+            if current is None or (doc["is_active"] and not current["is_active"]):
+                out[doc["concept_id"]] = doc
+        return out
+    except Exception as e:
+        logger.debug("Process documents unavailable for the graph: %s", e)
+        return {}
+
+
 def _prune_to_reachable(
     nodes: dict[str, dict], edges: list[dict], roots: set[str], hops: int = 1
 ) -> tuple[dict[str, dict], list[dict]]:
@@ -396,14 +443,27 @@ async def build_graph(
     search: Optional[str] = None,
     include_orphans: bool = True,
     hops: int = 1,
+    include_processes: Optional[bool] = None,
 ) -> dict:
     """Assemble the whole graph, optionally narrowed.
 
     ``root_concept`` restricts to one subtree — picking BFSI shows only that
     industry and everything annotated anywhere beneath it. ``search`` keeps
     matching nodes plus whatever they connect to.
+
+    Processes, subprocesses and process documents are drawn only when the
+    graph is narrowed (``include_processes`` None: decided by the filters).
+    Unnarrowed, each domain still reports how many processes sit under it.
     """
+    if include_processes is None:
+        include_processes = bool(
+            root_concept or search or scheme == Scheme.PROCESS.value
+            or (kinds and PROCESS_KINDS & {k for k in kinds if k})
+        )
     concepts = store.list_concepts(scheme)
+    process_links = store.all_links(ConceptLinkPredicate.PART_OF_DOMAIN.value)
+    if not include_processes:
+        concepts = [c for c in concepts if c["scheme_id"] != Scheme.PROCESS.value]
     annotations = store.all_annotations()
     inventory = await _fetch_inventory(client)
 
@@ -429,6 +489,27 @@ async def build_graph(
         node = nodes[concept["id"]]
         node["rollup"] = counts
         node["rollup_total"] = sum(counts.values())
+
+    # How many processes each domain concept holds, at or below it — shown
+    # even when processes are not drawn, so a domain says what filtering on
+    # it would reveal.
+    _attach_process_counts(nodes, concepts, process_links)
+
+    process_docs: dict[str, dict] = {}
+    if include_processes:
+        process_docs = _process_documents(
+            [c["id"] for c in concepts if c["scheme_id"] == Scheme.PROCESS.value])
+        for concept_id, doc in process_docs.items():
+            node_id = f"process_document:{doc['id']}"
+            nodes[node_id] = _node(
+                node_id, "process_document", f"{doc['title']} v{doc['version']}",
+                document_id=doc["id"], concept_id=concept_id, status=doc["status"],
+                version=doc["version"], stats=doc.get("stats") or {},
+            )
+            node = nodes.get(concept_id)
+            if node is not None:
+                node["document"] = {"id": doc["id"], "version": doc["version"],
+                                    "status": doc["status"], "title": doc["title"]}
 
     # ── Edges: hierarchy, then annotations ───────────────────────────────
     edges: list[dict] = []
@@ -468,6 +549,25 @@ async def build_graph(
 
     edges.extend(_composition_edges(inventory, nodes))
 
+    if include_processes:
+        for link in process_links:
+            if link["source"] in nodes and link["target"] in nodes:
+                edges.append({
+                    "id": f"l:{link['source']}->{link['target']}",
+                    "source": link["source"], "target": link["target"],
+                    "kind": "part_of_domain", "label": "part of",
+                    # The domain contains the process when expanded.
+                    "reveal": "reverse",
+                })
+        for concept_id, doc in process_docs.items():
+            doc_node = f"process_document:{doc['id']}"
+            if concept_id in nodes and doc_node in nodes:
+                edges.append({
+                    "id": f"d:{doc_node}->{concept_id}",
+                    "source": doc_node, "target": concept_id,
+                    "kind": "documents", "label": "documents", "reveal": "reverse",
+                })
+
     # ── Narrowing ────────────────────────────────────────────────────────
     if root_concept:
         # Accepts several ids so a goal that matched more than one domain shows
@@ -478,6 +578,17 @@ async def build_graph(
             concept_id = concept_id.strip()
             if concept_id:
                 subtree |= store.expand([concept_id])
+        if include_processes:
+            # Processes hang off the subtree by link, not by parent, so they
+            # are added explicitly — with their documents — rather than left to
+            # the hop budget, which would cut subprocesses off.
+            under = set().union(*(
+                store.processes_under([c.strip()], include_ancestors=False)
+                for c in str(root_concept).split(",") if c.strip()
+            )) if str(root_concept).strip() else set()
+            subtree |= {pid for pid in under if pid in nodes}
+            subtree |= {f"process_document:{process_docs[pid]['id']}"
+                        for pid in under if pid in process_docs}
 
         roots = set(subtree) | {
             e["source"] for e in edges if e["target"] in subtree and e["kind"] != "hierarchy"

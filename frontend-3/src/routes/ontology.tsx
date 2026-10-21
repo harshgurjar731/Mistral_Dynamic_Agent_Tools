@@ -34,6 +34,8 @@ import type { OntologyOverview } from "@/types";
 const searchSchema = z.object({
   /** The view on screen, so a refresh or a shared link lands in the same place. */
   view: z.string().optional(),
+  /** A concept to open the graph narrowed to — linked from the Processes page. */
+  focus: z.string().optional(),
 });
 
 export const Route = createFileRoute("/ontology")({
@@ -458,9 +460,10 @@ function FeatureBanner({
 }
 
 function ActiveView({ view, overview }: { view: string; overview: OntologyOverview | undefined }) {
+  const { focus } = Route.useSearch();
   switch (view) {
     case "graph":
-      return <OverviewTab />;
+      return <OverviewTab key={focus ?? ""} focus={focus} />;
     case "terms":
       return <VocabularyTab />;
     case "annotations":

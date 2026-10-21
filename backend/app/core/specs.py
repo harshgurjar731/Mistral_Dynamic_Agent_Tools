@@ -322,6 +322,11 @@ class CapabilitySpec:
     # Filled by AgentDesignLayer.
     spec: Optional[AgentSpec] = None
 
+    # Filled by GoalDecompositionLayer when the run has process knowledge: the
+    # process stage this capability performs, or why it is not one.
+    process_stage: Optional[str] = None
+    process_deviation: Optional[str] = None
+
 
 @dataclass
 class WorkflowSpec:

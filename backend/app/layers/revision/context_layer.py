@@ -67,6 +67,7 @@ class RevisionContextLayer(Layer):
 
         if not spec.operations_given:
             spec.catalog = await _catalog(ctx)
+            await _load_process_knowledge(ctx, spec.workflow_name)
 
         ctx.set_layer_summary(
             self.name,
@@ -74,6 +75,24 @@ class RevisionContextLayer(Layer):
             + (f", focused on {', '.join(spec.focus_step_ids)}" if spec.focus_step_ids else ""),
         )
         return await next(ctx)
+
+
+async def _load_process_knowledge(ctx: PipelineContext, workflow_name: str) -> None:
+    """Ground a revision in the process the workflow was built for, if any.
+
+    Only workflows built with process knowledge carry an ``implements_process``
+    annotation, so every other workflow revises exactly as before.
+    """
+    from app.process_knowledge import context as pk_context, pipeline as pk, resolver
+
+    try:
+        docs = await asyncio.to_thread(resolver.documents_for_subject, "workflow", workflow_name)
+    except Exception as e:
+        logger.debug("No process knowledge for revision of %s: %s", workflow_name, e)
+        return
+    if docs:
+        ctx.metadata[pk.CONTEXT_KEY] = pk_context.build(docs, mode="workflow")
+        ctx.metadata[pk.USAGE_KEY] = {}
 
 
 async def _catalog(ctx: PipelineContext) -> dict:

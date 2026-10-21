@@ -37,6 +37,7 @@ def _build_context(
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
     stream: bool = False,
+    process_knowledge: Optional[dict] = None,
 ) -> PipelineContext:
     """Translate route parameters into a PipelineContext."""
     image = None
@@ -52,6 +53,7 @@ def _build_context(
         image=image,
         stream=stream,
         client=client,
+        process_request=process_knowledge,
     )
 
 
@@ -66,6 +68,7 @@ async def orchestrate(
     tier: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
+    process_knowledge: Optional[dict] = None,
 ) -> dict:
     """Main orchestration flow — returns a JSON dict."""
     ctx = _build_context(
@@ -77,6 +80,7 @@ async def orchestrate(
         image_base64=image_base64,
         image_mime=image_mime,
         stream=False,
+        process_knowledge=process_knowledge,
     )
 
     try:
@@ -104,6 +108,7 @@ async def orchestrate_stream(
     tier: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
+    process_knowledge: Optional[dict] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming orchestration — yields SSE-formatted strings in real-time.
 
@@ -120,6 +125,7 @@ async def orchestrate_stream(
         image_base64=image_base64,
         image_mime=image_mime,
         stream=True,
+        process_knowledge=process_knowledge,
     )
 
     # Attach a queue so ctx.emit() pushes events in real-time

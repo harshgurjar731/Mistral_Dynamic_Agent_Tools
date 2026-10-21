@@ -124,10 +124,13 @@ def workflow_subject(definition: dict, *, goal: str = "", guardrail_review: Opti
     return json.dumps(payload, indent=2, default=str)
 
 
-async def select_rules(client, scope: str, subject: str, *, phase: str = "rule selection") -> dict:
+async def select_rules(client, scope: str, subject: str, *, phase: str = "rule selection",
+                       extra: str = "") -> dict:
     """Ask the model which optional rules fit. Never raises.
 
-    Returns ``{"selected": [...], "reasoning": str, "decided": bool}``.
+    Returns ``{"selected": [...], "reasoning": str, "decided": bool}``, plus
+    ``process_refs`` when ``extra`` (a process-knowledge block, appended to the
+    user prompt) asked for them.
     """
     from app.config import settings
     from app.core.decision import decide, parse_json
@@ -139,11 +142,14 @@ async def select_rules(client, scope: str, subject: str, *, phase: str = "rule s
         system, user = build_prompt(scope, subject)
         raw = await decide(
             client, model=settings.MISTRAL_ORCHESTRATOR_MODEL,
-            system=system, user=user, phase=phase,
+            system=system, user=user + extra, phase=phase,
         )
         data = parse_json(raw, {}) or {}
         selected, reasoning = parse_selection(data, scope)
-        return {"selected": selected, "reasoning": reasoning, "decided": True}
+        result = {"selected": selected, "reasoning": reasoning, "decided": True}
+        if extra:
+            result["process_refs"] = data.get("process_refs") or []
+        return result
     except Exception as e:
         logger.warning("Rule selection (%s) failed: %s", scope, e)
         return {"selected": [], "reasoning": "Rule selection could not be made — only always-on rules apply.",

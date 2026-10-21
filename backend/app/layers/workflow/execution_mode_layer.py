@@ -36,6 +36,7 @@ class ExecutionModeLayer(WorkflowDecisionLayer):
     """Route each capability to an agent, an activity, or a connector."""
 
     name = "execution_mode"
+    process_view = "execution_mode"
     label = "Choose how each step runs"
     detail = "Decides agent vs activity vs integration for each unit of work, and removes what is redundant."
     phase = "execution mode"

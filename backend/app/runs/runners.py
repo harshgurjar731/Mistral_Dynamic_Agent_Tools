@@ -18,11 +18,13 @@ def _as_dict(value: Any) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
-async def workflow_plan(run: LiveRun, *, client, goal: str) -> RunOutcome:
+async def workflow_plan(run: LiveRun, *, client, goal: str,
+                        process_knowledge: Optional[dict] = None) -> RunOutcome:
     from app.core.context import PipelineContext
     from app.layers import workflow_pipeline
 
-    ctx = PipelineContext(query=goal, stream=True, client=client)
+    ctx = PipelineContext(query=goal, stream=True, client=client,
+                          process_request=process_knowledge)
     ctx.event_queue = run
     await workflow_pipeline.execute(ctx)
 
@@ -54,6 +56,7 @@ async def agent(
     tier: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
+    process_knowledge: Optional[dict] = None,
 ) -> RunOutcome:
     from app.layers import chat_pipeline
     from app.services.orchestrator_service import _build_context
@@ -66,6 +69,7 @@ async def agent(
         image_base64=image_base64,
         image_mime=image_mime,
         stream=True,
+        process_knowledge=process_knowledge,
     )
     ctx.event_queue = run
     await chat_pipeline.execute(ctx)

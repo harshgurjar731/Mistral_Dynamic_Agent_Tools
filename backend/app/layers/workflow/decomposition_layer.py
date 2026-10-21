@@ -40,10 +40,37 @@ def _str_list(value) -> list[str]:
     return []
 
 
+def _stage_ref(ctx: PipelineContext, value) -> str | None:
+    """A capability's process stage, only if it names a real stage."""
+    from app.process_knowledge import pipeline as process_knowledge
+
+    pc = process_knowledge.active(ctx)
+    if not pc or not value:
+        return None
+    stage = str(value).strip().split(":", 1)[-1].strip().lower().replace(" ", "_")
+    return stage if f"stage:{stage}" in (pc.get("refs") or {}) else None
+
+
+def _record_stage_mapping(ctx: PipelineContext, layer: str, capabilities: list) -> None:
+    """Which stage each capability covers — and which stages none covers."""
+    from app.process_knowledge import pipeline as process_knowledge
+
+    pc = process_knowledge.active(ctx)
+    if not pc:
+        return
+    covered = {c.process_stage for c in capabilities if c.process_stage}
+    items = [{"ref": f"stage:{c.process_stage}", "how": f"performed by capability '{c.id}'"}
+             for c in capabilities if c.process_stage]
+    items += [{"ref": s["_ref"], "how": "no capability covers this stage"}
+              for s in pc.get("stages") or [] if s["_ref"].split(":", 1)[1] not in covered]
+    process_knowledge.record(ctx, layer, items)
+
+
 class GoalDecompositionLayer(DecisionLayer):
     """Break the goal into the ordered capabilities it requires."""
 
     name = "goal_decomposition"
+    process_view = "decomposition"
     label = "Decompose the goal"
     detail = "Decides what work the goal requires, before deciding who does it."
     phase = "goal decomposition"
@@ -62,6 +89,19 @@ class GoalDecompositionLayer(DecisionLayer):
             GOAL_DECOMPOSITION_USER_PROMPT.format(
                 goal=ctx.workflow_spec.goal,
                 scope_description=inv.get("scope_description") or "no specific domain matched",
+            ),
+        )
+
+    def process_block(self, ctx: PipelineContext) -> str:
+        from app.process_knowledge import pipeline as process_knowledge
+
+        return process_knowledge.block(
+            ctx, self.process_view,
+            extra_instruction=(
+                " Also give every capability a \"process_stage\" field: the id of the stage it "
+                "performs (without the \"stage:\" prefix), or null — and when null, a "
+                "\"process_deviation\" field saying in one sentence why this capability is not a "
+                "process stage. Every stage the goal needs should be covered by a capability."
             ),
         )
 
@@ -100,6 +140,8 @@ class GoalDecompositionLayer(DecisionLayer):
                 outputs=_str_list(raw.get("outputs")),
                 depends_on=[_slug(d, "") for d in _str_list(raw.get("depends_on"))],
                 parallelisable=bool(raw.get("parallelisable")),
+                process_stage=_stage_ref(ctx, raw.get("process_stage")),
+                process_deviation=str(raw.get("process_deviation") or "")[:300] or None,
             ))
 
         # Drop dependencies on capabilities that were never emitted. The
@@ -117,6 +159,7 @@ class GoalDecompositionLayer(DecisionLayer):
 
         spec.capabilities = capabilities
         spec.rationale["decomposition"] = str(data.get("reasoning") or "")
+        _record_stage_mapping(ctx, self.name, capabilities)
 
         logger.info(
             "Decomposed '%s' into %d capabilities: %s",
@@ -134,6 +177,8 @@ class GoalDecompositionLayer(DecisionLayer):
                     "tier": c.tier,
                     "depends_on": c.depends_on,
                     "parallelisable": c.parallelisable,
+                    **({"process_stage": c.process_stage} if c.process_stage else {}),
+                    **({"process_deviation": c.process_deviation} if c.process_deviation else {}),
                 }
                 for c in capabilities
             ],

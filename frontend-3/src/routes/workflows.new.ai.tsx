@@ -39,6 +39,10 @@ import {
   PlannerHistorySheet,
   type PlannerHistoryEntry,
 } from "@/components/workflows/PlannerHistorySheet";
+import {
+  ProcessKnowledgeControl,
+  useProcessKnowledge,
+} from "@/components/processes/ProcessKnowledgeControl";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { BuildingBlockLegend } from "@/components/workflows/BuildingBlockLegend";
 import { PlanDecisionDialog } from "@/components/workflows/PlanDecisionPanel";
@@ -293,6 +297,7 @@ function AiPlannerPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const process = useProcessKnowledge("workflow");
 
   const tracked = useTrackedRun(runId);
   const { missing } = useRunView(runId);
@@ -422,7 +427,7 @@ function AiPlannerPage() {
       if (!value || running || starting) return;
       setStarting(true);
       try {
-        const run = await runsApi.startWorkflowPlan(value);
+        const run = await runsApi.startWorkflowPlan(value, process.request);
         trackStartedRun(run);
         setReplay(null);
         setGoal(value);
@@ -433,7 +438,7 @@ function AiPlannerPage() {
         setStarting(false);
       }
     },
-    [goal, navigate, running, starting],
+    [goal, navigate, running, starting, process.request],
   );
 
   const newPlan = () => {
@@ -539,6 +544,12 @@ function AiPlannerPage() {
             rows={6}
             disabled={busy}
             className="custom-scrollbar min-h-[180px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+          />
+          <ProcessKnowledgeControl
+            state={process}
+            goal={goal}
+            disabled={busy}
+            className="mx-2 mt-1"
           />
           <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 p-2">
             <span className="flex items-center gap-2 text-xs text-muted-foreground">

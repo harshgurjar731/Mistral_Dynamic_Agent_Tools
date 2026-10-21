@@ -26,12 +26,14 @@ logger = logging.getLogger(__name__)
 async def plan_workflow_stream(
     client: Mistral,
     goal: str,
+    process_knowledge: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """5-phase async generator that streams SSE events for workflow planning."""
     ctx = PipelineContext(
         query=goal,
         stream=True,
         client=client,
+        process_request=process_knowledge,
     )
 
     # Attach a queue so ctx.emit() pushes events in real-time

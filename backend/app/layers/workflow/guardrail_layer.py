@@ -41,6 +41,7 @@ class WorkflowGuardrailLayer(WorkflowDecisionLayer):
     """Trace the assembled workflow for exposure and gate coverage."""
 
     name = "workflow_guardrail"
+    process_view = "guardrail"
     label = "Review the whole path"
     detail = "Decides what the assembled workflow exposes, which no single step reveals."
     phase = "workflow guardrail review"

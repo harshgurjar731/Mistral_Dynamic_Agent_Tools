@@ -38,6 +38,9 @@ class PipelineContext:
     tier: Optional[str] = None
     cleanup_agent: bool = False
     stream: bool = False            # True when invoked via the /stream route
+    #: ``{"enabled": bool, "document_ids": [int]}`` from the orchestration page's
+    #: process-knowledge toggle. None or disabled: the feature is off for the run.
+    process_request: Optional[dict] = None
 
     # ── Accumulated state (layers write here) ───────────────────────────
     # Flattened view of ``agent_spec``, published by AgentAssemblyLayer. Kept
@@ -124,6 +127,12 @@ class PipelineContext:
             payload["summary"] = summary
         if error:
             payload["error"] = error
+        if state == "completed":
+            # What this layer took from the run's process knowledge, so the
+            # timeline can show it under the row. Absent when the feature is off.
+            used = (self.metadata.get("_process_usage") or {}).get(name)
+            if used:
+                payload["process"] = used
         self.emit("layer", payload)
 
     def set_error(self, message: str) -> None:

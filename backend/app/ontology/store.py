@@ -19,8 +19,8 @@ from typing import Iterable
 from sqlalchemy import text
 
 from app.database import SessionLocal
-from app.ontology.models import Annotation, Concept, ConceptScheme
-from app.ontology.vocab import Predicate, Scheme, SubjectType
+from app.ontology.models import Annotation, Concept, ConceptLink, ConceptScheme
+from app.ontology.vocab import ConceptLinkPredicate, Predicate, Scheme, SubjectType
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,14 @@ def list_schemes() -> list[dict]:
 #: schemes are shallow and just report their depth.
 DOMAIN_LEVEL_NAMES = ("industry", "domain", "subdomain")
 
+#: The process scheme continues the classification below the domain tree: a
+#: root is a process, anything beneath it a subprocess.
+PROCESS_LEVEL_NAMES = ("process", "subprocess")
+
 
 def level_name(scheme_id: str, level: int) -> str:
+    if scheme_id == Scheme.PROCESS.value:
+        return PROCESS_LEVEL_NAMES[min(level, len(PROCESS_LEVEL_NAMES) - 1)]
     if scheme_id != Scheme.DOMAIN.value:
         return "concept"
     return DOMAIN_LEVEL_NAMES[level] if level < len(DOMAIN_LEVEL_NAMES) else "subdomain"
@@ -538,11 +544,23 @@ def delete_scheme(scheme_id: str, cascade: bool = False) -> dict:
                 .filter(Annotation.concept_id.in_(concept_ids))
                 .delete(synchronize_session=False)
             )
+            db.query(ConceptLink).filter(
+                ConceptLink.source_concept_id.in_(concept_ids)
+                | ConceptLink.target_concept_id.in_(concept_ids)
+            ).delete(synchronize_session=False)
             db.query(Concept).filter(Concept.scheme_id == scheme_id).delete(
                 synchronize_session=False
             )
         db.delete(scheme)
         db.commit()
+
+    if concept_ids:
+        try:
+            from app.process_knowledge import store as process_store
+
+            process_store.delete_for_concepts(concept_ids)
+        except Exception as e:
+            logger.debug("Process documents not removed for deleted scheme: %s", e)
 
     logger.info(
         "Deleted scheme '%s' (%d concepts, %d annotations)",
@@ -652,21 +670,43 @@ def update_concept(
 
 
 def concept_usage(concept_id: str) -> dict:
-    """What a delete would take with it: children and annotations."""
+    """What a delete would take with it: children, annotations, linked
+    processes and process documents."""
     with _session() as db:
         if db is None:
-            return {"children": [], "annotations": 0, "subjects": []}
+            return {"children": [], "annotations": 0, "subjects": [],
+                    "processes": [], "documents": 0}
         children = [c.id for c in db.query(Concept).filter(Concept.parent_id == concept_id).all()]
         rows = (
             db.query(Annotation.subject_type, Annotation.subject_id)
             .filter(Annotation.concept_id == concept_id)
             .all()
         )
+        processes = [
+            r[0] for r in db.query(ConceptLink.source_concept_id).filter(
+                ConceptLink.target_concept_id == concept_id,
+                ConceptLink.predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value,
+            ).all()
+        ]
     return {
         "children": children,
         "annotations": len(rows),
         "subjects": [{"subject_type": t, "subject_id": s} for t, s in rows[:50]],
+        "processes": processes,
+        "documents": _document_count([concept_id]),
     }
+
+
+def _document_count(concept_ids: Iterable[str]) -> int:
+    """Process documents filed against these concepts — 0 when the process
+    knowledge tables are not there yet."""
+    try:
+        from app.process_knowledge import store as process_store
+
+        return process_store.count_for_concepts(list(concept_ids))
+    except Exception as e:
+        logger.debug("Process document count unavailable: %s", e)
+        return 0
 
 
 def delete_concept(concept_id: str, cascade: bool = False) -> dict:
@@ -677,10 +717,12 @@ def delete_concept(concept_id: str, cascade: bool = False) -> dict:
     stranded child drops out of every hierarchy walk.
     """
     usage = concept_usage(concept_id)
-    if (usage["children"] or usage["annotations"]) and not cascade:
+    if (usage["children"] or usage["annotations"] or usage["processes"]
+            or usage["documents"]) and not cascade:
         raise VocabularyError(
-            f"'{concept_id}' has {len(usage['children'])} child concepts and "
-            f"{usage['annotations']} annotations. Pass cascade=true to remove them too."
+            f"'{concept_id}' has {len(usage['children'])} child concepts, "
+            f"{usage['annotations']} annotations, {len(usage['processes'])} linked processes "
+            f"and {usage['documents']} process documents. Pass cascade=true to remove them too."
         )
 
     with _session() as db:
@@ -691,13 +733,36 @@ def delete_concept(concept_id: str, cascade: bool = False) -> dict:
             raise VocabularyError(f"Concept '{concept_id}' not found.")
 
         doomed = descendants(concept_id) if cascade else {concept_id}
+        # Processes linked into a doomed domain go with it: a process with no
+        # domain is unreachable from every scope, which is a silent loss
+        # rather than a visible one.
+        if cascade:
+            linked = {
+                r[0] for r in db.query(ConceptLink.source_concept_id).filter(
+                    ConceptLink.target_concept_id.in_(list(doomed)),
+                    ConceptLink.predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value,
+                ).all()
+            }
+            for process_id in linked:
+                doomed |= descendants(process_id)
         removed_annotations = (
             db.query(Annotation)
             .filter(Annotation.concept_id.in_(list(doomed)))
             .delete(synchronize_session=False)
         )
+        db.query(ConceptLink).filter(
+            ConceptLink.source_concept_id.in_(list(doomed))
+            | ConceptLink.target_concept_id.in_(list(doomed))
+        ).delete(synchronize_session=False)
         db.query(Concept).filter(Concept.id.in_(list(doomed))).delete(synchronize_session=False)
         db.commit()
+
+    try:
+        from app.process_knowledge import store as process_store
+
+        process_store.delete_for_concepts(list(doomed))
+    except Exception as e:
+        logger.debug("Process documents not removed for deleted concepts: %s", e)
 
     logger.info(
         "Deleted concept '%s' (%d concepts, %d annotations)",
@@ -850,3 +915,128 @@ __all__ = [
     "tier_for_agent",
     "tiers_for_agents",
 ]
+
+
+# ── Cross-scheme links (process → domain) ──────────────────────────────────
+
+
+def link_concepts(
+    source_id: str, target_id: str,
+    predicate: str = ConceptLinkPredicate.PART_OF_DOMAIN.value, source: str = "user",
+) -> dict:
+    """Tie two concepts across schemes. Idempotent."""
+    with _session() as db:
+        if db is None:
+            raise VocabularyError("The ontology database is unavailable.")
+        src = db.query(Concept).filter(Concept.id == source_id).first()
+        dst = db.query(Concept).filter(Concept.id == target_id).first()
+        if not src or not dst:
+            raise VocabularyError(f"Both '{source_id}' and '{target_id}' must exist.")
+        if predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value and (
+            src.scheme_id != Scheme.PROCESS.value or dst.scheme_id != Scheme.DOMAIN.value
+        ):
+            raise VocabularyError("part_of_domain links a process to a domain concept.")
+        existing = db.query(ConceptLink).filter(
+            ConceptLink.source_concept_id == source_id,
+            ConceptLink.predicate == predicate,
+            ConceptLink.target_concept_id == target_id,
+        ).first()
+        if not existing:
+            db.add(ConceptLink(source_concept_id=source_id, predicate=predicate,
+                               target_concept_id=target_id, source=source))
+            db.commit()
+    return {"source": source_id, "predicate": predicate, "target": target_id}
+
+
+def unlink_concepts(
+    source_id: str, target_id: str | None = None,
+    predicate: str = ConceptLinkPredicate.PART_OF_DOMAIN.value,
+) -> int:
+    """Remove links from ``source_id`` (to ``target_id`` only, when given)."""
+    with _session() as db:
+        if db is None:
+            return 0
+        q = db.query(ConceptLink).filter(
+            ConceptLink.source_concept_id == source_id, ConceptLink.predicate == predicate,
+        )
+        if target_id:
+            q = q.filter(ConceptLink.target_concept_id == target_id)
+        removed = q.delete(synchronize_session=False)
+        db.commit()
+        return removed
+
+
+def all_links(predicate: str | None = None) -> list[dict]:
+    with _session() as db:
+        if db is None:
+            return []
+        q = db.query(ConceptLink)
+        if predicate:
+            q = q.filter(ConceptLink.predicate == predicate)
+        return [
+            {"id": r.id, "source": r.source_concept_id, "predicate": r.predicate,
+             "target": r.target_concept_id, "origin": r.source}
+            for r in q.all()
+        ]
+
+
+def domain_of(process_id: str) -> str | None:
+    """The domain concept a process (or any subprocess below it) belongs to.
+
+    Subprocesses inherit their root process's link, so only roots need one.
+    """
+    chain = [process_id, *_ancestor_chain(process_id)]
+    with _session() as db:
+        if db is None:
+            return None
+        for concept_id in chain:
+            row = db.query(ConceptLink.target_concept_id).filter(
+                ConceptLink.source_concept_id == concept_id,
+                ConceptLink.predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value,
+            ).first()
+            if row:
+                return row[0]
+    return None
+
+
+def _ancestor_chain(concept_id: str) -> list[str]:
+    """Ancestors nearest-first — ``ancestors`` returns an unordered set."""
+    out: list[str] = []
+    with _session() as db:
+        if db is None:
+            return out
+        cursor, guard = concept_id, 0
+        while cursor and guard < 16:
+            row = db.query(Concept.parent_id).filter(Concept.id == cursor).first()
+            if not row or not row[0]:
+                break
+            out.append(row[0])
+            cursor = row[0]
+            guard += 1
+    return out
+
+
+def processes_under(domain_ids: Iterable[str], include_ancestors: bool = True) -> set[str]:
+    """Every process and subprocess reachable from these domains.
+
+    Walks the domain tree the same way scoping does — down, and up when
+    ``include_ancestors`` — then follows ``part_of_domain`` links and expands
+    each linked process to its subprocesses.
+    """
+    ids = [d for d in domain_ids if d]
+    if not ids:
+        return set()
+    domain_scope = expand(ids) if include_ancestors else set().union(*(descendants(d) for d in ids))
+    with _session() as db:
+        if db is None:
+            return set()
+        roots = {
+            r[0] for r in db.query(ConceptLink.source_concept_id).filter(
+                ConceptLink.target_concept_id.in_(list(domain_scope)),
+                ConceptLink.predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value,
+            ).all()
+        }
+    out: set[str] = set()
+    for root in roots:
+        out |= descendants(root)
+    return out

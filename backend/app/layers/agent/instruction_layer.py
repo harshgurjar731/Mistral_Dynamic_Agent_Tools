@@ -32,6 +32,7 @@ class InstructionAuthoringLayer(AgentDecisionLayer):
     """Author the six-section system instructions for the assembled agent."""
 
     name = "instruction_authoring"
+    process_view = "agent_instructions"
     label = "Write the instructions"
     detail = "Decides how this agent thinks, expressing every prior decision to the model."
     phase = "instruction authoring"

@@ -46,6 +46,7 @@ class RevisionIntentLayer(RevisionDecisionLayer):
     """Turn the instruction into edit operations, or one clarifying question."""
 
     name = "revision_intent"
+    process_view = "revision"
     label = "Understand the request"
     detail = "Works out exactly which edits your instruction asks for."
     phase = "revision intent"

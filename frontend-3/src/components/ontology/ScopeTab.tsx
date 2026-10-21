@@ -192,6 +192,53 @@ function ScopePanel({
                 </ul>
               </div>
             ) : null}
+
+            {scope.data.processes?.length ? (
+              <div>
+                <p className="eyebrow mb-1.5">
+                  Process knowledge — what would be used
+                  {scope.data.process_threshold != null
+                    ? ` (needs a score of ${scope.data.process_threshold})`
+                    : ""}
+                </p>
+                <ul className="space-y-1">
+                  {scope.data.processes.map((p, i) => {
+                    const picked =
+                      i === scope.data.processes!.findIndex((c) => c.has_document) &&
+                      p.has_document &&
+                      p.score >= (scope.data.process_threshold ?? 0);
+                    return (
+                      <li
+                        key={p.concept_id}
+                        className={
+                          picked
+                            ? "rounded-md border border-indigo/30 bg-indigo/5 px-2 py-1.5"
+                            : "rounded-md border border-border/50 px-2 py-1.5"
+                        }
+                      >
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate text-foreground">{p.label}</span>
+                          <span className="technical-label">{p.score.toFixed(1)}</span>
+                          {picked ? (
+                            <span className="text-[10px] font-semibold text-indigo">USED</span>
+                          ) : !p.has_document ? (
+                            <span className="text-[10px] text-muted-foreground">no document</span>
+                          ) : null}
+                        </div>
+                        <p className="truncate text-[10px] text-muted-foreground">
+                          {p.path}
+                          {p.why.length ? ` — ${p.why.join("; ")}` : ""}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : scope.data.scoped ? (
+              <p className="text-[11px] text-muted-foreground">
+                No business process is filed under this scope yet.
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>

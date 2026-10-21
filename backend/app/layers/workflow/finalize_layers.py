@@ -42,6 +42,47 @@ _REVIEWED_HASH_KEY = "workflow_reviewed_hash"
 _PLANNER_BLOCKING = {"step.unreachable", "step.multiple_next"}
 
 
+def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> list[dict]:
+    """Warnings for mandatory process controls no workflow step covers.
+
+    A control is covered when a step performs one of the stages it applies to
+    (decomposition maps capabilities to stages, and capability ids become step
+    ids). Records both outcomes as process-knowledge usage.
+    """
+    from app.process_knowledge import pipeline as process_knowledge
+
+    pc = process_knowledge.active(ctx)
+    if not pc:
+        return []
+    stage_steps: dict[str, list[str]] = {}
+    for cap in ctx.workflow_spec.capabilities:
+        if cap.process_stage and cap.id in step_ids:
+            stage_steps.setdefault(cap.process_stage, []).append(cap.id)
+
+    issues, used = [], []
+    for control in pc.get("controls") or []:
+        if control.get("mandatory") is not True:
+            continue
+        stages = {str(s) for s in control.get("applies_to") or []}
+        stages |= {str(st.get("id")) for st in pc.get("stages") or []
+                   if control.get("id") in (st.get("controls") or [])}
+        steps = sorted({step for st in stages for step in stage_steps.get(st, [])})
+        if steps:
+            used.append({"ref": control["_ref"],
+                         "how": f"covered by step(s) {', '.join(steps)}"})
+        else:
+            used.append({"ref": control["_ref"], "how": "not covered by any step — warned"})
+            issues.append({
+                "severity": "warning", "code": "process_control_uncovered",
+                "message": (f"Mandatory process control '{control.get('id')}' "
+                            f"({control.get('description') or ''}) applies to stage(s) "
+                            f"{', '.join(sorted(stages)) or '—'}, but no step performs them."),
+                "step_id": None,
+            })
+    process_knowledge.record(ctx, layer, used)
+    return issues
+
+
 class WorkflowValidationLayer(WorkflowStepLayer):
     """Check the assembled definition before anything is persisted."""
 
@@ -117,6 +158,9 @@ class WorkflowValidationLayer(WorkflowStepLayer):
         contract_issues = [
             *(ctx.metadata.get("contract_issues") or []),
             *(i for i in ctx.metadata.get("build_issues") or [] if i.get("step_id") in step_ids),
+            # Advisory only: a mandatory control of the run's process that no
+            # step performs. Never blocks — the user's goal may rightly omit it.
+            *_process_coverage(ctx, self.name, step_ids),
         ]
         if contract_issues:
             from app.services.workflow_engine.models import ValidationIssue

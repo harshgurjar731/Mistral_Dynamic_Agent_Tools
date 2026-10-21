@@ -1,11 +1,13 @@
 """
 Ontology tables — SKOS-lite.
 
-Three tables are enough for everything the platform needs:
+Four tables are enough for everything the platform needs:
 
 * ``ontology_schemes``     — one row per vocabulary (domain, capability, …)
 * ``ontology_concepts``    — the terms, each optionally pointing at a parent
 * ``ontology_annotations`` — (subject, predicate, concept) triples
+* ``ontology_concept_links`` — concept-to-concept edges that cross schemes
+  (a process is ``part_of_domain`` its subdomain)
 
 Governance rules used to live here too; they are now their own feature in
 ``app.rules``. The old ``ontology_rules`` tables are left in place, unused.
@@ -136,4 +138,30 @@ class Annotation(Base):
         # "every subject with this concept".
         Index("ix_annotation_subject", "subject_type", "subject_id"),
         Index("ix_annotation_lookup", "predicate", "concept_id"),
+    )
+
+
+class ConceptLink(Base):
+    """A typed edge between two concepts in different schemes.
+
+    ``parent_id`` cannot cross schemes — every hierarchy walk is recursive
+    within one — so a process that belongs to a subdomain is tied to it here.
+    Kept out of the parent walk deliberately: goal matching and agent scoping
+    descend the domain tree, and following these links would pull processes
+    into everything that does.
+    """
+
+    __tablename__ = "ontology_concept_links"
+
+    id = Column(Integer, primary_key=True)
+    source_concept_id = Column(String, nullable=False, index=True)
+    predicate = Column(String, nullable=False, index=True)       # part_of_domain
+    target_concept_id = Column(String, nullable=False, index=True)
+    source = Column(String, nullable=False, default="user")
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_concept_id", "predicate", "target_concept_id", name="uq_concept_link",
+        ),
     )

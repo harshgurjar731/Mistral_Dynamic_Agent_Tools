@@ -324,6 +324,9 @@ async def get_graph(
     search: Optional[str] = Query(None),
     include_orphans: bool = Query(True, description="Keep nodes with no edges"),
     hops: int = Query(1, ge=1, le=3, description="How far to expand around a filter match"),
+    include_processes: Optional[bool] = Query(
+        None, description="Draw processes, subprocesses and their documents. "
+                          "Default: only when the graph is narrowed."),
 ):
     """The whole knowledge graph: vocabulary plus everything annotated against it."""
     kind_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
@@ -336,6 +339,7 @@ async def get_graph(
         search=search,
         include_orphans=include_orphans,
         hops=hops,
+        include_processes=include_processes,
     )
 
 
@@ -347,6 +351,15 @@ async def scope_goal(goal: str = Query(..., min_length=1)):
     """
     scope = matcher.scope_for_goal(goal)
     concepts = [c for c in (store.get_concept(cid) for cid in sorted(scope["concepts"])) if c]
+    try:
+        from app.config import settings
+        from app.process_knowledge import resolver
+
+        processes = resolver.candidates_for(goal, scope)
+        threshold = float(settings.PROCESS_MATCH_MIN_SCORE)
+    except Exception as e:
+        logger.debug("Process candidates unavailable for scope: %s", e)
+        processes, threshold = [], None
     return {
         "goal": goal,
         "scoped": scope["scoped"],
@@ -354,6 +367,9 @@ async def scope_goal(goal: str = Query(..., min_length=1)):
         "label": matcher.describe_scope(scope),
         "concepts": concepts,
         "scores": matcher.score_concepts(goal, Scheme.DOMAIN.value)[:8],
+        # What the process-knowledge layer would choose from, best first.
+        "processes": processes,
+        "process_threshold": threshold,
     }
 
 

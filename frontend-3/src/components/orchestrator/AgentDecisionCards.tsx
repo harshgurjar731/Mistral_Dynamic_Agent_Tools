@@ -9,6 +9,12 @@ import { tierIdentity } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { RuleOutcome } from "@/types";
 import {
+  ProcessAppliedCard,
+  ProcessKnowledgeCard,
+  type ProcessAppliedEvent,
+  type ProcessKnowledgeEvent,
+} from "@/components/processes/ProcessKnowledgeCards";
+import {
   LibraryProvisionedCard,
   ModerationGuardrailCard,
   Rationale,
@@ -58,6 +64,8 @@ export interface AgentDecisions {
   rules_selected?: RulesSelectedView;
   rules_applied?: { outcomes?: RuleOutcome[] };
   rule_outcomes?: RuleOutcome[];
+  process_knowledge?: ProcessKnowledgeEvent;
+  process_knowledge_applied?: ProcessAppliedEvent;
 }
 
 export const AGENT_DECISION_EVENTS = new Set<keyof AgentDecisions>([
@@ -69,6 +77,8 @@ export const AGENT_DECISION_EVENTS = new Set<keyof AgentDecisions>([
   "rules_selected",
   "rules_applied",
   "rule_outcomes",
+  "process_knowledge",
+  "process_knowledge_applied",
 ]);
 
 function RequirementsCard({ data }: { data: RequirementsView }) {
@@ -262,6 +272,15 @@ export function agentLayerCards(d: AgentDecisions): Record<string, ReactNode> {
   const changed = applied.filter(isNotable);
   return {
     requirement_analysis: d.requirements ? <RequirementsCard data={d.requirements} /> : null,
+    process_knowledge:
+      d.process_knowledge || d.process_knowledge_applied ? (
+        <>
+          {d.process_knowledge ? <ProcessKnowledgeCard data={d.process_knowledge} /> : null}
+          {d.process_knowledge_applied ? (
+            <ProcessAppliedCard data={d.process_knowledge_applied} />
+          ) : null}
+        </>
+      ) : null,
     capability_gap: d.tool_new ? <ToolBuiltCard data={d.tool_new} /> : null,
     library_provisioning: d.library_provisioned ? (
       <LibraryProvisionedCard data={d.library_provisioned} />
@@ -292,6 +311,7 @@ export function agentLayerCards(d: AgentDecisions): Record<string, ReactNode> {
 export function agentLayerRaw(d: AgentDecisions): Record<string, unknown> {
   return {
     requirement_analysis: d.requirements,
+    process_knowledge: d.process_knowledge,
     capability_gap: d.tool_new,
     library_provisioning: d.library_provisioned,
     guardrail_config: d.guardrails,

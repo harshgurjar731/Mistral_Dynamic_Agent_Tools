@@ -694,14 +694,15 @@ export interface LibraryDocument {
 }
 
 /* ── Ontology ───────────────────────────────────────────────────────── */
-export type SchemeId = "agent_tier" | "domain" | "capability" | "data_class";
+export type SchemeId = "agent_tier" | "domain" | "capability" | "data_class" | "process";
 export type Predicate =
   | "has_tier"
   | "serves_domain"
   | "handles_data_class"
   | "requires_capability"
   | "provides_capability"
-  | "egresses_to";
+  | "egresses_to"
+  | "implements_process";
 export type SubjectType = "agent" | "tool" | "connector" | "workflow" | "library";
 
 export interface ConceptScheme {
@@ -789,6 +790,15 @@ export interface OntologyGraphNode {
   description?: string;
   rollup?: Record<string, number>;
   rollup_total?: number;
+  /** domain concepts: processes linked at or below this one. */
+  process_count?: number;
+  /** process concepts: the document shown with it. */
+  document?: { id: number; version: number; status: string; title: string };
+  /** process_document nodes. */
+  document_id?: number;
+  concept_id?: string;
+  version?: number;
+  stats?: Record<string, number>;
 }
 export interface OntologyGraphEdge {
   id: string;
@@ -820,6 +830,7 @@ export const PREDICATE_LABELS: Record<Predicate, string> = {
   requires_capability: "Requires capability",
   provides_capability: "Provides capability",
   egresses_to: "Sends data to",
+  implements_process: "Implements process",
 };
 export const PREDICATE_SCHEME: Record<Predicate, SchemeId> = {
   has_tier: "agent_tier",
@@ -828,6 +839,7 @@ export const PREDICATE_SCHEME: Record<Predicate, SchemeId> = {
   requires_capability: "capability",
   provides_capability: "capability",
   egresses_to: "data_class",
+  implements_process: "process",
 };
 
 /* ── Graph RAG ──────────────────────────────────────────────────────── */

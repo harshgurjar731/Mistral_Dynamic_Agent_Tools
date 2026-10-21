@@ -48,6 +48,20 @@ export const QK = {
   modelCatalog: () => ["settings", "catalog"] as const,
   runs: () => ["runs"] as const,
   libraries: () => ["libraries"] as const,
+  // Process knowledge. A process is an ontology concept, so writes here also
+  // invalidate QK.ontology().
+  processes: () => ["processes"] as const,
+  processConfig: () => ["processes", "config"] as const,
+  processIndustries: () => ["processes", "industries"] as const,
+  processTree: () => ["processes", "tree"] as const,
+  processNode: (id: string) => ["processes", "node", id] as const,
+  processDocuments: (params: Record<string, unknown>) =>
+    ["processes", "documents", params] as const,
+  processDocument: (id: number) => ["processes", "document", id] as const,
+  processTemplates: () => ["processes", "templates"] as const,
+  processTemplate: (ref: number | "default") => ["processes", "templates", ref] as const,
+  processUsage: (params: Record<string, unknown>) => ["processes", "usage", params] as const,
+  processResolve: (goal: string) => ["processes", "resolve", goal] as const,
   libraryDocs: (id: string) => ["libraries", id, "documents"] as const,
   rag: () => ["rag"] as const,
   ontologySchemes: () => ["ontology", "schemes"] as const,

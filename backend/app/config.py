@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     WORKFLOW_MAX_VERSIONS: int = 50
     UPLOAD_MAX_MB: int = 20
 
+    # Process knowledge (Processes page, orchestration toggle)
+    PROCESS_KNOWLEDGE_DEFAULT: bool = False
+    PROCESS_DOC_MAX_KB: int = 512
+    PROCESS_MATCH_MIN_SCORE: float = 3.0
+
     WORKFLOW_MAX_STEPS: int = 20
     WORKFLOW_STEP_TIMEOUT: int = 60
 

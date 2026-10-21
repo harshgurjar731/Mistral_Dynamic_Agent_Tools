@@ -75,6 +75,7 @@ class ToolSelectionLayer(AgentDecisionLayer):
     """Decide which platform tools this agent needs."""
 
     name = "tool_selection"
+    process_view = "agent_tools"
     label = "Choose tools"
     detail = "Decides which platform capabilities this agent needs."
     phase = "tool selection"
@@ -124,6 +125,7 @@ class ConnectorSelectionLayer(AgentDecisionLayer):
     """Decide which external services this agent must reach."""
 
     name = "connector_selection"
+    process_view = "agent_connectors"
     label = "Choose integrations"
     detail = "Decides which external services this agent must reach."
     phase = "connector selection"
@@ -176,6 +178,7 @@ class LibrarySelectionLayer(AgentDecisionLayer):
     """Decide what grounding material this agent reads."""
 
     name = "library_selection"
+    process_view = "agent_libraries"
     label = "Choose knowledge"
     detail = "Decides what documents this agent reads, and whether it reasons over the graph."
     phase = "library selection"
@@ -293,6 +296,7 @@ class IdentityLayer(AgentDecisionLayer):
     """
 
     name = "identity"
+    process_view = "agent_identity"
     label = "Define the agent"
     detail = "Decides the tier, and therefore the name and remit."
     phase = "identity"

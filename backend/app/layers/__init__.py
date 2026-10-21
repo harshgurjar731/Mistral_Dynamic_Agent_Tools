@@ -37,6 +37,7 @@ from app.layers.agent import (
     ToolSelectionLayer,
 )
 from app.layers.cleanup_layer import CleanupLayer
+from app.layers.process_knowledge_layer import ProcessKnowledgeLayer
 from app.layers.execution_layer import ExecutionLayer
 from app.layers.revision import (
     RevisionApplyLayer,
@@ -93,6 +94,9 @@ chat_pipeline.add(CleanupLayer())
 chat_pipeline.add(RequirementAnalysisLayer())
 chat_pipeline.add(CapabilityGapLayer())
 chat_pipeline.add(AgentInventoryLayer())
+# After inventory (it resolves the scope this reads), before the facet group so
+# every branch shares one process context. Off unless the request turns it on.
+chat_pipeline.add(ProcessKnowledgeLayer("agent"))
 chat_pipeline.add(ParallelGroup(
     "agent_facets",
     [
@@ -121,6 +125,7 @@ chat_pipeline.add(ExecutionLayer())
 
 workflow_pipeline = Pipeline("workflow_design")
 workflow_pipeline.add(ResourceInventoryLayer())
+workflow_pipeline.add(ProcessKnowledgeLayer("workflow"))
 workflow_pipeline.add(GoalDecompositionLayer())
 workflow_pipeline.add(ExecutionModeLayer())
 workflow_pipeline.add(CapabilityReuseLayer())

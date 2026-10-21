@@ -104,6 +104,7 @@ class GuardrailConfigLayer(AgentDecisionLayer):
     """Decide the moderation configuration from the assembled agent."""
 
     name = "guardrail_config"
+    process_view = "agent_guardrail"
     label = "Configure guardrails"
     detail = "Decides the moderation categories and thresholds Mistral enforces on this agent."
     phase = "guardrail configuration"

@@ -41,6 +41,10 @@ import {
   settlePipeline,
   type PipelineRun,
 } from "@/components/pipeline/usePipelineRun";
+import {
+  ProcessKnowledgeControl,
+  useProcessKnowledge,
+} from "@/components/processes/ProcessKnowledgeControl";
 import { formatElapsed } from "@/components/runs/runMeta";
 import { stopRun, trackStartedRun } from "@/lib/runs/connections";
 import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
@@ -213,6 +217,7 @@ function OrchestratorChat() {
   const [replay, setReplay] = useState<OrchestratorRunEntry | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const process = useProcessKnowledge("agent");
 
   const tracked = useTrackedRun(runId);
   const { missing } = useRunView(runId);
@@ -336,6 +341,8 @@ function OrchestratorChat() {
         const started = await runsApi.startAgent({
           query,
           ...(conversationId ? { conversation_id: conversationId } : {}),
+          // Only a new agent is designed; a follow-up reuses the one it has.
+          ...(conversationId ? {} : { process_knowledge: process.request }),
         });
         trackStartedRun(started);
         void navigate({ search: { run: started.id } });
@@ -347,7 +354,7 @@ function OrchestratorChat() {
         setStarting(false);
       }
     },
-    [conversationId, input, isProcessing, navigate],
+    [conversationId, input, isProcessing, navigate, process.request],
   );
 
   const loadHistoryEntry = (entry: OrchestratorRunEntry) => {
@@ -565,6 +572,14 @@ function OrchestratorChat() {
       {/* ── Composer ── */}
       <div className="sticky bottom-4 z-20 mt-4">
         <div className="mx-auto max-w-3xl">
+          {!conversationId ? (
+            <ProcessKnowledgeControl
+              state={process}
+              goal={input}
+              disabled={isProcessing}
+              className="mb-2"
+            />
+          ) : null}
           <Composer
             value={input}
             onChange={setInput}
@@ -631,6 +646,14 @@ function OrchestratorChat() {
                           <span className="truncate text-xs font-semibold text-foreground">
                             {entry.title || "Orchestration Run"}
                           </span>
+                          {entry.decisions?.process_knowledge?.enabled ? (
+                            <span
+                              title="Built with process knowledge"
+                              className="shrink-0 rounded-md border border-indigo/25 bg-indigo/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-indigo uppercase"
+                            >
+                              Process
+                            </span>
+                          ) : null}
                           {entry.failed ? (
                             <span className="shrink-0 rounded-md border border-red/25 bg-red/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-red uppercase">
                               Failed

@@ -25,6 +25,8 @@ import { Route as LogsIndexRouteImport } from './routes/logs.index'
 import { Route as LogsTraceIdRouteImport } from './routes/logs.$traceId'
 import { Route as McpIndexRouteImport } from './routes/mcp.index'
 import { Route as McpServerNameRouteImport } from './routes/mcp.$serverName'
+import { Route as ProcessesIndexRouteImport } from './routes/processes.index'
+import { Route as ProcessesIndustryIdRouteImport } from './routes/processes.$industryId'
 import { Route as RemoteServersIndexRouteImport } from './routes/remote-servers.index'
 import { Route as RemoteServersIdRouteImport } from './routes/remote-servers.$id'
 import { Route as RemoteServersNewRouteImport } from './routes/remote-servers.new'
@@ -124,6 +126,16 @@ const McpIndexRoute = McpIndexRouteImport.update({
 const McpServerNameRoute = McpServerNameRouteImport.update({
   id: '/mcp/$serverName',
   path: '/mcp/$serverName',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProcessesIndexRoute = ProcessesIndexRouteImport.update({
+  id: '/processes/',
+  path: '/processes/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProcessesIndustryIdRoute = ProcessesIndustryIdRouteImport.update({
+  id: '/processes/$industryId',
+  path: '/processes/$industryId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RemoteServersIndexRoute = RemoteServersIndexRouteImport.update({
@@ -246,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
+  '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
   '/rules/$id': typeof RulesIdRoute
@@ -256,6 +269,7 @@ export interface FileRoutesByFullPath {
   '/libraries/': typeof LibrariesIndexRoute
   '/logs/': typeof LogsIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/processes/': typeof ProcessesIndexRoute
   '/remote-servers/': typeof RemoteServersIndexRoute
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
@@ -283,6 +297,7 @@ export interface FileRoutesByTo {
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
+  '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
   '/rules/$id': typeof RulesIdRoute
@@ -293,6 +308,7 @@ export interface FileRoutesByTo {
   '/libraries': typeof LibrariesIndexRoute
   '/logs': typeof LogsIndexRoute
   '/mcp': typeof McpIndexRoute
+  '/processes': typeof ProcessesIndexRoute
   '/remote-servers': typeof RemoteServersIndexRoute
   '/rules': typeof RulesIndexRoute
   '/tools': typeof ToolsIndexRoute
@@ -322,6 +338,7 @@ export interface FileRoutesById {
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
+  '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
   '/rules/$id': typeof RulesIdRoute
@@ -332,6 +349,7 @@ export interface FileRoutesById {
   '/libraries/': typeof LibrariesIndexRoute
   '/logs/': typeof LogsIndexRoute
   '/mcp/': typeof McpIndexRoute
+  '/processes/': typeof ProcessesIndexRoute
   '/remote-servers/': typeof RemoteServersIndexRoute
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
@@ -362,6 +380,7 @@ export interface FileRouteTypes {
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
+    | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
     | '/rules/$id'
@@ -372,6 +391,7 @@ export interface FileRouteTypes {
     | '/libraries/'
     | '/logs/'
     | '/mcp/'
+    | '/processes/'
     | '/remote-servers/'
     | '/rules/'
     | '/tools/'
@@ -399,6 +419,7 @@ export interface FileRouteTypes {
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
+    | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
     | '/rules/$id'
@@ -409,6 +430,7 @@ export interface FileRouteTypes {
     | '/libraries'
     | '/logs'
     | '/mcp'
+    | '/processes'
     | '/remote-servers'
     | '/rules'
     | '/tools'
@@ -437,6 +459,7 @@ export interface FileRouteTypes {
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
+    | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
     | '/rules/$id'
@@ -447,6 +470,7 @@ export interface FileRouteTypes {
     | '/libraries/'
     | '/logs/'
     | '/mcp/'
+    | '/processes/'
     | '/remote-servers/'
     | '/rules/'
     | '/tools/'
@@ -475,6 +499,7 @@ export interface RootRouteChildren {
   ConnectorsIdRoute: typeof ConnectorsIdRoute
   LogsTraceIdRoute: typeof LogsTraceIdRoute
   McpServerNameRoute: typeof McpServerNameRoute
+  ProcessesIndustryIdRoute: typeof ProcessesIndustryIdRoute
   RemoteServersIdRoute: typeof RemoteServersIdRoute
   RemoteServersNewRoute: typeof RemoteServersNewRoute
   RulesIdRoute: typeof RulesIdRoute
@@ -484,6 +509,7 @@ export interface RootRouteChildren {
   ConnectorsIndexRoute: typeof ConnectorsIndexRoute
   LogsIndexRoute: typeof LogsIndexRoute
   McpIndexRoute: typeof McpIndexRoute
+  ProcessesIndexRoute: typeof ProcessesIndexRoute
   RemoteServersIndexRoute: typeof RemoteServersIndexRoute
   RulesIndexRoute: typeof RulesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
@@ -613,6 +639,20 @@ declare module '@tanstack/react-router' {
       path: '/mcp/$serverName'
       fullPath: '/mcp/$serverName'
       preLoaderRoute: typeof McpServerNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/processes/': {
+      id: '/processes/'
+      path: '/processes'
+      fullPath: '/processes/'
+      preLoaderRoute: typeof ProcessesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/processes/$industryId': {
+      id: '/processes/$industryId'
+      path: '/processes/$industryId'
+      fullPath: '/processes/$industryId'
+      preLoaderRoute: typeof ProcessesIndustryIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/remote-servers/': {
@@ -783,6 +823,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectorsIdRoute: ConnectorsIdRoute,
   LogsTraceIdRoute: LogsTraceIdRoute,
   McpServerNameRoute: McpServerNameRoute,
+  ProcessesIndustryIdRoute: ProcessesIndustryIdRoute,
   RemoteServersIdRoute: RemoteServersIdRoute,
   RemoteServersNewRoute: RemoteServersNewRoute,
   RulesIdRoute: RulesIdRoute,
@@ -792,6 +833,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectorsIndexRoute: ConnectorsIndexRoute,
   LogsIndexRoute: LogsIndexRoute,
   McpIndexRoute: McpIndexRoute,
+  ProcessesIndexRoute: ProcessesIndexRoute,
   RemoteServersIndexRoute: RemoteServersIndexRoute,
   RulesIndexRoute: RulesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,

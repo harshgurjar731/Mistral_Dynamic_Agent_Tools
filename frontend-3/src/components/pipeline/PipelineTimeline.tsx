@@ -13,8 +13,19 @@
  * is visible without a click.
  */
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Check, ChevronRight, Code, GitMerge, Loader2, Minus } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpenCheck,
+  Check,
+  ChevronRight,
+  Code,
+  GitMerge,
+  Loader2,
+  Minus,
+} from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ProcessUse } from "@/api/processes";
+import { ProcessUseList } from "@/components/processes/shared";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/status";
 
@@ -33,6 +44,8 @@ export interface LayerRuntime {
   ms?: number | undefined;
   summary?: string | undefined;
   error?: string | undefined;
+  /** Elements of the run's process knowledge this layer used. */
+  process?: ProcessUse[] | undefined;
 }
 
 interface Props {
@@ -62,6 +75,32 @@ function StateIcon({ state, className }: { state: LayerState; className?: string
   if (state === "failed") return <AlertTriangle className={cn("size-3", className)} />;
   if (state === "skipped") return <Minus className={cn("size-3", className)} />;
   return <span className="size-1.5 rounded-full bg-muted-foreground/40" />;
+}
+
+/** "Process knowledge · 3" — shown on any row whose layer used some. */
+function ProcessChip({ uses, onClick }: { uses: ProcessUse[]; onClick?: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      title="What this layer took from the process knowledge"
+      className="inline-flex items-center gap-1 rounded-full border border-indigo/30 bg-indigo/10 px-1.5 py-px text-[9px] font-semibold tracking-wider text-indigo uppercase"
+    >
+      <BookOpenCheck className="size-2.5" /> Process · {uses.length}
+    </button>
+  );
+}
+
+function ProcessUsePanel({ uses }: { uses: ProcessUse[] }) {
+  return (
+    <div className="mt-2.5 rounded-xl border border-indigo/25 bg-indigo/5 p-3">
+      <p className="eyebrow mb-2 text-indigo">Process knowledge used here</p>
+      <ProcessUseList uses={uses} />
+    </div>
+  );
 }
 
 function Duration({ ms }: { ms?: number | undefined }) {
@@ -96,11 +135,17 @@ function Branch({ entry, run }: { entry: LayerManifestEntry; run: LayerRuntime }
           {entry.label}
         </span>
         <Duration ms={run.ms} />
+        {run.process?.length ? <ProcessChip uses={run.process} /> : null}
       </div>
       <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
         {run.summary || entry.detail}
       </p>
       {run.error ? <p className="mt-0.5 text-[11px] text-red">{run.error}</p> : null}
+      {run.process?.length ? (
+        <div className="mt-1.5">
+          <ProcessUseList uses={run.process} />
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -173,7 +218,10 @@ export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: 
           const branches = (entry.concurrent ?? []).filter((b) => !b.hidden);
           const card = cards?.[entry.name];
           const rawPayload = raw?.[entry.name];
-          const expandable = Boolean(card || branches.length > 0 || rawPayload !== undefined);
+          const uses = run.process ?? [];
+          const expandable = Boolean(
+            card || branches.length > 0 || rawPayload !== undefined || uses.length > 0,
+          );
           const isOpen = open[entry.name] ?? false;
 
           return (
@@ -227,6 +275,12 @@ export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: 
                   <Duration ms={run.ms} />
                   {run.state === "skipped" ? (
                     <span className="technical-label">not needed</span>
+                  ) : null}
+                  {uses.length > 0 ? (
+                    <ProcessChip
+                      uses={uses}
+                      onClick={() => setOpen((p) => ({ ...p, [entry.name]: true }))}
+                    />
                   ) : null}
                   {branches.length > 0 ? (
                     <span className="inline-flex items-center gap-1 rounded-full border border-cyan/25 bg-cyan/10 px-1.5 py-px text-[9px] font-semibold tracking-wider text-cyan uppercase">
@@ -297,6 +351,8 @@ export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: 
                     ) : null}
 
                     {card}
+
+                    {uses.length > 0 ? <ProcessUsePanel uses={uses} /> : null}
 
                     {rawPayload !== undefined ? (
                       <div className="mt-2">

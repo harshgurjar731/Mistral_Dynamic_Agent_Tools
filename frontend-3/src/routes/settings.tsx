@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Workflow,
   Wrench,
   X,
   type LucideIcon,
@@ -58,6 +59,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SettingTile } from "@/components/settings/SettingControls";
+import { ProcessTemplatesPanel } from "@/components/settings/ProcessTemplatesPanel";
 import {
   ModelCatalogBrowser,
   ModelUsageMap,
@@ -103,7 +105,7 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
   monitor: Monitor,
 };
 
-type CategoryId = "overview" | "models" | "tool_service" | "platform" | "frontend";
+type CategoryId = "overview" | "models" | "tool_service" | "platform" | "process" | "frontend";
 
 const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIcon }[] = [
   {
@@ -131,6 +133,13 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     title: "Platform",
     blurb: "Pacing, workflows, knowledge graph, observability and security.",
     icon: ShieldCheck,
+  },
+  {
+    id: "process",
+    title: "Process knowledge",
+    blurb:
+      "The template process documents must follow, and how documents are checked and matched to a request.",
+    icon: Workflow,
   },
   {
     id: "frontend",
@@ -547,6 +556,7 @@ function SettingsPage() {
                   </div>
                 </div>
               ) : null}
+              {category === "process" ? <ProcessTemplatesPanel /> : null}
               {sectionsIn(category).map((s) => (
                 <SectionCard
                   key={`${s.target}-${s.id}`}

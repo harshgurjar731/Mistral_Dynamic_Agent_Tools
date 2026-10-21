@@ -1,4 +1,12 @@
-import { AlertCircle, CheckCircle2, Clock, GitBranch, Loader2, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  BookOpenCheck,
+  CheckCircle2,
+  Clock,
+  GitBranch,
+  Loader2,
+  Trash2,
+} from "lucide-react";
 import type { PlannerRun } from "@/stores/plannerHistory";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -28,6 +36,31 @@ function HistorySkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** With / without process knowledge — what makes two runs of a goal comparable. */
+function ProcessBadge({ entry }: { entry: PlannerHistoryEntry }) {
+  const step = entry.steps?.find((s) => s.type === "process_knowledge");
+  if (!step) return null;
+  const pk = step.content as { enabled?: boolean; documents?: Array<{ title?: string }> };
+  const used = pk.enabled && (pk.documents?.length ?? 0) > 0;
+  return (
+    <p
+      className={cn(
+        "mb-2 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
+        used
+          ? "border-indigo/25 bg-indigo/10 text-indigo"
+          : "border-border bg-background-elevated text-muted-foreground",
+      )}
+    >
+      <BookOpenCheck className="size-2.5" />
+      {used
+        ? `With process: ${pk.documents?.[0]?.title ?? "document"}`
+        : pk.enabled
+          ? "Process knowledge on — none matched"
+          : "Without process knowledge"}
+    </p>
   );
 }
 
@@ -130,6 +163,7 @@ export function PlannerHistorySheet({
                   {entry.workflowName && entry.status !== "failed" ? (
                     <p className="mb-3 font-mono text-xs text-primary">{entry.workflowName}</p>
                   ) : null}
+                  <ProcessBadge entry={entry} />
                   <div className="mt-2 flex items-center justify-between border-t border-border pt-2 text-[10px] text-muted-foreground">
                     <span>
                       {entry.fromBackend

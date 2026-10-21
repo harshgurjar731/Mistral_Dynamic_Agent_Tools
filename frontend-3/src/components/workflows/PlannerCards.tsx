@@ -6,6 +6,12 @@
  * layer's row in the PipelineTimeline; `LegacyPlannerTimeline` renders whatever
  * no layer owns (errors, and history entries recorded without a manifest).
  */
+import {
+  ProcessAppliedCard,
+  ProcessKnowledgeCard,
+  type ProcessAppliedEvent,
+  type ProcessKnowledgeEvent,
+} from "@/components/processes/ProcessKnowledgeCards";
 import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useState, type ReactNode } from "react";
@@ -50,6 +56,8 @@ import {
 /* ── Step model ────────────────────────────────────────────────────────── */
 
 export type PlannerStepType =
+  | "process_knowledge"
+  | "process_knowledge_applied"
   | "capabilities"
   | "execution_modes"
   | "reuse_plan"
@@ -85,6 +93,8 @@ export interface PlannerStep {
 
 /** Which layer produced each kind of card. */
 export const PLANNER_CARD_OWNER: Partial<Record<PlannerStepType, string>> = {
+  process_knowledge: "process_knowledge",
+  process_knowledge_applied: "process_knowledge",
   capabilities: "goal_decomposition",
   execution_modes: "execution_mode",
   reuse_plan: "capability_reuse",
@@ -1611,6 +1621,10 @@ export function RollbackReportCard({ data }: { data: RollbackData }) {
 export function renderPlannerCard(step: PlannerStep): ReactNode {
   const c = step.content;
   switch (step.type) {
+    case "process_knowledge":
+      return <ProcessKnowledgeCard data={c as ProcessKnowledgeEvent} />;
+    case "process_knowledge_applied":
+      return <ProcessAppliedCard data={c as ProcessAppliedEvent} />;
     case "capabilities":
       return <CapabilitiesCard data={c as CapabilitiesData} />;
     case "execution_modes":

@@ -23,6 +23,12 @@ class Scheme(str, Enum):
     DOMAIN = "domain"
     CAPABILITY = "capability"
     DATA_CLASS = "data_class"
+    #: Business processes and their subprocesses. A separate hierarchy from
+    #: ``domain`` on purpose: goal matching, agent scoping and inventory
+    #: filtering all walk the domain tree, and processes must not change what
+    #: they see. A process is tied to its domain by a ``part_of_domain`` link
+    #: (``ontology_concept_links``), not by ``parent_id``.
+    PROCESS = "process"
 
 
 class SubjectType(str, Enum):
@@ -49,6 +55,22 @@ class Predicate(str, Enum):
     REQUIRES_CAPABILITY = "requires_capability"
     PROVIDES_CAPABILITY = "provides_capability"
     EGRESSES_TO = "egresses_to"
+
+    #: An agent, workflow or library built for (or grounded in) a business
+    #: process. Written by the process-knowledge layer when a build used one,
+    #: and editable by hand. Points at a concept in the ``process`` scheme.
+    IMPLEMENTS_PROCESS = "implements_process"
+
+
+class ConceptLinkPredicate(str, Enum):
+    """Relations between two concepts in *different* schemes.
+
+    ``parent_id`` is the is-a hierarchy inside one scheme; these are the edges
+    that cross schemes, which a recursive parent walk must never follow.
+    """
+
+    #: process → the domain or subdomain it belongs to.
+    PART_OF_DOMAIN = "part_of_domain"
 
 
 class AgentTier(str, Enum):

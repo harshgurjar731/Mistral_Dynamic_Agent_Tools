@@ -104,8 +104,17 @@ class AgentDesignLayer(WorkflowStepLayer):
             ]
             return json.dumps(items, indent=2) if items else "Nothing — this is a terminal step."
 
+        from app.process_knowledge import pipeline as process_knowledge
+
         async def _design_one(cap):
             async with semaphore:
+                # This capability's own stage, its controls and exceptions —
+                # not the whole process. "" when the run has no process knowledge.
+                process_block = process_knowledge.block(
+                    ctx, "design", focus=cap.process_stage,
+                    extra_instruction=" Write the controls and exceptions that apply into "
+                                      "agent_instructions.",
+                )
                 raw = await decide(
                     ctx.client,
                     model=settings.MISTRAL_ORCHESTRATOR_MODEL,
@@ -128,12 +137,15 @@ class AgentDesignLayer(WorkflowStepLayer):
                         connector_ids=json.dumps(inv.get("connector_ids", [])),
                         library_descriptions=inv.get("library_descriptions", ""),
                         library_ids=json.dumps(inv.get("library_ids", [])),
-                    ),
+                    ) + process_block,
                     phase=f"agent design ({cap.id})",
                     timeout_ms=LONG_TIMEOUT_MS,
                     temperature=0.2,
                 )
-                return cap, parse_json(raw, None)
+                data = parse_json(raw, None)
+                if process_block:
+                    process_knowledge.record_refs(ctx, self.name, data, target=cap.id)
+                return cap, data
 
         results = await asyncio.gather(
             *[_design_one(c) for c in to_design], return_exceptions=True

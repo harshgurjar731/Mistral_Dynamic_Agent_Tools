@@ -116,10 +116,4 @@ export function createSSEStream(url: string, opts: StreamOptions): () => void {
 }
 
 export type LiveState =
-  | "idle"
-  | "connecting"
-  | "live"
-  | "reconnecting"
-  | "closed"
-  | "disconnected"
-  | "error";
+  "idle" | "connecting" | "live" | "reconnecting" | "closed" | "disconnected" | "error";
