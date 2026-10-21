@@ -47,6 +47,9 @@ coverage.xml
 *.db
 *.sqlite
 *.sqlite3
+# Settings-page overrides and the cached Mistral model list
+runtime_settings.json
+model_catalog.json
 
 # ───────────────────────────────────────────────
 # Node / Frontend

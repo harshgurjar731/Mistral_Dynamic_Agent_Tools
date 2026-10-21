@@ -28,7 +28,7 @@ def _choice_message(choice):
         return message
     transcript = getattr(choice, "messages", None) or []
     return transcript[-1] if transcript else None
-from app.config import map_model_name
+from app.config import map_model_name, settings
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ async def chat_completion(client: Mistral, data: dict) -> dict:
         elif data.get("model"):
             kwargs["model"] = map_model_name(data["model"])
         else:
-            kwargs["model"] = "mistral-large-latest"
+            kwargs["model"] = settings.CHAT_DEFAULT_MODEL
 
         if data.get("temperature") is not None:
             kwargs["temperature"] = data["temperature"]
@@ -190,7 +190,7 @@ async def stream_chat_completion(client: Mistral, data: dict) -> AsyncGenerator[
         if data.get("model"):
             kwargs["model"] = map_model_name(data["model"])
         elif not data.get("agent_id"):
-            kwargs["model"] = "mistral-large-latest"
+            kwargs["model"] = settings.CHAT_DEFAULT_MODEL
         if data.get("temperature") is not None:
             kwargs["temperature"] = data["temperature"]
         if data.get("max_tokens") is not None:

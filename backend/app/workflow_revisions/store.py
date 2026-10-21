@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from sqlalchemy import func
 
+from app.config import settings
 from app.database import SessionLocal
 from app.workflow_revisions.models import (
     OPEN_STATUSES,
@@ -36,8 +37,8 @@ _REVISION_JSON = {
     "trace": [],
 }
 
-#: Versions kept per workflow. Older ones are pruned, oldest first.
-MAX_VERSIONS = 50
+# Versions kept per workflow: WORKFLOW_MAX_VERSIONS (Settings page). Older ones
+# are pruned, oldest first.
 
 
 def _now() -> datetime:
@@ -236,7 +237,7 @@ def _prune(db, workflow_name: str) -> None:
         db.query(WorkflowVersionRecord.id)
         .filter(WorkflowVersionRecord.workflow_name == workflow_name)
         .order_by(WorkflowVersionRecord.version_no.desc())
-        .offset(MAX_VERSIONS)
+        .offset(max(1, settings.WORKFLOW_MAX_VERSIONS))
         .all()
     )
     if rows:

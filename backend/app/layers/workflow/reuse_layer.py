@@ -14,15 +14,16 @@ inventory, and its only output is a reuse-or-create verdict per capability.
 import json
 import logging
 
+from app.config import settings
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowDecisionLayer
 
 logger = logging.getLogger(__name__)
 
-#: Below this the model is guessing, and a wrong reuse is more expensive than
-#: an extra agent — it produces a workflow whose steps quietly do the wrong
-#: thing, which is far harder to diagnose than one redundant agent.
-_MIN_REUSE_CONFIDENCE = 0.6
+# REUSE_MIN_CONFIDENCE (Settings page): below it the model is guessing, and a
+# wrong reuse is more expensive than an extra agent — it produces a workflow
+# whose steps quietly do the wrong thing, which is far harder to diagnose than
+# one redundant agent.
 
 #: Words in a goal or in a capability's data items that mean the workflow
 #: carries exposure an agent's safety posture has to be adequate for. Used to
@@ -153,10 +154,10 @@ class CapabilityReuseLayer(WorkflowDecisionLayer):
                 )
                 agent_id = None
 
-            if action == "reuse" and agent_id and confidence < _MIN_REUSE_CONFIDENCE:
+            if action == "reuse" and agent_id and confidence < settings.REUSE_MIN_CONFIDENCE:
                 logger.info(
                     "Capability '%s' reuse confidence %.2f below %.2f — creating instead",
-                    cap.id, confidence, _MIN_REUSE_CONFIDENCE,
+                    cap.id, confidence, settings.REUSE_MIN_CONFIDENCE,
                 )
                 agent_id = None
 

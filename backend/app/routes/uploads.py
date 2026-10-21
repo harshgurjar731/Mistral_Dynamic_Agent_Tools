@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,6 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 
 @router.post("/uploads/image")
@@ -38,8 +38,8 @@ async def upload_image(file: UploadFile = File(...)):
 
     # Read file content
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Max size: {MAX_FILE_SIZE // (1024*1024)}MB")
+    if len(content) > settings.UPLOAD_MAX_MB * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"File too large. Max size: {settings.UPLOAD_MAX_MB}MB")
 
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file uploaded")

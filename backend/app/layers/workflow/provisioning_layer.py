@@ -15,6 +15,7 @@ import json
 import logging
 from functools import partial
 
+from app.config import settings
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowStepLayer
 
@@ -57,9 +58,9 @@ async def _provision_library(cap, ctx) -> str | None:
     return library_id
 
 
-#: Agent creation is a fast API call, so this is higher than the synthesis and
-#: design bounds — it exists to be polite to the API, not to pace a queue.
-_CREATION_CONCURRENCY = 5
+# AGENT_CREATION_CONCURRENCY (Settings page): agent creation is a fast API
+# call, so it is higher than the synthesis and design bounds — it exists to be
+# polite to the API, not to pace a queue.
 
 
 class AgentProvisioningLayer(WorkflowStepLayer):
@@ -116,7 +117,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
         to_create = [c for c in agent_caps if not c.reuse_agent_id and c.spec]
         if to_create:
             ctx.emit("status", f"Creating {len(to_create)} agent(s)…")
-            semaphore = asyncio.Semaphore(_CREATION_CONCURRENCY)
+            semaphore = asyncio.Semaphore(max(1, settings.AGENT_CREATION_CONCURRENCY))
             # Libraries made for a capability, kept across retries so a retried
             # agent is not given a second, duplicate library.
             libraries: dict[str, str | None] = {}

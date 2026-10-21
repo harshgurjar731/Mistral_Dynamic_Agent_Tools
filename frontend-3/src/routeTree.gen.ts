@@ -14,6 +14,7 @@ import { Route as HealthRouteImport } from './routes/health'
 import { Route as LibrariesRouteImport } from './routes/libraries'
 import { Route as OntologyRouteImport } from './routes/ontology'
 import { Route as PlaygroundRouteImport } from './routes/playground'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
@@ -68,6 +69,11 @@ const OntologyRoute = OntologyRouteImport.update({
 const PlaygroundRoute = PlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
@@ -270,6 +277,7 @@ export interface FileRoutesByTo {
   '/health': typeof HealthRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
@@ -308,6 +316,7 @@ export interface FileRoutesById {
   '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/libraries/$id': typeof LibrariesIdRoute
@@ -347,6 +356,7 @@ export interface FileRouteTypes {
     | '/libraries'
     | '/ontology'
     | '/playground'
+    | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
@@ -383,6 +393,7 @@ export interface FileRouteTypes {
     | '/health'
     | '/ontology'
     | '/playground'
+    | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
@@ -420,6 +431,7 @@ export interface FileRouteTypes {
     | '/libraries'
     | '/ontology'
     | '/playground'
+    | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
     | '/libraries/$id'
@@ -458,6 +470,7 @@ export interface RootRouteChildren {
   LibrariesRoute: typeof LibrariesRouteWithChildren
   OntologyRoute: typeof OntologyRoute
   PlaygroundRoute: typeof PlaygroundRoute
+  SettingsRoute: typeof SettingsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
   LogsTraceIdRoute: typeof LogsTraceIdRoute
@@ -523,6 +536,13 @@ declare module '@tanstack/react-router' {
       path: '/playground'
       fullPath: '/playground'
       preLoaderRoute: typeof PlaygroundRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents/': {
@@ -758,6 +778,7 @@ const rootRouteChildren: RootRouteChildren = {
   LibrariesRoute: LibrariesRouteWithChildren,
   OntologyRoute: OntologyRoute,
   PlaygroundRoute: PlaygroundRoute,
+  SettingsRoute: SettingsRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
   LogsTraceIdRoute: LogsTraceIdRoute,

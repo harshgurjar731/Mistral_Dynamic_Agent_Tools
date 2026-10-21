@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CHAT_MODELS } from "@/lib/models";
+import { useModelConfig } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessions";
 import type { ChatMessagePayload } from "@/api";
@@ -68,7 +68,17 @@ function PlaygroundPage() {
   );
 
   const [input, setInput] = useState("");
-  const [model, setModel] = useState("mistral-large-latest");
+  const { choices: modelChoices, chatDefaultModel, isLoaded: modelsLoaded } = useModelConfig();
+  const [model, setModel] = useState(chatDefaultModel);
+  // Adopt the configured default once it arrives, unless the user already picked.
+  const modelTouched = useRef(false);
+  useEffect(() => {
+    if (modelsLoaded && !modelTouched.current) setModel(chatDefaultModel);
+  }, [modelsLoaded, chatDefaultModel]);
+  const pickModel = (m: string) => {
+    modelTouched.current = true;
+    setModel(m);
+  };
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(1.0);
   const [safePrompt, setSafePrompt] = useState(false);
@@ -183,7 +193,7 @@ function PlaygroundPage() {
   };
 
   const hasMessages = activeSession && activeSession.messages.length > 0;
-  const activeModel = CHAT_MODELS.find((m) => m.value === model);
+  const activeModel = modelChoices.find((m) => m.value === model);
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col md:h-dvh">
@@ -362,12 +372,12 @@ function PlaygroundPage() {
                   <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Model
                   </label>
-                  <Select value={model} onValueChange={setModel}>
+                  <Select value={model} onValueChange={pickModel}>
                     <SelectTrigger className="mt-1.5 bg-background-elevated text-foreground">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {CHAT_MODELS.map((m) => (
+                      {modelChoices.map((m) => (
                         <SelectItem key={m.value} value={m.value}>
                           {m.label}
                         </SelectItem>

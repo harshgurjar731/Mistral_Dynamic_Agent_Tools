@@ -19,13 +19,13 @@ import asyncio
 import json
 import logging
 
+from app.config import settings
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowStepLayer
 
 logger = logging.getLogger(__name__)
 
-#: Same bound as agent design: one small completion per new agent.
-_SELECTION_CONCURRENCY = 4
+# RULE_SELECTION_CONCURRENCY (Settings page): one small completion per new agent.
 
 
 class WorkflowAgentRulesLayer(WorkflowStepLayer):
@@ -50,7 +50,7 @@ class WorkflowAgentRulesLayer(WorkflowStepLayer):
             return await next(ctx)
 
         ctx.emit("status", f"Choosing rules for {len(to_select)} agent(s)…")
-        semaphore = asyncio.Semaphore(_SELECTION_CONCURRENCY)
+        semaphore = asyncio.Semaphore(max(1, settings.RULE_SELECTION_CONCURRENCY))
 
         async def _one(cap):
             async with semaphore:

@@ -310,6 +310,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Could not refresh dynamic tools: %s (Tool Service may not be running)", e)
 
+    # Keep the Mistral model catalog current (Settings page, model checks).
+    # Background: a slow or failing models call must not hold up boot.
+    from app.app_settings import catalog as model_catalog
+    catalog_task = asyncio.create_task(model_catalog.refresh_loop())
+
     # ── Start Mistral Workflows worker as a managed subprocess ──────────
     worker_proc = None
     if settings.MISTRAL_WORKER_ENABLED:
@@ -335,6 +340,8 @@ async def lifespan(app: FastAPI):
         logger.info("ℹ️ Mistral worker disabled (MISTRAL_WORKER_ENABLED=false)")
 
     yield
+
+    catalog_task.cancel()
 
     # ── Shutdown: record in-flight background runs as interrupted ───────
     try:
@@ -426,6 +433,9 @@ app.include_router(runs_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import observability as observability_routes  # noqa: E402
 app.include_router(observability_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import settings as settings_routes  # noqa: E402
+app.include_router(settings_routes.router, prefix=settings.API_PREFIX)
 
 # ── Static file serving for uploads ─────────────────────────────────────────
 import os

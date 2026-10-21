@@ -74,6 +74,10 @@ app.include_router(synthesis.router)
 app.include_router(execution.router)
 app.include_router(management.router)
 
+from app.routes import settings as settings_routes  # noqa: E402
+
+app.include_router(settings_routes.router)
+
 # MCP routes (Phase 4)
 try:
     from app.routes import mcp

@@ -42,6 +42,10 @@ export const QK = {
   remoteDeployment: (id: number) => ["remote-deployments", id] as const,
   workflowRemoteDeployments: (name: string) => ["remote-deployments", "workflow", name] as const,
   health: () => ["health"] as const,
+  settings: () => ["settings"] as const,
+  // Under "settings" so saving the Settings page refreshes every picker.
+  publicConfig: () => ["settings", "public"] as const,
+  modelCatalog: () => ["settings", "catalog"] as const,
   runs: () => ["runs"] as const,
   libraries: () => ["libraries"] as const,
   libraryDocs: (id: string) => ["libraries", id, "documents"] as const,

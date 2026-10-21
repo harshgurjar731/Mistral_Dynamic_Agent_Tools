@@ -259,11 +259,13 @@ class AgentSpec:
         Keeping that shape here means the decomposition stops at the pipeline
         boundary instead of rippling through every consumer.
         """
+        from app.config import settings
+
         return {
             "agent_name": self.agent_name or "Dynamic Agent",
             "description": self.description or "Dynamically created agent",
             "tier": self.tier or "foundation",
-            "model": self.model or "mistral-large-latest",
+            "model": self.model or settings.DEFAULT_AGENT_MODEL,
             "temperature": self.temperature if self.temperature is not None else 0.5,
             "tools": list(self.tools or []),
             "connectors": list(self.connectors or []),

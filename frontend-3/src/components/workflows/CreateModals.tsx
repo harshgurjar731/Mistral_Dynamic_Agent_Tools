@@ -24,7 +24,7 @@ import { GuardrailEditor } from "@/components/agents/GuardrailEditor";
 import { RuleSelector } from "@/components/rules/RuleSelector";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CHAT_MODELS } from "@/lib/models";
+import { modelLabel, useModelConfig } from "@/lib/models";
 import {
   Dialog,
   DialogContent,
@@ -71,7 +71,10 @@ export function CreateAgentModal({
   const [tab, setTab] = useState<AgentTab>("basics");
   // Identity
   const [name, setName] = useState("");
-  const [model, setModel] = useState(models[0] ?? "mistral-large-latest");
+  const { choices: modelChoices, defaultAgentModel } = useModelConfig();
+  const [model, setModel] = useState(
+    models.includes(defaultAgentModel) ? defaultAgentModel : (models[0] ?? defaultAgentModel),
+  );
   const [tier, setTier] = useState(tiers[0] ?? "foundation");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -256,7 +259,7 @@ export function CreateAgentModal({
                   >
                     {models.map((m) => (
                       <option key={m} value={m} className="bg-background-elevated">
-                        {CHAT_MODELS.find((c) => c.value === m)?.label ?? m}
+                        {modelLabel(modelChoices, m)}
                       </option>
                     ))}
                   </select>

@@ -478,7 +478,7 @@ async def get_builder_catalog():
             agents.append(CatalogAgent(
                 id=item["id"],
                 name=item.get("name") or item["id"],
-                model=item.get("model") or "mistral-large-latest",
+                model=item.get("model") or settings.DEFAULT_AGENT_MODEL,
                 description=item.get("description"),
                 tier=item.get("tier"),
                 tools=[t for t in tool_names if t],
@@ -586,13 +586,7 @@ async def get_builder_catalog():
         activities=sorted(activities, key=lambda t: t.name.lower()),
         connectors=sorted(connectors, key=lambda c: c.name.lower()),
         domains=sorted(domains, key=lambda d: d.label.lower()),
-        models=[
-            "mistral-large-latest",
-            "mistral-medium-latest",
-            "mistral-small-latest",
-            "open-mistral-nemo",
-            "codestral-latest",
-        ],
+        models=settings.agent_model_choices,
         tiers=["foundation", "domain", "use_case"],
     )
 
@@ -1102,7 +1096,6 @@ async def get_workflow_executions(
 
 # How long to wait for the worker to restart and register a new workflow.
 # A cold restart is ~10-15s (watchfiles debounce + SDK import + Temporal connect).
-REGISTRATION_WAIT_SECONDS = float(os.environ.get("WORKFLOW_REGISTRATION_WAIT", "30"))
 REGISTRATION_POLL_SECONDS = 1.5
 
 
@@ -1211,7 +1204,7 @@ async def register_workflow_on_mistral(workflow_name: str, wait_seconds: float |
                 ),
             }
         else:
-            wait = REGISTRATION_WAIT_SECONDS if wait_seconds is None else wait_seconds
+            wait = settings.WORKFLOW_REGISTRATION_WAIT if wait_seconds is None else wait_seconds
             logger.info(
                 "Waiting up to %.0fs for the worker to register '%s'%s",
                 wait, workflow_name, "" if code_changed else " (module unchanged)",

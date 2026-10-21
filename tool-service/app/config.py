@@ -80,3 +80,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Overrides saved from the backend's Settings page win over the environment.
+from app.runtime_settings import apply_overrides  # noqa: E402
+
+apply_overrides(settings)

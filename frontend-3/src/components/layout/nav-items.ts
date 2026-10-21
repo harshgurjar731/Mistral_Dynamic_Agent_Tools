@@ -9,6 +9,7 @@ import {
   Plug,
   ScrollText,
   Server,
+  Settings,
   ShieldCheck,
   Terminal,
   Wrench,
@@ -39,4 +40,5 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Remote Servers", to: "/remote-servers", icon: HardDrive },
   { label: "Libraries", to: "/libraries", icon: Library },
   { label: "Health", to: "/health", icon: Activity },
+  { label: "Settings", to: "/settings", icon: Settings },
 ];

@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 
+from app.config import resolve_agent_model, settings
 from app.core.context import PipelineContext
 from app.core.decision import LONG_TIMEOUT_MS, decide, parse_json
 from app.core.specs import AgentSpec, GuardrailSpec
@@ -29,15 +30,6 @@ from app.layers.workflow.base import WorkflowStepLayer
 
 logger = logging.getLogger(__name__)
 
-#: Bounded so a large workflow does not open a completion per capability at
-#: once. Design calls are the longest in the chain after the DAG layers.
-_DESIGN_CONCURRENCY = 4
-
-_VALID_MODELS = {
-    "mistral-large-latest",
-    "mistral-medium-latest",
-    "mistral-small-latest",
-}
 _VALID_TIERS = {"foundation", "domain", "use_case"}
 
 
@@ -90,7 +82,9 @@ class AgentDesignLayer(WorkflowStepLayer):
         ctx.emit("status", f"Designing {len(to_design)} agent(s)…")
 
         by_id = {c.id: c for c in spec.capabilities}
-        semaphore = asyncio.Semaphore(_DESIGN_CONCURRENCY)
+        # Bounded so a large workflow does not open a completion per capability
+        # at once. Design calls are the longest in the chain after the DAG layers.
+        semaphore = asyncio.Semaphore(max(1, settings.WORKFLOW_DESIGN_CONCURRENCY))
 
         def _upstream(cap) -> str:
             """What the steps this capability depends on will hand it."""
@@ -156,9 +150,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                 cap.spec = self._minimal_spec(cap)
                 continue
 
-            model = map_model_name(str(data.get("model") or "").strip())
-            if model not in _VALID_MODELS:
-                model = "mistral-large-latest"
+            model = resolve_agent_model(str(data.get("model") or ""))
 
             try:
                 temperature = float(data.get("temperature"))
@@ -305,7 +297,7 @@ class AgentDesignLayer(WorkflowStepLayer):
             agent_name=cap.name[:100],
             description=cap.purpose[:500] or f"Performs {cap.name}.",
             tier=cap.tier,
-            model="mistral-large-latest",
+            model=settings.DEFAULT_AGENT_MODEL,
             temperature=0.3,
             tools=[],
             connectors=[],

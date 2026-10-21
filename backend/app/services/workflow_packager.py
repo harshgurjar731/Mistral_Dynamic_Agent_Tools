@@ -51,6 +51,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.config import settings
 from app.services.mistral_workflows_compiler import compile_workflow_to_python
 from app.services.workflow_engine.models import (
     DeploymentAgentSpec,
@@ -320,7 +321,7 @@ async def build_deployment_manifest(workflow_def: WorkflowDefinition, client) ->
                 agent_specs[agent["id"]] = DeploymentAgentSpec(
                     source_agent_id=agent["id"],
                     name=agent.get("name") or agent["id"],
-                    model=agent.get("model") or "mistral-large-latest",
+                    model=agent.get("model") or settings.DEFAULT_AGENT_MODEL,
                     description=agent.get("description"),
                     instructions=agent.get("instructions") or "",
                     tier=agent.get("tier"),

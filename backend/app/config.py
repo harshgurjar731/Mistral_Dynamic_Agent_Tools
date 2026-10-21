@@ -17,6 +17,28 @@ class Settings(BaseSettings):
     # override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
     MISTRAL_CODING_MODEL: str = "codestral-latest"
 
+    # ── Models ──────────────────────────────────────────────────────────
+    # Every one of these is editable on the Settings page, which also lists
+    # where each is read (app/app_settings/registry.py).
+    DEFAULT_AGENT_MODEL: str = "mistral-large-latest"
+    CHAT_DEFAULT_MODEL: str = "mistral-large-latest"
+    # The agent designers' prompts choose a tier by these labels
+    # (mistral-large-latest / -medium- / -small-); each resolves to the model
+    # configured for that tier. See resolve_agent_model().
+    AGENT_MODEL_LARGE: str = "mistral-large-latest"
+    AGENT_MODEL_MEDIUM: str = "mistral-medium-latest"
+    AGENT_MODEL_SMALL: str = "mistral-small-latest"
+    # Comma-separated: the models every model picker offers. (open-mistral-nemo
+    # was dropped: Mistral's /v1/models no longer lists it.)
+    AGENT_MODEL_CHOICES: str = (
+        "mistral-large-latest,mistral-medium-latest,mistral-small-latest,codestral-latest"
+    )
+
+    # ── Model catalog (read from Mistral's /v1/models) ──────────────────
+    MISTRAL_API_BASE_URL: str = "https://api.mistral.ai"
+    MODEL_CATALOG_REFRESH_HOURS: float = 24.0
+    AUTO_UPGRADE_DEPRECATED_MODELS: bool = False
+
     # Dynamic Tools
     AUTO_APPROVE_DYNAMIC_TOOLS: bool = True
 
@@ -50,6 +72,17 @@ class Settings(BaseSettings):
     DECISION_CONCURRENCY: int = 2
     DECISION_MAX_RETRIES: int = 4
     DECISION_RETRY_BASE_SECONDS: float = 2.0
+    # Fan-out caps for the workflow planner's parallel layers.
+    WORKFLOW_DESIGN_CONCURRENCY: int = 4
+    AGENT_CREATION_CONCURRENCY: int = 5
+    RULE_SELECTION_CONCURRENCY: int = 4
+    TOOL_SYNTHESIS_CONCURRENCY: int = 3
+    # Below this the planner designs a new agent instead of reusing one.
+    REUSE_MIN_CONFIDENCE: float = 0.6
+
+    WORKFLOW_REGISTRATION_WAIT: float = 30.0
+    WORKFLOW_MAX_VERSIONS: int = 50
+    UPLOAD_MAX_MB: int = 20
 
     WORKFLOW_MAX_STEPS: int = 20
     WORKFLOW_STEP_TIMEOUT: int = 60
@@ -110,6 +143,10 @@ class Settings(BaseSettings):
         """Parse comma-separated CORS origins into a list."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
+    @property
+    def agent_model_choices(self) -> List[str]:
+        return [m.strip() for m in self.AGENT_MODEL_CHOICES.split(",") if m.strip()]
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -118,6 +155,33 @@ class Settings(BaseSettings):
 
 # Singleton settings instance
 settings = Settings()
+
+# Overrides saved from the Settings page win over the environment.
+from app.app_settings.store import apply_overrides  # noqa: E402
+
+apply_overrides(settings)
+
+#: The tier labels the agent designers' prompts choose between.
+TIER_LABELS = ("mistral-large-latest", "mistral-medium-latest", "mistral-small-latest")
+
+
+def resolve_agent_model(choice: str | None) -> str:
+    """The model an agent runs on, for the model a designer (LLM or form) chose.
+
+    A tier label resolves to the model configured for that tier; any other
+    selectable model is kept; anything else falls back to DEFAULT_AGENT_MODEL.
+    """
+    name = map_model_name((choice or "").strip())
+    tiers = {
+        "mistral-large-latest": settings.AGENT_MODEL_LARGE,
+        "mistral-medium-latest": settings.AGENT_MODEL_MEDIUM,
+        "mistral-small-latest": settings.AGENT_MODEL_SMALL,
+    }
+    if name in tiers:
+        return tiers[name]
+    if name and name in settings.agent_model_choices:
+        return name
+    return settings.DEFAULT_AGENT_MODEL
 
 
 def map_model_name(model_name: str) -> str:

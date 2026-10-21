@@ -110,11 +110,12 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
 
         # Always-on agent rules apply to stand-in agents too — the same
         # creation gate every other path uses (see app.rules.apply).
+        from app.config import settings
         from app.rules import apply as rules_apply
         from app.services.agent_service import build_guardrails
 
         prepared = rules_apply.prepare_agent(
-            model="mistral-large-latest", instructions=instructions,
+            model=settings.DEFAULT_AGENT_MODEL, instructions=instructions,
             tool_keys=[], connector_ids=[], guardrails=[], mode="pipeline",
         )
         create_kwargs: dict[str, Any] = {

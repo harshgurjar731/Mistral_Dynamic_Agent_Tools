@@ -45,6 +45,7 @@ activity one of two ways:
 import json
 import logging
 
+from app.config import settings
 from app.core.context import PipelineContext
 from app.core.layer import NextFn
 from app.layers.workflow import plan_control
@@ -52,9 +53,9 @@ from app.layers.workflow.base import WorkflowStepLayer
 
 logger = logging.getLogger(__name__)
 
-#: The tool service builds by generating and sandboxing real code. Three at a
-#: time keeps it responsive for everything else using it.
-_SYNTHESIS_CONCURRENCY = 3
+# TOOL_SYNTHESIS_CONCURRENCY (Settings page): the tool service builds by
+# generating and sandboxing real code. Three at a time keeps it responsive for
+# everything else using it.
 
 #: Statuses a second attempt cannot change.
 _FINAL_FAILURES = ("blocked",)
@@ -117,7 +118,7 @@ class ActivityGapLayer(WorkflowStepLayer):
                 ctx.emit("status", str(event.get("message", ""))[:200])
 
         resolutions = await resolve_code_needs(needs, client=ctx.client, on_event=relay,
-                                               concurrency=_SYNTHESIS_CONCURRENCY)
+                                               concurrency=max(1, settings.TOOL_SYNTHESIS_CONCURRENCY))
 
         # A second attempt, one at a time, for what failed. Most failures here
         # are the tool service being restarted or saturated by the concurrent

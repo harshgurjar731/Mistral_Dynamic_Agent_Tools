@@ -12,8 +12,9 @@ These models accept ``reasoning_effort`` of ``"high"`` or ``"none"`` only
 (measured; other values are rejected with a 400). IDs are pinned rather than
 ``-latest`` so a model change is deliberate.
 
-Override per role from the environment: ``ROUTE_SPEC_AUTHOR_MODEL=...``,
-``ROUTE_SPEC_AUTHOR_EFFORT=none|high|omit``, ``ROUTE_SPEC_AUTHOR_TIMEOUT_MS=...``.
+Override per role on the Settings page, or from the environment:
+``ROUTE_SPEC_AUTHOR_MODEL=...``, ``ROUTE_SPEC_AUTHOR_EFFORT=none|high|omit``,
+``ROUTE_SPEC_AUTHOR_TIMEOUT_MS=...``. A Settings-page value wins.
 """
 
 from __future__ import annotations
@@ -52,7 +53,14 @@ _ROUTES: dict[str, ModelRoute] = {
 
 
 def _env(role: str, field: str) -> Optional[str]:
-    value = os.environ.get(f"ROUTE_{role.upper()}_{field}")
+    key = f"ROUTE_{role.upper()}_{field}"
+    # The Settings page wins over the environment.
+    from app.app_settings.store import override
+
+    saved = override(key)
+    if saved is not None:
+        return saved
+    value = os.environ.get(key)
     return value.strip() if value and value.strip() else None
 
 

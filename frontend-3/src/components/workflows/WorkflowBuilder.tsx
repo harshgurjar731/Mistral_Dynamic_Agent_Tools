@@ -62,6 +62,7 @@ import {
   type PaletteItem,
 } from "./BuilderPalette";
 import { CreateAgentModal, CreateToolModal } from "./CreateModals";
+import { useModelConfig } from "@/lib/models";
 
 /** Fills in canvas coordinates for any step that has none, using dagre once. */
 function ensureLayout(def: WorkflowDefinition): WorkflowDefinition {
@@ -214,6 +215,7 @@ export function WorkflowBuilder({
     staleTime: 60_000,
   });
   const catalog: BuilderCatalog | undefined = catalogQuery.data;
+  const { choices: modelChoices } = useModelConfig();
 
   const update = useCallback((fn: (d: WorkflowDefinition) => WorkflowDefinition) => {
     setDefinition((current) => {
@@ -862,9 +864,7 @@ export function WorkflowBuilder({
       <CreateAgentModal
         open={showAgentModal}
         onOpenChange={setShowAgentModal}
-        models={
-          catalog?.models ?? ["mistral-large-latest", "mistral-small-latest", "codestral-latest"]
-        }
+        models={catalog?.models ?? modelChoices.map((m) => m.value)}
         tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
         tools={catalog?.tools ?? []}
         connectors={catalog?.connectors ?? []}

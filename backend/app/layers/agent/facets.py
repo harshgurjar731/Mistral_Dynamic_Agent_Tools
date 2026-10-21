@@ -19,17 +19,12 @@ agent creation outright, and the failure surfaces far from its cause.
 import json
 import logging
 
+from app.config import settings
 from app.core.context import PipelineContext
 from app.core.decision import AgentDecisionLayer
 from app.layers.agent.inventory_layer import INVENTORY_KEY
 
 logger = logging.getLogger(__name__)
-
-_VALID_MODELS = {
-    "mistral-large-latest",
-    "mistral-medium-latest",
-    "mistral-small-latest",
-}
 
 _VALID_TIERS = {"foundation", "domain", "use_case"}
 
@@ -258,12 +253,14 @@ class ModelSelectionLayer(AgentDecisionLayer):
         )
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:
-        from app.config import map_model_name
+        from app.config import resolve_agent_model
 
-        model = map_model_name(str(data.get("model") or "").strip())
-        if model not in _VALID_MODELS:
-            logger.warning("Model '%s' not recognised — defaulting to large", model)
-            model = "mistral-large-latest"
+        # The prompt chooses a tier; the Settings page decides what each tier
+        # runs on (AGENT_MODEL_LARGE/MEDIUM/SMALL).
+        chosen = str(data.get("model") or "").strip()
+        model = resolve_agent_model(chosen)
+        if model == settings.DEFAULT_AGENT_MODEL and chosen != model:
+            logger.info("Model choice '%s' resolved to the default agent model", chosen)
 
         try:
             temperature = float(data.get("temperature"))
@@ -279,7 +276,7 @@ class ModelSelectionLayer(AgentDecisionLayer):
         logger.info("Model selection: %s @ %.2f", model, temperature)
 
     def fallback(self, ctx: PipelineContext) -> None:
-        ctx.agent_spec.model = "mistral-large-latest"
+        ctx.agent_spec.model = settings.DEFAULT_AGENT_MODEL
         ctx.agent_spec.temperature = 0.3
 
 

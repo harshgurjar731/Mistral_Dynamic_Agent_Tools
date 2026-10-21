@@ -52,6 +52,8 @@ export type * from "./remoteServers";
 export { runsApi, isTerminal } from "./runs";
 export { revisionsApi } from "./revisions";
 export { observabilityApi } from "./observability";
+export { settingsApi } from "./settings";
+export type * from "./settings";
 export type * from "./observability";
 export type { BackgroundRun, RunDecision, RunKind, RunProgress, RunStatus } from "./runs";
 

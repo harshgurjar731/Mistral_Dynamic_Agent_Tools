@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { CHAT_MODELS } from "@/lib/models";
+import { useModelConfig } from "@/lib/models";
 import { rulesApi } from "@/api";
 import type { AgentCreate } from "@/api/agents";
 import type { GuardrailConfig, RuleRef } from "@/types";
@@ -34,7 +34,12 @@ export function CreateAgentModal({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [model, setModel] = useState("mistral-large-latest");
+  const { choices: modelChoices, defaultAgentModel } = useModelConfig();
+  const [model, setModel] = useState(defaultAgentModel);
+  // Open on the configured default (it may arrive after the first render).
+  useEffect(() => {
+    if (open) setModel(defaultAgentModel);
+  }, [open, defaultAgentModel]);
   const [tier, setTier] = useState("foundation");
   const [instructions, setInstructions] = useState("");
   const [temperature, setTemperature] = useState<number | null>(0.7);
@@ -46,7 +51,7 @@ export function CreateAgentModal({
     setRules([]);
     setName("");
     setDescription("");
-    setModel("mistral-large-latest");
+    setModel(defaultAgentModel);
     setTier("foundation");
     setInstructions("");
     setTemperature(0.7);
@@ -93,7 +98,7 @@ export function CreateAgentModal({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CHAT_MODELS.map((m) => (
+                  {modelChoices.map((m) => (
                     <SelectItem key={m.value} value={m.value}>
                       {m.label}
                     </SelectItem>

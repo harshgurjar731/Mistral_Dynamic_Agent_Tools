@@ -24,8 +24,9 @@ Measured, not assumed: these models accept only ``"high"`` or ``"none"`` —
 values only, and the client drops the parameter and retries if a model rejects
 it anyway.
 
-Every field is overridable per role from the environment, e.g.
-``ROUTE_CODEGEN_MODEL=mistral-large-2512`` or ``ROUTE_ARBITER_EFFORT=none``.
+Every field is overridable per role on the backend's Settings page or from the
+environment, e.g. ``ROUTE_CODEGEN_MODEL=mistral-large-2512`` or
+``ROUTE_ARBITER_EFFORT=none``. A Settings-page value wins.
 """
 
 from __future__ import annotations
@@ -77,7 +78,14 @@ _ROUTES: dict[str, ModelRoute] = {
 
 
 def _env(role: str, field: str) -> Optional[str]:
-    value = os.environ.get(f"ROUTE_{role.upper()}_{field}")
+    key = f"ROUTE_{role.upper()}_{field}"
+    # The backend's Settings page wins over the environment.
+    from app.runtime_settings import override
+
+    saved = override(key)
+    if saved is not None:
+        return saved
+    value = os.environ.get(key)
     return value.strip() if value and value.strip() else None
 
 

@@ -26,7 +26,8 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """Matches Mistral OpenAPI ChatCompletionRequest schema."""
-    model: str = "mistral-large-latest"
+    # None: CHAT_DEFAULT_MODEL (Settings page).
+    model: Optional[str] = None
     messages: list[ChatMessage]
     agent_id: Optional[str] = None
     temperature: Optional[float] = None

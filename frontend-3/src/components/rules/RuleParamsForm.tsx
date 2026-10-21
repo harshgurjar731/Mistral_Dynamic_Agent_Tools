@@ -4,7 +4,7 @@ import { Check, Plus, X } from "lucide-react";
 import { connectorsApi, QK, toolsApi } from "@/api";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { CHAT_MODELS } from "@/lib/models";
+import { useModelConfig } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import type { RuleParamField } from "@/types";
 
@@ -13,6 +13,7 @@ type Option = { value: string; label: string };
 /** Options for a field whose choices are live inventory rather than fixed. */
 function useOptions(field: RuleParamField): Option[] {
   const source = field.options_source;
+  const { choices: modelChoices } = useModelConfig();
   const tools = useQuery({
     queryKey: QK.tools(),
     queryFn: toolsApi.list,
@@ -33,7 +34,7 @@ function useOptions(field: RuleParamField): Option[] {
       label: c.name ?? c.id,
     }));
   }
-  if (source === "models") return CHAT_MODELS.map((m) => ({ value: m.value, label: m.label }));
+  if (source === "models") return modelChoices;
   return field.options ?? [];
 }
 

@@ -20,6 +20,7 @@ os.environ["AUTO_APPROVE_DYNAMIC_TOOLS"] = "true"
 os.environ["MISTRAL_API_KEY"] = "test-key"
 os.environ["TOOL_MODEL_MAX_ATTEMPTS"] = "1"
 os.environ["STRICT_ACTIVITY_SPEC"] = "true"
+os.environ["RUNTIME_SETTINGS_PATH"] = os.path.join(_TMP, "runtime_settings.json")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

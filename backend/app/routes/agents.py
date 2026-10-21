@@ -4,9 +4,10 @@ Aligned with Mistral OpenAPI spec endpoints.
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
+from app.config import settings
 from app.dependencies import get_mistral_client
 from app.services import agent_service
 
@@ -63,7 +64,8 @@ class AgentRuleRef(BaseModel):
 
 class CreateAgentRequest(BaseModel):
     name: str
-    model: str = "mistral-large-latest"
+    # DEFAULT_AGENT_MODEL (Settings page) when the request names none.
+    model: str = Field(default_factory=lambda: settings.DEFAULT_AGENT_MODEL)
     instructions: str = "You are a helpful assistant."
     description: Optional[str] = None
     tier: Optional[str] = None
