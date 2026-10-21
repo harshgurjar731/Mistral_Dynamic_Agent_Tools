@@ -5,6 +5,7 @@ import { connectorsApi, QK, toolsApi } from "@/api";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useModelConfig } from "@/lib/models";
+import { ModelPicker } from "@/components/shared/ModelPicker";
 import { cn } from "@/lib/utils";
 import type { RuleParamField } from "@/types";
 
@@ -87,6 +88,7 @@ function FieldControl({
   onChange: (v: unknown) => void;
 }) {
   const options = useOptions(field);
+  const { allModels } = useModelConfig();
   const list = Array.isArray(value) ? (value as string[]) : [];
 
   switch (field.kind) {
@@ -94,6 +96,27 @@ function FieldControl({
       return <TagInput value={list} onChange={onChange} />;
     case "checkboxes":
     case "multiselect":
+      if (field.options_source === "models") {
+        // Pinned models as chips, plus any other model the account can call.
+        return (
+          <div className="space-y-2">
+            <ChoiceChips
+              options={options}
+              value={list}
+              onChange={onChange}
+              emptyHint="No models available yet."
+            />
+            <ModelPicker
+              value=""
+              onChange={(m) => !list.includes(m) && onChange([...list, m])}
+              models={allModels}
+              capability="chat"
+              placeholder="Add another model…"
+              className="max-w-sm"
+            />
+          </div>
+        );
+      }
       return (
         <ChoiceChips
           options={options}

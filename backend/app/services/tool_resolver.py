@@ -44,6 +44,12 @@ class ToolResolver:
         self.base_url = base_url or settings.TOOL_SERVICE_URL
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=180.0)
 
+    def retarget(self, base_url: str) -> None:
+        """Point at a new Tool Service URL (saved on the Settings page)."""
+        if base_url and base_url != self.base_url:
+            self.base_url = base_url
+            self._client = httpx.AsyncClient(base_url=base_url, timeout=180.0)
+
     async def _send(self, method: str, url: str, *, wait: float | None = None,
                     read_only: bool = False, **kwargs) -> httpx.Response:
         """Send one request, riding out a Tool Service restart.

@@ -24,7 +24,31 @@ def get_store() -> SettingsStore:
 
         path = os.environ.get("RUNTIME_SETTINGS_PATH") or _DEFAULT_PATH
         _store = SettingsStore(SECTIONS, all_defs(), path, target="backend")
+        _store.on_change(["TOOL_SERVICE_URL"], _retarget_tool_service)
+        _store.on_change(["NEO4J_URI", "NEO4J_USER", "NEO4J_DATABASE"], _reconnect_graph)
     return _store
+
+
+# Hooks: rebuild what was built once from a value, so the change is live.
+# Imported lazily — the store is built while app.config is still importing.
+
+def _retarget_tool_service() -> None:
+    import sys
+
+    if "app.services.tool_resolver" in sys.modules:
+        from app.config import settings
+        from app.services.tool_resolver import tool_resolver
+
+        tool_resolver.retarget(settings.TOOL_SERVICE_URL)
+
+
+def _reconnect_graph() -> None:
+    import sys
+
+    if "app.rag.graph_store" in sys.modules:
+        from app.rag import graph_store
+
+        graph_store.reset()
 
 
 def apply_overrides(settings_obj: Any) -> None:

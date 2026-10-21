@@ -151,13 +151,28 @@ async def review_models(apply: bool = False):
 
 @router.get("/public")
 async def public_config():
-    """What the UI's pickers and defaults read — small, and safe to poll."""
+    """What the UI reads — model pickers, defaults, the model list and the
+    frontend's own settings. Small, and safe to poll."""
+    from app.app_settings.registry import UI_KEYS
+
     def label(model: str) -> str:
         latest = model.endswith("-latest")
         pretty = model.removesuffix("-latest").replace("-", " ").title()
         return f"{pretty} (latest)" if latest else pretty
 
+    store = get_store()
     choices = settings.agent_model_choices
+    # Every model the account can call, so any dropdown can offer any model.
+    models = [
+        {
+            "id": m["id"],
+            "aliases": m.get("aliases") or [],
+            "max_context_length": m.get("max_context_length"),
+            "deprecation": m.get("deprecation"),
+            "capabilities": {k: v for k, v in (m.get("capabilities") or {}).items() if v},
+        }
+        for m in catalog.load().get("models", [])
+    ]
     return {
         "models": {
             "default_agent_model": settings.DEFAULT_AGENT_MODEL,
@@ -169,6 +184,8 @@ async def public_config():
                 "small": settings.AGENT_MODEL_SMALL,
             },
             "choices": [{"value": m, "label": label(m)} for m in choices],
+            "catalog": models,
         },
+        "ui": {key: store.value(key) for key in UI_KEYS},
         "catalog": _catalog_meta(),
     }

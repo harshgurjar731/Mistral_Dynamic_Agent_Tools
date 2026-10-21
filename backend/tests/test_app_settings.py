@@ -131,3 +131,56 @@ def test_review_upgrades_deprecated_models(monkeypatch):
     report = asyncio.run(catalog.review(apply=True))
     assert {"target": "backend", "key": "DEFAULT_AGENT_MODEL", "model": "new-large"} in report["upgraded"]
     assert settings.DEFAULT_AGENT_MODEL == "new-large"
+
+
+def test_change_saved_by_another_process_is_picked_up(tmp_path):
+    """Two stores on one file stand in for the API and the workflows worker."""
+    path = tmp_path / "rs.json"
+    defs = [SettingDef("X", "s", "X", "", type="int", default=1)]
+
+    class Obj:  # a pydantic-like settings object with field X
+        model_fields = {"X": type("F", (), {"default": 1})()}
+        X = 1
+
+    api = SettingsStore([Section("s", "S", "")], defs, path, "backend", watch=False)
+    worker = SettingsStore([Section("s", "S", "")], defs, path, "backend", watch=False)
+    obj = Obj()
+    worker.install(obj)
+    api.install(Obj())
+    fired = []
+    worker.on_change(["X"], lambda: fired.append(obj.X))
+
+    api.update({"X": 7})
+    time.sleep(0.01)
+    assert worker.sync() == ["X"]
+    assert obj.X == 7 and fired == [7]
+
+    api.reset()
+    assert worker.sync() == ["X"]
+    assert obj.X == 1
+
+
+def test_hook_runs_on_save_and_reset():
+    calls = []
+    store = get_store()
+    store.on_change(["UPLOAD_MAX_MB"], lambda: calls.append(settings.UPLOAD_MAX_MB))
+    store.update({"UPLOAD_MAX_MB": 33})
+    store.reset(keys=["UPLOAD_MAX_MB"])
+    assert calls == [33, 20]
+
+
+def test_ui_settings_have_defaults_and_validate():
+    store = get_store()
+    assert store.value("UI_ACCENT") == "ember"
+    assert store.value("UI_SIDEBAR_COLLAPSED") is True
+    store.update({"UI_ACCENT": "violet"})
+    assert store.value("UI_ACCENT") == "violet"
+    with pytest.raises(ValueError):
+        store.update({"UI_ACCENT": "neon"})
+
+
+def test_every_setting_is_described():
+    for key, defn in get_store().defs.items():
+        assert defn.description.strip(), f"{key} has no description"
+        assert defn.impact, f"{key} has no impact areas"
+        assert defn.used_in, f"{key} has no code locations"

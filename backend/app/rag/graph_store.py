@@ -138,6 +138,16 @@ def close() -> None:
             _driver = None
 
 
+def reset() -> None:
+    """Drop the driver and any cached failure, so the next call reconnects
+    with the current NEO4J_* settings (changed on the Settings page)."""
+    global _unavailable_reason, _failed_at
+    close()
+    with _driver_lock:
+        _unavailable_reason = None
+        _failed_at = None
+
+
 def available() -> bool:
     return _get_driver() is not None
 

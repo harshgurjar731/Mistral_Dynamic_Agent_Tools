@@ -14,6 +14,7 @@ import type { AgentCreate } from "@/api/agents";
 import type { GuardrailConfig, RuleRef } from "@/types";
 import { RuleSelector } from "@/components/rules/RuleSelector";
 import { GuardrailEditor } from "./GuardrailEditor";
+import { ModelPicker } from "@/components/shared/ModelPicker";
 
 const TIERS = [
   { value: "foundation", label: "Foundation" },
@@ -34,7 +35,7 @@ export function CreateAgentModal({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const { choices: modelChoices, defaultAgentModel } = useModelConfig();
+  const { choices: modelChoices, allModels, defaultAgentModel } = useModelConfig();
   const [model, setModel] = useState(defaultAgentModel);
   // Open on the configured default (it may arrive after the first render).
   useEffect(() => {
@@ -93,18 +94,14 @@ export function CreateAgentModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Model</label>
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger className="mt-1 bg-background text-foreground">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelChoices.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>
-                      {m.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelPicker
+                value={model}
+                onChange={setModel}
+                models={allModels}
+                pinned={modelChoices}
+                capability="function_calling"
+                className="mt-1"
+              />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Tier</label>

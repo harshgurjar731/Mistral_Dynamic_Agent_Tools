@@ -29,7 +29,11 @@ export interface SettingItem {
   restart_pending: boolean;
   editable: boolean;
   used_in: string[];
+  /** Plain-language areas of the product a change affects. */
+  impact: string[];
   options: string[];
+  option_labels: Record<string, string>;
+  unit: string | null;
   min: number | null;
   max: number | null;
   capability: string | null;
@@ -43,6 +47,7 @@ export interface SettingsSection {
   title: string;
   description: string;
   icon: string;
+  category: "models" | "tool_service" | "platform" | "frontend" | string;
   target: SettingTarget;
   settings: SettingItem[];
 }
@@ -104,8 +109,20 @@ export interface PublicConfig {
     orchestrator_model: string;
     tiers: { large: string; medium: string; small: string };
     choices: { value: string; label: string }[];
+    /** Every model the account can call. */
+    catalog: SlimModel[];
   };
+  /** The frontend's own settings (UI_*). */
+  ui: Record<string, SettingValue>;
   catalog: CatalogMeta;
+}
+
+export interface SlimModel {
+  id: string;
+  aliases: string[];
+  max_context_length: number | null;
+  deprecation: string | null;
+  capabilities: Record<string, boolean>;
 }
 
 export type SettingsChanges = Partial<Record<SettingTarget, Record<string, SettingValue>>>;

@@ -1,4 +1,4 @@
-import type { CatalogModel, SettingItem, SettingValue } from "@/api/settings";
+import type { CatalogModel, SettingItem, SettingsSection, SettingValue } from "@/api/settings";
 
 /** Draft and override keys: the same key can exist on both services. */
 export const draftKey = (s: Pick<SettingItem, "target" | "key">) => `${s.target}:${s.key}`;
@@ -53,4 +53,25 @@ export function displayValue(v: SettingValue): string {
   if (Array.isArray(v)) return v.join(", ");
   if (typeof v === "boolean") return v ? "On" : "Off";
   return String(v);
+}
+
+/** Every word of ``query`` appears somewhere in what the setting says about itself. */
+export function matchesQuery(item: SettingItem, section: SettingsSection, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const value = Array.isArray(item.value) ? item.value.join(" ") : String(item.value ?? "");
+  const hay = [
+    item.label,
+    item.key,
+    item.description,
+    item.group ?? "",
+    section.title,
+    item.type === "secret" ? "" : value,
+    ...item.impact,
+    ...item.used_in,
+    ...Object.values(item.option_labels ?? {}),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
 }

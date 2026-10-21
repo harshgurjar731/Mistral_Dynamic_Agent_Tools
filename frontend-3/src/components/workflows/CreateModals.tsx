@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { ModelPicker } from "@/components/shared/ModelPicker";
 
 /* ── Inline Agent Creation Modal ────────────────────────────────────── */
 
@@ -71,7 +72,7 @@ export function CreateAgentModal({
   const [tab, setTab] = useState<AgentTab>("basics");
   // Identity
   const [name, setName] = useState("");
-  const { choices: modelChoices, defaultAgentModel } = useModelConfig();
+  const { choices: modelChoices, allModels, defaultAgentModel } = useModelConfig();
   const [model, setModel] = useState(
     models.includes(defaultAgentModel) ? defaultAgentModel : (models[0] ?? defaultAgentModel),
   );
@@ -252,17 +253,13 @@ export function CreateAgentModal({
                 </div>
                 <div>
                   <label className="eyebrow mb-1 block">Model</label>
-                  <select
+                  <ModelPicker
                     value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className={SELECT_CLASS}
-                  >
-                    {models.map((m) => (
-                      <option key={m} value={m} className="bg-background-elevated">
-                        {modelLabel(modelChoices, m)}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setModel}
+                    models={allModels}
+                    pinned={models.map((m) => ({ value: m, label: modelLabel(modelChoices, m) }))}
+                    capability="function_calling"
+                  />
                 </div>
                 <div>
                   <label className="eyebrow mb-1 block">Tier</label>

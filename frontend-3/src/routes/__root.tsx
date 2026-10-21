@@ -17,6 +17,8 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { HealthIndicator } from "@/components/layout/HealthIndicator";
 import { BackgroundRuns } from "@/components/runs/BackgroundRuns";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
+import { AppConfigApplier } from "@/components/layout/AppConfigApplier";
+import { useUiConfig } from "@/lib/uiConfig";
 
 function NotFoundComponent() {
   return (
@@ -125,18 +127,41 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  const [collapsed, setCollapsed] = useState(true);
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AppConfigApplier />
+      <AppShell />
+    </QueryClientProvider>
+  );
+}
+
+function AppShell() {
+  const ui = useUiConfig();
+  const [collapsed, setCollapsed] = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  // Follow the configured default until the user toggles the sidebar.
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!touched) setCollapsed(ui.UI_SIDEBAR_COLLAPSED);
+  }, [ui.UI_SIDEBAR_COLLAPSED, touched]);
+
+  return (
+    <>
       <div className="relative min-h-screen bg-background">
-        <div className="app-atmosphere" aria-hidden />
-        <div className="app-atmosphere grid-backdrop opacity-40" aria-hidden />
+        {ui.UI_BACKGROUND_EFFECTS ? (
+          <>
+            <div className="app-atmosphere" aria-hidden />
+            <div className="app-atmosphere grid-backdrop opacity-40" aria-hidden />
+          </>
+        ) : null}
 
         <Sidebar
           collapsed={collapsed}
-          onToggleCollapsed={() => setCollapsed((c) => !c)}
+          onToggleCollapsed={() => {
+            setTouched(true);
+            setCollapsed((c) => !c);
+          }}
           mobileOpen={mobileOpen}
           onCloseMobile={() => setMobileOpen(false)}
         />
@@ -152,7 +177,7 @@ function RootComponent() {
               <Menu className="size-4" />
             </button>
             <span className="truncate font-display text-sm font-bold text-foreground">
-              Agentic AI Design Patterns
+              {ui.UI_BRAND_TITLE} {ui.UI_BRAND_SUBTITLE}
             </span>
             <div className="ml-auto flex items-center gap-2">
               <RunsIndicator />
@@ -168,8 +193,11 @@ function RootComponent() {
         </div>
       </div>
       <BackgroundRuns />
-      <Toaster position="top-right" theme="dark" />
-    </QueryClientProvider>
+      <Toaster
+        position={ui.UI_TOAST_POSITION as "top-right"}
+        theme="dark"
+      />
+    </>
   );
 }
 

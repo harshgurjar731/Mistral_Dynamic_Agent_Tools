@@ -6,6 +6,7 @@ import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { CardGridSkeleton } from "@/components/ui/Skeletons";
 import { cn } from "@/lib/utils";
+import { useUiConfig } from "@/lib/uiConfig";
 
 export const Route = createFileRoute("/health")({
   head: () => ({
@@ -62,10 +63,11 @@ function ServiceCard({
 }
 
 function HealthPage() {
+  const ui = useUiConfig();
   const query = useQuery({
     queryKey: QK.health(),
     queryFn: healthApi.get,
-    refetchInterval: 15_000,
+    refetchInterval: Math.max(5, Number(ui.UI_HEALTH_PAGE_POLL_SECONDS) || 15) * 1000,
   });
 
   return (

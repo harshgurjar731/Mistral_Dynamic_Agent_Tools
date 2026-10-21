@@ -15,6 +15,7 @@ import { HealthIndicator } from "./HealthIndicator";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
+import { useUiConfig } from "@/lib/uiConfig";
 
 export function Sidebar({
   collapsed,
@@ -28,6 +29,7 @@ export function Sidebar({
   onCloseMobile: () => void;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const ui = useUiConfig();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const sessions = useSessionStore((s) => s.sessions);
@@ -73,10 +75,10 @@ export function Sidebar({
           {showLabels ? (
             <div className="min-w-0 flex-1">
               <p className="truncate font-display text-base font-bold leading-tight text-foreground">
-                Agentic AI
+                {ui.UI_BRAND_TITLE}
               </p>
               <p className="mt-0.5 truncate text-[13px] leading-tight text-muted-foreground">
-                Design Patterns
+                {ui.UI_BRAND_SUBTITLE}
               </p>
             </div>
           ) : null}

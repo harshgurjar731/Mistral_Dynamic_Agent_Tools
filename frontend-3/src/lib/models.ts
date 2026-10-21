@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { QK } from "@/api/queryKeys";
-import { settingsApi } from "@/api/settings";
+import { settingsApi, type SlimModel } from "@/api/settings";
 
 /**
  * Offline fallback only — the real list and defaults come from the Settings
@@ -14,6 +14,7 @@ export const CHAT_MODELS = [
 ] as const;
 
 const FALLBACK_DEFAULT = "mistral-large-latest";
+const NO_MODELS: SlimModel[] = [];
 
 export interface ModelOption {
   value: string;
@@ -35,6 +36,8 @@ export function useModelConfig() {
     choices,
     defaultAgentModel: models?.default_agent_model ?? FALLBACK_DEFAULT,
     chatDefaultModel: models?.chat_default_model ?? FALLBACK_DEFAULT,
+    /** Every model the account can call (empty until the catalog is fetched). */
+    allModels: models?.catalog ?? NO_MODELS,
     isLoaded: query.isSuccess,
   };
 }

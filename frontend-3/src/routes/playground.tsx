@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessions";
 import type { ChatMessagePayload } from "@/api";
 import type { Message, UploadResult } from "@/types";
+import { ModelPicker } from "@/components/shared/ModelPicker";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -68,7 +69,8 @@ function PlaygroundPage() {
   );
 
   const [input, setInput] = useState("");
-  const { choices: modelChoices, chatDefaultModel, isLoaded: modelsLoaded } = useModelConfig();
+  const { choices: modelChoices, allModels, chatDefaultModel, isLoaded: modelsLoaded } =
+    useModelConfig();
   const [model, setModel] = useState(chatDefaultModel);
   // Adopt the configured default once it arrives, unless the user already picked.
   const modelTouched = useRef(false);
@@ -372,18 +374,14 @@ function PlaygroundPage() {
                   <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Model
                   </label>
-                  <Select value={model} onValueChange={pickModel}>
-                    <SelectTrigger className="mt-1.5 bg-background-elevated text-foreground">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelChoices.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <ModelPicker
+                    value={model}
+                    onChange={pickModel}
+                    models={allModels}
+                    pinned={modelChoices}
+                    capability="chat"
+                    className="mt-1.5 bg-background-elevated"
+                  />
                 </div>
 
                 <div className="h-px bg-border/60" />

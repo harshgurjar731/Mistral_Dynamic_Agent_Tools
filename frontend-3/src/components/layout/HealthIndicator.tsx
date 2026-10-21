@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { healthApi, QK } from "@/api";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { cn } from "@/lib/utils";
+import { useUiConfig } from "@/lib/uiConfig";
 
 export function HealthIndicator({
   variant = "pill",
@@ -12,10 +13,11 @@ export function HealthIndicator({
   variant?: "pill" | "rail";
   collapsed?: boolean;
 } = {}) {
+  const ui = useUiConfig();
   const { data, isError, isLoading } = useQuery({
     queryKey: QK.health(),
     queryFn: healthApi.get,
-    refetchInterval: 30_000,
+    refetchInterval: Math.max(5, Number(ui.UI_HEALTH_POLL_SECONDS) || 30) * 1000,
     retry: 1,
   });
 
