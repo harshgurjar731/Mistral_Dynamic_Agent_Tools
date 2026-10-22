@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { displayValue, formatContext, supports } from "./settingsModel";
+import { NavLayoutEditor } from "./NavLayoutEditor";
 
 /* ── Badges ─────────────────────────────────────────────────────────── */
 
@@ -245,6 +246,11 @@ function ValueInput({
   if (SWATCHES[item.key]) {
     return <SwatchPicker item={item} value={String(value ?? "")} onChange={onChange} />;
   }
+  if (item.key === "UI_NAV_LAYOUT") {
+    return (
+      <NavLayoutEditor value={String(value ?? "")} onChange={onChange} disabled={!item.editable} />
+    );
+  }
   switch (item.type) {
     case "bool":
       return (
@@ -395,7 +401,7 @@ export function SettingTile({
 }: SettingTileProps) {
   const [showCode, setShowCode] = useState(false);
   const canReset = item.editable && (item.source === "override" || dirty);
-  const wide = item.type === "model_list" || Boolean(SWATCHES[item.key]);
+  const wide = item.type === "model_list" || item.type === "json" || Boolean(SWATCHES[item.key]);
 
   return (
     <div

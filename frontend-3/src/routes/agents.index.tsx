@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Layers, Plus, Search, Sparkles, X } from "lucide-react";
@@ -132,10 +133,14 @@ function AgentsIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Agent <span className="text-gradient-brand">Studio</span>
+            <FeatureTitle route="/agents">
+              Agent <span className="text-gradient-brand">Studio</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Create, configure, and manage your AI agents.
+            <FeatureDescription route="/agents">
+              Create, configure, and manage your AI agents.
+            </FeatureDescription>
           </p>
         </div>
         <button

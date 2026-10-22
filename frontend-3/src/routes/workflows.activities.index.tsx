@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -145,10 +146,15 @@ function ActivityGalleryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2">
-            <Zap className="size-6 text-pink-400" /> Activity Gallery
+            <Zap className="size-6 text-pink-400" />{" "}
+            <FeatureTitle route="/workflows/activities" gradient={false}>
+              Activity Gallery
+            </FeatureTitle>
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Isolated, retryable units of work a workflow can run directly — no LLM in the loop.
+            <FeatureDescription route="/workflows/activities">
+              Isolated, retryable units of work a workflow can run directly — no LLM in the loop.
+            </FeatureDescription>
           </p>
         </div>
         <Button

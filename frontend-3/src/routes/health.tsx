@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Box, Server } from "lucide-react";
 import { healthApi, QK } from "@/api";
@@ -72,8 +73,16 @@ function HealthPage() {
 
   return (
     <div className="px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">System Health</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Live status of all core microservices.</p>
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <FeatureTitle route="/health" gradient={false}>
+          System Health
+        </FeatureTitle>
+      </h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        <FeatureDescription route="/health">
+          Live status of all core microservices.
+        </FeatureDescription>
+      </p>
 
       <div className="mt-6">
         {query.isLoading ? (

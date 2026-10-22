@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { FeatureTitle } from "@/components/layout/FeatureText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, MessageSquare, Settings2, Sparkles, X } from "lucide-react";
 import { z } from "zod";
@@ -254,7 +255,11 @@ function PlaygroundPage() {
         {/* Title */}
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">
-            {activeSession?.title || "Playground"}
+            {activeSession?.title || (
+              <FeatureTitle route="/playground" gradient={false}>
+                Playground
+              </FeatureTitle>
+            )}
           </h1>
         </div>
 

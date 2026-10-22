@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { QK } from "@/api/queryKeys";
 import { settingsApi } from "@/api/settings";
+import { tabRenames } from "@/components/layout/nav-items";
 
 /**
  * The frontend's own settings (Settings page → Frontend & Design). Defaults
@@ -20,6 +21,8 @@ export const UI_DEFAULTS = {
   UI_BRAND_SUBTITLE: "Design Patterns",
   UI_DOCUMENT_TITLE: "Agentic AI Design Patterns",
   UI_SIDEBAR_COLLAPSED: true,
+  /** JSON {order, hidden} of nav routes; "" is the built-in menu. */
+  UI_NAV_LAYOUT: "",
   UI_TOAST_POSITION: "top-right",
   UI_API_TIMEOUT_SECONDS: 420,
   UI_HEALTH_POLL_SECONDS: 30,
@@ -243,15 +246,28 @@ export function applyUiConfig(cfg: UiConfig) {
     `;
   }
 
-  applyTitle(cfg.UI_DOCUMENT_TITLE);
+  applyTitle(cfg.UI_DOCUMENT_TITLE, tabRenames(cfg.UI_NAV_LAYOUT));
 }
 
-/** Route heads hard-code the default product name; swap it for the configured one. */
-export function applyTitle(name: string) {
+/**
+ * Route heads hard-code "<page> — <default product name>"; swap in the
+ * configured product name and any renamed page name (built-in → renamed).
+ * Idempotent, so the title observer settles after one rewrite.
+ */
+export function applyTitle(name: string, pageRenames: Record<string, string> = {}) {
   if (typeof document === "undefined") return;
-  const wanted = name.trim() || DEFAULT_TITLE;
   const current = document.title;
-  if (wanted !== DEFAULT_TITLE && current.includes(DEFAULT_TITLE)) {
-    document.title = current.replace(DEFAULT_TITLE, wanted);
+  const wanted = name.trim() || DEFAULT_TITLE;
+  let next = current;
+  if (wanted !== DEFAULT_TITLE && next.includes(DEFAULT_TITLE)) {
+    next = next.replace(DEFAULT_TITLE, wanted);
   }
+  const sep = next.indexOf(" — ");
+  const page = sep >= 0 ? next.slice(0, sep) : next;
+  const renamed = pageRenames[page];
+  // A name that is already a rename's result is left alone — two features
+  // swapping names would otherwise flip the title back and forth forever.
+  const alreadyRenamed = Object.values(pageRenames).includes(page);
+  if (renamed && !alreadyRenamed) next = renamed + next.slice(page.length);
+  if (next !== current) document.title = next;
 }

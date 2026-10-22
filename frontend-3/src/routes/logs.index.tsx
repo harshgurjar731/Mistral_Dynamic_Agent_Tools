@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
@@ -74,11 +75,17 @@ function LogsPage() {
       <PageHeader
         eyebrow="Observability"
         title={
-          <>
+          <FeatureTitle route="/logs">
             Logs & <span className="text-gradient-brand">Traces</span>
-          </>
+          </FeatureTitle>
         }
-        description="Every action this platform takes — API calls, workflow runs and each of their steps, rule verdicts, tool calls, pipeline layers and model calls — is traced to Mistral Observability and read back here."
+        description={
+          <FeatureDescription route="/logs">
+            Every action this platform takes — API calls, workflow runs and each of their steps,
+            rule verdicts, tool calls, pipeline layers and model calls — is traced to Mistral
+            Observability and read back here.
+          </FeatureDescription>
+        }
         actions={
           <>
             <select

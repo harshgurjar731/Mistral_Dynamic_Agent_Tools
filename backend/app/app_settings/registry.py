@@ -453,6 +453,15 @@ DEFS: list[SettingDef] = [
     SettingDef("UI_SIDEBAR_COLLAPSED", "ui_layout", "Start with sidebar collapsed",
                "Whether the navigation opens as an icon rail or fully expanded.", type="bool",
                default=True, impact=("Sidebar",), used_in=("frontend routes/__root.tsx",)),
+    SettingDef("UI_NAV_LAYOUT", "ui_layout", "Navigation menu",
+               "Order of the sidebar's pages, which are shown, and what each feature is called. "
+               "Drag to reorder; switch a page off to hide it from the sidebar — it still opens "
+               "from a link; the pencil renames a feature's sidebar label, page title, page "
+               "description and browser tab name. Empty: the built-in menu and texts.",
+               type="json", default="",
+               impact=("Sidebar", "Page titles", "Browser tab titles"),
+               used_in=("frontend components/layout/nav-items.ts",
+                        "frontend components/layout/FeatureText.tsx")),
     SettingDef("UI_TOAST_POSITION", "ui_layout", "Notification position",
                "Where success and error notifications appear.", type="enum",
                default="top-right",
@@ -485,7 +494,8 @@ _ROUTE_JOBS = {
                        "Turns a free-text request into a structured need.",
                        "layers/codegen/layers.py — need normalisation (R1)"),
     "policy_gate": ("Policy gate (R2)",
-                    "Screens the request against the tool-safety blocklist.",
+                    "Screens a tool or activity request against the tool safety rules switched "
+                    "on for it (Settings → Tool safety). Not called when none are on.",
                     "layers/codegen/layers.py — policy screen (R2)"),
     "reuse_resolution": ("Reuse resolution (R3)",
                          "Decides whether an existing tool or activity already does the job.",

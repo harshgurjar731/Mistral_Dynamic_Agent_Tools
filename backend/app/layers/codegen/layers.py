@@ -143,25 +143,32 @@ class PolicyGateLayer:
         if need.origin == "runtime":
             return  # a stored requirement already passed this gate when it was authored
 
-        from app.prompts_codegen import POLICY_GATE_SYSTEM
+        # Tool safety rules (Settings → Tool safety). Only the rules switched on
+        # for this point are checked; with none on — the default — there is
+        # nothing to screen and no model call is made.
+        from app.safety import apply as safety, store as safety_store
+
+        point = safety.screen_point(need.purpose, need.origin)
+        rules = safety_store.rules_for(point)
+        if not rules:
+            ctx.emit("policy_gate", "No tool safety rules apply here — not screened.")
+            return
 
         text = json.dumps({"intent": need.intent, "normalised": ctx.normalised,
                            "draft": need.draft, "user_guidance": need.guidance}, default=str)
         try:
-            raw = await decide(ctx.client, route="policy_gate", system=POLICY_GATE_SYSTEM,
+            raw = await decide(ctx.client, route="policy_gate", system=safety.screen_prompt(rules),
                                user=text, phase="policy gate")
             verdict = parse_json(raw, None)
         except Exception as e:  # noqa: BLE001
             verdict = None
             logger.warning("Policy gate unavailable: %s", e)
-        if not isinstance(verdict, dict):
-            # Fail closed: code that was never screened is not built.
-            ctx.finish("blocked", "The safety screen could not be completed; nothing was built.",
-                       reason="policy_unavailable")
-            return
-        if not verdict.get("allowed", False):
-            ctx.finish("blocked", str(verdict.get("reason") or "Blocked by the safety policy."),
-                       reason="policy")
+        ruling = safety.judge(rules, verdict)
+        for warning in ruling["warnings"]:
+            ctx.emit("policy_gate", f"Safety warning — {warning}")
+        if ruling["blocked"]:
+            ctx.finish("blocked", ruling["reason"],
+                       reason="policy" if isinstance(verdict, dict) else "policy_unavailable")
 
 
 # ── R3 ──────────────────────────────────────────────────────────────────────
@@ -230,7 +237,10 @@ class SpecAuthoringLayer:
         ctx.emit("author", ("re-authoring after: " + "; ".join(ctx.issues)[:300]) if ctx.issues
                  else f"writing the {ctx.profile.noun} specification")
         try:
-            raw = await decide(ctx.client, route="spec_author", system=ctx.profile.author_system,
+            from app.safety import apply as safety
+
+            raw = await decide(ctx.client, route="spec_author",
+                               system=safety.apply(ctx.profile.author_system, "spec_authoring"),
                                user=user, phase="spec authoring")
             data = parse_json(raw, None)
         except Exception as e:  # noqa: BLE001

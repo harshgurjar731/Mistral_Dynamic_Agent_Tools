@@ -204,7 +204,8 @@ synthesised function. It is not an integration with a named external product.
   "rejected": [{"tool": "<tool_key>", "why_not": "string"}],
   "reasoning": "string"
 }
-""" + _TOOL_SAFETY_BLOCKLIST + _SINGLE_DECISION_CONTRACT
+
+""" + _TOOL_SAFETY_BLOCKLIST + "\n" + _SINGLE_DECISION_CONTRACT
 
 TOOL_SELECTION_USER_PROMPT = """\
 REQUIREMENT ANALYSIS:
@@ -987,7 +988,8 @@ attached, so the step is correctly wired and documents can be added later.
   },
   "reasoning": "string"
 }
-""" + _TOOL_SAFETY_BLOCKLIST + _SINGLE_DECISION_CONTRACT
+
+""" + _TOOL_SAFETY_BLOCKLIST + "\n" + _SINGLE_DECISION_CONTRACT
 
 AGENT_DESIGN_USER_PROMPT = """\
 WORKFLOW GOAL (context only — design for the capability, not the whole goal):

@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -291,11 +292,15 @@ function OntologyHub({
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold">
-            <span className="text-gradient-brand">Ontology</span>
+            <FeatureTitle route="/ontology">
+              <span className="text-gradient-brand">Ontology</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            A shared vocabulary the planner narrows on before it chooses agents. Concepts live in
-            schemes; annotations bind them to agents, tools, connectors, workflows and libraries.
+            <FeatureDescription route="/ontology">
+              A shared vocabulary the planner narrows on before it chooses agents. Concepts live in
+              schemes; annotations bind them to agents, tools, connectors, workflows and libraries.
+            </FeatureDescription>
           </p>
         </div>
         {counts ? (

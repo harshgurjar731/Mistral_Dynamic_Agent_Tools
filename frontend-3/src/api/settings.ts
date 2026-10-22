@@ -2,7 +2,7 @@ import { get, post, put } from "./client";
 
 export type SettingTarget = "backend" | "tool_service";
 export type SettingType =
-  "string" | "int" | "float" | "bool" | "enum" | "model" | "model_list" | "secret";
+  "string" | "int" | "float" | "bool" | "enum" | "model" | "model_list" | "secret" | "json";
 export type SettingValue = string | number | boolean | string[] | null;
 
 export interface ModelStatus {

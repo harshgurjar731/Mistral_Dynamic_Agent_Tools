@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -338,10 +339,14 @@ function ConnectorsIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Connector <span className="text-gradient-brand">Registry</span>
+            <FeatureTitle route="/connectors">
+              Connector <span className="text-gradient-brand">Registry</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Manage MCP connectors registered with Mistral.
+            <FeatureDescription route="/connectors">
+              Manage MCP connectors registered with Mistral.
+            </FeatureDescription>
           </p>
         </div>
         <button

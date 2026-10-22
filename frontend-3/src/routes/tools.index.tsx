@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Wrench, Inbox, Sparkles, Plus, Search, Loader2 } from "lucide-react";
@@ -132,10 +133,14 @@ function ToolsPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Tool <span className="text-gradient-brand">Lifecycle</span>
+            <FeatureTitle route="/tools">
+              Tool <span className="text-gradient-brand">Lifecycle</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Synthesize, review, and manage dynamic tools.
+            <FeatureDescription route="/tools">
+              Synthesize, review, and manage dynamic tools.
+            </FeatureDescription>
           </p>
         </div>
         <button

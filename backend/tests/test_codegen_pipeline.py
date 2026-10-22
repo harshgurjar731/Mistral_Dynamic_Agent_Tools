@@ -77,6 +77,22 @@ class Stub:
         return {"status": "rejected", "message": "Tool rejected"}
 
 
+@pytest.fixture(autouse=True)
+def safety_rules(monkeypatch):
+    """Tool safety rules as configured: none on (the shipped default), unless a
+    test switches some on with ``safety_rules(...)``."""
+    from app.safety import store as safety_store
+
+    active: list[dict] = []
+    monkeypatch.setattr(safety_store, "rules_for",
+                        lambda point: [r for r in active if point in r["applies_to"]])
+
+    def switch_on(strictness="standard", points=tuple(safety_store.POINTS)):
+        active[:] = [{**r, "enabled": True, "strictness": strictness, "applies_to": list(points),
+                      "builtin": True} for r in safety_store.BUILTIN]
+    return switch_on
+
+
 @pytest.fixture
 def stub(monkeypatch):
     def install(**kw):
@@ -111,11 +127,23 @@ def _activity_need(outputs=("gst_amount", "grand_total")):
 def test_explicit_tool_request_goes_through_every_layer(stub):
     s = stub(answers={
         "normalise need": {"name": "word_count", "summary": "count words"},
-        "policy gate": {"allowed": True},
         "spec authoring": {**GST_REQ, "name": "word_count", "output_schema": None, "examples": []},
     })
     resolution = _run(CodeNeed(purpose="tool", origin="explicit", intent="count words in text"))
     assert resolution.status == "built" and resolution.name == "word_count"
+    # No safety rule is on by default, so nothing is screened.
+    assert s.phases == ["normalise need", "spec authoring"]
+
+
+def test_screen_runs_when_rules_are_on(stub, safety_rules):
+    safety_rules()
+    s = stub(answers={
+        "normalise need": {"name": "word_count", "summary": "count words"},
+        "policy gate": {"violations": []},
+        "spec authoring": {**GST_REQ, "name": "word_count", "output_schema": None, "examples": []},
+    })
+    resolution = _run(CodeNeed(purpose="tool", origin="explicit", intent="count words in text"))
+    assert resolution.status == "built"
     assert s.phases == ["normalise need", "policy gate", "spec authoring"]
     assert s.submitted[0]["purpose"] == "tool"
 
@@ -173,19 +201,61 @@ def test_tools_are_not_offered_as_activities(stub):
     assert resolution.name == "apply_gst_2"
 
 
-def test_policy_block_stops_before_authoring(stub):
+def test_policy_block_stops_before_authoring(stub, safety_rules):
+    safety_rules("standard")
     s = stub(answers={"normalise need": {"name": "run_shell"},
-                      "policy gate": {"allowed": False, "reason": "executes shell commands"}})
+                      "policy gate": {"violations": [{"rule": "no_arbitrary_code",
+                                                      "confidence": "high",
+                                                      "why": "executes shell commands"}]}})
     resolution = _run(CodeNeed(purpose="tool", origin="explicit", intent="run any shell command"))
     assert resolution.status == "blocked" and "shell" in resolution.message
     assert "spec authoring" not in s.phases
 
 
-def test_policy_gate_fails_closed(stub):
+def test_strictness_decides_what_blocks(stub, safety_rules):
+    unsure = {"violations": [{"rule": "no_arbitrary_code", "confidence": "medium", "why": "maybe"}]}
+    # Standard blocks a clear violation only: a "medium" one is a warning.
+    safety_rules("standard")
+    stub(answers={"normalise need": {"name": "x"}, "policy gate": unsure, "spec authoring": GST_REQ})
+    assert _run(CodeNeed(purpose="tool", origin="explicit", intent="x")).status == "built"
+    # Strict blocks it.
+    safety_rules("strict")
+    stub(answers={"normalise need": {"name": "x"}, "policy gate": unsure, "spec authoring": GST_REQ})
+    assert _run(CodeNeed(purpose="tool", origin="explicit", intent="x")).status == "blocked"
+    # Advise never blocks, even when sure.
+    safety_rules("advise")
+    sure = {"violations": [{"rule": "no_arbitrary_code", "confidence": "high", "why": "yes"}]}
+    stub(answers={"normalise need": {"name": "x"}, "policy gate": sure, "spec authoring": GST_REQ})
+    assert _run(CodeNeed(purpose="tool", origin="explicit", intent="x")).status == "built"
+
+
+def test_violation_of_an_unconfigured_rule_is_ignored(stub, safety_rules):
+    safety_rules("strict")
+    stub(answers={"normalise need": {"name": "validate_text"}, "spec authoring": GST_REQ,
+                  "policy gate": {"violations": [{"rule": "validates arbitrary strings",
+                                                  "confidence": "high", "why": "unsafe input"}]}})
+    assert _run(CodeNeed(purpose="tool", origin="explicit", intent="validate text")).status == "built"
+
+
+def test_rules_apply_only_where_chosen(stub, safety_rules):
+    # On for activity builds only: an agent tool is not screened.
+    safety_rules("strict", points=("screen_activity_build",))
+    s = stub(answers={"normalise need": {"name": "word_count"}, "spec authoring": GST_REQ})
+    _run(CodeNeed(purpose="tool", origin="explicit", intent="count words"))
+    assert "policy gate" not in s.phases
+
+
+def test_policy_gate_fails_closed_only_for_strict_rules(stub, safety_rules):
+    safety_rules("strict")
     s = stub(answers={"normalise need": {"name": "x"}})
     s.answers["policy gate"] = []  # decide() will raise
     resolution = _run(CodeNeed(purpose="tool", origin="explicit", intent="something"))
     assert resolution.status == "blocked" and resolution.reason == "policy_unavailable"
+
+    safety_rules("standard")
+    s = stub(answers={"normalise need": {"name": "x"}, "spec authoring": GST_REQ})
+    s.answers["policy gate"] = []
+    assert _run(CodeNeed(purpose="tool", origin="explicit", intent="something")).status == "built"
 
 
 def test_runtime_recovery_rebuilds_the_stored_requirement_verbatim(stub):

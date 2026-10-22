@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect } from "react";
 import { api } from "@/api/client";
+import { tabRenames } from "@/components/layout/nav-items";
 import {
   applyTitle,
   applyUiConfig,
@@ -27,14 +28,17 @@ export function AppConfigApplier() {
     api.defaults.timeout = Math.max(10, Number(cfg.UI_API_TIMEOUT_SECONDS) || 420) * 1000;
   }, [serialized]);
 
-  // Pages set their own <title> on navigation; keep the configured name in it.
+  // Pages set their own <title> on navigation; keep the configured product
+  // name and renamed page names in it.
   useEffect(() => {
     const titleEl = document.querySelector("title");
     if (!titleEl) return;
-    const observer = new MutationObserver(() => applyTitle(cfg.UI_DOCUMENT_TITLE));
+    const renames = tabRenames(cfg.UI_NAV_LAYOUT);
+    applyTitle(cfg.UI_DOCUMENT_TITLE, renames);
+    const observer = new MutationObserver(() => applyTitle(cfg.UI_DOCUMENT_TITLE, renames));
     observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
     return () => observer.disconnect();
-  }, [cfg.UI_DOCUMENT_TITLE]);
+  }, [cfg.UI_DOCUMENT_TITLE, cfg.UI_NAV_LAYOUT]);
 
   return null;
 }

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -176,11 +177,15 @@ function RemoteServersPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Remote <span className="text-gradient-brand">Servers</span>
+            <FeatureTitle route="/remote-servers">
+              Remote <span className="text-gradient-brand">Servers</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            Where dynamic tools and workflow packages get deployed. Add a VM or endpoint, check it,
-            then deploy to it from a tool or a workflow.
+            <FeatureDescription route="/remote-servers">
+              Where dynamic tools and workflow packages get deployed. Add a VM or endpoint, check
+              it, then deploy to it from a tool or a workflow.
+            </FeatureDescription>
           </p>
         </div>
         <Link

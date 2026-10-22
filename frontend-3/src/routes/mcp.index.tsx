@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -132,11 +133,15 @@ function McpIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            MCP <span className="text-gradient-brand">Servers</span>
+            <FeatureTitle route="/mcp">
+              MCP <span className="text-gradient-brand">Servers</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            Model Context Protocol servers whose tools your agents can call. Register one, check its
-            health, and try its tools before wiring them in.
+            <FeatureDescription route="/mcp">
+              Model Context Protocol servers whose tools your agents can call. Register one, check
+              its health, and try its tools before wiring them in.
+            </FeatureDescription>
           </p>
         </div>
         <button

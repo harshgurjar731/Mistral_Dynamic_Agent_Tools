@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { FeatureTitle } from "@/components/layout/FeatureText";
 import {
   AlertTriangle,
   ArrowRight,
@@ -413,9 +414,11 @@ function OrchestratorChat() {
       {empty ? (
         <div className="flex flex-1 flex-col items-center justify-center py-8">
           <h1 className="text-center text-3xl font-semibold tracking-tight text-foreground sm:text-4xl lg:text-5xl">
-            Describe your goal.
-            <br />
-            <span className="text-gradient-brand">We design the agent.</span>
+            <FeatureTitle route="/">
+              Describe your goal.
+              <br />
+              <span className="text-gradient-brand">We design the agent.</span>
+            </FeatureTitle>
           </h1>
 
           <div className="mt-10 grid w-full max-w-2xl gap-3 sm:grid-cols-3">

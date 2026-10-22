@@ -8,7 +8,7 @@ from app.core.specs import CodeNeed
 from app.layers.codegen import pipeline
 from app.services import code_rebuild, tool_testing
 from app.services.workflow_engine.models import WorkflowDefinition
-from tests.test_codegen_pipeline import GST_REQ, stub  # noqa: F401 — the fixture
+from tests.test_codegen_pipeline import GST_REQ, safety_rules, stub  # noqa: F401 — fixtures
 
 RECORD = {"id": 11, "name": "apply_gst", "version_no": 3, "status": "approved",
           "purpose": "activity", "source_code": "def run(**kw):\n    return kw['subtotal'] * 1.18",
@@ -56,18 +56,26 @@ def _run(need, **kw):
     return asyncio.run(pipeline.resolve_code_need(need, client=object(), **kw))
 
 
-def test_rebuild_is_screened_keeps_its_name_and_sends_the_feedback(stub):
-    s = stub(answers={"policy gate": {"allowed": True}},
-             catalogue=[{"name": "apply_gst", "purpose": "activity"}])
+def test_rebuild_keeps_its_name_and_sends_the_feedback(stub):
+    s = stub(catalogue=[{"name": "apply_gst", "purpose": "activity"}])
     resolution = _run(_feedback_need())
     assert resolution.status == "built" and resolution.name == "apply_gst"
-    assert s.phases == ["policy gate"], "screened again — it carries typed text — but not re-authored"
-    assert "accept strings" in s.prompts[0]
+    assert s.phases == [], "no safety rule is on by default, and a rebuild is not re-authored"
     assert s.submitted[0]["feedback"]["runtime_error"] == "TypeError"
 
 
-def test_rebuild_blocked_by_policy_builds_nothing(stub):
-    s = stub(answers={"policy gate": {"allowed": False, "reason": "no"}})
+def test_rebuild_is_screened_when_rebuild_rules_are_on(stub, safety_rules):
+    safety_rules("standard", points=("screen_rebuild",))
+    s = stub(answers={"policy gate": {"violations": []}})
+    assert _run(_feedback_need()).status == "built"
+    assert s.phases == ["policy gate"], "screened — it carries typed text"
+    assert "accept strings" in s.prompts[0]
+
+
+def test_rebuild_blocked_by_policy_builds_nothing(stub, safety_rules):
+    safety_rules("standard", points=("screen_rebuild",))
+    s = stub(answers={"policy gate": {"violations": [
+        {"rule": "no_arbitrary_code", "confidence": "high", "why": "runs shell"}]}})
     assert _run(_feedback_need()).status == "blocked" and s.submitted == []
 
 

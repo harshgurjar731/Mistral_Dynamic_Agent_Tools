@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -180,11 +181,15 @@ function WorkflowsIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            <span className="text-gradient-brand">Workflows</span>
+            <FeatureTitle route="/workflows">
+              <span className="text-gradient-brand">Workflows</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            Deterministic multi-step pipelines. Save keeps edits local; publish compiles the
-            definition and registers it with the Mistral worker.
+            <FeatureDescription route="/workflows">
+              Deterministic multi-step pipelines. Save keeps edits local; publish compiles the
+              definition and registers it with the Mistral worker.
+            </FeatureDescription>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

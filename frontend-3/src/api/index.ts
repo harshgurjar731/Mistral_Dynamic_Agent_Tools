@@ -55,6 +55,7 @@ export { revisionsApi } from "./revisions";
 export { observabilityApi } from "./observability";
 export { settingsApi } from "./settings";
 export { processesApi } from "./processes";
+export { safetyApi } from "./safety";
 export type * from "./processes";
 export type * from "./settings";
 export type * from "./observability";

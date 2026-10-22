@@ -105,6 +105,9 @@ class AgentDesignLayer(WorkflowStepLayer):
             return json.dumps(items, indent=2) if items else "Nothing — this is a terminal step."
 
         from app.process_knowledge import pipeline as process_knowledge
+        from app.safety import apply as safety
+
+        design_system = safety.apply(AGENT_DESIGN_SYSTEM_PROMPT, "workflow_agent_design")
 
         async def _design_one(cap):
             async with semaphore:
@@ -118,7 +121,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                 raw = await decide(
                     ctx.client,
                     model=settings.MISTRAL_ORCHESTRATOR_MODEL,
-                    system=AGENT_DESIGN_SYSTEM_PROMPT,
+                    system=design_system,
                     user=AGENT_DESIGN_USER_PROMPT.format(
                         goal=spec.goal,
                         capability=json.dumps({

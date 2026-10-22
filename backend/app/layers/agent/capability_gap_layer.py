@@ -44,6 +44,7 @@ class CapabilityGapLayer(Layer):
         from app.core.specs import CodeNeed
         from app.layers.codegen import resolve_code_need
         from app.prompts import SYNTHESIS_CHECK_SYSTEM_PROMPT, SYNTHESIS_CHECK_USER_PROMPT
+        from app.safety import apply as safety
         from app.services.tool_registry import get_tool_descriptions
 
         ctx.emit("status", "Checking for missing capabilities…")
@@ -60,7 +61,7 @@ class CapabilityGapLayer(Layer):
             raw = await decide(
                 ctx.client,
                 route="capability_gap",
-                system=SYNTHESIS_CHECK_SYSTEM_PROMPT,
+                system=safety.apply(SYNTHESIS_CHECK_SYSTEM_PROMPT, "capability_gap"),
                 user=SYNTHESIS_CHECK_USER_PROMPT.format(
                     tool_descriptions=get_tool_descriptions(),
                     user_query=query_block,

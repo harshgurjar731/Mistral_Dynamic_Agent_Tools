@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { NAV_ITEMS } from "./nav-items";
+import { arrangeNav, navLabel, parseNavLayout } from "./nav-items";
 import { HealthIndicator } from "./HealthIndicator";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { useSessionStore } from "@/stores/sessions";
@@ -46,10 +46,18 @@ export function Sidebar({
 
   const matches = (to: string) =>
     to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
+  // Order, visibility and labels come from Settings → Layout → Navigation menu.
+  const navItems = useMemo(
+    () =>
+      arrangeNav(parseNavLayout(ui.UI_NAV_LAYOUT))
+        .filter((r) => !r.hidden)
+        .map((r) => ({ ...r.item, label: navLabel(r) })),
+    [ui.UI_NAV_LAYOUT],
+  );
   // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
-  const activeTo = NAV_ITEMS.filter((i) => matches(i.to)).sort(
-    (a, b) => b.to.length - a.to.length,
-  )[0]?.to;
+  const activeTo = navItems
+    .filter((i) => matches(i.to))
+    .sort((a, b) => b.to.length - a.to.length)[0]?.to;
   const isActive = (to: string) => to === activeTo;
 
   const showLabels = !collapsed;
@@ -102,7 +110,7 @@ export function Sidebar({
         </div>
 
         <nav className="custom-scrollbar flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.to);
             const key = item.expandable ?? item.to;

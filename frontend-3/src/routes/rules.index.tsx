@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -92,11 +93,15 @@ function RulesPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Rules & <span className="text-gradient-brand">Gates</span>
+            <FeatureTitle route="/rules">
+              Rules & <span className="text-gradient-brand">Gates</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            The rules your agents and workflows must follow. Always-on rules apply everywhere; the
-            orchestrator adds the others where they fit — and you can add them by hand.
+            <FeatureDescription route="/rules">
+              The rules your agents and workflows must follow. Always-on rules apply everywhere; the
+              orchestrator adds the others where they fit — and you can add them by hand.
+            </FeatureDescription>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

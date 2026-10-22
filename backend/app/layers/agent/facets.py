@@ -94,9 +94,11 @@ class ToolSelectionLayer(AgentDecisionLayer):
             TOOL_SELECTION_USER_PROMPT,
         )
 
+        from app.safety import apply as safety
+
         inv = _inventory(ctx)
         return (
-            TOOL_SELECTION_SYSTEM_PROMPT,
+            safety.apply(TOOL_SELECTION_SYSTEM_PROMPT, "tool_selection"),
             TOOL_SELECTION_USER_PROMPT.format(
                 requirements=_requirements_block(ctx),
                 user_query=ctx.query,

@@ -20,6 +20,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     # and create_all() creates only the tables it knows about.
     import app.ontology.models
     import app.process_knowledge.models
+    import app.safety.models
     import app.rag.models
     import app.remote_server_model
     import app.rules.models
@@ -48,6 +49,11 @@ def prepare_database(*, seed_rules: bool = True) -> None:
 
     process_templates.ensure_schema()
     process_templates.ensure_builtin()
+
+    # Tool safety rules: the built-in set, inserted off when missing.
+    from app.safety import store as safety_store
+
+    safety_store.seed()
 
     if seed_rules:
         # The recommended starter rules. Insert-if-missing, so edits made on

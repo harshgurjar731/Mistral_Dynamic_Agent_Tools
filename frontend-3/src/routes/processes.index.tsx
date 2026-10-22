@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -110,12 +111,16 @@ function ProcessesIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            <span className="text-gradient-brand">Processes</span>
+            <FeatureTitle route="/processes">
+              <span className="text-gradient-brand">Processes</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            The business processes each industry runs, filed by domain and subdomain like the
-            ontology, with a process and subprocess level below. A process document attached here
-            grounds agent and workflow design when Process knowledge is turned on.
+            <FeatureDescription route="/processes">
+              The business processes each industry runs, filed by domain and subdomain like the
+              ontology, with a process and subprocess level below. A process document attached here
+              grounds agent and workflow design when Process knowledge is turned on.
+            </FeatureDescription>
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">

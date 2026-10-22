@@ -61,7 +61,7 @@ class SettingDef:
     section: str
     label: str
     description: str
-    #: string | int | float | bool | enum | model | model_list | secret
+    #: string | int | float | bool | enum | model | model_list | secret | json
     type: str = "string"
     #: None: the default of the ``Settings`` field of the same name.
     default: Any = None
@@ -130,6 +130,17 @@ def coerce(defn: SettingDef, raw: Any) -> Any:
         if not seen:
             raise ValueError(f"{defn.label}: choose at least one model")
         return seen
+    if t == "json":
+        # Kept as compact JSON text, so every caller sees one string shape.
+        if isinstance(raw, (dict, list)):
+            return json.dumps(raw, separators=(",", ":"))
+        text = "" if raw is None else str(raw).strip()
+        if not text:
+            return ""
+        try:
+            return json.dumps(json.loads(text), separators=(",", ":"))
+        except ValueError:
+            raise ValueError(f"{defn.label}: not valid JSON") from None
     text = "" if raw is None else str(raw).strip()
     if t == "model":
         if not text:

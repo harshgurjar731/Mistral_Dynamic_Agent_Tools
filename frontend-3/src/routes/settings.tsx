@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +26,7 @@ import {
   Save,
   Search,
   Server,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -61,6 +63,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { SettingTile } from "@/components/settings/SettingControls";
 import { ProcessTemplatesPanel } from "@/components/settings/ProcessTemplatesPanel";
+import { ToolSafetyPanel } from "@/components/settings/ToolSafetyPanel";
 import {
   ModelCatalogBrowser,
   ModelUsageMap,
@@ -114,7 +117,8 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
   monitor: Monitor,
 };
 
-type CategoryId = "overview" | "models" | "tool_service" | "platform" | "process" | "frontend";
+type CategoryId =
+  "overview" | "models" | "tool_service" | "platform" | "process" | "safety" | "frontend";
 
 const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIcon }[] = [
   {
@@ -149,6 +153,13 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     blurb:
       "The template process documents must follow, and how documents are checked and matched to a request.",
     icon: Workflow,
+  },
+  {
+    id: "safety",
+    title: "Tool safety",
+    blurb:
+      "Which kinds of tool the AI may not design or build, how strictly, and where each rule applies. Off by default.",
+    icon: ShieldAlert,
   },
   {
     id: "frontend",
@@ -350,10 +361,16 @@ function SettingsPage() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
             <p className="eyebrow mb-1">Configuration</p>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              <FeatureTitle route="/settings" gradient={false}>
+                Settings
+              </FeatureTitle>
+            </h1>
             <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-              Every model and configuration value of the backend, the Tool Service and this
-              interface. Saved values take effect immediately wherever they are used.
+              <FeatureDescription route="/settings">
+                Every model and configuration value of the backend, the Tool Service and this
+                interface. Saved values take effect immediately wherever they are used.
+              </FeatureDescription>
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -571,6 +588,7 @@ function SettingsPage() {
               {category === "process" ? (
                 <ProcessTemplatesPanel initialScope={search.scope} />
               ) : null}
+              {category === "safety" ? <ToolSafetyPanel /> : null}
               {sectionsIn(category).map((s) => (
                 <SectionCard
                   key={`${s.target}-${s.id}`}

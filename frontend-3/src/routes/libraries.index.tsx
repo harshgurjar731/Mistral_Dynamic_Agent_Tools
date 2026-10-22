@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -88,11 +89,15 @@ function LibrariesIndexPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            <span className="text-gradient-brand">Libraries</span>
+            <FeatureTitle route="/libraries">
+              <span className="text-gradient-brand">Libraries</span>
+            </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            Document sets an agent can be pointed at. Attach one to an agent from its detail page to
-            give it retrieval over these files.
+            <FeatureDescription route="/libraries">
+              Document sets an agent can be pointed at. Attach one to an agent from its detail page
+              to give it retrieval over these files.
+            </FeatureDescription>
           </p>
         </div>
         <button

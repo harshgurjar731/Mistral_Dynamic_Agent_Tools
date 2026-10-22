@@ -63,6 +63,23 @@ def test_model_list_round_trips_as_comma_string():
     assert settings.agent_model_choices == ["a-model", "b-model"]
 
 
+def test_json_setting_is_validated_and_kept_compact():
+    defn = SettingDef("J", "s", "Nav", "", type="json", default="")
+    assert coerce(defn, "") == ""
+    assert coerce(defn, {"order": ["/a"], "hidden": []}) == '{"order":["/a"],"hidden":[]}'
+    assert coerce(defn, '{ "hidden": ["/b"] }') == '{"hidden":["/b"]}'
+    with pytest.raises(ValueError):
+        coerce(defn, "{not json")
+
+
+def test_nav_layout_is_a_public_ui_setting():
+    from app.app_settings.registry import UI_KEYS
+
+    assert "UI_NAV_LAYOUT" in UI_KEYS
+    get_store().update({"UI_NAV_LAYOUT": {"order": ["/settings", "/"], "hidden": ["/logs"]}})
+    assert json.loads(get_store().value("UI_NAV_LAYOUT"))["hidden"] == ["/logs"]
+
+
 def test_tier_labels_resolve_to_configured_models():
     get_store().update({"AGENT_MODEL_SMALL": "ministral-8b-latest",
                         "DEFAULT_AGENT_MODEL": "mistral-medium-latest"})
