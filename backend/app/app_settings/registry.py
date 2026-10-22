@@ -44,9 +44,9 @@ SECTIONS = [
     Section("platform", "Platform & security", "API, database, CORS and uploads.",
             "shield", "platform"),
     # ── Process knowledge ──────────────────────────────────────────────
-    Section("process_knowledge", "Process knowledge",
-            "How business-process documents are checked and matched to a request when the "
-            "orchestration pages build with process knowledge.", "workflow", "process"),
+    Section("process_knowledge", "Matching & limits",
+            "Whether builds use process knowledge by default, how closely a process must match a "
+            "request to be used, and the largest document accepted.", "workflow", "process"),
     # ── Frontend ───────────────────────────────────────────────────────
     Section("ui_design", "Theme & design",
             "Colours, shape and typography of the whole interface. Applied the moment you save.",
