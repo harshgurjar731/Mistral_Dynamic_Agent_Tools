@@ -116,7 +116,7 @@ function IndustryPage() {
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <TemplateDownloadMenu />
+          <TemplateDownloadMenu conceptId={selected} />
           <Button size="sm" variant="outline" asChild>
             <Link to="/ontology" search={{ view: "graph", focus: industryId }}>
               <Network className="size-3.5" /> View in ontology

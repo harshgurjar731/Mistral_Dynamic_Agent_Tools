@@ -34,6 +34,7 @@ import {
   RefChip,
   StatsLine,
   TemplateDownloadMenu,
+  TemplateLine,
 } from "./shared";
 import { useDocumentIngest } from "./useDocumentIngest";
 
@@ -354,11 +355,24 @@ export function ProcessPanel({
         style={{ background: "var(--surface)" }}
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-medium text-foreground">
-            {active ? "Upload a new version" : "Upload the process document"}
-          </p>
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {active ? "Upload a new version" : "Upload the process document"}
+            </p>
+            <p className="mt-0.5">
+              <TemplateLine template={node.template} />{" "}
+              <Link
+                to="/settings"
+                search={{ category: "process", scope: node.id }}
+                className="text-[11px] text-primary hover:underline"
+                title="Templates are set per industry, domain, process and subprocess in Settings"
+              >
+                change
+              </Link>
+            </p>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <TemplateDownloadMenu />
+            <TemplateDownloadMenu conceptId={node.id} />
             <Button size="sm" variant="ghost" onClick={ingest.draft}>
               <Sparkles className="size-3.5" /> Draft from text with AI
             </Button>

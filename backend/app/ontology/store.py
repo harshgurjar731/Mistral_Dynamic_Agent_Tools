@@ -558,7 +558,10 @@ def delete_scheme(scheme_id: str, cascade: bool = False) -> dict:
         try:
             from app.process_knowledge import store as process_store
 
+            from app.process_knowledge import templates as process_templates
+
             process_store.delete_for_concepts(concept_ids)
+            process_templates.delete_for_concepts(concept_ids)
         except Exception as e:
             logger.debug("Process documents not removed for deleted scheme: %s", e)
 
@@ -760,7 +763,10 @@ def delete_concept(concept_id: str, cascade: bool = False) -> dict:
     try:
         from app.process_knowledge import store as process_store
 
+        from app.process_knowledge import templates as process_templates
+
         process_store.delete_for_concepts(list(doomed))
+        process_templates.delete_for_concepts(list(doomed))
     except Exception as e:
         logger.debug("Process documents not removed for deleted concepts: %s", e)
 

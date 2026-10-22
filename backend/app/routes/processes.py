@@ -14,6 +14,7 @@ the orchestration pages' upload/picker all go through these.
     POST   /processes/documents                    upload without filing (orchestration pages)
     POST   /processes/documents/json               same, from content
     POST   /processes/validate                     check a file without saving it
+    POST   /processes/classify                     where an upload belongs, and its template
     GET    /processes/documents                    list (?concept_id= | ?unfiled=true)
     GET    /processes/documents/{id}               one, with content and report
     GET    /processes/documents/{id}/download      the stored JSON as a file
@@ -23,13 +24,21 @@ the orchestration pages' upload/picker all go through these.
     DELETE /processes/documents/{id}               delete (refused while used, unless force)
     POST   /processes/fix                          AI fix of an upload or a stored document
     POST   /processes/draft                        AI draft from prose
-    GET    /processes/templates                    template versions
+    GET    /processes/templates                    versions at a scope (?concept_id= | ?all=true)
+    GET    /processes/templates/scopes             every node with a template of its own
+    GET    /processes/templates/for/{id|global}    the template that applies at a node
+    GET    /processes/templates/for/{id}/download  ?kind=blank|example|schema
+    POST   /processes/templates/scope/{id}/clear   stop overriding: inherit again
     GET    /processes/templates/{id|default}       one template with its schema
     GET    /processes/templates/{id|default}/download   ?kind=blank|example|schema
     POST   /processes/templates/preview            read an upload: schema or inferred from example
-    POST   /processes/templates                    save a template version
-    POST   /processes/templates/{id}/default       make default and re-check every document
+    POST   /processes/templates                    save a version at a scope (concept_id)
+    POST   /processes/templates/{id}/default       make active at its scope; re-check documents
     DELETE /processes/templates/{id}
+
+Templates are scoped: a document is checked against the nearest active
+template above it — subprocess › process › subdomain › domain › industry ›
+global. An unfiled upload is classified first (``process_knowledge.classifier``).
     GET    /processes/usage                        where documents were used
     GET    /processes/resolve?goal=                which process a goal would use
 """
@@ -279,6 +288,8 @@ def _node(concept_id: str) -> dict:
     else:
         out["processes"] = sorted(ontology_store.processes_under([concept_id], include_ancestors=False))
     out["usage_counts"] = ontology_store.concept_usage(concept_id)
+    # The template documents here are checked against, and where it is set.
+    out["template"] = _template_summary(templates.template_for(concept_id))
     return out
 
 
@@ -362,39 +373,97 @@ async def save_document_json(concept_id: str, body: DocumentJson):
         template_id=body.template_id, replace_id=body.replace_id)
 
 
+def _save_unfiled(data: Any, *, filename: str, source: str, goal: str = "",
+                  classify_as: Optional[str] = None, replace_id: Optional[int] = None,
+                  template_id: Optional[int] = None) -> dict:
+    """Store an orchestration-page upload, checked against the template of
+    where it is classified — the chosen node, what the document names, or what
+    the request is about (see ``classifier``)."""
+    from app.process_knowledge import classifier
+
+    classification = None
+    if not template_id and not (replace_id and not classify_as and not goal):
+        classification = classifier.classify(data, goal=goal, chosen=classify_as)
+    return store.save_document(data, concept_id=None, filename=filename, source=source,
+                               template_id=template_id, replace_id=replace_id,
+                               classification=classification)
+
+
 @router.post("/documents", status_code=201)
 async def upload_unfiled(file: UploadFile = File(...), concept_id: Optional[str] = Form(None),
-                         template_id: Optional[int] = Form(None)):
-    """An upload from an orchestration page. Filed under ``concept_id`` when given."""
+                         template_id: Optional[int] = Form(None),
+                         goal: str = Form(""), classify_as: Optional[str] = Form(None)):
+    """An upload from an orchestration page.
+
+    ``concept_id`` files it under that process. Otherwise it stays unfiled and
+    is checked against the template of where it is classified: ``classify_as``
+    when chosen, else what the document itself names, else the request ``goal``.
+    """
+    data = await _read(file)
     if concept_id:
         _guard(_process_concept, concept_id)
-    data = await _read(file)
+        return await asyncio.to_thread(
+            _guard, store.save_document, data, concept_id=concept_id,
+            filename=file.filename or "", source="upload", template_id=template_id)
     return await asyncio.to_thread(
-        _guard, store.save_document, data, concept_id=concept_id or None,
-        filename=file.filename or "", source="orchestration" if not concept_id else "upload",
-        template_id=template_id)
+        _guard, _save_unfiled, data, filename=file.filename or "", source="orchestration",
+        goal=goal, classify_as=classify_as or None, template_id=template_id)
+
+
+class UnfiledJson(DocumentJson):
+    goal: str = ""
+    classify_as: Optional[str] = None
 
 
 @router.post("/documents/json", status_code=201)
-async def save_unfiled_json(body: DocumentJson, concept_id: Optional[str] = Query(None)):
+async def save_unfiled_json(body: UnfiledJson, concept_id: Optional[str] = Query(None)):
     if concept_id:
         _guard(_process_concept, concept_id)
+        return await asyncio.to_thread(
+            _guard, store.save_document, _content_arg(body.content), concept_id=concept_id,
+            filename=body.filename, source=body.source if body.source in _SOURCES else "upload",
+            template_id=body.template_id, replace_id=body.replace_id)
     return await asyncio.to_thread(
-        _guard, store.save_document, _content_arg(body.content), concept_id=concept_id or None,
-        filename=body.filename, source=body.source if body.source in _SOURCES else "orchestration",
-        template_id=body.template_id, replace_id=body.replace_id)
+        _guard, _save_unfiled, _content_arg(body.content), filename=body.filename,
+        source=body.source if body.source in _SOURCES else "orchestration", goal=body.goal,
+        classify_as=body.classify_as, replace_id=body.replace_id, template_id=body.template_id)
 
 
 @router.post("/validate")
 async def validate_upload(file: UploadFile = File(...), concept_id: Optional[str] = Form(None),
-                          template_id: Optional[int] = Form(None)):
-    """Check a file without storing it."""
+                          template_id: Optional[int] = Form(None), goal: str = Form(""),
+                          classify_as: Optional[str] = Form(None)):
+    """Check a file without storing it — against its process's template, or
+    for an unfiled one, that of where it is classified."""
+    from app.process_knowledge import classifier
+
     data = await _read(file)
-    template = templates.get_template(template_id) if template_id else templates.default_template()
+    classification = None
+    if template_id:
+        template = templates.get_template(template_id)
+    elif concept_id:
+        template = templates.template_for(concept_id)
+    else:
+        classification = await asyncio.to_thread(
+            classifier.classify, data, goal=goal, chosen=classify_as)
+        template = templates.template_for(classification.get("concept_id"))
     if not template:
         raise HTTPException(status_code=404, detail="Template not found.")
-    report = await asyncio.to_thread(validation.validate, data, template, concept_id=concept_id)
-    return report
+    return await asyncio.to_thread(validation.validate, data, template, concept_id=concept_id,
+                                   classification=classification)
+
+
+@router.post("/classify")
+async def classify_upload(file: UploadFile = File(...), goal: str = Form(""),
+                          classify_as: Optional[str] = Form(None)):
+    """Where an upload would be classified, and the template that would check it."""
+    from app.process_knowledge import classifier
+
+    data = await _read(file)
+    classification = await asyncio.to_thread(classifier.classify, data, goal=goal,
+                                             chosen=classify_as)
+    template = templates.template_for(classification.get("concept_id"))
+    return {"classification": classification, "template": _template_summary(template)}
 
 
 @router.get("/documents")
@@ -431,9 +500,12 @@ async def reupload_document(document_id: int, file: UploadFile = File(...)):
     data = await _read(file)
     # A valid document is never overwritten: its re-upload is a new version.
     replace = document_id if existing["status"] != "valid" else None
+    # An unfiled one keeps where it was classified, and so its template.
+    classification = None if existing["concept_id"] else store._stored_classification(document_id)
     return await asyncio.to_thread(
         _guard, store.save_document, data, concept_id=existing["concept_id"],
-        filename=file.filename or "", source=existing["source"], replace_id=replace)
+        filename=file.filename or "", source=existing["source"], replace_id=replace,
+        classification=classification)
 
 
 @router.post("/documents/{document_id}/activate")
@@ -465,16 +537,23 @@ class FixRequest(BaseModel):
     raw: Optional[Any] = None
     concept_id: Optional[str] = None
     template_id: Optional[int] = None
+    #: For an unfiled upload: where to classify it (see /documents).
+    goal: str = ""
+    classify_as: Optional[str] = None
 
 
 class DraftRequest(BaseModel):
     text: str = Field(..., min_length=20, max_length=60_000)
+    #: The process it will be filed under (also checks it describes it).
     concept_id: Optional[str] = None
     template_id: Optional[int] = None
+    #: For an unfiled draft: the node whose template it should follow.
+    classify_as: Optional[str] = None
 
 
-def _template_or_404(template_id: Optional[int]) -> dict:
-    template = templates.get_template(template_id) if template_id else templates.default_template()
+def _template_or_404(template_id: Optional[int], scope: Optional[str] = None) -> dict:
+    """A specific template, or the one that applies at ``scope``."""
+    template = templates.get_template(template_id) if template_id else templates.template_for(scope)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found.")
     return template
@@ -485,17 +564,24 @@ async def fix_document(body: FixRequest):
     from app.dependencies import get_mistral_client
     from app.process_knowledge import ai
 
-    raw, concept_id = body.raw, body.concept_id
+    from app.process_knowledge import classifier
+
+    raw, concept_id, scope = body.raw, body.concept_id, None
     if body.document_id:
         doc = await asyncio.to_thread(store.get_document, body.document_id)
         if not doc:
             raise HTTPException(status_code=404, detail=f"Document {body.document_id} not found.")
         raw = doc["raw"] or (json.dumps(doc["content"]) if doc.get("content") is not None else "")
         concept_id = concept_id or doc.get("concept_id")
+        # An unfiled upload is fixed towards the template it was checked against.
+        scope = ((doc.get("report") or {}).get("classification") or {}).get("concept_id")
     if raw in (None, ""):
         raise HTTPException(status_code=422, detail="Nothing to fix — give document_id or raw.")
+    if not concept_id and not scope and (body.goal or body.classify_as):
+        scope = classifier.classify(raw, goal=body.goal, chosen=body.classify_as).get("concept_id")
     try:
-        return await ai.fix(get_mistral_client(), raw, _template_or_404(body.template_id),
+        return await ai.fix(get_mistral_client(), raw,
+                            _template_or_404(body.template_id, concept_id or scope),
                             concept_id=concept_id)
     except Exception as e:
         logger.warning("AI fix failed: %s", e, exc_info=True)
@@ -508,7 +594,9 @@ async def draft_document(body: DraftRequest):
     from app.process_knowledge import ai
 
     try:
-        return await ai.draft(get_mistral_client(), body.text, _template_or_404(body.template_id),
+        return await ai.draft(get_mistral_client(), body.text,
+                              _template_or_404(body.template_id,
+                                               body.concept_id or body.classify_as),
                               concept_id=body.concept_id)
     except Exception as e:
         logger.warning("AI draft failed: %s", e, exc_info=True)
@@ -526,9 +614,74 @@ def _template_ref(ref: str) -> dict:
     return template
 
 
+def _scope_arg(concept_id: str) -> Optional[str]:
+    """"global" in a path means the global scope."""
+    if concept_id in ("global", "default", ""):
+        return None
+    if not ontology_store.get_concept(concept_id):
+        raise HTTPException(status_code=404, detail=f"'{concept_id}' is not in the ontology.")
+    return concept_id
+
+
+def _template_summary(template: dict) -> dict:
+    return {k: template.get(k) for k in ("id", "name", "version", "kind", "concept_id",
+                                          "scope_path", "inherited", "applies_to", "builtin")}
+
+
+def _download(template: dict, kind: str) -> Response:
+    payload = templates.download_payload(template, kind)
+    suffix = {"blank": "template", "example": "example", "schema": "schema"}[kind]
+    name = f"{_slug(template['name'])}_v{template['version']}_{suffix}.json"
+    return Response(content=json.dumps(payload, indent=2), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/templates")
-async def list_templates():
-    return {"templates": await asyncio.to_thread(templates.list_templates)}
+async def list_templates(concept_id: Optional[str] = None, all: bool = False):
+    """Templates set at one scope (``concept_id``; none: the global scope), or at all."""
+    scope = _scope_arg(concept_id) if concept_id else None
+    rows = await asyncio.to_thread(templates.list_templates, scope, every_scope=all)
+    return {"templates": rows}
+
+
+@router.get("/templates/scopes")
+async def template_scopes():
+    """Every node with an active template of its own, and how many documents
+    each template now checks."""
+    def _build():
+        rows = templates.scopes()
+        docs = store.list_documents()
+        for row in rows:
+            row["documents"] = sum(
+                1 for d in docs
+                if d.get("template_id") == row["template"]["id"])
+        return rows
+    return {"scopes": await asyncio.to_thread(_build)}
+
+
+@router.get("/templates/for/{concept_id}")
+async def get_template_for(concept_id: str):
+    """The template that applies at a node, and where it is set."""
+    scope = _scope_arg(concept_id)
+    template = await asyncio.to_thread(templates.template_for, scope)
+    own = await asyncio.to_thread(templates.list_templates, scope)
+    return {**template, "applies_to_path": templates.scope_path(scope), "own_versions": own}
+
+
+@router.get("/templates/for/{concept_id}/download")
+async def download_template_for(concept_id: str,
+                                kind: str = Query("blank", pattern="^(blank|example|schema)$")):
+    return _download(templates.template_for(_scope_arg(concept_id)), kind)
+
+
+@router.post("/templates/scope/{concept_id}/clear")
+async def clear_template_scope(concept_id: str):
+    """Stop a node overriding: its documents use the inherited template again."""
+    scope = _scope_arg(concept_id)
+    cleared = _guard(templates.clear_scope, scope)
+    revalidated = await asyncio.to_thread(store.revalidate_all)
+    return {"cleared": cleared, "revalidated": revalidated,
+            "now": _template_summary(templates.template_for(scope))}
 
 
 @router.get("/templates/{ref}")
@@ -538,12 +691,7 @@ async def get_template(ref: str):
 
 @router.get("/templates/{ref}/download")
 async def download_template(ref: str, kind: str = Query("blank", pattern="^(blank|example|schema)$")):
-    template = _template_ref(ref)
-    payload = templates.download_payload(template, kind)
-    suffix = {"blank": "template", "example": "example", "schema": "schema"}[kind]
-    name = f"{_slug(template['name'])}_v{template['version']}_{suffix}.json"
-    return Response(content=json.dumps(payload, indent=2), media_type="application/json",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return _download(_template_ref(ref), kind)
 
 
 @router.post("/templates/preview")
@@ -573,25 +721,31 @@ class TemplateCreate(BaseModel):
     kind: str = "schema"
     description: str = ""
     make_default: bool = False
+    #: The industry, domain, subdomain, process or subprocess it applies to.
+    #: None: the global default.
+    concept_id: Optional[str] = None
 
     model_config = {"populate_by_name": True}
 
 
 @router.post("/templates", status_code=201)
 async def create_template(body: TemplateCreate):
+    scope = _scope_arg(body.concept_id) if body.concept_id else None
     created = _guard(templates.create_template, body.name, body.schema_, example=body.example,
                      kind=body.kind if body.kind in ("schema", "inferred") else "schema",
-                     description=body.description, make_default=body.make_default)
+                     description=body.description, make_default=body.make_default,
+                     concept_id=scope)
     revalidated = None
     if body.make_default:
-        revalidated = await asyncio.to_thread(store.revalidate_all, created["id"])
+        revalidated = await asyncio.to_thread(store.revalidate_all)
     return {**created, "revalidated": revalidated}
 
 
 @router.post("/templates/{template_id}/default")
 async def make_default(template_id: int):
+    """Make a template the active one at its own scope."""
     template = _guard(templates.set_default, template_id)
-    revalidated = await asyncio.to_thread(store.revalidate_all, template_id)
+    revalidated = await asyncio.to_thread(store.revalidate_all)
     return {**template, "revalidated": revalidated}
 
 

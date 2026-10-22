@@ -89,11 +89,34 @@ export function ReportView({ report, max = 60 }: { report: ValidationReport; max
         <div>
           <p className="font-medium">{report.summary}</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Checked against {report.template?.name ?? "the template"} v
+            Checked against{" "}
+            <span className="text-foreground">{report.template?.name ?? "the template"}</span> v
             {report.template?.version ?? 1}
+            {report.template?.scope_path ? (
+              <>
+                {" — "}
+                {report.template.inherited ? "inherited from " : "set for "}
+                {report.template.scope_path}
+              </>
+            ) : null}
             {report.stats ? " · " : ""}
             <StatsLine stats={report.stats} />
           </p>
+          {report.classification ? (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {report.classification.concept_id ? (
+                <>
+                  Classified as{" "}
+                  <span className="text-foreground">{report.classification.path}</span> —{" "}
+                  {report.classification.detail}.
+                </>
+              ) : (
+                <>
+                  Not classified ({report.classification.detail}), so the global template applied.
+                </>
+              )}
+            </p>
+          ) : null}
         </div>
       </div>
       {issues.length ? (
@@ -160,7 +183,12 @@ export function ValidationReportDialog({
         </div>
         <DialogFooter className="flex-wrap gap-2 sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <TemplateDownloadMenu templateId={report.template?.id ?? "default"} label="Template" />
+            <TemplateDownloadMenu
+              {...(report.template?.id
+                ? { templateId: report.template.id }
+                : { conceptId: report.template?.concept_id ?? null })}
+              label="Template"
+            />
             <Button
               size="sm"
               variant="ghost"

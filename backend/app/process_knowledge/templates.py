@@ -8,8 +8,10 @@ A template is a JSON Schema. It can be uploaded in either of two forms:
   becomes required, with the type it had. Shown back for confirmation before
   it is saved, because an inference is a guess about intent.
 
-A built-in template is seeded on first boot and is the default until another
-is chosen. Its shape is what the process-knowledge layer reads best — stages,
+Templates are scoped to a node of the classification — industry, domain,
+subdomain, process or subprocess — and a document is checked against the
+nearest one above it, falling back to the global default (see ``scope_chain``).
+A built-in global template is seeded on first boot. Its shape is what the process-knowledge layer reads best — stages,
 controls, risks — but any template works: retrieval and the prompt rendering
 read whatever of those fields a document has.
 """
@@ -380,7 +382,11 @@ def skeleton_from_schema(schema: dict) -> Any:
             props = node.get("properties") or {}
             if not props and isinstance(node.get("additionalProperties"), dict):
                 return {"<term>": "<definition>"}
-            return {k: walk(v, k) for k, v in props.items()}
+            out = {k: walk(v, k) for k, v in props.items()}
+            # Required but not described: still has to be in the document.
+            for key in node.get("required") or []:
+                out.setdefault(key, f"<{key.replace('_', ' ')}>")
+            return out
         if kind == "array":
             item = walk(node.get("items") or {"type": "string"}, name)
             return [item]
@@ -420,6 +426,55 @@ def looks_like_schema(data: Any) -> bool:
 # ── Store ──────────────────────────────────────────────────────────────────
 
 
+# ── Scope ──────────────────────────────────────────────────────────────────
+#
+# A template applies to one node of the classification — an industry, domain,
+# subdomain, process or subprocess — or, with no node, to everything (the
+# global default). A document is checked against the nearest active template
+# above it:
+#
+#     subprocess → process → subdomain → domain → industry → global
+#
+# so a template set on an industry covers every process in it until a domain or
+# a process sets its own.
+
+GLOBAL = None
+
+
+def scope_chain(concept_id: Optional[str]) -> list[Optional[str]]:
+    """Scopes whose template would apply to ``concept_id``, nearest first.
+
+    Ends with ``None`` (the global default). Processes walk their own parents,
+    then jump to the domain the root process is filed under and walk that.
+    """
+    from app.ontology import store as ontology_store
+    from app.ontology.vocab import Scheme
+
+    if not concept_id:
+        return [GLOBAL]
+    concept = ontology_store.get_concept(concept_id)
+    if not concept:
+        return [GLOBAL]
+    chain: list[Optional[str]] = [concept_id, *ontology_store._ancestor_chain(concept_id)]
+    if concept["scheme_id"] == Scheme.PROCESS.value:
+        domain = ontology_store.domain_of(concept_id)
+        if domain:
+            chain += [domain, *ontology_store._ancestor_chain(domain)]
+    chain.append(GLOBAL)
+    return chain
+
+
+def scope_path(concept_id: Optional[str]) -> str:
+    """Industry › Domain › … for a scope; "All industries" for the global one."""
+    if not concept_id:
+        return "All industries (global default)"
+    from app.ontology import store as ontology_store
+
+    chain = list(reversed(scope_chain(concept_id)[:-1]))
+    labels = [(ontology_store.get_concept(c) or {}).get("label", c) for c in chain]
+    return " › ".join(labels) or concept_id
+
+
 def _to_dict(row: ProcessTemplate, *, full: bool = True) -> dict:
     out = {
         "id": row.id,
@@ -427,6 +482,9 @@ def _to_dict(row: ProcessTemplate, *, full: bool = True) -> dict:
         "version": row.version,
         "description": row.description or "",
         "kind": row.kind,
+        "concept_id": row.concept_id,
+        "scope_path": scope_path(row.concept_id),
+        # "Active for its scope". Kept as is_default for the API's sake.
         "is_default": bool(row.is_default),
         "builtin": bool(row.builtin),
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -437,8 +495,28 @@ def _to_dict(row: ProcessTemplate, *, full: bool = True) -> dict:
     return out
 
 
+def ensure_schema() -> None:
+    """Add ``concept_id`` to a templates table created before templates had
+    a scope. Additive and idempotent — see ``knowledge.ensure_schema``."""
+    if SessionLocal is None:
+        return
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        existing = {row[1] for row in db.execute(text("PRAGMA table_info(process_templates)"))}
+        if existing and "concept_id" not in existing:
+            db.execute(text("ALTER TABLE process_templates ADD COLUMN concept_id VARCHAR"))
+            db.commit()
+            logger.info("process_templates: added concept_id column")
+    except Exception as e:
+        logger.warning("Could not migrate process_templates schema: %s", e)
+    finally:
+        db.close()
+
+
 def ensure_builtin() -> None:
-    """Seed the built-in template once, and make sure something is default."""
+    """Seed the built-in global template once, and keep a global one active."""
     if SessionLocal is None:
         return
     db = SessionLocal()
@@ -449,10 +527,12 @@ def ensure_builtin() -> None:
                 description="The built-in format: identity, classification, stages, controls, "
                             "exceptions, risks, regulations, data entities and KPIs.",
                 schema=json.dumps(DEFAULT_SCHEMA), example=json.dumps(DEFAULT_EXAMPLE),
-                kind="schema", is_default=False, builtin=True,
+                kind="schema", is_default=False, builtin=True, concept_id=None,
             ))
             db.flush()
-        if not db.query(ProcessTemplate).filter(ProcessTemplate.is_default.is_(True)).first():
+        has_global = db.query(ProcessTemplate).filter(
+            ProcessTemplate.concept_id.is_(None), ProcessTemplate.is_default.is_(True)).first()
+        if not has_global:
             builtin = db.query(ProcessTemplate).filter(ProcessTemplate.builtin.is_(True)).first()
             if builtin:
                 builtin.is_default = True
@@ -464,65 +544,131 @@ def ensure_builtin() -> None:
         db.close()
 
 
-def list_templates() -> list[dict]:
+def list_templates(concept_id: Optional[str] = None, *, every_scope: bool = False) -> list[dict]:
+    """Templates set at one scope (``None``: the global one), or at every scope."""
     if SessionLocal is None:
         return []
     db = SessionLocal()
     try:
-        rows = db.query(ProcessTemplate).order_by(ProcessTemplate.name, ProcessTemplate.version).all()
+        q = db.query(ProcessTemplate)
+        if not every_scope:
+            q = (q.filter(ProcessTemplate.concept_id.is_(None)) if concept_id is None
+                 else q.filter(ProcessTemplate.concept_id == concept_id))
+        rows = q.order_by(ProcessTemplate.concept_id, ProcessTemplate.name,
+                          ProcessTemplate.version.desc()).all()
         return [_to_dict(r, full=False) for r in rows]
     finally:
         db.close()
 
 
+def _active_by_scope() -> dict[Optional[str], ProcessTemplate]:
+    db = SessionLocal()
+    try:
+        rows = db.query(ProcessTemplate).filter(ProcessTemplate.is_default.is_(True)).all()
+        out: dict[Optional[str], ProcessTemplate] = {}
+        for r in rows:
+            out.setdefault(r.concept_id, r)
+        for r in rows:
+            db.expunge(r)
+        return out
+    finally:
+        db.close()
+
+
+def scopes() -> list[dict]:
+    """Every scope with an active template of its own."""
+    if SessionLocal is None:
+        return []
+    return [
+        {"concept_id": cid, "scope_path": scope_path(cid), "template": _to_dict(row, full=False)}
+        for cid, row in sorted(_active_by_scope().items(), key=lambda kv: (kv[0] is not None, kv[0] or ""))
+    ]
+
+
 def get_template(template_id: Optional[int] = None) -> Optional[dict]:
-    """One template, or the default one when no id is given."""
+    """One template by id, or the active global one when no id is given."""
     if SessionLocal is None:
         return None
     db = SessionLocal()
     try:
         q = db.query(ProcessTemplate)
-        row = (q.filter(ProcessTemplate.id == template_id).first() if template_id
-               else q.filter(ProcessTemplate.is_default.is_(True)).first())
-        if row is None and not template_id:
-            row = q.filter(ProcessTemplate.builtin.is_(True)).first()
+        if template_id:
+            row = q.filter(ProcessTemplate.id == template_id).first()
+        else:
+            row = q.filter(ProcessTemplate.concept_id.is_(None),
+                           ProcessTemplate.is_default.is_(True)).first() \
+                or q.filter(ProcessTemplate.builtin.is_(True)).first()
         return _to_dict(row) if row else None
     finally:
         db.close()
 
 
-def default_template() -> dict:
-    """The default template, falling back to the in-code one if the table is empty."""
-    found = get_template()
-    if found:
-        return found
+def _fallback() -> dict:
     return {"id": None, "name": "Standard process template", "version": 1, "kind": "schema",
-            "is_default": True, "builtin": True, "schema": copy.deepcopy(DEFAULT_SCHEMA),
+            "concept_id": None, "scope_path": scope_path(None), "is_default": True,
+            "builtin": True, "schema": copy.deepcopy(DEFAULT_SCHEMA),
             "example": copy.deepcopy(DEFAULT_EXAMPLE), "description": ""}
 
 
+def template_for(concept_id: Optional[str]) -> dict:
+    """The template a document filed at ``concept_id`` is checked against.
+
+    Carries where it came from: ``applies_to`` (the node asked about),
+    ``inherited`` and ``scope_path`` of the node that set it.
+    """
+    if SessionLocal is None:
+        found = _fallback()
+    else:
+        active = _active_by_scope()
+        found = None
+        for scope in scope_chain(concept_id):
+            row = active.get(scope)
+            if row is not None:
+                found = _to_dict(row)
+                break
+        found = found or get_template() or _fallback()
+    return {**found, "applies_to": concept_id,
+            "inherited": (found.get("concept_id") or None) != (concept_id or None)}
+
+
+def default_template() -> dict:
+    """The global default template."""
+    return template_for(None)
+
+
 def create_template(name: str, schema: dict, *, example: Any = None, kind: str = "schema",
-                    description: str = "", make_default: bool = False) -> dict:
+                    description: str = "", make_default: bool = False,
+                    concept_id: Optional[str] = None) -> dict:
+    """Save a template version at a scope. ``make_default`` activates it there."""
     problems = check_schema(schema)
     if problems:
         raise ValueError("; ".join(problems))
     if SessionLocal is None:
         raise RuntimeError("The database is unavailable.")
+    if concept_id:
+        from app.ontology import store as ontology_store
+
+        if not ontology_store.get_concept(concept_id):
+            raise LookupError(f"'{concept_id}' is not in the ontology.")
     db = SessionLocal()
     try:
-        latest = (db.query(ProcessTemplate).filter(ProcessTemplate.name == name)
+        scope_q = (db.query(ProcessTemplate).filter(ProcessTemplate.concept_id.is_(None))
+                   if not concept_id else
+                   db.query(ProcessTemplate).filter(ProcessTemplate.concept_id == concept_id))
+        latest = (scope_q.filter(ProcessTemplate.name == name)
                   .order_by(ProcessTemplate.version.desc()).first())
         row = ProcessTemplate(
             name=name.strip() or "Process template",
             version=(latest.version + 1) if latest else 1,
             description=description, schema=json.dumps(schema),
             example=json.dumps(example) if example is not None else None,
-            kind=kind, is_default=False, builtin=False,
+            kind=kind, is_default=False, builtin=False, concept_id=concept_id or None,
         )
         db.add(row)
         db.flush()
         if make_default:
-            db.query(ProcessTemplate).update({ProcessTemplate.is_default: False})
+            scope_q.filter(ProcessTemplate.id != row.id).update(
+                {ProcessTemplate.is_default: False}, synchronize_session=False)
             row.is_default = True
         db.commit()
         db.refresh(row)
@@ -532,6 +678,7 @@ def create_template(name: str, schema: dict, *, example: Any = None, kind: str =
 
 
 def set_default(template_id: int) -> dict:
+    """Make a template the active one at its own scope."""
     if SessionLocal is None:
         raise RuntimeError("The database is unavailable.")
     db = SessionLocal()
@@ -539,11 +686,34 @@ def set_default(template_id: int) -> dict:
         row = db.query(ProcessTemplate).filter(ProcessTemplate.id == template_id).first()
         if not row:
             raise LookupError(f"Template {template_id} not found.")
-        db.query(ProcessTemplate).update({ProcessTemplate.is_default: False})
+        scope_q = (db.query(ProcessTemplate).filter(ProcessTemplate.concept_id.is_(None))
+                   if row.concept_id is None else
+                   db.query(ProcessTemplate).filter(ProcessTemplate.concept_id == row.concept_id))
+        scope_q.update({ProcessTemplate.is_default: False}, synchronize_session=False)
         row.is_default = True
         db.commit()
         db.refresh(row)
         return _to_dict(row)
+    finally:
+        db.close()
+
+
+def clear_scope(concept_id: str) -> int:
+    """Stop a node overriding: its documents fall back to the inherited template.
+
+    The template versions are kept so the override can be switched back on.
+    """
+    if not concept_id:
+        raise ValueError("The global template cannot be cleared — make another one active instead.")
+    if SessionLocal is None:
+        raise RuntimeError("The database is unavailable.")
+    db = SessionLocal()
+    try:
+        n = db.query(ProcessTemplate).filter(
+            ProcessTemplate.concept_id == concept_id, ProcessTemplate.is_default.is_(True),
+        ).update({ProcessTemplate.is_default: False}, synchronize_session=False)
+        db.commit()
+        return n
     finally:
         db.close()
 
@@ -558,10 +728,24 @@ def delete_template(template_id: int) -> None:
             raise LookupError(f"Template {template_id} not found.")
         if row.builtin:
             raise ValueError("The built-in template cannot be deleted.")
-        if row.is_default:
-            raise ValueError("Make another template the default before deleting this one.")
+        if row.is_default and row.concept_id is None:
+            raise ValueError("Make another global template active before deleting this one.")
         db.delete(row)
         db.commit()
+    finally:
+        db.close()
+
+
+def delete_for_concepts(concept_ids: list[str]) -> int:
+    """Templates set on concepts that are being deleted go with them."""
+    if SessionLocal is None or not concept_ids:
+        return 0
+    db = SessionLocal()
+    try:
+        n = db.query(ProcessTemplate).filter(ProcessTemplate.concept_id.in_(concept_ids)).delete(
+            synchronize_session=False)
+        db.commit()
+        return n
     finally:
         db.close()
 

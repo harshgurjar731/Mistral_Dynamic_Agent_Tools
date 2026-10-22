@@ -13,8 +13,9 @@ import {
   FileJson,
   Upload,
 } from "lucide-react";
-import { errorMessage, processesApi } from "@/api";
-import type { DocumentStats, DocumentStatus, ProcessUse } from "@/api/processes";
+import { useQuery } from "@tanstack/react-query";
+import { errorMessage, processesApi, QK } from "@/api";
+import type { DocumentStats, DocumentStatus, ProcessUse, TemplateRef } from "@/api/processes";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,25 +29,44 @@ import { cn } from "@/lib/utils";
 
 /* ── Template download ─────────────────────────────────────────────── */
 
+/**
+ * Download a template: the one that applies at a node of the classification
+ * (``conceptId``; ``null`` for the global default), or one specific version
+ * (``templateId``). With a node, the menu names which template that is and
+ * where it is set, since templates are inherited down the classification.
+ */
 export function TemplateDownloadMenu({
-  templateId = "default",
+  conceptId,
+  templateId,
   size = "sm",
   variant = "outline",
   label = "Download template",
   className,
 }: {
-  templateId?: number | "default";
+  conceptId?: string | null | undefined;
+  templateId?: number | undefined;
   size?: "sm" | "default";
   variant?: "outline" | "secondary" | "ghost";
   label?: string;
-  className?: string;
+  className?: string | undefined;
 }) {
+  const [open, setOpen] = useState(false);
+  const byNode = templateId === undefined;
+  const scope = conceptId ?? null;
+  const effective = useQuery({
+    queryKey: QK.processTemplate(`for:${scope ?? "global"}`),
+    queryFn: () => processesApi.templateFor(scope),
+    enabled: open && byNode,
+    staleTime: 30_000,
+  });
   const get = (kind: "blank" | "example" | "schema") =>
-    processesApi
-      .downloadTemplate(templateId, kind)
-      .catch((e) => toast.error(`Download failed: ${errorMessage(e)}`));
+    (byNode
+      ? processesApi.downloadTemplateFor(scope, kind)
+      : processesApi.downloadTemplate(templateId, kind)
+    ).catch((e) => toast.error(`Download failed: ${errorMessage(e)}`));
+  const t = effective.data;
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button size={size} variant={variant} className={className}>
           <Download className="size-3.5" />
@@ -54,10 +74,30 @@ export function TemplateDownloadMenu({
           <ChevronDown className="size-3 opacity-60" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-          Documents must match this format exactly
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuLabel className="space-y-0.5 text-[11px] font-normal text-muted-foreground">
+          {byNode ? (
+            t ? (
+              <>
+                <span className="block font-medium text-foreground">
+                  {t.name} v{t.version}
+                </span>
+                <span className="block">
+                  {t.inherited
+                    ? `Inherited from ${t.scope_path}`
+                    : t.concept_id
+                      ? `Set for ${t.scope_path}`
+                      : "The global default"}
+                </span>
+              </>
+            ) : (
+              "Loading the template that applies here…"
+            )
+          ) : (
+            "Documents must match this format exactly"
+          )}
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void get("blank")}>
           <FileJson className="size-3.5" />
           <div>
@@ -82,6 +122,28 @@ export function TemplateDownloadMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** "Checked against X v2 — inherited from BFSI › Lending" for a node. */
+export function TemplateLine({
+  template,
+  className,
+}: {
+  template: TemplateRef | null | undefined;
+  className?: string | undefined;
+}) {
+  if (!template) return null;
+  return (
+    <span className={cn("text-[11px] text-muted-foreground", className)}>
+      Template: <span className="text-foreground">{template.name}</span> v{template.version}
+      {" · "}
+      {template.inherited
+        ? `inherited from ${template.scope_path ?? "above"}`
+        : template.concept_id
+          ? "set here"
+          : "global default"}
+    </span>
   );
 }
 

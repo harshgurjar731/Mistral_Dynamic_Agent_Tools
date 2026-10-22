@@ -25,10 +25,19 @@ interface Current {
 
 export function useDocumentIngest({
   conceptId,
+  goal,
+  classifyAs,
   onSaved,
 }: {
   /** File under this process; omitted: an unfiled (orchestration) upload. */
   conceptId?: string | null;
+  /**
+   * Unfiled uploads are checked against the template of where they are
+   * classified: ``classifyAs`` when the user chose, else what the document
+   * names, else this request ``goal``.
+   */
+  goal?: string | undefined;
+  classifyAs?: string | null | undefined;
   /** Called with every valid document stored. */
   onSaved?: (doc: ProcessDocument) => void;
 }) {
@@ -88,12 +97,14 @@ export function useDocumentIngest({
       const text = await file.text().catch(() => undefined);
       await run(
         () =>
-          conceptId ? processesApi.uploadTo(conceptId, file) : processesApi.uploadUnfiled(file),
+          conceptId
+            ? processesApi.uploadTo(conceptId, file)
+            : processesApi.uploadUnfiled(file, { goal, classifyAs }),
         file.name,
         text,
       );
     },
-    [conceptId, run],
+    [conceptId, goal, classifyAs, run],
   );
 
   const reupload = useCallback(
@@ -133,8 +144,8 @@ export function useDocumentIngest({
 
   const draft = useCallback(() => {
     setCurrent(null);
-    setAi({ mode: "draft", conceptId: conceptId ?? null });
-  }, [conceptId]);
+    setAi({ mode: "draft", conceptId: conceptId ?? null, classifyAs: classifyAs ?? null });
+  }, [conceptId, classifyAs]);
 
   const accept = useCallback(
     async (document: Record<string, unknown>) => {
@@ -150,9 +161,14 @@ export function useDocumentIngest({
       };
       setBusy(true);
       try {
+        // An unfiled fix keeps its classification server-side (replace_id); a
+        // new unfiled document is classified like an upload.
         const result = target
           ? await processesApi.saveJsonTo(target, document, opts)
-          : await processesApi.saveJsonUnfiled(document, opts);
+          : await processesApi.saveJsonUnfiled(document, {
+              ...opts,
+              ...(replaceId ? {} : { goal: goal ?? "", classify_as: classifyAs ?? null }),
+            });
         setAi(null);
         handle(result, opts.filename, JSON.stringify(document, null, 2));
       } catch (e) {
@@ -161,7 +177,7 @@ export function useDocumentIngest({
         setBusy(false);
       }
     },
-    [ai, current, conceptId, handle],
+    [ai, current, conceptId, goal, classifyAs, handle],
   );
 
   const dialogs: ReactNode = (

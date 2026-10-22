@@ -44,6 +44,8 @@ export function ProcessCascadePicker({
   value,
   onChange,
   onlyWithDocuments,
+  anyLevel,
+  showDocuments = true,
   className,
 }: {
   tree: ProcessTree | undefined;
@@ -51,6 +53,14 @@ export function ProcessCascadePicker({
   onChange: (processId: string) => void;
   /** Hide processes with no valid active document (picking one to use). */
   onlyWithDocuments?: boolean;
+  /**
+   * Report the deepest level picked, whatever it is — an industry, domain or
+   * subdomain as well as a process. For choosing a template scope or where a
+   * document belongs, not a document to use.
+   */
+  anyLevel?: boolean;
+  /** Show each process's document version in its option. */
+  showDocuments?: boolean;
   className?: string;
 }) {
   const idx = useMemo(() => indexTree(tree), [tree]);
@@ -73,6 +83,14 @@ export function ProcessCascadePicker({
   const subprocesses = process ? (idx.subsByParent.get(process) ?? []).filter(keep) : [];
 
   const set = (id: string) => onChange(id);
+  /** What to report when a level changes: that level (if any), else the one above. */
+  const at = (picked: string, above: string) => (anyLevel ? picked || above : "");
+  const docNote = (c: TreeProcess) =>
+    showDocuments
+      ? c.documents.active_id
+        ? ` (v${c.documents.active_version})`
+        : " — no document"
+      : "";
 
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
@@ -84,7 +102,7 @@ export function ProcessCascadePicker({
           setDomain("");
           setSubdomain("");
           setProcess("");
-          set("");
+          set(at(e.target.value, ""));
         }}
         aria-label="Industry"
       >
@@ -103,7 +121,7 @@ export function ProcessCascadePicker({
           setDomain(e.target.value);
           setSubdomain("");
           setProcess("");
-          set("");
+          set(at(e.target.value, industry));
         }}
         aria-label="Domain"
       >
@@ -121,7 +139,7 @@ export function ProcessCascadePicker({
         onChange={(e) => {
           setSubdomain(e.target.value);
           setProcess("");
-          set("");
+          set(at(e.target.value, domain));
         }}
         aria-label="Subdomain"
       >
@@ -138,7 +156,7 @@ export function ProcessCascadePicker({
         disabled={!processes.length}
         onChange={(e) => {
           setProcess(e.target.value);
-          set(e.target.value);
+          set(anyLevel ? e.target.value || subdomain || domain : e.target.value);
         }}
         aria-label="Process"
       >
@@ -146,7 +164,7 @@ export function ProcessCascadePicker({
         {processes.map((c) => (
           <option key={c.id} value={c.id}>
             {c.label}
-            {c.documents.active_id ? ` (v${c.documents.active_version})` : " — no document"}
+            {docNote(c)}
           </option>
         ))}
       </select>
@@ -161,7 +179,7 @@ export function ProcessCascadePicker({
           {subprocesses.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label}
-              {c.documents.active_id ? ` (v${c.documents.active_version})` : " — no document"}
+              {docNote(c)}
             </option>
           ))}
         </select>

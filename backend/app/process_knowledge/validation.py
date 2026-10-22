@@ -481,7 +481,7 @@ def _placement_issues(doc: dict, concept_id: str) -> list[dict]:
 
 
 def validate(raw: bytes | str | dict, template: dict, *, concept_id: Optional[str] = None,
-             max_kb: Optional[int] = None) -> dict:
+             max_kb: Optional[int] = None, classification: Optional[dict] = None) -> dict:
     """Check one document. Never raises; everything wrong is in the report.
 
     Returns ``{valid, errors, warnings, issues, summary, document, template, stats}``
@@ -533,8 +533,16 @@ def validate(raw: bytes | str | dict, template: dict, *, concept_id: Optional[st
         "issues": issues,
         "summary": summary,
         "document": doc if isinstance(doc, dict) else None,
-        "template": {"id": template.get("id"), "name": template.get("name"),
-                     "version": template.get("version")},
+        "template": {
+            "id": template.get("id"), "name": template.get("name"),
+            "version": template.get("version"),
+            # Which node set it, and whether it was inherited from above.
+            "concept_id": template.get("concept_id"),
+            "scope_path": template.get("scope_path"),
+            "inherited": bool(template.get("inherited")),
+        },
+        # For an unfiled upload: where it was classified, which chose the template.
+        **({"classification": classification} if classification else {}),
         "stats": stats,
     }
 

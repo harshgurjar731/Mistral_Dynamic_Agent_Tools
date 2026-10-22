@@ -231,6 +231,7 @@ export function ProcessKnowledgeControl({
       <AttachDialog
         open={attachOpen}
         onOpenChange={setAttachOpen}
+        goal={goal}
         onAttach={(doc) => {
           state.attach(doc);
           setAttachOpen(false);
@@ -253,15 +254,29 @@ function AttachDialog({
   open,
   onOpenChange,
   onAttach,
+  goal,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onAttach: (doc: AttachedDoc) => void;
+  /** The request being typed — classifies an upload when nothing else does. */
+  goal: string;
 }) {
   const tree = useQuery({ queryKey: QK.processTree(), queryFn: processesApi.tree, enabled: open });
   const [picked, setPicked] = useState("");
-  const ingest = useDocumentIngest({ onSaved: (d) => onAttach(asAttached(d)) });
+  /** Where the upload belongs, which picks its template. Empty: detect it. */
+  const [belongsTo, setBelongsTo] = useState("");
+  const ingest = useDocumentIngest({
+    goal,
+    classifyAs: belongsTo || null,
+    onSaved: (d) => onAttach(asAttached(d)),
+  });
   const pickedNode = tree.data?.processes.find((p) => p.id === picked);
+  const scoped = useQuery({
+    queryKey: QK.processTemplate(`for:${belongsTo || "global"}`),
+    queryFn: () => processesApi.templateFor(belongsTo || null),
+    enabled: open && Boolean(belongsTo),
+  });
 
   return (
     <>
@@ -280,13 +295,56 @@ function AttachDialog({
               <TabsTrigger value="inventory">From Processes</TabsTrigger>
             </TabsList>
             <TabsContent value="upload" className="space-y-3 pt-2">
+              <div className="rounded-lg border border-border/60 p-3">
+                <p className="text-xs font-medium text-foreground">Belongs to</p>
+                <p className="mt-0.5 mb-2 text-[11px] text-muted-foreground">
+                  The document is checked against the template of its industry, domain or process.
+                  Leave this empty to detect it from the document's own classification, or from your
+                  request.
+                </p>
+                {tree.isLoading ? (
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <ProcessCascadePicker
+                    key={open ? "open" : "closed"}
+                    tree={tree.data}
+                    value={belongsTo}
+                    onChange={setBelongsTo}
+                    anyLevel
+                    showDocuments={false}
+                  />
+                )}
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  {belongsTo ? (
+                    scoped.data ? (
+                      <>
+                        Will be checked against{" "}
+                        <span className="text-foreground">
+                          {scoped.data.name} v{scoped.data.version}
+                        </span>{" "}
+                        —{" "}
+                        {scoped.data.inherited
+                          ? `inherited from ${scoped.data.scope_path}`
+                          : scoped.data.concept_id
+                            ? `set for ${scoped.data.scope_path}`
+                            : "the global default"}
+                        .
+                      </>
+                    ) : (
+                      <Loader2 className="inline size-3 animate-spin" />
+                    )
+                  ) : (
+                    "Auto-detect — the report says where it was classified and which template checked it."
+                  )}
+                </p>
+              </div>
               <FileDrop
                 onFile={(f) => void ingest.upload(f)}
                 busy={ingest.busy}
-                hint="JSON in the template's format"
+                hint="JSON in the format of its domain's template"
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <TemplateDownloadMenu />
+                <TemplateDownloadMenu conceptId={belongsTo || null} />
                 <Button size="sm" variant="ghost" onClick={ingest.draft}>
                   <Sparkles className="size-3.5" /> Draft one from text with AI
                 </Button>

@@ -31,7 +31,12 @@ export type AiSource =
       raw?: unknown;
       conceptId?: string | null | undefined;
     }
-  | { mode: "draft"; conceptId?: string | null | undefined };
+  | {
+      mode: "draft";
+      conceptId?: string | null | undefined;
+      /** Unfiled: the node whose template the draft follows. */
+      classifyAs?: string | null | undefined;
+    };
 
 export function AiFixDialog({
   open,
@@ -56,7 +61,11 @@ export function AiFixDialog({
     mutationFn: () => {
       if (!source) throw new Error("Nothing to work on.");
       if (source.mode === "draft") {
-        return processesApi.draft({ text: prose, concept_id: source.conceptId ?? null });
+        return processesApi.draft({
+          text: prose,
+          concept_id: source.conceptId ?? null,
+          classify_as: source.classifyAs ?? null,
+        });
       }
       return processesApi.fix({
         ...(source.documentId ? { document_id: source.documentId } : {}),

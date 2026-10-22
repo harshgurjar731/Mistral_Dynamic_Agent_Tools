@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -74,7 +75,15 @@ import {
 } from "@/components/settings/settingsModel";
 import { cn } from "@/lib/utils";
 
+const searchSchema = z.object({
+  /** Open on this category — e.g. "process" from the Processes page. */
+  category: z.string().optional(),
+  /** Process knowledge: the industry, domain or process whose template to show. */
+  scope: z.string().optional(),
+});
+
 export const Route = createFileRoute("/settings")({
+  validateSearch: searchSchema,
   head: () => ({
     meta: [
       { title: "Settings — Agentic AI Design Patterns" },
@@ -157,7 +166,10 @@ function SettingsPage() {
   const settingsQ = useQuery({ queryKey: QK.settings(), queryFn: settingsApi.get });
   const catalogQ = useQuery({ queryKey: QK.modelCatalog(), queryFn: settingsApi.catalog });
 
-  const [category, setCategory] = useState<CategoryId>("models");
+  const search = Route.useSearch();
+  const [category, setCategory] = useState<CategoryId>(() =>
+    CATEGORIES.some((c) => c.id === search.category) ? (search.category as CategoryId) : "models",
+  );
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Record<string, SettingValue>>({});
   const [report, setReport] = useState<RefreshReport | null>(null);
@@ -556,7 +568,9 @@ function SettingsPage() {
                   </div>
                 </div>
               ) : null}
-              {category === "process" ? <ProcessTemplatesPanel /> : null}
+              {category === "process" ? (
+                <ProcessTemplatesPanel initialScope={search.scope} />
+              ) : null}
               {sectionsIn(category).map((s) => (
                 <SectionCard
                   key={`${s.target}-${s.id}`}

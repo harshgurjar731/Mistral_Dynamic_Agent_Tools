@@ -74,19 +74,37 @@ def _session():
 # ── Documents ──────────────────────────────────────────────────────────────
 
 
+def template_for_document(concept_id: Optional[str], classification: Optional[dict]) -> dict:
+    """The template a document is checked against: its process's, or — for an
+    unfiled one — that of where it was classified."""
+    scope = concept_id or (classification or {}).get("concept_id")
+    return templates.template_for(scope)
+
+
 def save_document(raw: bytes | str | dict, *, concept_id: Optional[str], filename: str = "",
                   source: str = "upload", template_id: Optional[int] = None,
-                  replace_id: Optional[int] = None) -> dict:
+                  replace_id: Optional[int] = None,
+                  classification: Optional[dict] = None) -> dict:
     """Validate and store one document. Returns ``{document, report}``.
+
+    Checked against the template of ``concept_id`` (the process it is filed
+    under), or for an unfiled upload, of ``classification["concept_id"]`` —
+    each falling back up the classification to the global template.
+    ``template_id`` forces one specific template instead.
 
     ``replace_id`` overwrites an existing *invalid* document in place (its
     re-upload or AI fix) instead of adding a version; a valid result is then
     promoted to the next version number and made active.
     """
-    template = templates.get_template(template_id) if template_id else templates.default_template()
+    if replace_id and classification is None and not concept_id:
+        # A re-upload or fix of an unfiled document keeps where it was classified.
+        classification = _stored_classification(replace_id)
+    template = (templates.get_template(template_id) if template_id
+                else template_for_document(concept_id, classification))
     if template is None:
         raise LookupError(f"Template {template_id} not found.")
-    report = validation.validate(raw, template, concept_id=concept_id)
+    report = validation.validate(raw, template, concept_id=concept_id,
+                                 classification=classification)
     doc = report["document"]
     raw_text = raw if isinstance(raw, str) else (
         json.dumps(raw, indent=2) if isinstance(raw, dict)
@@ -293,23 +311,38 @@ def delete_for_concepts(concept_ids: list[str]) -> int:
         db.close()
 
 
-def revalidate_all(template_id: Optional[int] = None) -> dict:
-    """Re-check every stored document against the (new) default template.
+def _stored_classification(document_id: int) -> Optional[dict]:
+    db = _session()
+    try:
+        row = db.query(ProcessDocument.report).filter(ProcessDocument.id == document_id).first()
+        return ((_loads(row[0], {}) or {}).get("classification")) if row else None
+    finally:
+        db.close()
 
-    A previously valid document that now fails becomes ``stale`` and stops
-    being active — it is never deleted, and a stale one that passes again is
-    restored to ``valid``.
+
+def revalidate_all() -> dict:
+    """Re-check every stored document against the template that now applies to it.
+
+    Run after any template change: templates are scoped and inherited, so one
+    change at an industry can move every process under it. A previously valid
+    document that now fails becomes ``stale`` and stops being active — it is
+    never deleted, and a stale one that passes again is restored, and made
+    active again when its process has no active version.
     """
-    template = templates.get_template(template_id) if template_id else templates.default_template()
-    if not template:
-        return {"checked": 0}
     db = _session()
     counts = {"checked": 0, "valid": 0, "stale": 0, "invalid": 0}
+    cache: dict[Optional[str], dict] = {}
     try:
         for row in db.query(ProcessDocument).all():
             counts["checked"] += 1
+            classification = (_loads(row.report, {}) or {}).get("classification")
+            scope = row.concept_id or (classification or {}).get("concept_id")
+            if scope not in cache:
+                cache[scope] = templates.template_for(scope)
+            template = cache[scope]
             source = _loads(row.content) if row.content else row.raw
-            report = validation.validate(source, template, concept_id=row.concept_id)
+            report = validation.validate(source, template, concept_id=row.concept_id,
+                                         classification=classification)
             row.report = json.dumps(validation.public_report(report))
             row.template_id = template.get("id")
             row.template_version = template.get("version")
@@ -325,6 +358,19 @@ def revalidate_all(template_id: Optional[int] = None) -> dict:
                 if row.status == "stale":
                     row.is_active = False
             counts[row.status if row.status in counts else "invalid"] += 1
+        db.flush()
+
+        # A process left with no active version gets its newest valid one back.
+        concepts = {r[0] for r in db.query(ProcessDocument.concept_id)
+                    .filter(ProcessDocument.concept_id.isnot(None)).distinct().all()}
+        for concept_id in concepts:
+            q = db.query(ProcessDocument).filter(ProcessDocument.concept_id == concept_id)
+            if q.filter(ProcessDocument.is_active.is_(True)).first():
+                continue
+            newest = q.filter(ProcessDocument.status == "valid").order_by(
+                ProcessDocument.version.desc()).first()
+            if newest:
+                newest.is_active = True
         db.commit()
         return counts
     finally:

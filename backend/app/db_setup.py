@@ -46,6 +46,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     # before anyone uploads a template of their own.
     from app.process_knowledge import templates as process_templates
 
+    process_templates.ensure_schema()
     process_templates.ensure_builtin()
 
     if seed_rules:

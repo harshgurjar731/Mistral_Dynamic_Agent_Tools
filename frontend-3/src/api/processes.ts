@@ -34,8 +34,34 @@ export interface ValidationReport {
   warnings: ValidationIssue[];
   issues: ValidationIssue[];
   summary: string;
-  template: { id: number | null; name: string; version: number };
+  template: TemplateRef;
   stats: DocumentStats;
+  /** Unfiled uploads: where it was classified, which chose the template. */
+  classification?: Classification;
+}
+
+/** Which template checked a document, and which node of the classification set it. */
+export interface TemplateRef {
+  id: number | null;
+  name: string;
+  version: number;
+  kind?: "schema" | "inferred";
+  /** The node that set it; null: the global default. */
+  concept_id?: string | null;
+  scope_path?: string;
+  /** True when set above the node asked about. */
+  inherited?: boolean;
+  applies_to?: string | null;
+  builtin?: boolean;
+}
+
+export interface Classification {
+  concept_id: string | null;
+  label: string | null;
+  level: string | null;
+  path: string;
+  method: "chosen" | "document" | "request" | "none";
+  detail: string;
 }
 
 export interface ProcessDocument {
@@ -135,6 +161,8 @@ export interface UsageRow {
 export interface ProcessNode extends TreeConcept {
   children: TreeConcept[];
   path: string;
+  /** The template documents here are checked against. */
+  template?: TemplateRef;
   domain_id?: string | null;
   documents?: ProcessDocument[];
   usage?: UsageRow[];
@@ -153,11 +181,30 @@ export interface ProcessTemplate {
   version: number;
   description: string;
   kind: "schema" | "inferred";
+  /** Active at its scope. */
   is_default: boolean;
   builtin: boolean;
+  /** The node it is set on; null: global. */
+  concept_id: string | null;
+  scope_path: string;
   created_at?: string | null;
   schema?: Record<string, unknown>;
   example?: unknown;
+}
+
+/** The template that applies at a node, with the versions set on it directly. */
+export interface EffectiveTemplate extends ProcessTemplate {
+  inherited: boolean;
+  applies_to: string | null;
+  applies_to_path: string;
+  own_versions: ProcessTemplate[];
+}
+
+export interface TemplateScope {
+  concept_id: string | null;
+  scope_path: string;
+  template: ProcessTemplate;
+  documents: number;
 }
 
 export interface TemplatePreview {
@@ -213,7 +260,7 @@ export interface ProcessConfig {
   default_enabled: boolean;
   max_kb: number;
   min_score: number;
-  template: { id: number | null; name: string; version: number };
+  template: TemplateRef;
   levels: ProcessLevel[];
 }
 
@@ -233,6 +280,18 @@ export interface ProcessUse {
   document_id: number;
   document_version?: number | null;
   concept_id?: string | null;
+}
+
+export interface UnfiledOptions {
+  goal?: string | undefined;
+  classifyAs?: string | null | undefined;
+}
+
+function unfiledFields(opts: UnfiledOptions): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (opts.goal?.trim()) out["goal"] = opts.goal.trim();
+  if (opts.classifyAs) out["classify_as"] = opts.classifyAs;
+  return out;
 }
 
 async function upload<T>(
@@ -319,12 +378,29 @@ export const processesApi = {
       content,
       ...opts,
     }),
-  uploadUnfiled: (file: File, conceptId?: string) =>
-    upload<SaveResult>(`${B}/documents`, file, conceptId ? { concept_id: conceptId } : {}),
+  /**
+   * An orchestration-page upload. Checked against the template of where it is
+   * classified: ``classifyAs`` when chosen, else what the document names, else
+   * the request ``goal``.
+   */
+  uploadUnfiled: (file: File, opts: UnfiledOptions = {}) =>
+    upload<SaveResult>(`${B}/documents`, file, unfiledFields(opts)),
   saveJsonUnfiled: (
     content: unknown,
-    opts: { filename?: string; source?: string; replace_id?: number | null } = {},
+    opts: {
+      filename?: string;
+      source?: string;
+      replace_id?: number | null;
+      goal?: string;
+      classify_as?: string | null;
+    } = {},
   ) => post<SaveResult>(`${B}/documents/json`, { content, ...opts }),
+  classify: (file: File, opts: UnfiledOptions = {}) =>
+    upload<{ classification: Classification; template: TemplateRef }>(
+      `${B}/classify`,
+      file,
+      unfiledFields(opts),
+    ),
   validate: (file: File, conceptId?: string) =>
     upload<ValidationReport>(`${B}/validate`, file, conceptId ? { concept_id: conceptId } : {}),
   documents: (params: { concept_id?: string; unfiled?: boolean } = {}) =>
@@ -338,12 +414,33 @@ export const processesApi = {
   downloadDocument: (id: number) =>
     downloadFrom(`${B}/documents/${id}/download`, `process_${id}.json`),
 
-  fix: (body: { document_id?: number; raw?: unknown; concept_id?: string | null }) =>
-    post<FixResult>(`${B}/fix`, body),
-  draft: (body: { text: string; concept_id?: string | null }) =>
+  fix: (body: {
+    document_id?: number;
+    raw?: unknown;
+    concept_id?: string | null;
+    goal?: string;
+    classify_as?: string | null;
+  }) => post<FixResult>(`${B}/fix`, body),
+  draft: (body: { text: string; concept_id?: string | null; classify_as?: string | null }) =>
     post<FixResult>(`${B}/draft`, body),
 
-  templates: () => get<{ templates: ProcessTemplate[] }>(`${B}/templates`).then((r) => r.templates),
+  /** Versions set at one scope (none: the global scope), or at every scope. */
+  templates: (params: { concept_id?: string; all?: boolean } = {}) =>
+    get<{ templates: ProcessTemplate[] }>(`${B}/templates`, params).then((r) => r.templates),
+  templateScopes: () =>
+    get<{ scopes: TemplateScope[] }>(`${B}/templates/scopes`).then((r) => r.scopes),
+  /** The template that applies at a node ("global" for the default). */
+  templateFor: (conceptId: string | null) =>
+    get<EffectiveTemplate>(`${B}/templates/for/${encodeURIComponent(conceptId ?? "global")}`),
+  downloadTemplateFor: (conceptId: string | null, kind: "blank" | "example" | "schema" = "blank") =>
+    downloadFrom(
+      `${B}/templates/for/${encodeURIComponent(conceptId ?? "global")}/download?kind=${kind}`,
+      `process_template_${kind}.json`,
+    ),
+  clearTemplateScope: (conceptId: string) =>
+    post<{ cleared: number; revalidated: Record<string, number>; now: TemplateRef }>(
+      `${B}/templates/scope/${encodeURIComponent(conceptId)}/clear`,
+    ),
   template: (ref: number | "default") => get<ProcessTemplate>(`${B}/templates/${ref}`),
   downloadTemplate: (
     ref: number | "default" = "default",
@@ -357,6 +454,8 @@ export const processesApi = {
     kind: "schema" | "inferred";
     description?: string;
     make_default?: boolean;
+    /** The node it applies to; omitted: the global scope. */
+    concept_id?: string | null;
   }) =>
     post<ProcessTemplate & { revalidated: Record<string, number> | null }>(`${B}/templates`, body),
   makeDefault: (id: number) =>

@@ -1,9 +1,9 @@
 """
 Process knowledge tables.
 
-* ``process_templates`` — the JSON Schema every process document is checked
-  against. One is the default; a built-in one is seeded so the feature works
-  before anyone uploads their own.
+* ``process_templates`` — the JSON Schemas process documents are checked
+  against, each scoped to a node of the classification (or global). A document
+  uses the nearest active one above it; a built-in global one is seeded.
 * ``process_documents`` — the uploaded JSON, versioned per process concept.
   ``concept_id`` is empty for a document uploaded straight onto an
   orchestration page and never filed.
@@ -34,6 +34,10 @@ class ProcessTemplate(Base):
     example = Column(Text, nullable=True)
     #: schema — uploaded as a JSON Schema | inferred — derived from an example.
     kind = Column(String, nullable=False, default="schema")
+    #: The node it applies to (and everything under it that sets none of its
+    #: own). Null: the global default.
+    concept_id = Column(String, nullable=True, index=True)
+    #: Active at its scope. At most one per concept_id.
     is_default = Column(Boolean, nullable=False, default=False)
     builtin = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now())

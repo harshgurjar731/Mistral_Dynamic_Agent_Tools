@@ -194,8 +194,8 @@ def test_new_default_template_marks_documents_stale(db):
 
     stricter = copy.deepcopy(templates.DEFAULT_SCHEMA)
     stricter["required"] = [*stricter["required"], "service_level"]
-    created = templates.create_template("Strict", stricter, make_default=True)
-    counts = process_store.revalidate_all(created["id"])
+    templates.create_template("Strict", stricter, make_default=True)
+    counts = process_store.revalidate_all()
     assert counts["stale"] == 1
     doc = process_store.get_document(saved["document"]["id"])
     assert doc["status"] == "stale" and not doc["is_active"]
@@ -455,3 +455,138 @@ def test_api_create_upload_validate_download(db):
     preview = client.post("/api/processes/templates/preview",
                           files={"file": ("ex.json", json.dumps(DEFAULT_EXAMPLE).encode())}).json()
     assert preview["kind"] == "inferred" and preview["problems"] == []
+
+
+# ── Scoped templates ───────────────────────────────────────────────────────
+
+
+def _strict(field="service_level"):
+    schema = copy.deepcopy(templates.DEFAULT_SCHEMA)
+    schema["required"] = [*schema["required"], field]
+    return schema
+
+
+def test_templates_inherit_down_the_classification(db):
+    from app.ontology import store
+
+    pid = _proc(store)
+    sub = f"{pid}.aff"
+    store.create_concept(sub, "process", "Affordability", pid)
+
+    # Nothing set: everything uses the global default.
+    assert templates.template_for(sub)["concept_id"] is None
+    assert templates.template_for(sub)["inherited"] is True
+
+    industry = templates.create_template("BFSI", _strict("owner_team"), concept_id="domain.bfsi",
+                                         make_default=True)
+    found = templates.template_for(sub)
+    assert found["id"] == industry["id"] and found["inherited"]
+    assert found["scope_path"] == "BFSI"
+    # A sibling industry is unaffected.
+    assert templates.template_for("domain.health")["concept_id"] is None
+
+    own = templates.create_template("Mortgage approval", _strict("sla"), concept_id=pid,
+                                    make_default=True)
+    assert templates.template_for(pid)["id"] == own["id"]
+    assert templates.template_for(pid)["inherited"] is False
+    assert templates.template_for(sub)["id"] == own["id"]  # subprocess inherits the process's
+
+    # Clearing the process override falls back to the industry's.
+    assert templates.clear_scope(pid) == 1
+    assert templates.template_for(sub)["id"] == industry["id"]
+    with pytest.raises(ValueError):
+        templates.clear_scope(None)
+
+
+def test_documents_are_checked_against_their_scope(db):
+    from app.ontology import store
+    from app.process_knowledge import store as process_store
+
+    pid = _proc(store)
+    templates.create_template("Lending", _strict("service_level"), concept_id="domain.lending",
+                              make_default=True)
+    result = process_store.save_document(copy.deepcopy(DEFAULT_EXAMPLE), concept_id=pid)
+    assert not result["report"]["valid"]
+    assert result["report"]["template"]["name"] == "Lending"
+    assert result["report"]["template"]["inherited"] is True
+    assert any(i["path"] == "service_level" for i in result["report"]["errors"])
+
+    doc = {**copy.deepcopy(DEFAULT_EXAMPLE), "service_level": "2 days"}
+    assert process_store.save_document(doc, concept_id=pid)["report"]["valid"]
+
+
+def test_revalidation_follows_scope_changes(db):
+    from app.ontology import store
+    from app.process_knowledge import store as process_store
+
+    pid = _proc(store)
+    saved = process_store.save_document(copy.deepcopy(DEFAULT_EXAMPLE), concept_id=pid)["document"]
+    templates.create_template("Strict", _strict(), concept_id=pid, make_default=True)
+    assert process_store.revalidate_all()["stale"] == 1
+    assert process_store.get_document(saved["id"])["status"] == "stale"
+
+    templates.clear_scope(pid)
+    process_store.revalidate_all()
+    doc = process_store.get_document(saved["id"])
+    assert doc["status"] == "valid" and doc["is_active"]  # restored and re-activated
+
+
+def test_classifier_uses_document_then_request(db):
+    from app.ontology import store
+    from app.process_knowledge import classifier
+
+    pid = _proc(store)
+    # The example's classification names BFSI › Lending › Mortgage and its process.
+    found = classifier.classify(copy.deepcopy(DEFAULT_EXAMPLE))
+    assert found["concept_id"] == pid and found["method"] == "document"
+
+    only_domain = copy.deepcopy(DEFAULT_EXAMPLE)
+    only_domain["process"] = {"id": "unknown_thing", "name": "Unknown thing", "level": "process"}
+    only_domain["classification"] = {"industry": "BFSI", "domain": "Lending"}
+    assert classifier.classify(only_domain)["concept_id"] == "domain.lending"
+
+    chosen = classifier.classify(only_domain, chosen="domain.health")
+    assert chosen["concept_id"] == "domain.health" and chosen["method"] == "chosen"
+
+    nothing = classifier.classify('{"x": 1}')
+    assert nothing["concept_id"] is None and nothing["method"] == "none"
+
+
+def test_orchestration_upload_is_matched_to_its_domain_template(db):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.ontology import store
+
+    pid = _proc(store)
+    templates.create_template("Mortgage", _strict("service_level"), concept_id=pid,
+                              make_default=True)
+    client = TestClient(app)
+    body = json.dumps(DEFAULT_EXAMPLE).encode()
+
+    res = client.post("/api/processes/documents", files={"file": ("d.json", body)}).json()
+    report = res["report"]
+    assert res["document"]["concept_id"] is None  # still unfiled
+    assert report["classification"]["concept_id"] == pid
+    assert report["template"]["name"] == "Mortgage" and not report["valid"]
+
+    # Chosen elsewhere: checked against that template instead (the global one here).
+    other = client.post("/api/processes/documents", files={"file": ("d.json", body)},
+                        data={"classify_as": "domain.health"}).json()
+    assert other["report"]["valid"] and other["report"]["classification"]["method"] == "chosen"
+
+    # Fixing it in place keeps its classification, so the same template applies.
+    fixed = client.post("/api/processes/documents/json", json={
+        "content": {**DEFAULT_EXAMPLE, "service_level": "2 days"},
+        "replace_id": res["document"]["id"], "source": "ai_fixed"}).json()
+    assert fixed["report"]["valid"] and fixed["report"]["template"]["name"] == "Mortgage"
+
+    preview = client.post("/api/processes/classify", files={"file": ("d.json", body)}).json()
+    assert preview["template"]["name"] == "Mortgage"
+
+    scoped = client.get(f"/api/processes/templates/for/{pid}").json()
+    assert scoped["name"] == "Mortgage" and len(scoped["own_versions"]) == 1
+    assert client.get("/api/processes/templates/for/global").json()["concept_id"] is None
+    assert client.get("/api/processes/templates/scopes").status_code == 200
+    blank = client.get(f"/api/processes/templates/for/{pid}/download?kind=blank").json()
+    assert "service_level" in blank
