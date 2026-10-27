@@ -59,17 +59,70 @@ export const runsApi = {
   /** Rebuild a tool/activity version from a failure; tracked like a synthesis run. */
   startRebuild: (body: RebuildRequest) => post<BackgroundRun>("/api/runs/rebuild", body),
   /** `message` only counts for a choice the question lists in `message_options`. */
-  decide: (id: string, decisionId: string, choice: string, message?: string) =>
+  decide: (
+    id: string,
+    decisionId: string,
+    choice: string,
+    message?: string,
+    answers?: PrerequisiteAnswer[],
+  ) =>
     post<{ accepted: boolean; choice: string }>(`/api/runs/${id}/decisions/${decisionId}`, {
       choice,
       ...(message ? { message } : {}),
+      ...(answers ? { answers } : {}),
     }),
 };
+
+/** One thing a build needs from its user (`prerequisites` questions and events). */
+export interface PrerequisiteItem {
+  key: string;
+  category: "credential" | "endpoint" | "configuration" | "information";
+  label: string;
+  service: string;
+  why: string;
+  /** The name code reads it by (vault categories). */
+  name: string;
+  secret_kind: string;
+  sensitive: boolean;
+  required: boolean;
+  format_hint: string;
+  alternative: string;
+  default: string;
+  used_by: string[];
+  candidates: Array<{
+    id: string;
+    name: string;
+    label: string;
+    service: string;
+    kind: string;
+    usable: boolean;
+    status: string;
+    hint: string;
+    score: number;
+  }>;
+  status: "pending" | "vault" | "environment" | "answered" | "skipped" | "deferred";
+  auto: boolean;
+  secret_id: string | null;
+  secret_name: string | null;
+  /** An information item's answer; always null for a vault category. */
+  value: string | null;
+  instruction: string;
+}
+
+/**
+ * How one item was settled. There is no field for a value: a credential is
+ * stored in the vault first and named here by `secret_id`.
+ */
+export type PrerequisiteAnswer =
+  | { key: string; action: "vault"; secret_id: string }
+  | { key: string; action: "text"; text: string }
+  | { key: string; action: "skip"; instruction?: string }
+  | { key: string; action: "defer" };
 
 /** A question a run stopped to ask (`decision_required`). */
 export interface RunDecision {
   id: string;
-  kind: "build_failed" | "review_workflow" | string;
+  kind: "build_failed" | "review_workflow" | "prerequisites" | string;
   options: string[];
   default: string;
   title?: string;
@@ -93,6 +146,15 @@ export interface RunDecision {
   last_test?: { passed: boolean; summary: string } | null;
   /** Everything the plan has created so far — what a rollback removes. */
   created?: Array<{ kind: string; id: string; name?: string }>;
+  /** prerequisites: what is being built, and where the check ran. */
+  stage?: "workflow" | "agent" | "code";
+  subject?: string;
+  items?: PrerequisiteItem[];
+  /** prerequisites: why the previous answer could not be used (asked again). */
+  problems?: string[];
+  round?: number;
+  vault?: { enabled: boolean; admin_token_required: boolean };
+  run_id?: string | null;
 }
 
 export const eventsUrl = (id: string, after: number) => `/api/runs/${id}/events?after=${after}`;

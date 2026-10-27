@@ -267,6 +267,10 @@ class DecisionLayer(Layer):
     #: feature is off for a run the block is empty and the prompt is unchanged.
     process_view: Optional[str] = None
 
+    #: Whether this decision is told the build prerequisites settled with the
+    #: user (``app.build_prereqs.guidance``). Empty when there are none.
+    uses_prerequisites: bool = False
+
     def model_for(self, ctx: PipelineContext) -> str:
         from app.config import settings
 
@@ -301,6 +305,10 @@ class DecisionLayer(Layer):
             process_block = self.process_block(ctx)
             if process_block:
                 user = user + process_block
+            if self.uses_prerequisites:
+                from app.build_prereqs import guidance as prerequisites
+
+                user = user + prerequisites.block(ctx)
             raw = await decide(
                 ctx.client,
                 model=self.model_for(ctx),

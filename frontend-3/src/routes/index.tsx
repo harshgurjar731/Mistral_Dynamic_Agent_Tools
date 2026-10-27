@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { parseEventData, type SSEEvent } from "@/api/sse";
-import { errorMessage, runsApi, type RunStatus } from "@/api";
+import { errorMessage, runsApi, type RunDecision, type RunStatus } from "@/api";
 import { Composer } from "@/components/chat/Composer";
 import { Markdown } from "@/components/chat/Markdown";
 import { AutoTierChip } from "@/components/chat/TierSelector";
@@ -50,6 +50,7 @@ import { formatElapsed } from "@/components/runs/runMeta";
 import { stopRun, trackStartedRun } from "@/lib/runs/connections";
 import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
 import { useRunsStore } from "@/stores/runs";
+import { PlanDecisionDialog } from "@/components/workflows/PlanDecisionPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/status";
@@ -135,10 +136,13 @@ interface AgentView {
   errorText: string | null;
   /** Set once the run's `run_end` has been replayed. */
   end: { status: RunStatus; error: string | null } | null;
+  /** Questions the run stopped to ask (build prerequisites), with the answer once given. */
+  questions: Record<string, { question: RunDecision; choice?: string }>;
 }
 
 const initAgentView = (): AgentView => ({
   pipeline: EMPTY_PIPELINE,
+  questions: {},
   decisions: {},
   answer: "",
   conversationId: null,
@@ -162,6 +166,20 @@ function reduceAgent(view: AgentView, event: SSEEvent): AgentView {
   }
 
   switch (event.type) {
+    case "decision_required": {
+      const q = parseEventData<RunDecision>(event);
+      if (typeof q === "string" || !q.id) return view;
+      return { ...view, questions: { ...view.questions, [q.id]: { question: q } } };
+    }
+    case "decision_made": {
+      const a = parseEventData<{ id?: string; choice?: string }>(event);
+      const entry = typeof a === "string" || !a.id ? undefined : view.questions[a.id];
+      if (typeof a === "string" || !a.id || !entry) return view;
+      return {
+        ...view,
+        questions: { ...view.questions, [a.id]: { ...entry, choice: a.choice ?? "" } },
+      };
+    }
     case "text_chunk":
       return { ...view, answer: view.answer + event.data };
     case "conversation_id":
@@ -247,6 +265,11 @@ function OrchestratorChat() {
     [replay, view.decisions],
   );
   const answer = replay ? (replay.response ?? replay.answer ?? "") : view.answer;
+  // The question the run is waiting on, if any (build prerequisites).
+  const question =
+    replay || view.end
+      ? null
+      : (Object.values(view.questions).find((q) => q.choice === undefined)?.question ?? null);
   const agentId = replay ? (replay.agentId ?? null) : view.agentId;
   const errorText = replay ? null : view.errorText;
   const submittedQuery = replay
@@ -454,6 +477,14 @@ function OrchestratorChat() {
                 {submittedQuery}
               </div>
             </div>
+          ) : null}
+
+          {question && runId ? (
+            <PlanDecisionDialog
+              runId={runId}
+              decision={question}
+              pausedText="Agent creation is paused — your answer is needed"
+            />
           ) : null}
 
           {/* Pipeline — the chain of decisions, each with its evidence */}

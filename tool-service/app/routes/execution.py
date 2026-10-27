@@ -33,8 +33,14 @@ def execute(tool_name: str, request: ExecuteRequest, db: Session = Depends(get_d
     caller always sees the tool's own account of what went wrong.
     """
     result = execute_tool(db=db, tool_name=tool_name, arguments=request.arguments,
-                          version=request.version)
+                          version=request.version, secrets=request.secrets,
+                          secret_names=request.secret_names, vault=request.vault)
 
+    if result.get("reason") == "secrets_required":
+        # Not an error: the caller resolves these from its vault and calls again.
+        raise HTTPException(status_code=428, detail={"message": result["error"],
+                                                     "reason": "secrets_required",
+                                                     "secrets": result["secrets"]})
     if "error" in result and "result" not in result:
         raise HTTPException(
             status_code=_STATUS_BY_REASON.get(result.get("reason", ""), 400),

@@ -141,3 +141,37 @@ def test_import_keeps_the_pinned_version_number_when_free(clean_db):
     clash = import_tool(clean_db, "word_count", schema, GOOD_WORD_COUNT.replace("failed", "x"),
                         "hash-b", version_no=3)
     assert clean_db.get(ToolRecord, clash["tool_id"]).version_no == 4
+
+
+_KEYED = ("def run(**kwargs):\n"
+          "    key = kwargs.get('_secrets', {}).get('GST_API_KEY')\n"
+          "    if not key:\n"
+          "        return {'status': 'error', 'error_type': 'configuration_error',\n"
+          "                'message': 'GST_API_KEY is not configured'}\n"
+          "    return {'status': 'success', 'source': 'x',\n"
+          "            'data': {'gst_amount': 18.0, 'grand_total': 118.0, 'key_tail': key[-2:]}}\n")
+
+
+def test_vault_callers_are_asked_for_secrets_and_win_over_the_environment(clean_db, monkeypatch):
+    from app.config import settings
+
+    _install(clean_db, gst_spec(secrets=["GST_API_KEY"], output_schema=None), _KEYED)
+
+    # A caller with a vault, which has not looked the names up yet, is told them.
+    asked = execute_tool(clean_db, "apply_gst", {"subtotal": 100}, vault=True)
+    assert asked["reason"] == "secrets_required" and asked["secrets"] == ["GST_API_KEY"]
+
+    # Its answer is used — even over an allow-listed environment value.
+    monkeypatch.setattr(settings, "SECRETS_ALLOWLIST", "GST_API_KEY")
+    monkeypatch.setenv("GST_API_KEY", "from-env-ENV")
+    sent = execute_tool(clean_db, "apply_gst", {"subtotal": 100}, vault=True,
+                        secrets={"GST_API_KEY": "from-vault-VT"}, secret_names=["GST_API_KEY"])
+    assert sent["result"]["data"]["key_tail"] == "VT"
+
+    # Looked up but not in the vault: the environment still supplies it.
+    env = execute_tool(clean_db, "apply_gst", {"subtotal": 100}, vault=True, secrets={},
+                       secret_names=["GST_API_KEY"])
+    assert env["result"]["data"]["key_tail"] == "NV"
+
+    # Callers without a vault behave as before.
+    assert execute_tool(clean_db, "apply_gst", {"subtotal": 100})["result"]["data"]["key_tail"] == "NV"

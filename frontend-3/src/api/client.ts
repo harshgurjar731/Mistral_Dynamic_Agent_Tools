@@ -11,6 +11,17 @@ api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = window.localStorage.getItem("auth_token");
     if (token) config.headers.Authorization = `Bearer ${token}`;
+    // The vault's admin token (Settings → Vault → Unlock): this tab only, and
+    // sent to the vault's own routes only.
+    if (config.url?.startsWith("/api/vault")) {
+      let vaultToken: string | null = null;
+      try {
+        vaultToken = window.sessionStorage.getItem("vault_admin_token");
+      } catch {
+        vaultToken = null;
+      }
+      if (vaultToken) config.headers["X-Vault-Token"] = vaultToken;
+    }
   }
   return config;
 });

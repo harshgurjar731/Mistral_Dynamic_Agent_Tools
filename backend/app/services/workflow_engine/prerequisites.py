@@ -225,30 +225,67 @@ async def _activity_items(step: WorkflowStep) -> list[dict]:
 
     secrets = [s for s in (requirement or {}).get("secrets") or [] if s]
     if secrets:
-        status = await tool_resolver.secrets_status(secrets)
-        if status is None:
-            # An older tool service without /secrets/status: say so, do not block.
-            return [*items, _item(
-                f"secret.{step.id}", "secret", f"Secrets for '{name}' are configured", "warning",
-                step_id=step.id, detail=f"Could not check {', '.join(secrets)} on the tool service.",
-                instructions=[f"Make sure {', '.join(secrets)} are listed in the tool service's "
-                              f"SECRETS_ALLOWLIST and set in its environment.",
-                              "Rebuild the tool service to enable this check."])]
-        for secret in secrets:
-            info = status.get(secret) or {}
-            ok = info.get("allowed") and info.get("set")
-            items.append(_item(
-                f"secret.{step.id}.{secret}", "secret", f"Secret {secret} is available to '{name}'",
-                "met" if ok else "unmet", step_id=step.id,
-                detail="" if ok else
-                ("It is not in the tool service's SECRETS_ALLOWLIST. " if not info.get("allowed") else "")
-                + ("It is not set in the tool service's environment." if not info.get("set") else ""),
-                instructions=[] if ok else [
-                    f"Add {secret} to SECRETS_ALLOWLIST in the tool service's .env "
-                    f"(comma-separated).",
-                    f"Set {secret}=<value> in the same .env (or the container environment).",
-                    "Restart the tool service, then check again.",
-                ]))
+        items.extend(await _secret_items(step, name, secrets))
+    return items
+
+
+async def _secret_items(step: WorkflowStep, name: str, secrets: list[str]) -> list[dict]:
+    """Can every credential the activity names reach it — from the vault, or (when
+    allowed) the Tool Service's environment?"""
+    from app.config import settings
+    from app.services.tool_resolver import tool_resolver
+    from app.vault import store as vault
+
+    vault_status = await asyncio.to_thread(vault.status, secrets, name)
+    env_fallback = bool(settings.VAULT_ENV_FALLBACK)
+    pending = [s for s in secrets if not (vault_status.get(s) or {}).get("usable")]
+    env_status = await tool_resolver.secrets_status(pending) if pending and env_fallback else {}
+    missing_status = "unmet" if settings.PREREQ_BLOCK_RUN_ON_MISSING else "warning"
+
+    items = []
+    for secret in secrets:
+        key = f"secret.{step.id}.{secret}"
+        title = f"Credential {secret} is available to '{name}'"
+        info = vault_status.get(secret) or {}
+        if info.get("usable"):
+            items.append(_item(key, "secret", title, "met", step_id=step.id,
+                               detail=f"From the vault: {info.get('label') or secret}."))
+            continue
+        env = (env_status or {}).get(secret) or {}
+        if env_fallback and env.get("allowed") and env.get("set"):
+            items.append(_item(key, "secret", title, "met", step_id=step.id,
+                               detail="From the Tool Service's environment."))
+            continue
+        reason = info.get("reason") or "missing"
+        detail = {
+            "expired": f"The vault entry {secret} has expired.",
+            "disabled": f"The vault entry {secret} is switched off.",
+            "denied": f"The vault entry {secret} does not allow '{name}' to use it.",
+            "vault_off": "The vault is switched off, and the Tool Service's environment does "
+                         "not supply it either.",
+        }.get(reason, f"{secret} is not in the vault"
+                      + (" or the Tool Service's environment." if env_fallback else "."))
+        if env_status is None and env_fallback:
+            detail += " (The Tool Service's environment could not be checked.)"
+        fix = {
+            "expired": [f"Open {secret} on Settings → Vault and enter a new value or a later "
+                        f"expiry date."],
+            "disabled": [f"Switch {secret} back on in Settings → Vault."],
+            "denied": [f"Add '{name}' to the allowed tools of {secret} in Settings → Vault, or "
+                       f"clear its allowed tools so any tool may use it."],
+        }.get(reason, [f"Add an entry named exactly {secret} in Settings → Vault, with the "
+                       f"value the activity needs.",
+                       "Then check the prerequisites again — nothing else needs restarting."]
+              + ([f"Or set it on the Tool Service instead: add {secret} to SECRETS_ALLOWLIST in "
+                  f"its .env, set {secret}=<value> there, and restart it."]
+                 if env_fallback else []))
+        items.append(_item(
+            key, "secret", title, missing_status, step_id=step.id, detail=detail,
+            instructions=fix,
+            action={"type": "vault", "name": secret, "id": info.get("id"),
+                    "label": "Open in the vault" if info.get("exists") else "Add to the vault",
+                    "to": "/settings?category=vault"
+                          + (f"&secret={info['id']}" if info.get("id") else f"&create={secret}")}))
     return items
 
 

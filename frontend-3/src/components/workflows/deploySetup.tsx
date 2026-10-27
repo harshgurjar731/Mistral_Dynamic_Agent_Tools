@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import type { DeploymentManifest, DeploymentSetupField, SetupState } from "./deploySetupModel";
 
 /* ── The form ── */
@@ -20,11 +21,14 @@ function Field({
   value,
   onChange,
   keptOnServer,
+  fromVault = false,
 }: {
   field: DeploymentSetupField;
   value: string;
   onChange: (v: string) => void;
   keptOnServer: boolean;
+  /** Left blank, it is filled from the vault. */
+  fromVault?: boolean;
 }) {
   const required = field.required && !field.default && !keptOnServer;
   return (
@@ -41,11 +45,13 @@ function Field({
         placeholder={
           field.default
             ? field.default
-            : keptOnServer
-              ? "Blank keeps the value already on the server"
-              : field.secret
-                ? "Not stored by this app"
-                : ""
+            : fromVault
+              ? "Blank: filled from the vault"
+              : keptOnServer
+                ? "Blank keeps the value already on the server"
+                : field.secret
+                  ? "Not stored by this app"
+                  : ""
         }
         autoComplete={field.secret ? "new-password" : "off"}
         spellCheck={false}
@@ -118,13 +124,34 @@ export function DeploySetupForm({
                 ))
               : null}
 
+            {g.id === "tool" && groupFields.some((f) => f.in_vault) ? (
+              <label className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-2.5 text-[11px]">
+                <Switch
+                  checked={value.useVault}
+                  onCheckedChange={(on) => onChange({ ...value, useVault: on })}
+                  aria-label="Fill from the vault"
+                />
+                <span>
+                  <span className="font-medium text-foreground">Fill from the vault</span>
+                  <span className="block text-muted-foreground">
+                    {groupFields.filter((f) => f.in_vault).length} of {groupFields.length} are
+                    stored in the vault. Blank ones are filled from there — written in plain text to
+                    the deployment's .env, and recorded in the vault's audit log.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+
             {groupFields.map((f) => (
               <Field
                 key={f.key}
                 field={f}
                 value={value.env[f.key] ?? ""}
                 onChange={(v) => setEnv(f.key, v)}
-                keptOnServer={keptOnServer.includes(f.key)}
+                keptOnServer={
+                  keptOnServer.includes(f.key) || (value.useVault && Boolean(f.in_vault))
+                }
+                fromVault={value.useVault && Boolean(f.in_vault)}
               />
             ))}
 

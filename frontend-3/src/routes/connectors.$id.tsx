@@ -13,7 +13,7 @@ import {
   ExternalLink,
   Play,
 } from "lucide-react";
-import { connectorsApi, QK, errorMessage } from "@/api";
+import { connectorsApi, QK, errorMessage, vaultApi } from "@/api";
 import type { ConnectorScope, ConnectorTool } from "@/types";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { Button } from "@/components/ui/button";
@@ -220,7 +220,13 @@ function CredentialsSection({ id }: { id: string }) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
+  /** A vault entry to take the token from, instead of typing it. */
+  const [vaultRef, setVaultRef] = useState("");
   const [isDefault, setIsDefault] = useState(false);
+  const vault = useQuery({ queryKey: QK.vault(), queryFn: vaultApi.overview, enabled: showForm });
+  const vaultTokens = (vault.data?.secrets ?? []).filter(
+    (s) => s.usable && ["token", "api_key", "other", "client_secret"].includes(s.kind),
+  );
 
   const query = useQuery({
     queryKey: [...QK.connectorCreds(id), scope],
@@ -231,13 +237,21 @@ function CredentialsSection({ id }: { id: string }) {
     mutationFn: () =>
       connectorsApi.createCredentials(
         id,
-        { name, credentials: { bearer_token: token }, is_default: isDefault },
+        vaultRef
+          ? {
+              name,
+              credentials: {},
+              vault_fields: { bearer_token: vaultRef },
+              is_default: isDefault,
+            }
+          : { name, credentials: { bearer_token: token }, is_default: isDefault },
         scope,
       ),
     onSuccess: () => {
       toast.success("Credentials saved.");
       setName("");
       setToken("");
+      setVaultRef("");
       setIsDefault(false);
       setShowForm(false);
       qc.invalidateQueries({ queryKey: QK.connectorCreds(id) });
@@ -280,12 +294,36 @@ function CredentialsSection({ id }: { id: string }) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (name.trim() && token.trim()) create.mutate();
+            if (name.trim() && (token.trim() || vaultRef)) create.mutate();
           }}
           className="space-y-2 rounded-xl border border-border bg-background-elevated/60 p-3"
         >
           <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input placeholder="token" value={token} onChange={(e) => setToken(e.target.value)} />
+          {vaultRef ? null : (
+            <Input
+              placeholder="token"
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          )}
+          {vaultTokens.length ? (
+            <select
+              aria-label="Take the token from the vault"
+              value={vaultRef}
+              onChange={(e) => setVaultRef(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background-elevated px-2.5 text-xs text-foreground focus:outline-none"
+            >
+              <option value="">…or take it from the vault</option>
+              {vaultTokens.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} — {s.label}
+                  {s.service ? ` (${s.service})` : ""}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Switch checked={isDefault} onCheckedChange={setIsDefault} /> Set as default
           </label>

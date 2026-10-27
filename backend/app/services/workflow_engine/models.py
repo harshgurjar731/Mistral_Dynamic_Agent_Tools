@@ -369,6 +369,8 @@ class DeploymentSetupField(BaseModel):
     default: Optional[str] = None
     #: "worker" | "tool" | "connector" | "database" — groups the setup form.
     group: str = "worker"
+    #: A tool secret the platform's vault holds — the deploy can fill it from there.
+    in_vault: bool = False
 
 
 class DeploymentManifest(BaseModel):
@@ -408,6 +410,9 @@ class DeploymentSetup(BaseModel):
     #: Written to the package's .env (download) or merged into the server's (deploy).
     env: dict[str, str] = Field(default_factory=dict)
     sql: Optional[DeploymentSqlSetup] = None
+    #: Fill tool secrets left blank from the vault. The values are then written
+    #: in plain text to the package's .env (or the server's), so it is opt-in.
+    use_vault: bool = False
 
 
 class BuilderCatalogResponse(BaseModel):

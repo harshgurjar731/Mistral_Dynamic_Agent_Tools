@@ -1,9 +1,13 @@
 """
 The code-requirement pipeline — from a need to a usable tool or activity.
 
-    R1 → R2 → R3 ─┬─ reused ─────────────────────────────────────→ R8
-                  └─ create → [R4 → R5 → R6 → R7 → R7b] ─────────→ R8
-                               ↑________ issues (≤ MAX_REAUTHORS) ______|
+    R1 → R2 → R3 ─┬─ reused ──────────────────────────────────────────→ R8
+                  └─ create → [R4 → R5 → R6 → R4b → R7 → R7b] ─────────→ R8
+                               ↑___________ issues (≤ MAX_REAUTHORS) _______|
+
+R4b settles every credential the specification names before code is generated
+(``app.build_prereqs.code_check``); a credential the user chose to do without
+sends the specification back to its author.
 
 R7b executes what R7 built; a version that fails there is rolled back and its
 failures are re-authored against like any other issue.
@@ -24,6 +28,7 @@ from app.layers.codegen.layers import (
     MAX_REAUTHORS,
     BindAndRefreshLayer,
     ContractBindingLayer,
+    CredentialCheckLayer,
     NeedNormalisationLayer,
     PolicyGateLayer,
     RequirementContext,
@@ -40,6 +45,7 @@ logger = logging.getLogger(__name__)
 _R1, _R2, _R3 = NeedNormalisationLayer(), PolicyGateLayer(), ReuseResolutionLayer()
 _R4, _R5, _R6 = SpecAuthoringLayer(), ContractBindingLayer(), SpecPreflightLayer()
 _R7, _R7b, _R8 = SubmitAndTrackLayer(), SmokeTestLayer(), BindAndRefreshLayer()
+_R4b = CredentialCheckLayer()
 
 
 def _default_client():
@@ -58,15 +64,19 @@ async def resolve_code_need(
     on_event: Optional[Callable[[dict], None]] = None,
     catalogue: Optional[list[dict]] = None,
     must_succeed: Optional[list[dict]] = None,
+    code_check: Any = None,
 ) -> CodeResolution:
     """Run the pipeline for one need. Never raises.
 
     ``must_succeed``: inputs the built version must run without error — for a
     rebuild, the input the previous version failed on.
+    ``code_check``: the build's credential view (``build_prereqs.code_check``);
+    None checks credentials with nobody to ask.
     """
     ctx = RequirementContext(need=need, profile=profile_for(need.purpose),
                              client=client or _default_client(), on_event=on_event,
-                             catalogue=catalogue, must_succeed=list(must_succeed or []))
+                             catalogue=catalogue, must_succeed=list(must_succeed or []),
+                             code_check=code_check)
     try:
         if ctx.catalogue is None:
             from app.services.tool_resolver import tool_resolver
@@ -116,6 +126,10 @@ async def _run(ctx: RequirementContext) -> CodeResolution:
             return ctx.resolution
         await _R5.run(ctx)
         await _R6.run(ctx)
+        if not ctx.issues:
+            await _R4b.run(ctx)
+            if ctx.resolution:
+                return ctx.resolution
         if not ctx.issues:
             ctx.valid_requirement = ctx.requirement.as_request()
             await _R7.run(ctx)
@@ -209,6 +223,7 @@ async def resolve_code_needs(
     client: Any = None,
     on_event: Optional[Callable[[dict], None]] = None,
     concurrency: int = 3,
+    code_check: Any = None,
 ) -> list[CodeResolution]:
     """Resolve several needs concurrently, sharing one catalogue fetch.
 
@@ -224,7 +239,7 @@ async def resolve_code_needs(
     async def one(need: CodeNeed) -> CodeResolution:
         async with gate:
             resolution = await resolve_code_need(need, client=client, on_event=on_event,
-                                                 catalogue=catalogue)
+                                                 catalogue=catalogue, code_check=code_check)
             if resolution.name and resolution.status in ("built", "pending_approval"):
                 catalogue.append({"name": resolution.name, "purpose": need.purpose,
                                   "status": "pending_approval"})

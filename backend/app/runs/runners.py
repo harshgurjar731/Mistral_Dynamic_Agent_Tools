@@ -39,6 +39,9 @@ async def workflow_plan(run: LiveRun, *, client, goal: str,
     if ctx.metadata.get(plan_control.ROLLED_BACK_KEY):
         result["rolled_back"] = True
         return RunOutcome(status="cancelled", result=result, error=ctx.error)
+    stopped = _prerequisites_stop(ctx, result)
+    if stopped:
+        return stopped
     fatal = _as_dict(run.payload("fatal_error"))
     if ctx.error or fatal:
         error = ctx.error or (fatal or {}).get("error") or "Planning failed"
@@ -81,9 +84,27 @@ async def agent(
         "agent_name": done.get("agent_name") or config.get("agent_name"),
         "conversation_id": ctx.conversation_id,
     }
+    stopped = _prerequisites_stop(ctx, result)
+    if stopped:
+        return stopped
     if ctx.error:
         return RunOutcome(status="failed", result=result, error=str(ctx.error))
     return RunOutcome(result=result)
+
+
+def _prerequisites_stop(ctx, result: dict) -> Optional[RunOutcome]:
+    """A build stopped at its prerequisites — by the user, or because nobody could be
+    asked — created nothing and is reported as cancelled, not failed."""
+    from app.build_prereqs.layer import STOPPED_KEY
+    from app.build_prereqs.models import METADATA_KEY
+
+    reason = ctx.metadata.get(STOPPED_KEY)
+    if not reason:
+        return None
+    record = ctx.metadata.get(METADATA_KEY) or {}
+    result["prerequisites"] = {"stopped": reason, "items": [
+        {k: v for k, v in i.items() if k != "value"} for i in record.get("items") or []]}
+    return RunOutcome(status="cancelled", result=result, error=ctx.error)
 
 
 async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:

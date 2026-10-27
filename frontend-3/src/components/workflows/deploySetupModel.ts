@@ -32,6 +32,8 @@ export interface DeploymentSetupField {
   default?: string | null;
   /** "worker" | "tool" | "connector" | "database" */
   group: string;
+  /** A tool secret the platform's vault holds — it can be filled from there. */
+  in_vault?: boolean;
 }
 export interface DeploymentManifest {
   workflow_name: string;
@@ -53,10 +55,13 @@ export interface SetupState {
   sqlUrl: string;
   seedSql: string;
   seedName: string;
+  /** Fill tool secrets left blank from the vault (written into the package's .env). */
+  useVault: boolean;
 }
 
 export const emptySetup = (): SetupState => ({
   env: {},
+  useVault: false,
   sqlMode: "container",
   sqlUrl: "",
   seedSql: "",
@@ -73,7 +78,7 @@ export function setupRequest(manifest: DeploymentManifest | undefined, s: SetupS
         seed_sql: s.sqlMode === "container" ? s.seedSql || undefined : undefined,
       }
     : undefined;
-  return { env, sql };
+  return { env, sql, ...(s.useVault ? { use_vault: true } : {}) };
 }
 
 /** What still blocks a build, in words; ``optionalKeys`` may stay blank (e.g. kept on the server). */
@@ -85,7 +90,12 @@ export function setupProblems(
   if (!manifest) return [];
   const problems = (manifest.setup ?? [])
     .filter(
-      (f) => f.required && !f.default && !optionalKeys.includes(f.key) && !s.env[f.key]?.trim(),
+      (f) =>
+        f.required &&
+        !f.default &&
+        !optionalKeys.includes(f.key) &&
+        !(s.useVault && f.in_vault) &&
+        !s.env[f.key]?.trim(),
     )
     .map((f) => `${f.label} is required`);
   if (manifest.uses_sql_tools && s.sqlMode === "external" && !s.sqlUrl.includes("://")) {

@@ -21,6 +21,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     import app.ontology.models
     import app.process_knowledge.models
     import app.safety.models
+    import app.vault.models
     import app.rag.models
     import app.remote_server_model
     import app.rules.models
@@ -54,6 +55,11 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     from app.safety import store as safety_store
 
     safety_store.seed()
+
+    # Vault: drop audit events past their retention.
+    from app.vault import store as vault_store
+
+    vault_store.purge_audit()
 
     if seed_rules:
         # The recommended starter rules. Insert-if-missing, so edits made on

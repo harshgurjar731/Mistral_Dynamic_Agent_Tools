@@ -75,6 +75,7 @@ class ToolSelectionLayer(AgentDecisionLayer):
     """Decide which platform tools this agent needs."""
 
     name = "tool_selection"
+    uses_prerequisites = True
     process_view = "agent_tools"
     label = "Choose tools"
     detail = "Decides which platform capabilities this agent needs."
@@ -127,6 +128,7 @@ class ConnectorSelectionLayer(AgentDecisionLayer):
     """Decide which external services this agent must reach."""
 
     name = "connector_selection"
+    uses_prerequisites = True
     process_view = "agent_connectors"
     label = "Choose integrations"
     detail = "Decides which external services this agent must reach."

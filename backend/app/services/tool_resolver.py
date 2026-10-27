@@ -37,12 +37,19 @@ class ToolServiceUnavailable(Exception):
     """The Tool Service refused connections for the whole wait budget."""
 
 
+def _base_name(tool_name: str) -> str:
+    """``name@3`` → ``name``: vault access is granted to a tool, not to one version."""
+    return str(tool_name or "").split("@", 1)[0]
+
+
 class ToolResolver:
     """Communicates with the Docker Tool Service over HTTP."""
 
     def __init__(self, base_url: str = None):
         self.base_url = base_url or settings.TOOL_SERVICE_URL
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=180.0)
+        #: Tool name → the secret names it declares, learned from the Tool Service.
+        self._secret_names: dict[str, list[str]] = {}
 
     def retarget(self, base_url: str) -> None:
         """Point at a new Tool Service URL (saved on the Settings page)."""
@@ -225,20 +232,63 @@ class ToolResolver:
         return await self.run_synthesis(spec)
 
     async def execute_tool(self, tool_name: str, arguments: dict, version: int | None = None) -> dict:
-        """Execute a tool via the Docker Tool Service; ``version`` pins one."""
+        """Execute a tool via the Docker Tool Service; ``version`` pins one.
+
+        Credentials come from the vault (Settings → Vault). The names a tool
+        needs are learned from the Tool Service the first time it is called
+        (it answers 428 with them) and remembered, so later calls resolve and
+        send them in one round trip. Values found in the result are masked.
+        """
+        from app.vault import store as vault
+
+        values: dict[str, str] = {}
         try:
-            body = {"arguments": arguments}
+            body: dict = {"arguments": arguments}
             if version is not None:
                 body["version"] = int(version)
+            use_vault = vault.enabled()
+            if use_vault:
+                body["vault"] = True
+                names = self._secret_names.get(_base_name(tool_name))
+                if names:
+                    values = await self._vault_values(tool_name, names)
+                    body.update(secrets=values, secret_names=names)
             resp = await self._send("POST", f"/execute/{tool_name}", json=body)
+            if resp.status_code == 428 and use_vault:
+                names = [str(n) for n in ((resp.json().get("detail") or {}).get("secrets") or [])]
+                self._secret_names[_base_name(tool_name)] = names
+                values = await self._vault_values(tool_name, names)
+                body.update(secrets=values, secret_names=names)
+                resp = await self._send("POST", f"/execute/{tool_name}", json=body)
             if resp.status_code == 200:
-                return resp.json()
-            else:
-                return {"error": f"Tool Service returned {resp.status_code}: {resp.text}"}
+                return self._masked(resp.json(), values)
+            return self._masked(
+                {"error": f"Tool Service returned {resp.status_code}: {resp.text}"}, values)
         except ToolServiceUnavailable as e:
             return {"error": str(e)}
         except Exception as e:
-            return {"error": str(e)}
+            return self._masked({"error": str(e)}, values)
+
+    async def _vault_values(self, tool_name: str, names: list[str]) -> dict[str, str]:
+        from app.vault import store as vault
+
+        resolution = await asyncio.to_thread(vault.resolve, names, consumer=_base_name(tool_name))
+        if resolution.problems:
+            logger.info("Vault could not supply %s for '%s': %s",
+                        ", ".join(resolution.problems), tool_name, resolution.problems)
+        if not settings.VAULT_ENV_FALLBACK:
+            # Only the vault may supply credentials: anything it did not resolve is
+            # sent as empty, so the Tool Service does not reach for its environment.
+            return {**{n: "" for n in names}, **resolution.values}
+        return resolution.values
+
+    @staticmethod
+    def _masked(result: dict, values: dict[str, str]) -> dict:
+        if not values or not settings.VAULT_REDACT_RESULTS:
+            return result
+        from app.vault.redact import scrub
+
+        return scrub(result, values)
 
     async def get_tool(self, tool_id: int) -> dict | None:
         """One version by id, superseded versions included."""

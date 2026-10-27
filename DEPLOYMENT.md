@@ -55,7 +55,7 @@ nano deploy/.env                   # set MISTRAL_API_KEY
 bash deploy/azure/deploy.sh        # builds and starts everything
 ```
 
-On first run, `deploy.sh` fills in `NEO4J_PASSWORD` and `REMOTE_SERVER_SECRET_KEY` with random values and puts the VM's public IP into `PUBLIC_URL` / `CORS_ORIGINS`. Back up `deploy/.env`: if you lose `REMOTE_SERVER_SECRET_KEY`, stored remote-server credentials can no longer be read.
+On first run, `deploy.sh` fills in `NEO4J_PASSWORD`, `REMOTE_SERVER_SECRET_KEY` and `VAULT_MASTER_KEYS` with random values and puts the VM's public IP into `PUBLIC_URL` / `CORS_ORIGINS`. Back up `deploy/.env`: if you lose `REMOTE_SERVER_SECRET_KEY`, stored remote-server credentials can no longer be read, and if you lose `VAULT_MASTER_KEYS`, every value in the vault (Settings → Vault) must be entered again. Set `VAULT_ADMIN_TOKEN` too if anyone who can reach the app should not be able to change or reveal vault entries.
 
 Open `http://<vm-ip>`.
 

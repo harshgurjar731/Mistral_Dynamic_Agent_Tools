@@ -105,6 +105,7 @@ class AgentDesignLayer(WorkflowStepLayer):
             return json.dumps(items, indent=2) if items else "Nothing — this is a terminal step."
 
         from app.process_knowledge import pipeline as process_knowledge
+        from app.build_prereqs import guidance as prerequisites
         from app.safety import apply as safety
 
         design_system = safety.apply(AGENT_DESIGN_SYSTEM_PROMPT, "workflow_agent_design")
@@ -140,7 +141,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                         connector_ids=json.dumps(inv.get("connector_ids", [])),
                         library_descriptions=inv.get("library_descriptions", ""),
                         library_ids=json.dumps(inv.get("library_ids", [])),
-                    ) + process_block,
+                    ) + process_block + prerequisites.block(ctx, cap.id),
                     phase=f"agent design ({cap.id})",
                     timeout_ms=LONG_TIMEOUT_MS,
                     temperature=0.2,

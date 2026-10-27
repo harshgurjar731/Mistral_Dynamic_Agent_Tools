@@ -13,6 +13,10 @@
  *
  * Choosing Retry lets the user say what to change first; that message goes to
  * the builder as guidance for the retried items.
+ *
+ * A "prerequisites" question — what a build needs from the user before it
+ * starts — has its own form (`PrerequisitesForm`). It is also asked by agent
+ * builds, so the paused banner's wording comes from the caller.
  */
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -41,6 +45,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { PrerequisitesForm } from "@/components/vault/PrerequisitesForm";
 import { cn } from "@/lib/utils";
 
 interface ChoiceMeta {
@@ -97,7 +102,15 @@ const RETRY_PLACEHOLDER: Record<string, string> = {
   agent: "e.g. Keep the instructions shorter and focus only on drafting the reminder email.",
 };
 
-export function PlanDecisionDialog({ runId, decision }: { runId: string; decision: RunDecision }) {
+export function PlanDecisionDialog({
+  runId,
+  decision,
+  pausedText = "Planning is paused — your answer is needed",
+}: {
+  runId: string;
+  decision: RunDecision;
+  pausedText?: string | undefined;
+}) {
   const [openFor, setOpenFor] = useState<string | null>(decision.id);
   const open = openFor === decision.id;
 
@@ -119,12 +132,21 @@ export function PlanDecisionDialog({ runId, decision }: { runId: string; decisio
           // A stray click outside must not dismiss a question the plan is waiting on.
           onInteractOutside={(e) => e.preventDefault()}
         >
-          <DecisionForm
-            key={decision.id}
-            runId={runId}
-            decision={decision}
-            onLater={() => setOpenFor(null)}
-          />
+          {decision.kind === "prerequisites" ? (
+            <PrerequisitesForm
+              key={decision.id}
+              runId={runId}
+              decision={decision}
+              onLater={() => setOpenFor(null)}
+            />
+          ) : (
+            <DecisionForm
+              key={decision.id}
+              runId={runId}
+              decision={decision}
+              onLater={() => setOpenFor(null)}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
@@ -132,9 +154,7 @@ export function PlanDecisionDialog({ runId, decision }: { runId: string; decisio
         <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-3xl items-center gap-3 rounded-2xl border border-amber/50 bg-background/95 px-4 py-3 shadow-2xl backdrop-blur">
           <BellRing className="size-4 shrink-0 animate-pulse text-amber" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground">
-              Planning is paused — your answer is needed
-            </p>
+            <p className="text-sm font-semibold text-foreground">{pausedText}</p>
             <p className="truncate text-[11px] text-muted-foreground">{decision.title}</p>
           </div>
           <Button size="sm" onClick={() => setOpenFor(decision.id)}>

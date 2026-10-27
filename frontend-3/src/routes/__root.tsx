@@ -19,6 +19,8 @@ import { BackgroundRuns } from "@/components/runs/BackgroundRuns";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { AppConfigApplier } from "@/components/layout/AppConfigApplier";
 import { useUiConfig } from "@/lib/uiConfig";
+import { THEME_BOOT_SCRIPT, useTheme } from "@/lib/theme";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useResizablePanel } from "@/components/shared/ResizeHandle";
 import { cn } from "@/lib/utils";
 
@@ -118,8 +120,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // The boot script sets data-theme / class / color-scheme before React
+    // hydrates, so the server's markup and the live <html> differ on purpose.
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Day / night before first paint — no flash of the other theme. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         <HeadContent />
       </head>
       <body>
@@ -143,6 +149,7 @@ function RootComponent() {
 
 function AppShell() {
   const ui = useUiConfig();
+  const { resolved: theme } = useTheme();
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Follow the configured default until the user toggles the sidebar.
@@ -207,6 +214,7 @@ function AppShell() {
             <div className="ml-auto flex items-center gap-2">
               <RunsIndicator />
               <HealthIndicator />
+              <ThemeToggle />
             </div>
           </header>
 
@@ -218,7 +226,7 @@ function AppShell() {
         </div>
       </div>
       <BackgroundRuns />
-      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme="dark" />
+      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} />
     </>
   );
 }

@@ -240,10 +240,19 @@ def _setup_fields(name: str, tools: list[DeploymentDynamicTool],
     for t in tools:
         for secret in t.secrets:
             by_secret.setdefault(secret, []).append(t.name)
+    try:
+        from app.vault import store as vault
+
+        in_vault = {n for n, st in vault.status(list(by_secret)).items() if st.get("usable")}
+    except Exception:  # noqa: BLE001 — a package builds without the vault
+        in_vault = set()
     for secret, users in sorted(by_secret.items()):
         fields.append(DeploymentSetupField(
             key=secret, label=secret, secret=True, required=True, group="tool",
-            help=f"Read by {', '.join(users)} (third-party API credential)."))
+            in_vault=secret in in_vault,
+            help=f"Read by {', '.join(users)} (third-party API credential)."
+                 + (" Stored in the vault — leave blank and choose 'Fill from the vault'."
+                    if secret in in_vault else "")))
     for c in connectors:
         where = ", ".join(c.used_by)
         if c.auth == "bearer":
@@ -495,6 +504,8 @@ def _env_values(manifest: DeploymentManifest, sql, setup: DeploymentSetup | None
     server's .env is missing (remote_servers/deployers.py) and never rotates them.
     """
     given = dict(setup.env) if setup else {}
+    if setup and setup.use_vault:
+        given = {**_vault_env(manifest, given), **{k: v for k, v in given.items() if v}}
     rows: list[tuple[str, str, str]] = []
     for f in manifest.setup:
         value = given.get(f.key, f.default or "")
@@ -511,6 +522,17 @@ def _env_values(manifest: DeploymentManifest, sql, setup: DeploymentSetup | None
     rows += [("other", k, v) for k, v in given.items() if k not in known]
     order = list(_GROUP_TITLES)
     return sorted(rows, key=lambda r: order.index(r[0]) if r[0] in order else len(order))
+
+
+def _vault_env(manifest: DeploymentManifest, given: dict[str, str]) -> dict[str, str]:
+    """Tool secrets the operator left blank, from the vault (audited as a use)."""
+    wanted = [f.key for f in manifest.setup if f.group == "tool" and not given.get(f.key)]
+    if not wanted:
+        return {}
+    from app.vault import store as vault
+
+    return vault.resolve(wanted, consumer=f"deployment:{manifest.workflow_name}",
+                         actor="user").values
 
 
 _GROUP_TITLES = {
@@ -745,7 +767,7 @@ def build_package_zip(workflow_def: WorkflowDefinition, manifest: DeploymentMani
         # One set of generated passwords per package, the same in both files.
         generated = {"NEO4J_PASSWORD": _generated_password(), "SQL_DB_PASSWORD": _generated_password()}
         zf.writestr(".env.template", _render_env(manifest, sql, setup, generated, blank_secrets=True))
-        if setup and setup.env:
+        if setup and (setup.env or setup.use_vault):
             zf.writestr(".env", _render_env(manifest, sql, setup, generated, blank_secrets=False))
         zf.writestr("README.md", _render_readme(manifest, sql, knowledge))
 

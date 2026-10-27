@@ -36,7 +36,7 @@ export function DeploymentLog({
       </div>
       <pre
         ref={pre}
-        className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-foreground/90"
+        className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-background-elevated p-3 font-mono text-[11px] leading-relaxed text-foreground/90"
       >
         {data?.log?.trim() || "Waiting for output…"}
       </pre>

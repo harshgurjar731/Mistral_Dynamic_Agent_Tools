@@ -301,7 +301,9 @@ export interface RevisionSuggestion {
 export type PrerequisiteAction =
   | { type: "link"; to: string; label: string }
   | { type: "rebuild"; step_id: string; label: string }
-  | { type: "approve"; tool_id: number; label: string; to?: string };
+  | { type: "approve"; tool_id: number; label: string; to?: string }
+  /** A credential the step needs: add it to the vault (no id) or open its entry. */
+  | { type: "vault"; name: string; id?: string | null; label: string; to: string };
 
 /** One thing that must (or should) be true before a workflow runs. */
 export interface Prerequisite {

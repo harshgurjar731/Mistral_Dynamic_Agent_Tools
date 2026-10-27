@@ -47,6 +47,14 @@ SECTIONS = [
     Section("process_knowledge", "Matching & limits",
             "Whether builds use process knowledge by default, how closely a process must match a "
             "request to be used, and the largest document accepted.", "workflow", "process"),
+    # ── Vault & build prerequisites ────────────────────────────────────
+    Section("vault", "Vault behaviour",
+            "How stored credentials are protected, shown, kept and handed to the code that "
+            "uses them.", "shield", "vault"),
+    Section("build_prereqs", "Build prerequisites",
+            "Before an agent or workflow is built, what it needs from you — credentials, "
+            "service URLs, facts — is worked out and settled, so a build is never wasted on "
+            "something it cannot use.", "workflow", "vault"),
     # ── Frontend ───────────────────────────────────────────────────────
     Section("ui_design", "Theme & design",
             "Colours, shape and typography of the whole interface. Applied the moment you save.",
@@ -392,6 +400,101 @@ DEFS: list[SettingDef] = [
                "scores for any goal.", type="float", minimum=0, maximum=50,
                impact=("Process matching",), used_in=("process_knowledge/resolver.py",)),
 
+    # ── Vault ──────────────────────────────────────────────────────────
+    SettingDef("VAULT_ENABLED", "vault", "Vault on",
+               "Off: nothing is read from or offered from the vault — tools fall back to the "
+               "Tool Service's environment, and builds ask for nothing to be stored. Stored "
+               "entries are kept.", type="bool",
+               impact=("Tool & activity execution", "Build prerequisites", "Connector credentials"),
+               used_in=("vault/store.py — enabled, resolve",
+                        "services/tool_resolver.py — execute_tool")),
+    SettingDef("VAULT_ALLOW_REVEAL", "vault", "Allow revealing sensitive values",
+               "Off (recommended): a sensitive value can be replaced but never shown again. "
+               "On: the eye button shows it, and every reveal is written to the audit log. "
+               "Non-sensitive values (URLs, regions) are always shown.", type="bool",
+               impact=("Settings → Vault",), used_in=("vault/store.py — reveal",)),
+    SettingDef("VAULT_ENV_FALLBACK", "vault", "Fall back to the Tool Service environment",
+               "When a name is not in the vault, the Tool Service may still supply it from its "
+               "own environment (listed in its SECRETS_ALLOWLIST). Off: only the vault supplies "
+               "credentials, so every one is visible and audited here.", type="bool",
+               impact=("Tool & activity execution", "Run prerequisites"),
+               used_in=("services/tool_resolver.py — execute_tool",
+                        "services/workflow_engine/prerequisites.py — secret checks")),
+    SettingDef("VAULT_REDACT_RESULTS", "vault", "Mask vault values in results",
+               "Replace any stored value that appears in a tool's result with [vault:NAME] "
+               "before the result reaches an agent, a run log or a trace.", type="bool",
+               impact=("Tool results", "Run logs", "Traces"),
+               used_in=("services/tool_resolver.py — execute_tool", "vault/redact.py")),
+    SettingDef("VAULT_AUDIT_USE", "vault", "Audit every use",
+               "Write an audit event each time code receives a value. Off: only the use count "
+               "and last-used time are kept; changes, reveals and refusals are always audited.",
+               type="bool", impact=("Settings → Vault → Audit",),
+               used_in=("vault/store.py — resolve",)),
+    SettingDef("VAULT_AUDIT_RETENTION_DAYS", "vault", "Keep audit events for",
+               "Older events are removed at start-up. 0 keeps them forever.", type="int",
+               minimum=0, maximum=3650, unit="days", apply="restart",
+               impact=("Settings → Vault → Audit",), used_in=("vault/store.py — purge_audit",)),
+    SettingDef("VAULT_VERSION_HISTORY", "vault", "Previous values kept",
+               "How many earlier values of each entry are kept (encrypted) so a bad change can "
+               "be rolled back. 0 keeps none.", type="int", minimum=0, maximum=50,
+               impact=("Settings → Vault → History",), used_in=("vault/store.py — set_value",)),
+    SettingDef("VAULT_DEFAULT_EXPIRY_DAYS", "vault", "Default expiry for new entries",
+               "A new entry with no expiry date of its own expires after this many days, and "
+               "code stops receiving it. 0: entries do not expire unless you set a date.",
+               type="int", minimum=0, maximum=3650, unit="days",
+               impact=("Settings → Vault", "Build prerequisites"),
+               used_in=("vault/store.py — create_secret",)),
+    SettingDef("VAULT_ROTATION_REMINDER_DAYS", "vault", "Rotation reminder",
+               "Flag an entry whose value has not changed in this many days. A reminder only — "
+               "the value keeps working. 0 turns the reminder off.", type="int", minimum=0,
+               maximum=3650, unit="days", impact=("Settings → Vault",),
+               used_in=("vault/store.py — _status",)),
+
+    # ── Build prerequisites ────────────────────────────────────────────
+    SettingDef("PREREQ_CHECK_ENABLED", "build_prereqs", "Check prerequisites before building",
+               "Before building an agent or workflow, work out which credentials, service URLs "
+               "and facts it needs, match them against the vault, and ask you for what is "
+               "missing. Off: builds start at once, as before.", type="bool",
+               impact=("Agent creation (Orchestrator)", "Workflow planning (AI builder)"),
+               used_in=("build_prereqs/layer.py — BuildPrerequisitesLayer",)),
+    SettingDef("PREREQ_AUTO_USE_VAULT", "build_prereqs", "Use matching vault entries automatically",
+               "A requirement whose vault entry is certain (same name, or the only entry for "
+               "that service and kind) is used without asking. Off: you confirm every one.",
+               type="bool", impact=("Build prerequisites",),
+               used_in=("build_prereqs/resolve.py — auto_resolve",)),
+    SettingDef("PREREQ_ASK_WHEN_SATISFIED", "build_prereqs", "Ask even when everything is satisfied",
+               "Show the prerequisite list for confirmation even when the vault already covers "
+               "all of it. Off: the build continues and the list is shown in its timeline.",
+               type="bool", impact=("Build prerequisites",),
+               used_in=("build_prereqs/layer.py",)),
+    SettingDef("PREREQ_ASK_FOR_INFORMATION", "build_prereqs", "Ask for facts, not only credentials",
+               "Also ask for information the build cannot know — a tax rate, an approval "
+               "threshold, a recipient address. Off: only credentials and service URLs are "
+               "asked for; the build assumes the rest.", type="bool",
+               impact=("Build prerequisites",), used_in=("build_prereqs/analysis.py",)),
+    SettingDef("PREREQ_UNATTENDED_POLICY", "build_prereqs", "When nobody can be asked",
+               "A build started without a live page (the plain streaming endpoints, API "
+               "clients) cannot ask. Proceed: build anyway — code that needs a missing "
+               "credential reports a configuration error until it is added to the vault. "
+               "Stop: refuse to build and return the prerequisite list.",
+               type="enum", options=("proceed", "stop"),
+               option_labels=(("proceed", "Proceed without what is missing"),
+                              ("stop", "Stop and report what is missing")),
+               impact=("Agent creation (API)", "Workflow planning (API)"),
+               used_in=("build_prereqs/layer.py",)),
+    SettingDef("PREREQ_CODE_CHECK", "build_prereqs", "Check credentials again before building code",
+               "After a tool's or activity's specification is written, check that every "
+               "credential it names is available, and ask about any the first check missed — "
+               "before the code is generated.", type="bool",
+               impact=("Tool & activity synthesis",),
+               used_in=("layers/codegen/layers.py — CredentialCheckLayer (R4b)",)),
+    SettingDef("PREREQ_BLOCK_RUN_ON_MISSING", "build_prereqs", "Block runs with missing credentials",
+               "A workflow whose activity needs a credential that neither the vault nor the "
+               "Tool Service has is refused at start (its prerequisites show what to add). "
+               "Off: it starts, and that step fails with a configuration error.", type="bool",
+               impact=("Workflow runs", "Run prerequisites"),
+               used_in=("services/workflow_engine/prerequisites.py",)),
+
     # ── Frontend: theme & design ───────────────────────────────────────
     SettingDef("UI_ACCENT", "ui_design", "Accent colour",
                "Brand colour for primary buttons, focus rings, active navigation, links and "
@@ -401,6 +504,15 @@ DEFS: list[SettingDef] = [
                               ("violet", "Violet"), ("blue", "Blue"), ("cyan", "Cyan"),
                               ("emerald", "Emerald"), ("amber", "Amber"), ("rose", "Rose")),
                impact=("Whole interface",), used_in=(_APPLIER,)),
+    SettingDef("UI_COLOR_MODE", "ui_design", "Day / night mode",
+               "What every page shows to someone who has not picked a mode with the sun/moon "
+               "toggle in the sidebar (or Shift+Alt+L). A person's own choice is kept in their "
+               "browser and always wins. Match system follows the device's light or dark setting.",
+               type="enum", default="dark", options=("dark", "light", "system"),
+               option_labels=(("dark", "Night (default)"), ("light", "Day"),
+                              ("system", "Match the device")),
+               impact=("Whole interface",),
+               used_in=(_APPLIER, "frontend lib/theme.ts", "frontend components/layout/ThemeToggle.tsx")),
     SettingDef("UI_SURFACE_TONE", "ui_design", "Surface tone",
                "Tint of backgrounds, panels and the sidebar.", type="enum", default="neutral",
                options=("neutral", "warm", "cool", "midnight"),
@@ -507,6 +619,10 @@ _ROUTE_JOBS = {
                        "Decides in the Orchestrator chat whether a missing capability needs a "
                        "new tool.",
                        "layers/agent/capability_gap_layer.py"),
+    "prerequisite_analysis": ("Build prerequisites",
+                              "Works out, before an agent or workflow is built, which "
+                              "credentials, service URLs and facts it needs from you.",
+                              "build_prereqs/analysis.py"),
 }
 
 
@@ -521,6 +637,7 @@ def _route_defs() -> list[SettingDef]:
             role, (role.replace("_", " ").capitalize(), f"Route '{role}'.", f"Route '{role}'"))
         used = (where, "core/decision.py — decide(route=…)", "llm_routes.py — route_for")
         impact = (("Tool & activity synthesis", "Orchestrator chat") if role == "capability_gap"
+                  else ("Agent creation", "Workflow planning") if role == "prerequisite_analysis"
                   else ("Tool & activity synthesis (code pipeline)",))
         defs += [
             SettingDef(f"{prefix}_MODEL", "model_routes", "Model", job, type="model",

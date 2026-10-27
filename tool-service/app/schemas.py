@@ -66,9 +66,19 @@ class JobResponse(BaseModel):
 # ── Execution ──────────────────────────────────────────────────────────────
 
 class ExecuteRequest(BaseModel):
-    """Request to execute a stored tool. ``version`` pins an exact version."""
+    """Request to execute a stored tool. ``version`` pins an exact version.
+
+    ``vault``: the caller holds a vault and can supply credentials. When the
+    version declares a secret the caller has not looked up (``secret_names``)
+    and the environment cannot supply, the call is answered 428 with the names
+    it needs, so the caller resolves exactly those and calls again.
+    ``secrets`` holds what the caller resolved; it wins over the environment.
+    """
     arguments: dict = Field(default_factory=dict)
     version: Optional[int] = None
+    vault: bool = False
+    secrets: Optional[dict[str, str]] = None
+    secret_names: Optional[list[str]] = None
 
 
 class ExecuteResponse(BaseModel):

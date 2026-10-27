@@ -56,10 +56,19 @@ export { observabilityApi } from "./observability";
 export { settingsApi } from "./settings";
 export { processesApi } from "./processes";
 export { safetyApi } from "./safety";
+export { vaultApi, vaultToken } from "./vault";
 export type * from "./processes";
 export type * from "./settings";
 export type * from "./observability";
-export type { BackgroundRun, RunDecision, RunKind, RunProgress, RunStatus } from "./runs";
+export type {
+  BackgroundRun,
+  PrerequisiteAnswer,
+  PrerequisiteItem,
+  RunDecision,
+  RunKind,
+  RunProgress,
+  RunStatus,
+} from "./runs";
 
 /* ── Health ─────────────────────────────────────────────────────────── */
 export const healthApi = {
@@ -231,7 +240,13 @@ export const connectorsApi = {
     ),
   createCredentials: (
     id: string,
-    body: { name: string; credentials: Record<string, unknown>; is_default?: boolean },
+    body: {
+      name: string;
+      credentials: Record<string, unknown>;
+      is_default?: boolean;
+      /** Credential field → vault entry id or name; resolved on the server. */
+      vault_fields?: Record<string, string>;
+    },
     scope: ConnectorScope = "user",
   ) => post<unknown>(`/api/connectors/${id}/credentials?scope=${scope}`, body),
   deleteCredentials: (id: string, credentialsName: string, scope: ConnectorScope = "user") =>

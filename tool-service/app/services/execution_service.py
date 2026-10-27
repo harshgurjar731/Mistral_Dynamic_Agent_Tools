@@ -127,12 +127,15 @@ def _error(error_type: str, message: str, detail: str = "") -> dict:
     return {"status": "error", "error_type": error_type, "message": message, "detail": detail}
 
 
-def execute_tool(db: Session, tool_name: str, arguments: dict, version: Optional[int] = None) -> dict:
+def execute_tool(db: Session, tool_name: str, arguments: dict, version: Optional[int] = None,
+                 *, secrets: Optional[dict] = None, secret_names: Optional[list] = None,
+                 vault: bool = False) -> dict:
     """Execute a tool by name (``name`` or ``name@N``).
 
     Returns ``{"result": ..., "tool_name", "version"}`` or, when the call
     never reached the code, ``{"error": ..., "reason": ...}`` for the route to
-    map to a status code.
+    map to a status code. ``reason == "secrets_required"`` carries
+    ``secrets``: the names a vault-holding caller should resolve and resend.
     """
     name, pinned = registry.parse_ref(tool_name)
     version = version if version is not None else pinned
@@ -163,8 +166,21 @@ def execute_tool(db: Session, tool_name: str, arguments: dict, version: Optional
 
     spec = registry.spec_of(record)
     if spec.secrets:
+        supplied = {str(k): str(v) for k, v in (secrets or {}).items() if isinstance(v, str)}
         allowed = settings.secrets_allowlist
-        args["_secrets"] = {s: os.environ[s] for s in spec.secrets if s in allowed and s in os.environ}
+        values = {}
+        for s in spec.secrets:
+            if s in supplied:  # the caller's vault wins over this service's environment
+                values[s] = supplied[s]
+            elif s in allowed and s in os.environ:
+                values[s] = os.environ[s]
+        looked_up = set(secret_names or [])
+        unasked = [s for s in spec.secrets if s not in values and s not in looked_up]
+        if vault and unasked:
+            return {"error": f"Tool '{name}' needs {', '.join(spec.secrets)}.",
+                    "reason": "secrets_required", "secrets": list(spec.secrets),
+                    "tool_name": name}
+        args["_secrets"] = values
 
     try:
         run_fn = registry.load(record)

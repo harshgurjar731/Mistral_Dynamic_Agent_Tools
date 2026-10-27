@@ -11,6 +11,8 @@ import { tabRenames } from "@/components/layout/nav-items";
  */
 export const UI_DEFAULTS = {
   UI_ACCENT: "ember",
+  /** Day / night default until a viewer picks one (lib/theme.ts). */
+  UI_COLOR_MODE: "dark",
   UI_SURFACE_TONE: "neutral",
   UI_RADIUS: "default",
   UI_FONT_BODY: "rubik",
@@ -148,10 +150,16 @@ const MONO_FONTS: Record<string, { stack: string; google?: string }> = {
 
 const DEFAULT_TITLE = UI_DEFAULTS.UI_DOCUMENT_TITLE;
 
-/** Write the design settings onto the document. Idempotent. */
-export function applyUiConfig(cfg: UiConfig) {
+/**
+ * Write the design settings onto the document. Idempotent. ``theme`` is the
+ * resolved day / night mode: surface tones and the accent tint have a light and
+ * a dark value, and these inline values would otherwise override the
+ * stylesheet's day palette.
+ */
+export function applyUiConfig(cfg: UiConfig, theme: "light" | "dark" = "dark") {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  const light = theme === "light";
   const set = (name: string, value: string | null) =>
     value === null ? root.style.removeProperty(name) : root.style.setProperty(name, value);
 
@@ -165,7 +173,15 @@ export function applyUiConfig(cfg: UiConfig) {
   }
   set("--primary-foreground", isDefaultAccent ? null : fg);
   set("--sidebar-primary-foreground", isDefaultAccent ? null : fg);
-  set("--accent", isDefaultAccent ? null : `oklch(0.32 0.03 ${accent.hue})`);
+  set(
+    "--accent",
+    isDefaultAccent
+      ? null
+      : light
+        ? `oklch(0.93 0.04 ${accent.hue})`
+        : `oklch(0.32 0.03 ${accent.hue})`,
+  );
+  set("--accent-foreground", isDefaultAccent || !light ? null : `oklch(0.25 0.04 ${accent.hue})`);
   set(
     "--gradient-brand",
     isDefaultAccent ? null : `linear-gradient(135deg, var(--primary), oklch(${accent.end}))`,
@@ -179,18 +195,30 @@ export function applyUiConfig(cfg: UiConfig) {
 
   // Surface tone
   const tone = TONES[cfg.UI_SURFACE_TONE] ?? null;
-  const tinted: [string, string][] = tone
-    ? [
-        ["--background", `oklch(0.125 ${tone.c} ${tone.h})`],
-        ["--background-elevated", `oklch(0.16 ${tone.c} ${tone.h})`],
-        ["--popover", `oklch(0.19 ${tone.c} ${tone.h})`],
-        ["--surface", `oklch(0.225 ${tone.c} ${tone.h} / 0.72)`],
-        ["--card", `oklch(0.225 ${tone.c} ${tone.h} / 0.76)`],
-        ["--secondary", `oklch(0.26 ${tone.c} ${tone.h})`],
-        ["--muted", `oklch(0.26 ${tone.c} ${tone.h})`],
-        ["--sidebar", `oklch(0.135 ${tone.c} ${tone.h} / 0.96)`],
-      ]
-    : [];
+  const tinted: [string, string][] = !tone
+    ? []
+    : light
+      ? [
+          // Day: the same hue, a whisper of it, on near-white.
+          ["--background", `oklch(0.975 ${tone.c * 0.5} ${tone.h})`],
+          ["--background-elevated", `oklch(0.995 ${tone.c * 0.3} ${tone.h})`],
+          ["--popover", `oklch(1 ${tone.c * 0.2} ${tone.h})`],
+          ["--surface", `oklch(1 ${tone.c * 0.3} ${tone.h} / 0.78)`],
+          ["--card", `oklch(1 ${tone.c * 0.3} ${tone.h} / 0.86)`],
+          ["--secondary", `oklch(0.95 ${tone.c * 0.6} ${tone.h})`],
+          ["--muted", `oklch(0.95 ${tone.c * 0.6} ${tone.h})`],
+          ["--sidebar", `oklch(0.985 ${tone.c * 0.4} ${tone.h} / 0.96)`],
+        ]
+      : [
+          ["--background", `oklch(0.125 ${tone.c} ${tone.h})`],
+          ["--background-elevated", `oklch(0.16 ${tone.c} ${tone.h})`],
+          ["--popover", `oklch(0.19 ${tone.c} ${tone.h})`],
+          ["--surface", `oklch(0.225 ${tone.c} ${tone.h} / 0.72)`],
+          ["--card", `oklch(0.225 ${tone.c} ${tone.h} / 0.76)`],
+          ["--secondary", `oklch(0.26 ${tone.c} ${tone.h})`],
+          ["--muted", `oklch(0.26 ${tone.c} ${tone.h})`],
+          ["--sidebar", `oklch(0.135 ${tone.c} ${tone.h} / 0.96)`],
+        ];
   for (const name of [
     "--background",
     "--background-elevated",

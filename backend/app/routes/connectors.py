@@ -10,7 +10,7 @@ other's servers.
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Any, Optional
 
@@ -59,6 +59,9 @@ class CredentialsRequest(BaseModel):
     name: str = "default"
     credentials: dict = Field(default_factory=dict)
     is_default: bool = True
+    #: Credential field → vault entry (id or name), e.g. {"bearer_token": "GITHUB_TOKEN"}.
+    #: Resolved here, so the value never passes through the browser.
+    vault_fields: dict[str, str] = Field(default_factory=dict)
 
 
 class ActivationRequest(BaseModel):
@@ -158,14 +161,44 @@ async def list_credentials(connector_id: str, scope: str = "user"):
 
 @router.post("/connectors/{connector_id}/credentials")
 async def set_credentials(connector_id: str, request: CredentialsRequest, scope: str = "user"):
-    """Store a named credential, e.g. {"bearer_token": "..."}."""
+    """Store a named credential, e.g. {"bearer_token": "..."}, or take fields from the
+    vault with ``vault_fields``."""
+    credentials = dict(request.credentials)
+    if request.vault_fields:
+        credentials.update(await _from_vault(connector_id, request.vault_fields))
     return await connector_service.set_credentials(
         connector_id,
         scope=scope,
         name=request.name,
-        credentials=request.credentials,
+        credentials=credentials,
         is_default=request.is_default,
     )
+
+
+async def _from_vault(connector_id: str, fields: dict[str, str]) -> dict:
+    import asyncio
+
+    from app.vault import store as vault
+
+    def resolve() -> dict:
+        names = {}
+        for field, ref in fields.items():
+            entry = vault.get_secret(ref)
+            names[field] = entry["name"]
+        resolution = vault.resolve(set(names.values()), consumer=f"connector:{connector_id}",
+                                   actor="user")
+        missing = {f: n for f, n in names.items() if n not in resolution.values}
+        if missing:
+            raise ValueError("Vault could not supply " + ", ".join(
+                f"{n} ({resolution.problems.get(n, 'missing')})" for n in missing.values()))
+        return {f: resolution.values[n] for f, n in names.items()}
+
+    try:
+        return await asyncio.to_thread(resolve)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.delete("/connectors/{connector_id}/credentials")

@@ -115,7 +115,10 @@ def test_missing_secret_blocks_with_configuration_steps(services):
     item = _by_id(_check(_definition(
         {"id": "gst", "type": "tool",
          "config": {"tool_name": "apply_gst", "code_requirement": REQ}})))["secret.gst.GST_API_KEY"]
-    assert item["blocking"] and "SECRETS_ALLOWLIST" in item["instructions"][0]
+    # The vault is the fix offered first; the Tool Service's environment remains an option.
+    assert item["blocking"] and "Settings → Vault" in item["instructions"][0]
+    assert any("SECRETS_ALLOWLIST" in i for i in item["instructions"])
+    assert item["action"]["type"] == "vault" and item["action"]["name"] == "GST_API_KEY"
 
 
 def test_tool_service_down_blocks_and_skips_activity_checks(services):

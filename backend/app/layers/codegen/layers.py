@@ -8,6 +8,7 @@ The code-requirement layers, R1–R8.
     R4 SpecAuthoring       author the SynthesisSpec v2              ┐
     R5 ContractBinding     does it fit its neighbours?              │ loop, with
     R6 SpecPreflight       schemas, examples, names                 │ bounded
+    R4b CredentialCheck    is every credential it names available?  │
     R7 SubmitAndTrack      build it on the tool service             │ re-authoring
     R7b SmokeTest          run it for real; roll back a broken build┘
     R8 BindAndRefresh      make it visible to the rest of the platform
@@ -57,6 +58,9 @@ class RequirementContext:
     smoke_problems: list[str] = field(default_factory=list)
     #: Inputs a rebuilt version must run without error (the input it failed on).
     must_succeed: list[dict] = field(default_factory=list)
+    #: The build's credential view (``app.build_prereqs.code_check.CodeCheck``):
+    #: names already settled, and a way to ask about new ones. None: nobody to ask.
+    code_check: Any = None
 
     def emit(self, stage: str, message: str, **data) -> None:
         logger.info("[codegen:%s] %s: %s", self.need.name_hint or self.need.purpose, stage, message)
@@ -304,6 +308,77 @@ class SpecPreflightLayer:
         if issues:
             ctx.issues.extend(issues)
             ctx.emit("preflight", "; ".join(issues)[:400])
+
+
+# ── R4b ─────────────────────────────────────────────────────────────────────
+
+
+class CredentialCheckLayer:
+    """Before code is generated: can every credential the spec names be supplied?
+
+    Each name in ``secrets`` must be settled for this build, usable in the
+    vault, or in the Tool Service's environment. The rest are asked about
+    (``app.build_prereqs.code_check``). What the user chose changes the spec:
+
+    * a vault entry under another name — the spec is renamed to it;
+    * proceed without the service — the spec goes back to its author, told to
+      do without it (and what to do instead);
+    * add it later — built as is; it reports a configuration error until then;
+    * stop — nothing is built (``blocked``).
+    """
+
+    name = "credential_check"
+
+    async def run(self, ctx: RequirementContext) -> None:
+        from app.config import settings
+
+        req = ctx.requirement
+        if (not settings.PREREQ_CODE_CHECK or req is None or not req.secrets
+                or ctx.need.origin in ("runtime", "feedback")):
+            return
+        from app.build_prereqs.code_check import CodeCheck
+
+        check = ctx.code_check or CodeCheck(None)
+        names = [n for n in dict.fromkeys(req.secrets) if n]
+        if all(check.settled(n) for n in names):
+            # Settled for an earlier need of this build: apply the same outcome
+            # (a rename, a skip) without asking again.
+            choice, items = "continue", [check.settled(n) for n in names]
+        else:
+            ctx.emit("credentials", f"checking credentials: {', '.join(names)}")
+            choice, items = await check.settle(
+                names, subject=req.name or ctx.need.name_hint or ctx.profile.noun,
+                why=f"The {ctx.profile.noun} '{req.name}' reads it: {req.api_details[:200]}")
+        if choice != "continue":
+            ctx.finish("blocked",
+                       "Not built: you stopped it at the credential check." if choice == "cancel"
+                       else "Not built: it needs " + ", ".join(names) + " and nobody could be "
+                            "asked. Add them in Settings → Vault and build it again.",
+                       reason="prerequisites")
+            return
+
+        renamed: dict[str, str] = {}
+        dropped: list[str] = []
+        for item in items:
+            if item.status == "vault" and item.secret_name and item.secret_name != item.key:
+                renamed[item.key] = item.secret_name
+            elif item.status == "skipped":
+                dropped.append(item.key)
+                instead = item.instruction or item.alternative
+                ctx.need.guidance.append(
+                    f"Do not use {item.key} or the service that needs it ({item.label}); the user "
+                    f"chose to proceed without it." + (f" Instead: {instead}" if instead else ""))
+        if renamed:
+            req.secrets = [renamed.get(n, n) for n in req.secrets]
+            for old, new in renamed.items():
+                req.api_details = req.api_details.replace(old, new)
+            ctx.emit("credentials", "using vault entries " + ", ".join(
+                f"{new} for {old}" for old, new in renamed.items()))
+        if dropped:
+            ctx.issues.append("The user chose to proceed without " + ", ".join(dropped)
+                              + ": rewrite the specification so it needs none of them — follow "
+                                "the user's guidance on what to do instead.")
+            ctx.emit("credentials", "re-authoring without " + ", ".join(dropped))
 
 
 # ── R7 ──────────────────────────────────────────────────────────────────────

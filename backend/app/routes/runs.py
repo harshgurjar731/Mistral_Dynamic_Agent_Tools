@@ -173,18 +173,38 @@ async def start_rebuild(body: RebuildRun):
     return run.snapshot()
 
 
+class PrerequisiteAnswer(BaseModel):
+    """How one build prerequisite was settled (``app.build_prereqs.ask``).
+
+    Deliberately has no field for a value: a credential is stored in the vault
+    first and named here by ``secret_id``."""
+    key: str = Field(min_length=1, max_length=120)
+    action: Literal["vault", "text", "skip", "defer"]
+    secret_id: Optional[str] = Field(default=None, max_length=64)
+    #: An information item's answer (refused for anything held in the vault).
+    text: Optional[str] = Field(default=None, max_length=2000)
+    #: For skip: what the build should do instead.
+    instruction: Optional[str] = Field(default=None, max_length=2000)
+
+
 class DecisionAnswer(BaseModel):
     choice: str = Field(min_length=1)
     #: For a choice the question lists in ``message_options`` (e.g. retry):
     #: what to change before trying again.
     message: Optional[str] = Field(default=None, max_length=4000)
+    #: For a ``prerequisites`` question: how each item was settled.
+    answers: Optional[list[PrerequisiteAnswer]] = Field(default=None, max_length=50)
 
 
 @router.post("/runs/{run_id}/decisions/{decision_id}")
 async def answer_decision(run_id: str, decision_id: str, body: DecisionAnswer):
     """Answer a question a running run is waiting on (``decision_required`` event)."""
-    data = {"message": body.message.strip()} if body.message and body.message.strip() else None
-    error = manager.answer(run_id, decision_id, body.choice, data)
+    data: dict = {}
+    if body.message and body.message.strip():
+        data["message"] = body.message.strip()
+    if body.answers is not None:
+        data["answers"] = [a.model_dump(exclude_none=True) for a in body.answers]
+    error = manager.answer(run_id, decision_id, body.choice, data or None)
     if error:
         if manager.live(run_id) is None and await manager.get(run_id) is None:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")

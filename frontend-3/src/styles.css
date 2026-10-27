@@ -7,6 +7,9 @@
 /*
  * Agentic AI Design Patterns — Control Plane design system.
  * Dark-first, glass surfaces, restrained glow. All colors are tokens.
+ *
+ * Day mode: `:root[data-theme="light"]` below redefines every token; nothing
+ * else in the app names a colour of its own. lib/theme.ts sets data-theme.
  */
 
 @theme inline {
@@ -136,6 +139,90 @@
   --sidebar-accent-foreground: oklch(0.985 0.003 247);
   --sidebar-border: oklch(0.75 0.033 257 / 0.12);
   --sidebar-ring: oklch(0.65 0.18 36);
+
+  /* Scenery: atmosphere, grid, scrollbars, shimmer, canvas details. */
+  --atmosphere: oklch(0.17 0.01 45 / 0.45);
+  --grid-line: oklch(0.75 0.033 257 / 0.06);
+  --scrollbar: oklch(0.75 0.033 257 / 0.22);
+  --scrollbar-hover: oklch(0.75 0.033 257 / 0.34);
+  --shimmer: oklch(1 0 0 / 0.07);
+  --selection: oklch(0.585 0.216 277 / 0.35);
+  --handle-border: oklch(1 0 0 / 0.3);
+  --canvas-minimap: oklch(0.13 0 0 / 0.72);
+}
+
+/* ── Day mode ───────────────────────────────────────────────────────────
+   Same roles, light values. Status colours are darker than at night so text
+   in them keeps its contrast on a white page; tints (bg-emerald/10 …) stay
+   soft because they are mixed from the same tokens. */
+:root[data-theme="light"] {
+  --background: oklch(0.975 0.004 70);
+  --background-elevated: oklch(0.995 0.002 70);
+  --foreground: oklch(0.22 0.012 60);
+
+  --surface: oklch(1 0 0 / 0.78);
+  --surface-elevated: oklch(1 0 0 / 0.94);
+  --surface-hover: oklch(0.93 0.006 60 / 0.75);
+
+  --border: oklch(0.32 0.012 60 / 0.13);
+  --border-strong: oklch(0.32 0.012 60 / 0.24);
+
+  --card: oklch(1 0 0 / 0.86);
+  --card-foreground: oklch(0.22 0.012 60);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.012 60);
+
+  --primary: oklch(0.6 0.19 36);
+  --primary-foreground: oklch(0.99 0.004 70);
+  --secondary: oklch(0.95 0.005 65);
+  --secondary-foreground: oklch(0.26 0.012 60);
+  --muted: oklch(0.95 0.005 65);
+  --muted-foreground: oklch(0.47 0.016 60);
+  --accent: oklch(0.93 0.035 45);
+  --accent-foreground: oklch(0.25 0.03 45);
+  --destructive: oklch(0.55 0.21 26);
+  --destructive-foreground: oklch(0.99 0.003 247);
+  --input: oklch(0.32 0.012 60 / 0.22);
+  --ring: oklch(0.6 0.19 36);
+
+  --indigo: oklch(0.6 0.19 36);
+  --purple: oklch(0.52 0.22 302);
+  --blue: oklch(0.52 0.19 259);
+  --cyan: oklch(0.55 0.11 214);
+  --pink: oklch(0.55 0.21 4);
+  --emerald: oklch(0.53 0.13 162);
+  --amber: oklch(0.6 0.15 65);
+  --red: oklch(0.55 0.21 26);
+  --orange: oklch(0.6 0.17 47);
+  --slate: oklch(0.5 0.03 257);
+
+  --gradient-brand: linear-gradient(135deg, var(--primary), oklch(0.66 0.15 55));
+  --shadow-panel: 0 1px 0 0 oklch(1 0 0 / 0.7) inset, 0 14px 30px -24px oklch(0.3 0.03 60 / 0.4);
+  --shadow-glow: 0 0 0 1px oklch(0.6 0.19 36 / 0.3), 0 10px 26px -14px oklch(0.6 0.19 36 / 0.3);
+
+  --chart-1: oklch(0.52 0.2 277);
+  --chart-2: oklch(0.55 0.11 214);
+  --chart-3: oklch(0.53 0.13 162);
+  --chart-4: oklch(0.62 0.15 65);
+  --chart-5: oklch(0.52 0.22 302);
+
+  --sidebar: oklch(0.985 0.003 70 / 0.96);
+  --sidebar-foreground: oklch(0.24 0.012 60);
+  --sidebar-primary: oklch(0.6 0.19 36);
+  --sidebar-primary-foreground: oklch(0.99 0.004 70);
+  --sidebar-accent: oklch(0.94 0.006 65);
+  --sidebar-accent-foreground: oklch(0.22 0.012 60);
+  --sidebar-border: oklch(0.32 0.012 60 / 0.1);
+  --sidebar-ring: oklch(0.6 0.19 36);
+
+  --atmosphere: oklch(0.93 0.03 55 / 0.55);
+  --grid-line: oklch(0.32 0.02 257 / 0.06);
+  --scrollbar: oklch(0.32 0.012 60 / 0.22);
+  --scrollbar-hover: oklch(0.32 0.012 60 / 0.36);
+  --shimmer: oklch(1 0 0 / 0.55);
+  --selection: oklch(0.6 0.19 36 / 0.22);
+  --handle-border: oklch(1 0 0 / 0.9);
+  --canvas-minimap: oklch(1 0 0 / 0.8);
 }
 
 @layer base {
@@ -145,6 +232,17 @@
 
   html {
     color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+  /* Switching day / night eases the change instead of snapping. */
+  html.theme-switching,
+  html.theme-switching * {
+    transition:
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease !important;
   }
 
   body {
@@ -180,7 +278,7 @@
   }
 
   ::selection {
-    background: oklch(0.585 0.216 277 / 0.35);
+    background: var(--selection);
   }
 
   :focus-visible {
@@ -196,13 +294,13 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, oklch(0.17 0.01 45 / 0.45), transparent 34%);
+  background: linear-gradient(180deg, var(--atmosphere), transparent 34%);
 }
 
 @utility grid-backdrop {
   background-image:
-    linear-gradient(to right, oklch(0.75 0.033 257 / 0.06) 1px, transparent 1px),
-    linear-gradient(to bottom, oklch(0.75 0.033 257 / 0.06) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
@@ -256,7 +354,7 @@
 
 @utility custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.75 0.033 257 / 0.22) transparent;
+  scrollbar-color: var(--scrollbar) transparent;
   &::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -265,11 +363,11 @@
     background: transparent;
   }
   &::-webkit-scrollbar-thumb {
-    background: oklch(0.75 0.033 257 / 0.22);
+    background: var(--scrollbar);
     border-radius: 999px;
   }
   &::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.75 0.033 257 / 0.34);
+    background: var(--scrollbar-hover);
   }
 }
 
@@ -313,7 +411,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.07), transparent);
+    background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
     animation: shimmer-sweep 1.8s infinite;
   }
 }
@@ -328,7 +426,7 @@
   }
 }
 
-/* React Flow theming (dark, tokenized) — every canvas in the app shares it */
+/* React Flow theming (tokenized, day and night) — every canvas in the app shares it */
 .react-flow {
   --xy-background-color: transparent;
   --xy-edge-stroke: var(--border-strong);
@@ -367,7 +465,7 @@
 }
 .react-flow__handle {
   background: var(--indigo);
-  border: 1px solid oklch(1 0 0 / 0.3);
+  border: 1px solid var(--handle-border);
   width: 8px;
   height: 8px;
 }
@@ -433,7 +531,7 @@
   fill: currentColor;
 }
 .ontology-canvas .react-flow__minimap {
-  background: oklch(0.13 0 0 / 0.72);
+  background: var(--canvas-minimap);
   box-shadow: var(--shadow-panel);
 }
 .ontology-canvas .react-flow__edge-text {

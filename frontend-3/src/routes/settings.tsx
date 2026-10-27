@@ -11,6 +11,7 @@ import {
   Database,
   Gauge,
   GitBranch,
+  KeyRound,
   LayoutDashboard,
   LayoutTemplate,
   Loader2,
@@ -64,6 +65,7 @@ import {
 import { SettingTile } from "@/components/settings/SettingControls";
 import { ProcessTemplatesPanel } from "@/components/settings/ProcessTemplatesPanel";
 import { ToolSafetyPanel } from "@/components/settings/ToolSafetyPanel";
+import { VaultPanel } from "@/components/settings/VaultPanel";
 import {
   ModelCatalogBrowser,
   ModelUsageMap,
@@ -83,6 +85,9 @@ const searchSchema = z.object({
   category: z.string().optional(),
   /** Process knowledge: the industry, domain or process whose template to show. */
   scope: z.string().optional(),
+  /** Vault: the entry to show, or a name to add (from a prerequisite's action). */
+  secret: z.string().optional(),
+  create: z.string().optional(),
 });
 
 export const Route = createFileRoute("/settings")({
@@ -118,7 +123,7 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
 };
 
 type CategoryId =
-  "overview" | "models" | "tool_service" | "platform" | "process" | "safety" | "frontend";
+  "overview" | "models" | "tool_service" | "platform" | "process" | "safety" | "vault" | "frontend";
 
 const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIcon }[] = [
   {
@@ -162,6 +167,13 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     icon: ShieldAlert,
   },
   {
+    id: "vault",
+    title: "Vault & prerequisites",
+    blurb:
+      "Encrypted credentials and service URLs for the code that calls third-party services, and what a build must settle with you before it starts.",
+    icon: KeyRound,
+  },
+  {
     id: "frontend",
     title: "Frontend & design",
     blurb:
@@ -181,6 +193,11 @@ function SettingsPage() {
   const [category, setCategory] = useState<CategoryId>(() =>
     CATEGORIES.some((c) => c.id === search.category) ? (search.category as CategoryId) : "models",
   );
+  useEffect(() => {
+    if (search.category && CATEGORIES.some((c) => c.id === search.category)) {
+      setCategory(search.category as CategoryId);
+    }
+  }, [search.category]);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Record<string, SettingValue>>({});
   const [report, setReport] = useState<RefreshReport | null>(null);
@@ -589,6 +606,9 @@ function SettingsPage() {
                 <ProcessTemplatesPanel initialScope={search.scope} />
               ) : null}
               {category === "safety" ? <ToolSafetyPanel /> : null}
+              {category === "vault" ? (
+                <VaultPanel focusId={search.secret} createName={search.create} />
+              ) : null}
               {sectionsIn(category).map((s) => (
                 <SectionCard
                   key={`${s.target}-${s.id}`}

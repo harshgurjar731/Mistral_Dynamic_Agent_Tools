@@ -41,6 +41,8 @@ class CapabilityGapLayer(Layer):
         return self.enabled and not ctx.agent_id and not ctx.conversation_id
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
+        from app.build_prereqs import guidance as prerequisites
+        from app.build_prereqs.code_check import CodeCheck
         from app.core.specs import CodeNeed
         from app.layers.codegen import resolve_code_need
         from app.prompts import SYNTHESIS_CHECK_SYSTEM_PROMPT, SYNTHESIS_CHECK_USER_PROMPT
@@ -64,7 +66,7 @@ class CapabilityGapLayer(Layer):
                 system=safety.apply(SYNTHESIS_CHECK_SYSTEM_PROMPT, "capability_gap"),
                 user=SYNTHESIS_CHECK_USER_PROMPT.format(
                     tool_descriptions=get_tool_descriptions(),
-                    user_query=query_block,
+                    user_query=query_block + prerequisites.block(ctx),
                 ),
                 phase="capability gap",
             )
@@ -90,13 +92,15 @@ class CapabilityGapLayer(Layer):
                     "parameters": data.get("parameters", {}),
                     "required": data.get("required", []),
                 },
+                guidance=prerequisites.code_guidance(ctx),
             )
 
             def relay(event: dict) -> None:
-                if event.get("stage") in ("reuse", "author", "submit", "build"):
+                if event.get("stage") in ("reuse", "author", "submit", "build", "credentials"):
                     ctx.emit("status", str(event.get("message", ""))[:200])
 
-            resolution = await resolve_code_need(need, client=ctx.client, on_event=relay)
+            resolution = await resolve_code_need(need, client=ctx.client, on_event=relay,
+                                                 code_check=CodeCheck(ctx))
             logger.info("Capability resolution: %s %s (%s)", resolution.status,
                         resolution.name, resolution.message[:200])
 

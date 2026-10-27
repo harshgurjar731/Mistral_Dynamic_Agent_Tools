@@ -51,6 +51,10 @@ export const QK = {
   // Process knowledge. A process is an ontology concept, so writes here also
   // invalidate QK.ontology().
   safetyRules: () => ["safety-rules"] as const,
+  vault: () => ["vault"] as const,
+  vaultSecret: (id: string) => ["vault", "secret", id] as const,
+  vaultVersions: (id: string) => ["vault", "secret", id, "versions"] as const,
+  vaultAudit: (params: Record<string, unknown>) => ["vault", "audit", params] as const,
   processes: () => ["processes"] as const,
   processConfig: () => ["processes", "config"] as const,
   processIndustries: () => ["processes", "industries"] as const,

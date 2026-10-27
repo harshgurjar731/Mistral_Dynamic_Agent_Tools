@@ -52,12 +52,15 @@ import {
   type LibraryProvisionedView,
   type RulesSelectedView,
 } from "@/components/pipeline/DecisionCards";
+import { PrerequisitesCard, type PrerequisitesEvent } from "@/components/vault/PrerequisitesCard";
 
 /* ── Step model ────────────────────────────────────────────────────────── */
 
 export type PlannerStepType =
   | "process_knowledge"
   | "process_knowledge_applied"
+  | "prerequisites"
+  | "code_prerequisites"
   | "capabilities"
   | "execution_modes"
   | "reuse_plan"
@@ -97,6 +100,8 @@ export const PLANNER_CARD_OWNER: Partial<Record<PlannerStepType, string>> = {
   process_knowledge_applied: "process_knowledge",
   capabilities: "goal_decomposition",
   execution_modes: "execution_mode",
+  prerequisites: "workflow_prerequisites",
+  code_prerequisites: "activity_gap",
   reuse_plan: "capability_reuse",
   // One consolidated plan per layer; the per-activity events are still
   // accepted for older history entries.
@@ -1629,6 +1634,9 @@ export function renderPlannerCard(step: PlannerStep): ReactNode {
       return <CapabilitiesCard data={c as CapabilitiesData} />;
     case "execution_modes":
       return <ExecutionModesCard data={c as ExecutionModesData} />;
+    case "prerequisites":
+    case "code_prerequisites":
+      return <PrerequisitesCard data={c as PrerequisitesEvent} />;
     case "reuse_plan":
       return <ReusePlanCard data={c as ReusePlanData} />;
     case "activity_plan":

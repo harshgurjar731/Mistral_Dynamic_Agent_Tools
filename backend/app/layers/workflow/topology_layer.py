@@ -150,6 +150,7 @@ class StepTopologyLayer(WorkflowDecisionLayer):
     """Decide steps, types, edges, parallel groups and bindings."""
 
     name = "step_topology"
+    uses_prerequisites = True
     process_view = "topology"
     label = "Shape the graph"
     detail = "Decides which steps exist, how they connect, and which run concurrently."

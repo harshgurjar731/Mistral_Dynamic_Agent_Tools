@@ -36,6 +36,7 @@ class DataFlowLayer(WorkflowDecisionLayer):
     """Fill in templates, arguments, expressions and the input schema."""
 
     name = "data_flow"
+    uses_prerequisites = True
     process_view = "data_flow"
     label = "Wire the data"
     detail = "Decides what each step is handed and what it passes on."

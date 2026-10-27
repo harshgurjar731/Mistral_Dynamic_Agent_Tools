@@ -8,6 +8,7 @@ import { Cpu, Wrench } from "lucide-react";
 import { tierIdentity } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { RuleOutcome } from "@/types";
+import { PrerequisitesCard, type PrerequisitesEvent } from "@/components/vault/PrerequisitesCard";
 import {
   ProcessAppliedCard,
   ProcessKnowledgeCard,
@@ -66,6 +67,8 @@ export interface AgentDecisions {
   rule_outcomes?: RuleOutcome[];
   process_knowledge?: ProcessKnowledgeEvent;
   process_knowledge_applied?: ProcessAppliedEvent;
+  prerequisites?: PrerequisitesEvent;
+  code_prerequisites?: PrerequisitesEvent;
 }
 
 export const AGENT_DECISION_EVENTS = new Set<keyof AgentDecisions>([
@@ -79,6 +82,8 @@ export const AGENT_DECISION_EVENTS = new Set<keyof AgentDecisions>([
   "rule_outcomes",
   "process_knowledge",
   "process_knowledge_applied",
+  "prerequisites",
+  "code_prerequisites",
 ]);
 
 function RequirementsCard({ data }: { data: RequirementsView }) {
@@ -281,7 +286,14 @@ export function agentLayerCards(d: AgentDecisions): Record<string, ReactNode> {
           ) : null}
         </>
       ) : null,
-    capability_gap: d.tool_new ? <ToolBuiltCard data={d.tool_new} /> : null,
+    agent_prerequisites: d.prerequisites ? <PrerequisitesCard data={d.prerequisites} /> : null,
+    capability_gap:
+      d.tool_new || d.code_prerequisites ? (
+        <>
+          {d.code_prerequisites ? <PrerequisitesCard data={d.code_prerequisites} /> : null}
+          {d.tool_new ? <ToolBuiltCard data={d.tool_new} /> : null}
+        </>
+      ) : null,
     library_provisioning: d.library_provisioned ? (
       <LibraryProvisionedCard data={d.library_provisioned} />
     ) : null,

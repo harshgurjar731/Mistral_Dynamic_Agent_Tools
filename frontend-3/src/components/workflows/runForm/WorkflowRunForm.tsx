@@ -450,7 +450,7 @@ function FieldControl({
           value={text}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
-          className={cn(base, "[color-scheme:dark]")}
+          className={base}
         />
       );
     case "email":

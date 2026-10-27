@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { arrangeNav, navLabel, parseNavLayout } from "./nav-items";
 import { HealthIndicator } from "./HealthIndicator";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
+import { ThemeToggle } from "./ThemeToggle";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import { useUiConfig } from "@/lib/uiConfig";
@@ -191,6 +192,7 @@ export function Sidebar({
           <div className="hidden space-y-1 border-b border-border pb-2 md:block">
             <RunsIndicator variant="rail" collapsed={collapsed} />
             <HealthIndicator variant="rail" collapsed={collapsed} />
+            <ThemeToggle variant="rail" collapsed={collapsed} />
           </div>
           <a
             href="/docs"

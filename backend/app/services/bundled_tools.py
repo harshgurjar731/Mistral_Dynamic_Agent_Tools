@@ -221,8 +221,17 @@ def execute(name: str, arguments: dict, version: int | None = None) -> dict:
                     "reason": "bad_arguments", "tool_name": name}
 
     secrets = entry.get("secrets") or []
+    vaulted: dict[str, str] = {}
     if secrets:
-        args["_secrets"] = {s: os.environ[s] for s in secrets if s in os.environ}
+        # A package's .env supplies its secrets; a vault in the same database
+        # (a package run next to the platform) is tried first.
+        try:
+            from app.vault import store as vault
+
+            vaulted = vault.resolve(secrets, consumer=name).values
+        except Exception:  # noqa: BLE001 — no vault here: the environment alone
+            vaulted = {}
+        args["_secrets"] = {**{s: os.environ[s] for s in secrets if s in os.environ}, **vaulted}
 
     try:
         run = _load(name, version_no, entry["module"])
@@ -249,4 +258,8 @@ def execute(name: str, arguments: dict, version: int | None = None) -> dict:
     except (TypeError, ValueError):
         result = _error("unexpected_error", f"{name} returned a value that is not JSON-serialisable",
                         repr(result)[:500])
+    if vaulted:
+        from app.vault.redact import scrub
+
+        result = scrub(result, vaulted)
     return {"result": result, "tool_name": name, "version": version_no}

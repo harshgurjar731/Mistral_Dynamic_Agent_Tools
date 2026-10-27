@@ -18,6 +18,7 @@ register it here:
     chat_pipeline.add(MyDecisionLayer(), before="guardrail_config")
 """
 
+from app.build_prereqs.layer import BuildPrerequisitesLayer
 from app.core.layer import ParallelGroup
 from app.core.pipeline import Pipeline
 
@@ -73,6 +74,9 @@ from app.layers.workflow import (
 # Ordering constraints, in the order they bind:
 #
 #   CleanupLayer is outermost so its try/finally wraps every other layer.
+#   BuildPrerequisitesLayer runs after the requirement is understood and before
+#     CapabilityGapLayer, the first layer that can build anything — what the
+#     build needs from the user is settled before any of it is spent.
 #   CapabilityGapLayer runs before tool selection, because a tool synthesised
 #     there has to be visible to the layer that selects tools.
 #   AgentInventoryLayer runs before the facet group, because all five branches
@@ -92,6 +96,7 @@ from app.layers.workflow import (
 chat_pipeline = Pipeline("agent_chat")
 chat_pipeline.add(CleanupLayer())
 chat_pipeline.add(RequirementAnalysisLayer())
+chat_pipeline.add(BuildPrerequisitesLayer("agent"))
 chat_pipeline.add(CapabilityGapLayer())
 chat_pipeline.add(AgentInventoryLayer())
 # After inventory (it resolves the scope this reads), before the facet group so
@@ -122,12 +127,17 @@ chat_pipeline.add(ExecutionLayer())
 # concurrency that exists is internal — AgentDesignLayer designs agents
 # concurrently, ActivityGapLayer synthesises concurrently, and
 # AgentProvisioningLayer creates concurrently, each under its own bound.
+#
+# BuildPrerequisitesLayer sits where the steps and how each runs are known and
+# nothing has been created yet: a build that cannot get what it needs stops
+# before it has spent anything.
 
 workflow_pipeline = Pipeline("workflow_design")
 workflow_pipeline.add(ResourceInventoryLayer())
 workflow_pipeline.add(ProcessKnowledgeLayer("workflow"))
 workflow_pipeline.add(GoalDecompositionLayer())
 workflow_pipeline.add(ExecutionModeLayer())
+workflow_pipeline.add(BuildPrerequisitesLayer("workflow"))
 workflow_pipeline.add(CapabilityReuseLayer())
 workflow_pipeline.add(ActivityGapLayer())
 workflow_pipeline.add(AgentDesignLayer())

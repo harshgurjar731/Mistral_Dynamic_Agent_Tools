@@ -49,6 +49,9 @@ _ROUTES: dict[str, ModelRoute] = {
     "spec_author": ModelRoute("spec_author", PRIMARY, "high", 240_000, None, FALLBACK),
     # Gap decisions made by the chat pipeline (CapabilityGapLayer).
     "capability_gap": ModelRoute("capability_gap", PRIMARY, "none", 120_000, 0.1, FALLBACK),
+    # What a build needs from the user before it starts (build_prereqs).
+    "prerequisite_analysis": ModelRoute("prerequisite_analysis", PRIMARY, "none", 120_000, 0.1,
+                                        FALLBACK),
 }
 
 

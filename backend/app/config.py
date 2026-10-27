@@ -89,6 +89,31 @@ class Settings(BaseSettings):
     PROCESS_DOC_MAX_KB: int = 512
     PROCESS_MATCH_MIN_SCORE: float = 3.0
 
+    # Vault (Settings → Vault): encrypted credentials and service URLs that
+    # tools, activities and connectors receive at run time. The master keys
+    # (VAULT_MASTER_KEYS) and the admin token (VAULT_ADMIN_TOKEN) are read
+    # from the environment only — see app/vault/crypto.py and guard.py.
+    VAULT_ENABLED: bool = True
+    VAULT_ALLOW_REVEAL: bool = False
+    VAULT_ENV_FALLBACK: bool = True
+    VAULT_REDACT_RESULTS: bool = True
+    VAULT_AUDIT_USE: bool = True
+    VAULT_AUDIT_RETENTION_DAYS: int = 180
+    VAULT_VERSION_HISTORY: int = 5
+    VAULT_DEFAULT_EXPIRY_DAYS: int = 0
+    VAULT_ROTATION_REMINDER_DAYS: int = 90
+
+    # Build prerequisites: what an agent or workflow needs from the user
+    # (credentials, service URLs, facts), worked out and settled before
+    # anything is built. See app/build_prereqs.
+    PREREQ_CHECK_ENABLED: bool = True
+    PREREQ_AUTO_USE_VAULT: bool = True
+    PREREQ_ASK_WHEN_SATISFIED: bool = False
+    PREREQ_ASK_FOR_INFORMATION: bool = True
+    PREREQ_UNATTENDED_POLICY: str = "proceed"
+    PREREQ_CODE_CHECK: bool = True
+    PREREQ_BLOCK_RUN_ON_MISSING: bool = True
+
     WORKFLOW_MAX_STEPS: int = 20
     WORKFLOW_STEP_TIMEOUT: int = 60
 

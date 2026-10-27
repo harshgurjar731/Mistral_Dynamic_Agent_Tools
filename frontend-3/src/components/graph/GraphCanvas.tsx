@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type DragEvent, type ReactNode } from "react";
+import { useTheme } from "@/lib/theme";
 import {
   Background,
   BackgroundVariant,
@@ -61,6 +62,7 @@ export function GraphCanvas({
   className?: string;
 }) {
   const handlePaneClick = useCallback(() => onPaneClick?.(), [onPaneClick]);
+  const { resolved: theme } = useTheme();
   const frameRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<ReactFlowInstance<StepFlowNode, StepFlowEdge> | null>(null);
   const { isFullscreen, isFallback, toggle } = useFullscreen(frameRef);
@@ -96,7 +98,7 @@ export function GraphCanvas({
       <StepCatalogContext.Provider value={catalog}>
         <ReactFlowProvider>
           <ReactFlow
-            colorMode="dark"
+            colorMode={theme}
             nodes={nodes}
             edges={edges}
             nodeTypes={stepNodeTypes}

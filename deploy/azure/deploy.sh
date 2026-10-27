@@ -23,6 +23,7 @@ set_if_empty() {  # key value
 set_if_empty NEO4J_PASSWORD "$(openssl rand -hex 16)"
 # A Fernet key is 32 random bytes, url-safe base64 encoded.
 set_if_empty REMOTE_SERVER_SECRET_KEY "$(openssl rand -base64 32 | tr '+/' '-_')"
+set_if_empty VAULT_MASTER_KEYS "$(openssl rand -base64 32 | tr '+/' '-_')"
 
 IP=$(curl -fs --max-time 3 -H Metadata:true \
   "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" || true)

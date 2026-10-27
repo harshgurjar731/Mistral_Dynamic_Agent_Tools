@@ -24,6 +24,7 @@ import {
 import { errorMessage, QK, toolsApi, workflowsApi } from "@/api";
 import type { Prerequisite, PrerequisiteReport } from "@/types";
 import { Button } from "@/components/ui/button";
+import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
 
 export function useWorkflowPrerequisites(workflowName: string | null | undefined) {
@@ -231,6 +232,9 @@ function PrerequisiteAction({ item, report }: { item: Prerequisite; report: Prer
   });
 
   if (!action) return null;
+  if (action.type === "vault") {
+    return <VaultAction action={action} blocking={item.blocking} onSaved={() => void refresh()} />;
+  }
   if (action.type === "link") {
     return (
       <Button asChild size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-[11px]">
@@ -265,5 +269,45 @@ function PrerequisiteAction({ item, report }: { item: Prerequisite; report: Prer
         </Link>
       ) : null}
     </div>
+  );
+}
+
+/** "Add to the vault" right here, or open an existing entry that needs fixing. */
+function VaultAction({
+  action,
+  blocking,
+  onSaved,
+}: {
+  action: Extract<NonNullable<Prerequisite["action"]>, { type: "vault" }>;
+  blocking: boolean;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (action.id) {
+    return (
+      <Button asChild size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-[11px]">
+        <Link to={action.to as never}>
+          {action.label} <ArrowRight className="size-3" />
+        </Link>
+      </Button>
+    );
+  }
+  return (
+    <>
+      <Button
+        size="sm"
+        variant={blocking ? "default" : "outline"}
+        className="h-7 shrink-0 gap-1 text-[11px]"
+        onClick={() => setOpen(true)}
+      >
+        {action.label}
+      </Button>
+      <VaultSecretDialog
+        open={open}
+        onOpenChange={setOpen}
+        preset={{ name: action.name }}
+        onSaved={onSaved}
+      />
+    </>
   );
 }

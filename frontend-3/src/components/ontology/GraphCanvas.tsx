@@ -1,3 +1,4 @@
+import { useTheme } from "@/lib/theme";
 import {
   memo,
   useEffect,
@@ -944,6 +945,7 @@ export function GraphCanvas({
   className?: string | undefined;
   empty?: ReactNode;
 }) {
+  const { resolved: theme } = useTheme();
   const frameRef = useRef<HTMLDivElement>(null);
   const { isFullscreen, isFallback, toggle } = useFullscreen(frameRef);
   const [minimap, setMinimap] = useState(minimapDefault);
@@ -1185,7 +1187,7 @@ export function GraphCanvas({
     >
       <ReactFlowProvider>
         <ReactFlow
-          colorMode="dark"
+          colorMode={theme}
           nodes={allNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}

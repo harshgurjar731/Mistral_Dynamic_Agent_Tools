@@ -73,6 +73,8 @@ class ActivityGapLayer(WorkflowStepLayer):
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         # ``next`` is the pipeline continuation, shadowing the builtin.
+        from app.build_prereqs import guidance as prerequisites
+        from app.build_prereqs.code_check import CodeCheck
         from app.core.specs import CodeNeed, CodeRequirement
         from app.layers.codegen import resolve_code_needs
 
@@ -110,15 +112,21 @@ class ActivityGapLayer(WorkflowStepLayer):
                             "inputs": cap.inputs, "outputs": cap.outputs},
                 upstream=upstream,
                 downstream=downstream,
+                # What was settled with the user before building: the vault names
+                # to read, the services to do without, the facts to rely on.
+                guidance=prerequisites.code_guidance(ctx, cap.id),
             ))
 
         def relay(event: dict) -> None:
             stage = event.get("stage")
-            if stage in ("reuse", "author", "submit", "contract", "preflight", "smoke", "rollback"):
+            if stage in ("reuse", "author", "submit", "contract", "preflight", "credentials", "smoke",
+                         "rollback"):
                 ctx.emit("status", str(event.get("message", ""))[:200])
 
+        code_check = CodeCheck(ctx)
         resolutions = await resolve_code_needs(needs, client=ctx.client, on_event=relay,
-                                               concurrency=max(1, settings.TOOL_SYNTHESIS_CONCURRENCY))
+                                               concurrency=max(1, settings.TOOL_SYNTHESIS_CONCURRENCY),
+                                               code_check=code_check)
 
         # A second attempt, one at a time, for what failed. Most failures here
         # are the tool service being restarted or saturated by the concurrent
@@ -128,7 +136,7 @@ class ActivityGapLayer(WorkflowStepLayer):
                     if not _resolved(r) and r.status not in _FINAL_FAILURES]
         if retry_at:
             ctx.emit("status", f"Retrying {len(retry_at)} activity(ies) that could not be built…")
-            await _retry(resolutions, needs, retry_at, ctx, relay)
+            await _retry(resolutions, needs, retry_at, ctx, relay, code_check)
             attempts += 1
 
         # Still failing after every automatic attempt: the user decides.
@@ -152,7 +160,7 @@ class ActivityGapLayer(WorkflowStepLayer):
                         needs[i].guidance.append(message)
                 ctx.emit("status", f"Retrying {len(failing)} activity(ies) at your request"
                                    + (" with your changes…" if message else "…"))
-                await _retry(resolutions, needs, failing, ctx, relay)
+                await _retry(resolutions, needs, failing, ctx, relay, code_check)
                 attempts += 1
                 continue
             if choice == "rollback":
@@ -261,12 +269,14 @@ def _short(text: str, limit: int = 300) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-async def _retry(resolutions: list, needs: list, at: list[int], ctx, relay) -> None:
+async def _retry(resolutions: list, needs: list, at: list[int], ctx, relay,
+                 code_check=None) -> None:
     """Build ``needs[at]`` again, one at a time, keeping any improvement."""
     from app.layers.codegen import resolve_code_needs
 
     retried = await resolve_code_needs([needs[i] for i in at], client=ctx.client,
-                                       on_event=relay, concurrency=1)
+                                       on_event=relay, concurrency=1,
+                                       code_check=code_check)
     for i, again in zip(at, retried):
         if _resolved(again):
             resolutions[i] = again
