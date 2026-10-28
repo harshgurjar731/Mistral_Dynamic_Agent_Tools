@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { Rule, RuleEnforcement, RuleScope } from "@/types";
 import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@/lib/sorting";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/rules/")({
   head: () => ({
@@ -450,7 +451,10 @@ function RuleActivity() {
         />
         <Segmented value={outcome} onChange={setOutcome} options={OUTCOME_FILTERS} />
         {query.isFetching ? (
-          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+          <>
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            <LivePercent mode="load" />
+          </>
         ) : null}
         {events.length > 0 && (
           <span className="ml-auto text-xs tabular-nums text-muted-foreground/60">

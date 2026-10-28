@@ -10,6 +10,7 @@ import { SectionCard } from "@/components/shared/SectionCard";
 import { CheckReportView, HostFacts } from "../CheckReportView";
 import { BrevInstanceCard, CloudInstanceCard, ConfigurationCard } from "./ServerPanels";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** How the server is set up and how it checks out — plus removing it. */
 export function SettingsTab({
@@ -77,7 +78,12 @@ export function SettingsTab({
               <PlugZap className="size-6 text-muted-foreground" />
               <p className="text-xs text-muted-foreground">This server hasn't been checked yet.</p>
               <Button size="sm" onClick={onCheck} disabled={checking}>
-                {checking ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                {checking ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : null}
                 Run diagnostics
               </Button>
             </div>
@@ -109,7 +115,10 @@ export function SettingsTab({
           disabled={removing}
         >
           {removing ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Trash2 className="size-3.5" />
           )}

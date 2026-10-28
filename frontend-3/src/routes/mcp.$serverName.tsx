@@ -49,6 +49,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/mcp/$serverName")({
   head: () => ({
@@ -192,7 +193,10 @@ function McpServerPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => healthCheck.mutate()} disabled={busy}>
               {healthCheck.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <RefreshCw className="size-3.5" />
               )}
@@ -550,7 +554,10 @@ function PlaygroundCard({
             disabled={!selected || !argsValid || execute.isPending}
           >
             {execute.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Play className="size-3.5" />
             )}

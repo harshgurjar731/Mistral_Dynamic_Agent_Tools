@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { STEP_TYPE_IDENTITY } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Read-only view of one step: what it runs, how it is configured and how it
@@ -332,7 +333,8 @@ function AgentSection({
         ) : null}
         {agentQuery.isLoading ? (
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="size-3 animate-spin" /> Loading agent configuration…
+            <Loader2 className="size-3 animate-spin" /> Loading agent configuration…{" "}
+            <LivePercent mode="load" />
           </p>
         ) : agentQuery.isError ? (
           <p className="mt-3 text-xs text-amber">

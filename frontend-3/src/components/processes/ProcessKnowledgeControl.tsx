@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { ProcessCascadePicker } from "./ProcessCascadePicker";
 import { DocumentStatusBadge, FileDrop, TemplateDownloadMenu } from "./shared";
 import { useDocumentIngest } from "./useDocumentIngest";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export interface AttachedDoc {
   id: number;
@@ -197,7 +198,10 @@ export function ProcessKnowledgeControl({
           {state.attached.length === 0 ? (
             <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
               {preview.isFetching ? (
-                <Loader2 className="inline size-3 animate-spin" />
+                <>
+                  <Loader2 className="inline size-3 animate-spin" />
+                  <LivePercent mode="load" />
+                </>
               ) : debounced.length < 8 ? (
                 "Nothing attached — a matching process will be looked up from the inventory."
               ) : chosen ? (
@@ -303,7 +307,10 @@ function AttachDialog({
                   request.
                 </p>
                 {tree.isLoading ? (
-                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  <>
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                    <LivePercent mode="load" />
+                  </>
                 ) : (
                   <ProcessCascadePicker
                     key={open ? "open" : "closed"}
@@ -352,7 +359,10 @@ function AttachDialog({
             </TabsContent>
             <TabsContent value="inventory" className="space-y-3 pt-2">
               {tree.isLoading ? (
-                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                <>
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  <LivePercent mode="load" />
+                </>
               ) : (
                 <ProcessCascadePicker
                   tree={tree.data}
@@ -441,7 +451,10 @@ function FileUnderDialog({
           </Button>
           <Button size="sm" disabled={!target || file.isPending} onClick={() => file.mutate()}>
             {file.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <FolderInput className="size-3.5" />
             )}

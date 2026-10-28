@@ -402,6 +402,14 @@ from app.observability.http import ActionTracingMiddleware  # noqa: E402
 
 app.add_middleware(ActionTracingMiddleware)
 
+# Live progress for any request tagged with X-Op-Id. Added after (so outside)
+# the tracing middleware: the op covers the whole request, its span included.
+from app.progress.middleware import OpProgressMiddleware  # noqa: E402
+from app.progress.tracker import install_log_forwarding  # noqa: E402
+
+app.add_middleware(OpProgressMiddleware)
+install_log_forwarding()
+
 # ── Exception Handlers ─────────────────────────────────────────────────────
 
 app.add_exception_handler(MistralAPIError, mistral_api_error_handler)
@@ -430,6 +438,9 @@ app.include_router(rules_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import runs as runs_routes  # noqa: E402
 app.include_router(runs_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import progress as progress_routes  # noqa: E402
+app.include_router(progress_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import observability as observability_routes  # noqa: E402
 app.include_router(observability_routes.router, prefix=settings.API_PREFIX)

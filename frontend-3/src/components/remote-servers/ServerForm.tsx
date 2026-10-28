@@ -44,6 +44,7 @@ import { CheckReportView } from "./CheckReportView";
 import { AccountNotice, InstancePicker } from "./ProviderAccounts";
 import { PURPOSE_LABEL, ServerStatusBadge, providerIcon } from "./status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type Values = Record<string, string>;
 
@@ -424,7 +425,10 @@ export function ServerForm({
             disabled={test.isPending}
           >
             {test.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <PlugZap className="size-3.5" />
             )}
@@ -450,7 +454,10 @@ export function ServerForm({
   const saveButton = (
     <Button type="submit" disabled={save.isPending}>
       {save.isPending ? (
-        <Loader2 className="size-3.5 animate-spin" />
+        <>
+          <Loader2 className="size-3.5 animate-spin" />
+          <LivePercent />
+        </>
       ) : (
         <Save className="size-3.5" />
       )}

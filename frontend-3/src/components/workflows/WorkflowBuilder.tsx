@@ -63,6 +63,7 @@ import {
 } from "./BuilderPalette";
 import { CreateAgentModal, CreateToolModal } from "./CreateModals";
 import { useModelConfig } from "@/lib/models";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Fills in canvas coordinates for any step that has none, using dagre once. */
 function ensureLayout(def: WorkflowDefinition): WorkflowDefinition {
@@ -626,7 +627,10 @@ export function WorkflowBuilder({
             disabled={preview.isPending || definition.steps.length === 0}
           >
             {preview.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Code2 className="size-3.5" />
             )}
@@ -639,7 +643,10 @@ export function WorkflowBuilder({
             disabled={!canSave || save.isPending}
           >
             {save.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Save className="size-3.5" />
             )}
@@ -651,7 +658,10 @@ export function WorkflowBuilder({
             disabled={!canSave || publish.isPending}
           >
             {publish.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Rocket className="size-3.5" />
             )}

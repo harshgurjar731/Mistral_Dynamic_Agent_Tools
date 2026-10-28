@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { formatRelative, formatTimestamp } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { WorkflowRefine } from "./useWorkflowRefine";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const SOURCE = {
   baseline: { icon: Flag, label: "Original" },
@@ -139,7 +140,10 @@ export function VersionHistorySheet({
                         onClick={() => restore(v)}
                       >
                         {restoring ? (
-                          <Loader2 className="size-3 animate-spin" />
+                          <>
+                            <Loader2 className="size-3 animate-spin" />
+                            <LivePercent />
+                          </>
                         ) : (
                           <RotateCcw className="size-3" />
                         )}

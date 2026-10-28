@@ -30,6 +30,7 @@ import { TableSkeleton } from "@/components/ui/Skeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration, formatRelative, formatTimestamp } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/logs/")({
   head: () => ({
@@ -264,7 +265,12 @@ function ActionsTab({ hours, workflowNames }: { hours: number; workflowNames: st
             disabled={traces.isFetchingNextPage}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-surface-hover hover:text-foreground"
           >
-            {traces.isFetchingNextPage ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {traces.isFetchingNextPage ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent mode="load" />
+              </>
+            ) : null}
             Load more
           </button>
         </div>
@@ -455,7 +461,10 @@ function WorkflowGroup({ name, hours }: { name: string; hours: number }) {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {traces.isLoading ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent mode="load" />
+            </>
           ) : (
             <>
               <span>

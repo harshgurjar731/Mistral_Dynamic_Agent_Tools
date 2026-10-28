@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FileDrop, TemplateDownloadMenu } from "@/components/processes/shared";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** The top-level fields a schema requires, for the plain-words summary. */
 function requiredFields(schema: Record<string, unknown>): string[] {
@@ -220,7 +221,12 @@ export function UploadTemplateDialog({
               disabled={!name.trim() || problems.length > 0 || save.isPending}
               onClick={() => save.mutate()}
             >
-              {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {save.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               Save and use it
             </Button>
           ) : null}

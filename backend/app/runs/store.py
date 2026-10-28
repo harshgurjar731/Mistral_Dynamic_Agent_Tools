@@ -50,6 +50,8 @@ def to_dict(row: PipelineRunRecord) -> dict:
         "progress": {
             "total": row.layers_total or 0,
             "done": row.layers_done or 0,
+            # Only whole layers are stored; a live run adds its running layer's share.
+            "fraction": round((row.layers_done or 0) / row.layers_total, 4) if row.layers_total else 0.0,
             "label": row.current_label,
             "note": row.note,
         },

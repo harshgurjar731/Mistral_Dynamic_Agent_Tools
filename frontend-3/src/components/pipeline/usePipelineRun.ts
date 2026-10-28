@@ -19,6 +19,8 @@ export interface PipelineRun {
   runtime: Record<string, LayerRuntime>;
   /** Free-text sub-progress from whichever layer is currently running. */
   activeNote: string;
+  /** How far the running layer is through its own work, 0–1, as the backend measured it. */
+  activeFraction?: number | undefined;
   /** True once a manifest has arrived — i.e. there is a chain worth drawing. */
   started: boolean;
 }
@@ -27,6 +29,7 @@ export const EMPTY_PIPELINE: PipelineRun = {
   manifest: [],
   runtime: {},
   activeNote: "",
+  activeFraction: 0,
   started: false,
 };
 
@@ -39,6 +42,12 @@ interface LayerEvent {
   /** What this layer used from the run's process knowledge. */
   process?: ProcessUse[];
 }
+
+const STEP_VERB: Record<string, string> = {
+  model: "Calling model",
+  tool: "Running tool",
+  step: "Workflow step",
+};
 
 function mapRunning(
   runtime: Record<string, LayerRuntime>,
@@ -61,7 +70,13 @@ export function applyPipelineEvent(
   if (type === "pipeline") {
     try {
       const parsed = JSON.parse(data) as { layers?: LayerManifestEntry[] };
-      return { manifest: parsed.layers ?? [], runtime: {}, activeNote: "", started: true };
+      return {
+        manifest: parsed.layers ?? [],
+        runtime: {},
+        activeNote: "",
+        activeFraction: 0,
+        started: true,
+      };
     } catch {
       /* a malformed manifest just leaves the timeline empty */
       return prev;
@@ -76,6 +91,8 @@ export function applyPipelineEvent(
         // A new layer going active clears the previous one's sub-progress,
         // so a stale note never sits under the wrong row.
         activeNote: p.state === "active" ? "" : prev.activeNote,
+        // Each layer measures its own work from zero.
+        activeFraction: p.state === "active" ? 0 : prev.activeFraction,
         runtime: {
           ...prev.runtime,
           [p.name]: {
@@ -94,6 +111,35 @@ export function applyPipelineEvent(
   }
 
   if (type === "status") return { ...prev, activeNote: data };
+
+  // Progress inside the running layer (``app.progress`` on the backend).
+  if (type === "stage") {
+    try {
+      const p = JSON.parse(data) as { label?: string; fraction?: number };
+      return {
+        ...prev,
+        activeNote: p.label || prev.activeNote,
+        activeFraction:
+          typeof p.fraction === "number"
+            ? Math.max(prev.activeFraction ?? 0, p.fraction)
+            : prev.activeFraction,
+      };
+    } catch {
+      return prev;
+    }
+  }
+  if (type === "step") {
+    try {
+      const p = JSON.parse(data) as { kind?: string; name?: string; state?: string };
+      if (p.state !== "active" || !p.name) return prev;
+      const verb = STEP_VERB[p.kind ?? ""];
+      return { ...prev, activeNote: verb ? `${verb} · ${p.name}` : p.name };
+    } catch {
+      return prev;
+    }
+  }
+  // Log lines are for the run log, not the timeline.
+  if (type === "log") return prev;
 
   return null;
 }
@@ -116,6 +162,8 @@ export function failPipeline(prev: PipelineRun, message: string): PipelineRun {
   };
 }
 
+const PIPELINE_EVENTS = new Set(["pipeline", "layer", "status", "stage", "step", "log"]);
+
 export function usePipelineRun() {
   const [run, setRun] = useState<PipelineRun>(EMPTY_PIPELINE);
 
@@ -127,7 +175,7 @@ export function usePipelineRun() {
    * arrive in the same tick as the manifest, so updates are always functional.
    */
   const handleEvent = useCallback((type: string, data: string): boolean => {
-    if (type !== "pipeline" && type !== "layer" && type !== "status") return false;
+    if (!PIPELINE_EVENTS.has(type)) return false;
     setRun((prev) => applyPipelineEvent(prev, type, data) ?? prev);
     return true;
   }, []);

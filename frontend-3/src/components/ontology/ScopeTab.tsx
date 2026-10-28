@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { GraphCanvas, type SimpleEdge, type SimpleNode } from "./GraphCanvas";
 import { kindColor, kindLabel } from "./graphTones";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Two rehearsals of the same machinery the planner uses: what a goal narrows
@@ -296,7 +297,10 @@ function ClassifyPanel() {
           className="w-full"
         >
           {classify.isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Sparkles className="size-4" />
           )}

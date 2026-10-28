@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Register an MCP server: the Tool Service handshakes with it and discovers its tools. */
 export function RegisterMcpDialog({
@@ -114,7 +115,10 @@ export function RegisterMcpDialog({
             </Button>
             <Button type="submit" disabled={!name.trim() || !validUrl || create.isPending}>
               {create.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Plus className="size-3.5" />
               )}

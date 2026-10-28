@@ -13,6 +13,7 @@ import { ExecutionMonitor } from "@/components/workflows/ExecutionMonitor";
 import { WorkflowRunForm } from "@/components/workflows/runForm/WorkflowRunForm";
 import { rememberRunInput } from "@/components/workflows/runForm/fieldModel";
 import { RemoteWorkflowSelect } from "./remoteShared";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Run a deployed workflow on this server's worker. Uses the app's full run
@@ -98,7 +99,8 @@ export function RunOnServerPanel({
 
       {!workflow ? null : definition.isLoading ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading the workflow's inputs…
+          <Loader2 className="size-3.5 animate-spin" /> Loading the workflow's inputs…{" "}
+          <LivePercent mode="load" />
         </p>
       ) : definition.data ? (
         <WorkflowRunForm
@@ -123,7 +125,10 @@ export function RunOnServerPanel({
           <div className="flex justify-end">
             <Button onClick={runJson} disabled={run.isPending}>
               {run.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Play className="size-3.5" />
               )}

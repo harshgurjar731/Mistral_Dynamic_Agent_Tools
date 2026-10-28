@@ -30,6 +30,7 @@ import type { Tool } from "@/types";
 import { isDeletableTool } from "@/lib/status";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/tools/")({
   head: () => ({
@@ -151,7 +152,7 @@ function ToolsPage() {
           <Sparkles className="size-4" />
           {synthesize.busy ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing…
+              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent />
             </>
           ) : (
             "Synthesize Tool"
@@ -369,7 +370,10 @@ function ToolsPage() {
               className="gap-2"
             >
               {synthesize.busy ? (
-                <Loader2 className="size-4 animate-spin" />
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Sparkles className="size-4" />
               )}

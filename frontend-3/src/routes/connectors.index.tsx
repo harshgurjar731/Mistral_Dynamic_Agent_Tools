@@ -26,6 +26,7 @@ import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@/lib/sorting";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/connectors/")({
   head: () => ({
@@ -196,7 +197,10 @@ function ConnectorCard({ connector }: { connector: Connector }) {
               className="pointer-events-auto ml-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium text-red/50 opacity-0 transition hover:bg-red/10 hover:text-red group-hover:opacity-100"
             >
               {remove.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
+                <>
+                  <Loader2 className="size-3 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Trash2 className="size-3" />
               )}
@@ -275,7 +279,12 @@ function CreateConnectorDialog({
             onClick={() => create.mutate()}
             disabled={!name.trim() || !description.trim() || !server.trim() || create.isPending}
           >
-            {create.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {create.isPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
+            ) : null}
             Create
           </Button>
         </DialogFooter>

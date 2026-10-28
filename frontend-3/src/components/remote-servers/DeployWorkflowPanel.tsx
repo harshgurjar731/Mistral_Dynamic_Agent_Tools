@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { DeploymentLog } from "./Deployments";
 import { ServerStatusBadge } from "./status";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Send a workflow package to a workflow-deployment server.
@@ -229,7 +230,10 @@ export function DeployWorkflowPanel({
           className="gap-2"
         >
           {deploy.isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Rocket className="size-4" />
           )}

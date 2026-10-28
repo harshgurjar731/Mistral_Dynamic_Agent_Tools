@@ -44,6 +44,7 @@ import { DetailSkeleton, TableSkeleton } from "@/components/ui/Skeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { executionStatusIdentity, formatDuration, formatTimestamp } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/workflows/$workflowName/")({
   head: ({ params }) => ({
@@ -235,7 +236,10 @@ function WorkflowDetailPage() {
             title="Export to Mistral workflow format"
           >
             {exportMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Download className="size-3.5" />
             )}
@@ -281,7 +285,10 @@ function WorkflowDetailPage() {
                 disabled={publish.isPending}
               >
                 {publish.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <Rocket className="size-3.5" />
                 )}

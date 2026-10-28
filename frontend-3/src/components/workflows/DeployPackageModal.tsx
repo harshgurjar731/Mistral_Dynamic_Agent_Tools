@@ -25,6 +25,7 @@ import {
   type DeploymentManifest,
   type SetupState,
 } from "@/components/workflows/deploySetupModel";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type ModalTab = "download" | "deploy";
 
@@ -279,7 +280,10 @@ export function DeployPackageModal({
               className="gap-2"
             >
               {download.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Download className="size-4" />
               )}

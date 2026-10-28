@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const LEVEL_TEXT: Record<ProcessLevel, { title: string; hint: string }> = {
   industry: { title: "industry", hint: "A line of business, e.g. Insurance or Healthcare." },
@@ -163,7 +164,12 @@ export function NodeFormDialog({
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={!label.trim() || save.isPending}>
-              {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {save.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               {node ? "Save" : "Create"}
             </Button>
           </DialogFooter>

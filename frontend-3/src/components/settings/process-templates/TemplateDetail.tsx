@@ -32,6 +32,7 @@ import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { inheritors, LEVEL_LABEL, type MapNode } from "./model";
 import { UploadTemplateDialog } from "./UploadTemplateDialog";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 function staleNote(r: Record<string, number> | null | undefined): string {
   const stale = r?.["stale"] ?? 0;
@@ -175,7 +176,10 @@ export function TemplateDetail({
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
               >
                 {inherit.isPending ? (
-                  <Loader2 className="size-3 animate-spin" />
+                  <>
+                    <Loader2 className="size-3 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <CornerLeftUp className="size-3" />
                 )}

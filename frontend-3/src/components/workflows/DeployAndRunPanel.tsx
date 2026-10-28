@@ -39,6 +39,7 @@ import {
   type DeploymentManifest,
   type SetupState,
 } from "./deploySetupModel";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const ACTIVE = new Set(["queued", "running"]);
 
@@ -96,7 +97,10 @@ function StageList({
             ) : failed ? (
               <XCircle className="size-3.5 shrink-0 text-red" />
             ) : current ? (
-              <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+              <>
+                <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+                <LivePercent />
+              </>
             ) : (
               <Circle className="size-3.5 shrink-0 text-muted-foreground/50" />
             )}
@@ -333,7 +337,10 @@ export function DeployAndRunPanel({
             className="gap-2"
           >
             {deploy.isPending || busy ? (
-              <Loader2 className="size-4 animate-spin" />
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Rocket className="size-4" />
             )}

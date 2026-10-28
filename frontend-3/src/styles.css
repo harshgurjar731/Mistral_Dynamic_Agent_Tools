@@ -416,6 +416,21 @@
   }
 }
 
+/* Work that is happening but cannot be measured: a segment that travels, not a
+   bar that pretends to fill. */
+@keyframes progress-travel {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@utility progress-indeterminate {
+  animation: progress-travel 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

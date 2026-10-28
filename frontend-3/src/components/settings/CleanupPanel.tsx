@@ -41,6 +41,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/Skeletons";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** The client-side target, listed with the server's. */
 const BROWSER_ID = "browser";
@@ -508,7 +509,14 @@ function ConfirmDialog({
             Cancel
           </Button>
           <Button variant="destructive" disabled={!ready || pending} onClick={onConfirm}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {pending ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <LivePercent />
+              </>
+            ) : (
+              <Trash2 className="size-4" />
+            )}
             {pending ? "Deleting…" : mode === "all" ? "Delete everything" : "Delete"}
           </Button>
         </DialogFooter>

@@ -26,6 +26,7 @@ import type { Prerequisite, PrerequisiteReport } from "@/types";
 import { Button } from "@/components/ui/button";
 import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export function useWorkflowPrerequisites(workflowName: string | null | undefined) {
   return useQuery({
@@ -61,7 +62,7 @@ export function WorkflowPrerequisites({
     return (
       <div className={cn("rounded-2xl border border-border/60 p-4 text-xs", className)}>
         <Loader2 className="mr-2 inline size-3.5 animate-spin" />
-        Checking what this workflow needs before it can run…
+        Checking what this workflow needs before it can run… <LivePercent />
       </div>
     );
   }
@@ -253,7 +254,12 @@ function PrerequisiteAction({ item, report }: { item: Prerequisite; report: Prer
         disabled={run.isPending}
         onClick={() => run.mutate()}
       >
-        {run.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
+        {run.isPending ? (
+          <>
+            <Loader2 className="size-3 animate-spin" />
+            <LivePercent />
+          </>
+        ) : null}
         {run.isPending
           ? action.type === "rebuild"
             ? "Building and testing…"

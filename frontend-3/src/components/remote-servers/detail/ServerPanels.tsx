@@ -39,6 +39,7 @@ import {
   useProviderAccounts,
   useStartInstance,
 } from "../ProviderAccounts";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Non-secret settings at a glance, plus which secrets are stored. */
 export function ConfigurationCard({
@@ -154,7 +155,10 @@ export function BrevInstanceCard({
           title={blocked ? "Log in to Brev first" : undefined}
         >
           {active || provision.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <RefreshCw className="size-3.5" />
           )}
@@ -267,7 +271,10 @@ export function CloudInstanceCard({
                 disabled={useIp.isPending}
               >
                 {useIp.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <ArrowRightLeft className="size-3.5" />
                 )}
@@ -283,7 +290,10 @@ export function CloudInstanceCard({
               disabled={start.isPending}
             >
               {start.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Play className="size-3.5" />
               )}
@@ -333,7 +343,10 @@ export function PushToolPanel({ server }: { server: RemoteServer }) {
         </div>
         <Button onClick={() => send.mutate()} disabled={!toolId || send.isPending}>
           {send.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Send className="size-3.5" />
           )}

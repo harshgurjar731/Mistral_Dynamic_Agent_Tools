@@ -28,6 +28,7 @@ import { applySort, byDate, byText, useSortKey, type SortOption } from "@/lib/so
 import { cn } from "@/lib/utils";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const searchSchema = z.object({
   purpose: z.enum(["tool", "workflow"]).optional(),
@@ -288,7 +289,10 @@ function RemoteServersPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
             >
               {checkAll.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <RefreshCw className="size-3.5" />
               )}

@@ -52,6 +52,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type Filter = "all" | "attention" | "expired" | "disabled" | "build";
 
@@ -281,7 +282,10 @@ export function VaultPanel({
               onClick={() => rotate.mutate()}
             >
               {rotate.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <RefreshCw className="size-3.5" />
               )}
@@ -678,7 +682,13 @@ function EditDialog({
             Cancel
           </Button>
           <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null} Save
+            {save.isPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
+            ) : null}{" "}
+            Save
           </Button>
         </DialogFooter>
       </DialogContent>

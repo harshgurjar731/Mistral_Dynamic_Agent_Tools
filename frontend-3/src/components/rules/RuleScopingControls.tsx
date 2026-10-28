@@ -19,6 +19,7 @@ import {
   useRuleCategories,
   useTargetOptions,
 } from "./ruleScoping";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /* ── Category ──────────────────────────────────────────────────────────── */
 
@@ -153,7 +154,7 @@ export function TargetPicker({
       <div className="custom-scrollbar max-h-44 overflow-y-auto p-1">
         {isLoading ? (
           <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-            <Loader2 className="size-3 animate-spin" /> Loading {noun}…
+            <Loader2 className="size-3 animate-spin" /> Loading {noun}… <LivePercent mode="load" />
           </p>
         ) : shown.length === 0 ? (
           <p className="px-2 py-3 text-xs text-muted-foreground">

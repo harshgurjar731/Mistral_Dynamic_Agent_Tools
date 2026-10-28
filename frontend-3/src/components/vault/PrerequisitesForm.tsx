@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type Choice =
   | { action: "vault"; secret_id: string; secret_name: string }
@@ -203,7 +204,12 @@ export function PrerequisitesForm({
           disabled={busy}
           onClick={() => send.mutate({ choice: "continue", answers })}
         >
-          {send.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          {send.isPending ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
+          ) : null}
           {send.isSuccess ? "Sent — building…" : "Continue building"}
         </Button>
       </DialogFooter>

@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { plural, type BulkSelection } from "@/lib/bulkSelection";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 function TriStateBox({
   state,
@@ -135,7 +136,10 @@ export function BulkActionBar({
               disabled={deleting}
             >
               {deleting ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Trash2 className="size-3.5" />
               )}

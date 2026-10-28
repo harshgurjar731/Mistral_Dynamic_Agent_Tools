@@ -35,6 +35,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Markdown } from "@/components/chat/Markdown";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /* ── Shared bits ─────────────────────────────────────────────────────── */
 
@@ -554,7 +555,10 @@ function ProposalCard({
             )}
           >
             {actions.applying ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Check className="size-3.5" />
             )}
@@ -609,7 +613,7 @@ export function PendingTurn() {
       <div className="space-y-2 px-4 py-3">
         <p className="flex items-center gap-2 text-xs text-foreground">
           <Loader2 className="size-3.5 animate-spin text-primary" />
-          Working out what to change…
+          Working out what to change… <LivePercent />
         </p>
         <div className="shimmer h-2 w-2/3 rounded-full bg-surface-hover/60" />
         <div className="shimmer h-2 w-1/2 rounded-full bg-surface-hover/60" />

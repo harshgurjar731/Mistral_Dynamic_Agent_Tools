@@ -53,6 +53,7 @@ import {
 import { ToolTestDialog, type RebuildPrefill } from "@/components/tools/ToolTestDialog";
 import { RebuildFromErrorDialog } from "@/components/tools/RebuildFromErrorDialog";
 import { takeRebuildHandoff } from "@/lib/rebuildHandoff";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
 export type ToolDetailVariant = "tool" | "activity";
@@ -548,7 +549,12 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
           </Select>
           <DialogFooter>
             <Button onClick={() => publish.mutate()} disabled={!serverName || publish.isPending}>
-              {publish.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {publish.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               Publish
             </Button>
           </DialogFooter>
@@ -587,7 +593,12 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
               onClick={() => sendTool.mutate()}
               disabled={!remoteServerId || sendTool.isPending}
             >
-              {sendTool.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {sendTool.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               Send
             </Button>
           </DialogFooter>

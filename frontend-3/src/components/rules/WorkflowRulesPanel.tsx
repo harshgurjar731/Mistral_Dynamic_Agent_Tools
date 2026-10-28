@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { QK, rulesApi } from "@/api";
 import { formatRelative } from "@/lib/status";
 import { OutcomePill, RuleIcon, SourcePill } from "./RulePills";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** A workflow's rules — who put each one there — and what they decided recently. */
 export function WorkflowRulesPanel({ workflowName }: { workflowName: string }) {
@@ -15,7 +16,7 @@ export function WorkflowRulesPanel({ workflowName }: { workflowName: string }) {
   if (query.isLoading) {
     return (
       <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" /> Loading rules…
+        <Loader2 className="size-3.5 animate-spin" /> Loading rules… <LivePercent mode="load" />
       </div>
     );
   }

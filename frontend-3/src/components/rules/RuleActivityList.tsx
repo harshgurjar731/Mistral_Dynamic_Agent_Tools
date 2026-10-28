@@ -6,6 +6,7 @@ import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { RuleOutcomeKind } from "@/types";
 import { OutcomePill, RuleIcon, SourcePill } from "./RulePills";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const CHECKPOINT_LABEL: Record<string, string> = {
   creation: "At creation",
@@ -34,7 +35,8 @@ export function RuleActivityList({ agentId }: { agentId: string }) {
   if (query.isLoading) {
     return (
       <div className="flex items-center gap-2 p-5 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" /> Loading rule activity…
+        <Loader2 className="size-3.5 animate-spin" /> Loading rule activity…{" "}
+        <LivePercent mode="load" />
       </div>
     );
   }

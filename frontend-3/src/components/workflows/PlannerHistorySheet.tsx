@@ -11,6 +11,7 @@ import type { PlannerRun } from "@/stores/plannerHistory";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** A history row: a run kept in this browser, or one reconstructed from a saved workflow. */
 export interface PlannerHistoryEntry extends PlannerRun {
@@ -115,7 +116,12 @@ export function PlannerHistorySheet({
           <SheetTitle className="text-sm font-semibold text-foreground">
             Planning History
           </SheetTitle>
-          {isLoading ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" /> : null}
+          {isLoading ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <LivePercent mode="load" />
+            </>
+          ) : null}
           <SheetDescription className="sr-only">
             Past planner runs and saved workflows. Select one to view its timeline.
           </SheetDescription>

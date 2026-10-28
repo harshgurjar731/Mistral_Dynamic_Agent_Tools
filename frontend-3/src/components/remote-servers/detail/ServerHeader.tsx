@@ -18,6 +18,7 @@ import {
   type ServerState,
 } from "../status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * One compact card for who the server is and how it's doing: identity,
@@ -123,7 +124,10 @@ export function ServerHeader({
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" onClick={onCheck} disabled={checking}>
             {checking ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <PlugZap className="size-3.5" />
             )}

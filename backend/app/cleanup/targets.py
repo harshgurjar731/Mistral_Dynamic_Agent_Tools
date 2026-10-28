@@ -25,6 +25,7 @@ from typing import Any, Awaitable, Callable, Iterable
 import httpx
 from sqlalchemy import bindparam, inspect, text
 
+from app import progress
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -700,7 +701,10 @@ async def run(target_ids: Iterable[str]) -> dict[str, Any]:
         raise ValueError(f"Unknown cleanup target(s): {', '.join(sorted(unknown))}")
 
     results = []
-    for t in (t for t in TARGETS if t.id in wanted):
+    chosen = [t for t in TARGETS if t.id in wanted]
+    total = len(chosen) + 1   # the baseline restore is the last step
+    for i, t in enumerate(chosen):
+        progress.report(f"Deleting {t.title}", done=i, total=total)
         started = time.monotonic()
         try:
             removed = await t.purge()
@@ -714,5 +718,7 @@ async def run(target_ids: Iterable[str]) -> dict[str, Any]:
         results[-1]["seconds"] = round(time.monotonic() - started, 2)
         logger.info("Cleanup %s: %s", t.id, results[-1])
 
+    progress.report("Restoring fresh-install defaults", done=len(chosen), total=total)
     await asyncio.to_thread(prepare_database, seed_rules=True)
+    progress.report("Cleanup finished", done=total, total=total)
     return {"results": results, "ok": all(r["ok"] for r in results)}

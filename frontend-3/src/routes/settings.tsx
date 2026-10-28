@@ -81,6 +81,7 @@ import {
   sameValue,
 } from "@/components/settings/settingsModel";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const searchSchema = z.object({
   /** Open on this category — e.g. "process" from the Processes page. */
@@ -661,7 +662,10 @@ function SettingsPage() {
             </Button>
             <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
               {save.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Save className="size-3.5" />
               )}
@@ -802,7 +806,10 @@ function Overview({
         actions={
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
             {refreshing ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <RefreshCw className="size-3.5" />
             )}

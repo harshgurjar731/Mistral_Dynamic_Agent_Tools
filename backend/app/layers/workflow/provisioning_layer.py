@@ -15,6 +15,7 @@ import json
 import logging
 from functools import partial
 
+from app import progress
 from app.config import settings
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowStepLayer
@@ -262,10 +263,16 @@ class AgentProvisioningLayer(WorkflowStepLayer):
 
             # Every failed agent is tried once more automatically; after that
             # the user decides (see plan_control).
+            async def _measured(cap):
+                # Each agent fills its own share of the layer's progress bar.
+                with progress.part(to_create.index(cap), len(to_create),
+                                   f"Creating agent {_agent_name(cap)}"):
+                    return await _create(cap)
+
             pending, attempts, auto_retried = list(to_create), 0, False
             while pending:
                 results = await asyncio.gather(
-                    *[_create(c) for c in pending], return_exceptions=True
+                    *[_measured(c) for c in pending], return_exceptions=True
                 )
                 attempts += 1
                 failures = []

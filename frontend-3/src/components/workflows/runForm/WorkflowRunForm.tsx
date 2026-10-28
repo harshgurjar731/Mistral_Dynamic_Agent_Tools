@@ -56,6 +56,7 @@ import {
   readLastInput,
   wrappedCollection,
 } from "./fieldModel";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** The wrapped rows in a list input's JSON text, if that is what it holds. */
 function wrappedIn(r: ResolvedField, text: string) {
@@ -1006,7 +1007,14 @@ export function WorkflowRunForm({
           disabled={running || Boolean(blockedReason) || (mode === "json" && Boolean(jsonError))}
           onClick={submit}
         >
-          {running ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+          {running ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <LivePercent />
+            </>
+          ) : (
+            <Play className="size-4" />
+          )}
           {running ? "Starting…" : "Run workflow"}
         </Button>
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground">

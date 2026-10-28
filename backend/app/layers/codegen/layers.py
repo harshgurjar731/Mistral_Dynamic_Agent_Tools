@@ -22,15 +22,35 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from app import progress
 from app.core.decision import decide, parse_json
 from app.core.specs import CodeNeed, CodeRequirement, CodeResolution
 from app.layers.codegen import preflight
 from app.layers.codegen.profiles import RequirementProfile, snake
 
 logger = logging.getLogger(__name__)
+
+# ── Measured progress ───────────────────────────────────────────────────────
+#
+# A build's stages always run in this order, so where a stage starts is where
+# the build has got to. The tool service's own build (``build`` events) is
+# measured inside its band from what it reports: its stages, which attempt
+# of how many it is on, and how many test cases the attempt passed.
+
+_STAGE_AT = {
+    "normalise": 0.03, "policy_gate": 0.06, "reuse": 0.10, "author": 0.15, "contract": 0.25,
+    "preflight": 0.28, "credentials": 0.30, "submit": 0.33,
+    "smoke": 0.90, "rollback": 0.95, "corrected": 0.97,
+}
+_BUILD_BAND = (0.35, 0.88)
+_BUILD_AT = {"intake": 0.05, "test_plan": 0.15, "review": 0.90, "done": 1.0}
+#: Within the service's build, its generate → verify attempts span this.
+_ATTEMPTS_BAND = (0.20, 0.85)
+_ATTEMPT = re.compile(r"attempt (\d+)/(\d+)")
 
 #: How many times a rejected specification is sent back to its author, across
 #: contract, pre-flight and tool-service rejections together.
@@ -61,9 +81,35 @@ class RequirementContext:
     #: The build's credential view (``app.build_prereqs.code_check.CodeCheck``):
     #: names already settled, and a way to ask about new ones. None: nobody to ask.
     code_check: Any = None
+    #: The tool service's attempt budget, read from its "attempt n/m" lines.
+    attempt_budget: int = 1
+
+    def _fraction(self, stage: str, message: str, data: dict) -> Optional[float]:
+        if stage != "build":
+            return _STAGE_AT.get(stage)
+        build_stage = str(data.get("build_stage") or "")
+        detail = data.get("data") if isinstance(data.get("data"), dict) else {}
+        inner: Optional[float] = _BUILD_AT.get(build_stage)
+        lo, hi = _ATTEMPTS_BAND
+        m = _ATTEMPT.search(message or "")
+        if m:
+            attempt, self.attempt_budget = int(m.group(1)), max(1, int(m.group(2)))
+            inner = lo + (hi - lo) * (attempt - 1) / self.attempt_budget
+        elif build_stage == "verify" and detail.get("attempt"):
+            attempt = int(detail["attempt"])
+            total = int(detail.get("total") or 0)
+            done = 1.0 if detail.get("ok") else (int(detail.get("passed") or 0) / total if total else 0.5)
+            inner = lo + (hi - lo) * (attempt - 1 + done) / self.attempt_budget
+        if inner is None:
+            return None
+        return _BUILD_BAND[0] + (_BUILD_BAND[1] - _BUILD_BAND[0]) * min(1.0, inner)
 
     def emit(self, stage: str, message: str, **data) -> None:
         logger.info("[codegen:%s] %s: %s", self.need.name_hint or self.need.purpose, stage, message)
+        fraction = self._fraction(stage, message, data)
+        noun = self.need.name_hint or self.need.purpose
+        progress.report(f"{noun}: {message}"[:300] if message else None,
+                        done=fraction, total=1.0 if fraction is not None else None)
         if self.on_event:
             try:
                 self.on_event({"stage": stage, "message": message, **data})

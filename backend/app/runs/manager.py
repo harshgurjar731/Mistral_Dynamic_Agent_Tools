@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 from app.core.events import SSEEvent
+from app.progress.tracker import Meter
 from app.runs import store
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ _FLUSH_INTERVAL_S = 0.75
 _RETAIN_FINISHED_S = 600
 #: Comment frame sent to idle watchers so proxies keep the connection open.
 _KEEPALIVE_S = 15
+#: Log lines a run keeps in its event log — enough to follow it, not a dump.
+_MAX_LOGS = 300
 #: How long a run waits for an answer before taking the question's default.
 DECISION_TIMEOUT_S = 6 * 3600
 
@@ -107,6 +110,12 @@ class LiveRun:
     _done: set[str] = field(default_factory=set)
     current_label: Optional[str] = None
     note: Optional[str] = None
+    # How far the active layer is through its own work (``app.progress``):
+    # a fresh meter per layer, so the bar moves inside a long layer too.
+    meter: Meter = field(default_factory=Meter)
+    _sub: float = 0.0
+    _steps: int = 0
+    _logs: int = 0
 
     _pending: list[tuple[int, str, str]] = field(default_factory=list)
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -120,6 +129,10 @@ class LiveRun:
         self.emit(sse.event, sse.data)
 
     def emit(self, event: str, data: Any) -> int:
+        if event == "log":
+            if self._logs >= _MAX_LOGS:
+                return len(self.events)
+            self._logs += 1
         payload = _payload(data)
         seq = len(self.events) + 1
         item = (seq, event, payload)
@@ -130,6 +143,11 @@ class LiveRun:
         for queue in self.subscribers:
             queue.put_nowait(item)
         return seq
+
+    def next_step(self) -> int:
+        """A new step id, for ``app.progress`` step events."""
+        self._steps += 1
+        return self._steps
 
     def saw(self, event: str) -> bool:
         return event in self.last_payloads
@@ -198,15 +216,30 @@ class LiveRun:
             if state == "active":
                 self.current_label = self._visible[name]
                 self.note = None
+                self.meter, self._sub = Meter(), 0.0
             elif state in ("completed", "skipped", "failed"):
                 self._done.add(name)
+                self._sub = 0.0
         elif event == "status":
             self.note = payload[:300]
+        elif event == "stage":
+            parsed = _parse(payload)
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("fraction"), (int, float)):
+                    self._sub = max(self._sub, float(parsed["fraction"]))
+                if parsed.get("label"):
+                    self.note = str(parsed["label"])[:300]
 
     def progress(self) -> dict:
+        total, done = len(self._visible), len(self._done)
+        # Finished layers, plus how far the running one has measurably got.
+        fraction = min(1.0, (done + (self._sub if done < total else 0.0)) / total) if total else 0.0
+        if not self.finished:
+            fraction = min(fraction, 0.99)   # 100% is for a run that has ended
         return {
-            "total": len(self._visible),
-            "done": len(self._done),
+            "total": total,
+            "done": done,
+            "fraction": round(fraction, 4),
             "label": self.current_label,
             "note": self.note,
         }
@@ -289,6 +322,11 @@ class RunManager:
         """Drive one run as its own trace on Mistral, linked to the request
         that started it — a run outlives that request by minutes."""
         from app.observability import tracing
+        from app.progress.tracker import bind
+
+        # The run reports its own progress — stages, steps, model calls, log
+        # lines — into its event log, not into the request that started it.
+        bind(run)
 
         with tracing.span(
             f"run {run.kind}", kind="run", root=True, link_current=True,

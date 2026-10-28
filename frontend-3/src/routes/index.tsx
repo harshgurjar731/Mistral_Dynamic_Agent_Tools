@@ -522,6 +522,7 @@ function OrchestratorChat() {
                   manifest={run.manifest}
                   runtime={run.runtime}
                   activeNote={run.activeNote}
+                  activeFraction={run.activeFraction}
                   cards={cards}
                   raw={raw}
                 />

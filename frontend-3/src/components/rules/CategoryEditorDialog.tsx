@@ -26,6 +26,7 @@ import {
   toneFor,
   useRuleCategories,
 } from "./ruleScoping";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const SCOPES: Array<{ value: CategoryScope; label: string; icon: typeof Bot }> = [
   { value: "agent", label: "Agent rules", icon: Bot },
@@ -313,7 +314,8 @@ export function CategoryEditorDialog({
           >
             {typesQuery.isLoading ? (
               <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" /> Loading rule types…
+                <Loader2 className="size-3 animate-spin" /> Loading rule types…{" "}
+                <LivePercent mode="load" />
               </p>
             ) : (
               <div className="space-y-3">
@@ -450,7 +452,10 @@ export function CategoryEditorDialog({
               className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-brand px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
             >
               {save.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Save className="size-3.5" />
               )}

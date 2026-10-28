@@ -10,7 +10,7 @@ import { useElapsed } from "@/lib/runs/useRun";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { useRunsStore, type TrackedRun } from "@/stores/runs";
-import { RunProgressBar } from "./RunProgress";
+import { RunProgressBar, runPercent } from "./RunProgress";
 import {
   formatElapsed,
   RUN_KIND_META,
@@ -18,6 +18,7 @@ import {
   runOutputName,
   useOpenRun,
 } from "./runMeta";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 function RunRow({ run, onOpen }: { run: TrackedRun; onOpen: (run: TrackedRun) => void }) {
   const running = run.status === "running";
@@ -67,7 +68,12 @@ function RunRow({ run, onOpen }: { run: TrackedRun; onOpen: (run: TrackedRun) =>
                 status.chip,
               )}
             >
-              {running ? <Loader2 className="size-2.5 animate-spin" /> : null}
+              {running ? (
+                <>
+                  <Loader2 className="size-2.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               {status.label}
             </span>
           </div>
@@ -91,7 +97,7 @@ function RunRow({ run, onOpen }: { run: TrackedRun; onOpen: (run: TrackedRun) =>
 
           {running ? (
             <>
-              <RunProgressBar run={run} className="mt-2" />
+              <RunProgressBar run={run} showPercent className="mt-2" />
               {label || note ? (
                 <p className="mt-1.5 truncate text-[11px] text-muted-foreground" title={note ?? ""}>
                   {label ? <span className="text-foreground/80">{label}</span> : null}
@@ -171,8 +177,15 @@ export function RunsIndicator({
     openRun(run);
   };
 
+  // The running runs' average progress, from those that can be measured yet.
+  const measured = running.map(runPercent).filter((p): p is number => p !== null);
+  const overall = measured.length
+    ? Math.round(measured.reduce((a, b) => a + b, 0) / measured.length)
+    : null;
+  const runningText = `${running.length} running${overall !== null ? ` · ${overall}%` : ""}`;
+
   const railLabel = running.length
-    ? `${running.length} running`
+    ? runningText
     : unseen
       ? `${unseen} finished`
       : "Background runs";
@@ -220,7 +233,7 @@ export function RunsIndicator({
             className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition hover:bg-primary/15"
           >
             <Loader2 className="size-3 animate-spin" />
-            {running.length} running
+            <span className="tabular-nums">{runningText}</span>
             {unseen > 0 ? (
               <span
                 className={cn(

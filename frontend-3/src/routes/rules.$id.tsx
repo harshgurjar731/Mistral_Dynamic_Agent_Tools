@@ -35,6 +35,7 @@ import {
   CategoryPicker,
 } from "@/components/rules/RuleScopingControls";
 import { appliesOf, appliesToFields, useRuleCategories } from "@/components/rules/ruleScoping";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/rules/$id")({
   head: () => ({
@@ -283,7 +284,10 @@ function RuleDetail({
             }
           >
             {save.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Save className="size-3.5" />
             )}
@@ -445,7 +449,7 @@ function RuleEvents({ ruleId }: { ruleId: string }) {
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : query.isLoading ? (
         <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading…
+          <Loader2 className="size-3.5 animate-spin" /> Loading… <LivePercent mode="load" />
         </div>
       ) : !events.length ? (
         <EmptyState

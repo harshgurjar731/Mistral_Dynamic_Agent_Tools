@@ -661,6 +661,7 @@ function AiPlannerPage() {
                           manifest={pipeline.manifest}
                           runtime={pipeline.runtime}
                           activeNote={pipeline.activeNote}
+                          activeFraction={pipeline.activeFraction}
                           cards={layerCards}
                           raw={layerRaw}
                         />

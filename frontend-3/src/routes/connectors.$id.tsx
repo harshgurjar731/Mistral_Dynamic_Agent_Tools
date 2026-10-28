@@ -32,6 +32,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/connectors/$id")({
   head: () => ({
@@ -135,7 +136,12 @@ function ToolsSection({ id }: { id: string }) {
             />
             <div className="flex justify-end">
               <Button size="sm" onClick={() => call.mutate()} disabled={call.isPending}>
-                {call.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                {call.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : null}
                 Call tool
               </Button>
             </div>
@@ -190,7 +196,10 @@ function AuthenticationSection({ id }: { id: string }) {
         disabled={fetchAuthUrl.isPending}
       >
         {fetchAuthUrl.isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
+          <>
+            <Loader2 className="size-3.5 animate-spin" />
+            <LivePercent />
+          </>
         ) : (
           <ExternalLink className="size-3.5" />
         )}
@@ -492,7 +501,12 @@ function ActivationSection({ id }: { id: string }) {
               onClick={() => setActivation.mutate()}
               disabled={setActivation.isPending}
             >
-              {setActivation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {setActivation.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               Confirm
             </Button>
           </div>

@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export function RetrievalTab() {
   const [query, setQuery] = useState("");
@@ -88,7 +89,10 @@ export function RetrievalTab() {
             title="Attach search_domain_knowledge tool to agents with libraries"
           >
             {syncAgentsMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Plug className="size-3.5 text-cyan" />
             )}
@@ -141,7 +145,10 @@ export function RetrievalTab() {
             className="flex items-center gap-1.5"
           >
             {searchMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Search className="size-3.5" />
             )}
@@ -169,8 +176,11 @@ export function RetrievalTab() {
               description={`${searchData.entities?.length ?? 0} entities found`}
             />
             <div className="custom-scrollbar max-h-[420px] space-y-2 overflow-y-auto p-4">
-              {(!searchData.entities || searchData.entities.length === 0) ? (
-                <EmptyState title="No graph entities matched" description="Try broadening your search query." />
+              {!searchData.entities || searchData.entities.length === 0 ? (
+                <EmptyState
+                  title="No graph entities matched"
+                  description="Try broadening your search query."
+                />
               ) : (
                 searchData.entities.map((e, idx) => (
                   <div
@@ -197,7 +207,7 @@ export function RetrievalTab() {
               description={`${searchData.passages?.length ?? 0} passages retrieved`}
             />
             <div className="custom-scrollbar max-h-[420px] space-y-2 overflow-y-auto p-4">
-              {(!searchData.passages || searchData.passages.length === 0) ? (
+              {!searchData.passages || searchData.passages.length === 0 ? (
                 <EmptyState title="No text passages matched" />
               ) : (
                 searchData.passages.map((p, idx) => (

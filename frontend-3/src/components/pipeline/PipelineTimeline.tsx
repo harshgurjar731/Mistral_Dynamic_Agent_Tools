@@ -57,6 +57,8 @@ interface Props {
   raw?: Record<string, unknown> | undefined;
   /** Free-text sub-progress from the layer currently running. */
   activeNote?: string | undefined;
+  /** How far the running layer is through its own work, 0–1. */
+  activeFraction?: number | undefined;
 }
 
 const DOT: Record<LayerState, string> = {
@@ -151,8 +153,21 @@ function Branch({ entry, run }: { entry: LayerManifestEntry; run: LayerRuntime }
 }
 
 /** Overall progress across the drawn chain. */
-function ProgressBar({ done, total, failed }: { done: number; total: number; failed: number }) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
+function ProgressBar({
+  done,
+  total,
+  failed,
+  active,
+}: {
+  done: number;
+  total: number;
+  failed: number;
+  /** The running layer's measured share of its own work, or null when none runs. */
+  active: number | null;
+}) {
+  // Finished layers plus the running one's measured part. 100% only when all settled.
+  const raw = total ? ((done + (active ?? 0)) / total) * 100 : 0;
+  const pct = done >= total ? Math.round(raw) : Math.min(99, Math.floor(raw));
   return (
     <div className="mb-5">
       <div className="mb-1.5 flex items-center justify-between">
@@ -160,9 +175,9 @@ function ProgressBar({ done, total, failed }: { done: number; total: number; fai
           {done} of {total} decisions
           {failed > 0 ? <span className="text-red"> · {failed} failed</span> : null}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{pct}%</span>
+        <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{pct}%</span>
       </div>
-      <div className="h-1 overflow-hidden rounded-full bg-border/60">
+      <div className="h-1.5 overflow-hidden rounded-full bg-border/60">
         <motion.div
           className={cn("h-full rounded-full", failed > 0 ? "bg-red" : "bg-gradient-brand")}
           initial={false}
@@ -174,7 +189,42 @@ function ProgressBar({ done, total, failed }: { done: number; total: number; fai
   );
 }
 
-export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: Props) {
+/**
+ * The running layer's own bar. It fills only as far as the backend has
+ * measured; a layer that reports nothing measurable shows motion instead.
+ */
+function LayerProgress({ fraction }: { fraction: number }) {
+  const measured = fraction > 0;
+  const pct = Math.min(99, Math.floor(fraction * 100));
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-primary/10">
+        {measured ? (
+          <motion.div
+            className="h-full rounded-full bg-primary"
+            initial={false}
+            animate={{ width: `${Math.max(pct, 2)}%` }}
+            transition={{ duration: 0.4 }}
+          />
+        ) : (
+          <div className="progress-indeterminate absolute inset-y-0 w-1/4 rounded-full bg-primary/70" />
+        )}
+      </div>
+      <span className="w-9 shrink-0 text-right font-mono text-[10px] font-semibold text-primary tabular-nums">
+        {measured ? `${pct}%` : "…"}
+      </span>
+    </div>
+  );
+}
+
+export function PipelineTimeline({
+  manifest,
+  runtime,
+  cards,
+  raw,
+  activeNote,
+  activeFraction,
+}: Props) {
   const visible = useMemo(() => manifest.filter((e) => !e.hidden), [manifest]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [showRaw, setShowRaw] = useState<Record<string, boolean>>({});
@@ -205,7 +255,12 @@ export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: 
 
   return (
     <div>
-      <ProgressBar done={done} total={visible.length} failed={failed} />
+      <ProgressBar
+        done={done}
+        total={visible.length}
+        failed={failed}
+        active={activeName ? (activeFraction ?? 0) : null}
+      />
 
       <ol className="relative space-y-4 pl-7">
         <span
@@ -308,6 +363,8 @@ export function PipelineTimeline({ manifest, runtime, cards, raw, activeNote }: 
               </div>
 
               {run.error ? <p className="mt-1 text-[11px] text-red">{run.error}</p> : null}
+
+              {run.state === "active" ? <LayerProgress fraction={activeFraction ?? 0} /> : null}
 
               <AnimatePresence>
                 {run.state === "active" && activeNote ? (

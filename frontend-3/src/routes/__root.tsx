@@ -24,6 +24,12 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useResizablePanel } from "@/components/shared/ResizeHandle";
 import { cn } from "@/lib/utils";
 import { RunQuestions } from "@/components/runs/RunQuestions";
+import { ActivityTray } from "@/components/activity/ActivityTray";
+import { TopProgressBar } from "@/components/activity/TopProgressBar";
+import { installOpTracking } from "@/lib/ops/tracker";
+
+// Before any page asks for anything: every request reports live progress.
+installOpTracking();
 
 const NAV_COLLAPSED_WIDTH = 64;
 const NAV_DEFAULT_WIDTH = 248;
@@ -225,6 +231,10 @@ function AppShell() {
             <Outlet />
           </main>
         </div>
+
+        {/* Inside the shell, so both can offset by the nav's width. */}
+        <TopProgressBar />
+        <ActivityTray />
       </div>
       <BackgroundRuns />
       {/* A run waiting on an answer, wherever you are — unless its page shows it. */}

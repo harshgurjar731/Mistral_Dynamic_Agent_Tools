@@ -36,6 +36,7 @@ import { Skeleton } from "@/components/ui/Skeletons";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const STRICTNESS_ORDER: Strictness[] = ["advise", "standard", "strict"];
 
@@ -530,7 +531,12 @@ function RuleDialog({
             }
             onClick={() => save.mutate()}
           >
-            {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {save.isPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
+            ) : null}
             {editing ? "Save" : "Add rule"}
           </Button>
         </DialogFooter>

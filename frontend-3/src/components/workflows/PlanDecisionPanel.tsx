@@ -47,6 +47,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { PrerequisitesForm } from "@/components/vault/PrerequisitesForm";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 interface ChoiceMeta {
   label: string;
@@ -418,7 +419,12 @@ function DecisionForm({
           disabled={!selected || busy}
           onClick={submit}
         >
-          {answer.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          {answer.isPending ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
+          ) : null}
           {answer.isSuccess
             ? "Sent — continuing…"
             : meta

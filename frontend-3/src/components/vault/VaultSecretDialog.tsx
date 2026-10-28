@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export interface VaultSecretPreset {
   name?: string | undefined;
@@ -374,7 +375,12 @@ export function VaultSecretDialog({
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={!canSave}>
-              {save.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {save.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : null}
               {isReplace ? "Replace value" : "Store in the vault"}
             </Button>
           </DialogFooter>

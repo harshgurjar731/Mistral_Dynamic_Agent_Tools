@@ -43,11 +43,12 @@ from typing import Any, Iterator, Optional
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
 from opentelemetry.trace import Link, NonRecordingSpan, Span, SpanContext, Status, StatusCode, TraceFlags
 
+from app import progress
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,7 @@ def setup(component: str = "api") -> bool:
             id_generator=_IdGenerator(),
         )
         provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=2000))
+        provider.add_span_processor(_ModelCallSteps())
         _provider = provider
     except Exception as e:
         logger.warning("⚠️ Observability not started: %s", e)
@@ -211,6 +213,29 @@ def instrument_client(client: Any) -> Any:
     except Exception as e:
         logger.warning("Could not instrument Mistral client: %s", e)
     return client
+
+
+class _ModelCallSteps(SpanProcessor):
+    """Spans the Mistral SDK opens itself — model, embedding and OCR calls —
+    shown live as steps of the request that made them."""
+
+    def __init__(self) -> None:
+        self._open: dict[int, Any] = {}
+
+    def on_start(self, span: Any, parent_context: Any = None) -> None:
+        scope = getattr(span, "instrumentation_scope", None)
+        if scope is not None and scope.name == TRACER_NAME:
+            return
+        handle = progress.step_begin("model", span.name)
+        if handle is not None:
+            self._open[span.context.span_id] = handle
+
+    def on_end(self, span: Any) -> None:
+        handle = self._open.pop(span.context.span_id, None)
+        if handle is None:
+            return
+        failed = span.status.status_code == StatusCode.ERROR
+        progress.step_end(handle, (span.status.description or "Failed") if failed else None)
 
 
 def tracer() -> trace.Tracer:
@@ -333,8 +358,28 @@ def _install_log_capture() -> None:
 
 # ── Spans ─────────────────────────────────────────────────────────────────────
 
+#: App span kinds shown as steps in a request's live progress. Layers arrive
+#: as pipeline events and the request itself is the op, so neither is repeated.
+_PROGRESS_KINDS = {"tool", "step"}
+
+
 @contextmanager
-def span(
+def span(name: str, *, kind: str, **kwargs: Any) -> Iterator[Span]:
+    """Open an app span (see ``_span``), shown live as a step of the current
+    request's progress when it is a kind worth showing."""
+    step = progress.step_begin(kind, name) if kind in _PROGRESS_KINDS else None
+    try:
+        with _span(name, kind=kind, **kwargs) as s:
+            yield s
+    except BaseException as e:
+        progress.step_end(step, str(e) or e.__class__.__name__)
+        raise
+    else:
+        progress.step_end(step)
+
+
+@contextmanager
+def _span(
     name: str,
     *,
     kind: str,

@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { IngestTimeline } from "./IngestTimeline";
 import { EntityGraph, type EntityEdge, type EntityNode } from "./EntityGraph";
 import { ACCEPT, docCount, LIVE, STATUS_TONE, type LibraryPane } from "./libraryMeta";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Everything about one library on its own page: documents and their ingest
@@ -241,7 +242,10 @@ function LibraryDetail({
         />
         <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={upload.isPending}>
           {upload.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Upload className="size-3.5" />
           )}
@@ -331,7 +335,10 @@ function LibraryDetail({
           >
             <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
               {upload.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <FileUp className="size-4" />
               )}
@@ -358,7 +365,8 @@ function LibraryDetail({
 
           {docsLoading ? (
             <div className="py-8 text-center text-xs text-muted-foreground">
-              <Loader2 className="mx-auto mb-2 size-4 animate-spin" /> Loading documents…
+              <Loader2 className="mx-auto mb-2 size-4 animate-spin" /> Loading documents…{" "}
+              <LivePercent mode="load" />
             </div>
           ) : documents.length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-foreground">
@@ -432,7 +440,12 @@ function LibraryDetail({
                             : undefined
                         }
                       >
-                        {live ? <Loader2 className="size-2.5 animate-spin" /> : null}
+                        {live ? (
+                          <>
+                            <Loader2 className="size-2.5 animate-spin" />
+                            <LivePercent />
+                          </>
+                        ) : null}
                         {doc.status === "uploaded" ? "not ingested" : doc.status}
                       </span>
                       <div className="flex items-center gap-1.5">
@@ -559,7 +572,8 @@ function DraftReviewModal({
 
         {isLoading ? (
           <div className="py-12 text-center text-xs text-muted-foreground">
-            <Loader2 className="size-4 animate-spin mx-auto mb-2" /> Loading proposed draft…
+            <Loader2 className="size-4 animate-spin mx-auto mb-2" /> Loading proposed draft…{" "}
+            <LivePercent mode="load" />
           </div>
         ) : !draft ? (
           <EmptyState title="No extraction draft available" />
@@ -646,7 +660,10 @@ function DraftReviewModal({
             className="flex items-center gap-1.5"
           >
             {commitMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <GitBranch className="size-3.5" />
             )}
@@ -732,7 +749,7 @@ function LibraryGraphPane({
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-        <Loader2 className="mr-2 size-4 animate-spin" /> Loading graph…
+        <Loader2 className="mr-2 size-4 animate-spin" /> Loading graph… <LivePercent mode="load" />
       </div>
     );
   }

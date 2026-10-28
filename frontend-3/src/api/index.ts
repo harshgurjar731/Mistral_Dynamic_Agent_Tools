@@ -1,4 +1,4 @@
-import { api, del, get, patch, post, put } from "./client";
+import { api, del, get, patch, post, postForm, put } from "./client";
 import type { ProcessCandidate } from "./processes";
 import type {
   BuilderCatalog,
@@ -128,9 +128,7 @@ export const orchestratorApi = {
 export async function uploadImage(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/uploads/image", { method: "POST", body: form });
-  if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-  return (await res.json()) as UploadResult;
+  return postForm<UploadResult>("/api/uploads/image", form);
 }
 
 /* ── Tools ──────────────────────────────────────────────────────────── */
@@ -201,9 +199,7 @@ export const librariesApi = {
   async uploadDocument(id: string, file: File) {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`/api/libraries/${id}/documents`, { method: "POST", body: form });
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-    return res.json();
+    return postForm<unknown>(`/api/libraries/${id}/documents`, form);
   },
 };
 
@@ -439,9 +435,7 @@ export const workflowsApi = {
   uploadImage: async (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch("/api/uploads/image", { method: "POST", body: form });
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-    return unwrapJson(await res.json());
+    return postForm<unknown>("/api/uploads/image", form);
   },
   /** Store a document for a document input in its library; resolves once Mistral has read it. */
   uploadInputDocument: async (name: string, field: string, file: File) => {
@@ -544,12 +538,7 @@ export const ragApi = {
     form.append("file", file);
     form.append("rules", rules);
     form.append("auto_extract", String(autoExtract));
-    const res = await fetch(`/api/rag/libraries/${libraryId}/documents`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-    return unwrapJson(await res.json());
+    return postForm<unknown>(`/api/rag/libraries/${libraryId}/documents`, form);
   },
   extract: (documentId: number, rules?: string | null) =>
     post<unknown>(`/api/rag/documents/${documentId}/extract`, { rules: rules ?? null }),

@@ -13,6 +13,7 @@ import {
   RemoteWorkflowSelect,
   type KeyValueRow,
 } from "./remoteShared";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 // A package runs one service: tool and activity code is bundled into the worker.
 const SERVICES: { id: BuildService; label: string; hint: string }[] = [
@@ -171,7 +172,10 @@ export function BuildWorkflowPanel({
           disabled={!workflow || services.length === 0 || build.isPending}
         >
           {build.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Hammer className="size-3.5" />
           )}

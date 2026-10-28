@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Library } from "@/types";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Create a library, or edit an existing one when `library` is given. */
 export function LibraryFormDialog({
@@ -83,7 +84,10 @@ export function LibraryFormDialog({
           </Button>
           <Button onClick={() => submit.mutate()} disabled={!name.trim() || submit.isPending}>
             {submit.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <LibraryIcon className="size-4" />
             )}

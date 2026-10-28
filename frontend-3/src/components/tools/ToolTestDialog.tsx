@@ -35,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { cn } from "@/lib/utils";
 import { paramFields, toArguments, valuesFrom, type ParamField } from "./paramForm";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export interface RebuildPrefill {
   error: string;
@@ -289,7 +290,10 @@ export function ToolTestDialog({
               disabled={run.isPending || (Boolean(sideEffects) && !confirmSideEffects)}
             >
               {run.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Play className="size-3.5" />
               )}

@@ -12,6 +12,8 @@ export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "inte
 export interface RunProgress {
   total: number;
   done: number;
+  /** 0–1: finished layers plus the running layer's measured share. */
+  fraction?: number | undefined;
   label?: string | null | undefined;
   note?: string | null | undefined;
 }

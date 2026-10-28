@@ -23,6 +23,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DiffView, prettyJson } from "./shared";
 import { ReportView } from "./ValidationReportDialog";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export type AiSource =
   | {
@@ -253,7 +254,10 @@ export function AiFixDialog({
                 onClick={() => onAccept(result.document!, result)}
               >
                 {accepting ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <CheckCircle2 className="size-3.5" />
                 )}

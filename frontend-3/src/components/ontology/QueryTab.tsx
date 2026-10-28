@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils";
 import { GraphCanvas, type GraphLayout, type SimpleEdge, type SimpleNode } from "./GraphCanvas";
 import { kindColor, kindLabel } from "./graphTones";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const EXAMPLES = [
   { label: "Sample Nodes", query: "MATCH (n) RETURN n LIMIT 50" },
@@ -122,8 +123,9 @@ export function QueryTab() {
               ))}
             </select>
             <span className="text-[11px] text-muted-foreground">
-              Press <kbd className="rounded border border-border bg-muted/40 px-1 py-0.5">Ctrl</kbd> +{" "}
-              <kbd className="rounded border border-border bg-muted/40 px-1 py-0.5">Enter</kbd> to run
+              Press <kbd className="rounded border border-border bg-muted/40 px-1 py-0.5">Ctrl</kbd>{" "}
+              + <kbd className="rounded border border-border bg-muted/40 px-1 py-0.5">Enter</kbd> to
+              run
             </span>
           </div>
 
@@ -162,7 +164,10 @@ export function QueryTab() {
               className="flex items-center gap-1.5"
             >
               {runMutation.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Play className="size-3.5" />
               )}
@@ -193,15 +198,21 @@ export function QueryTab() {
             }
           />
           <div className="p-4">
-            {(!result.rows || result.rows.length === 0) ? (
-              <EmptyState title="No records returned" description="The query completed successfully with 0 rows." />
+            {!result.rows || result.rows.length === 0 ? (
+              <EmptyState
+                title="No records returned"
+                description="The query completed successfully with 0 rows."
+              />
             ) : view === "table" ? (
               <div className="custom-scrollbar max-h-[500px] overflow-auto rounded-lg border border-border">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead className="sticky top-0 bg-background-elevated/95 backdrop-blur-sm border-b border-border">
                     <tr>
                       {columns.map((col) => (
-                        <th key={col} className="px-3 py-2 font-mono text-[11px] font-bold text-foreground">
+                        <th
+                          key={col}
+                          className="px-3 py-2 font-mono text-[11px] font-bold text-foreground"
+                        >
                           {col}
                         </th>
                       ))}
@@ -219,7 +230,10 @@ export function QueryTab() {
                                 ? JSON.stringify(val)
                                 : String(val);
                           return (
-                            <td key={col} className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+                            <td
+                              key={col}
+                              className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground"
+                            >
                               {display}
                             </td>
                           );

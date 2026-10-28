@@ -25,6 +25,8 @@ export interface RunLog {
 interface Progress {
   visible: Map<string, string>;
   done: Set<string>;
+  /** How far the running layer is through its own work, 0–1. */
+  sub: number;
 }
 
 const logs = new Map<string, RunLog>();
@@ -122,6 +124,20 @@ export function settleRun(
   if (run) finishedListeners.forEach((l) => l(run, { focused }));
 }
 
+const STEP_VERB: Record<string, string> = {
+  model: "Calling model",
+  tool: "Running tool",
+  step: "Workflow step",
+};
+
+/** Finished layers, plus how far the running one has measurably got. */
+function fractionOf(p: Progress): number {
+  const total = p.visible.size;
+  if (!total) return 0;
+  const sub = p.done.size < total ? p.sub : 0;
+  return Math.min(0.99, (p.done.size + sub) / total);
+}
+
 function trackProgress(id: string, e: SSEEvent) {
   let p = progress.get(id);
   if (e.type === "pipeline") {
@@ -133,47 +149,57 @@ function trackProgress(id: string, e: SSEEvent) {
         (parsed?.layers ?? []).filter((l) => !l.hidden).map((l) => [l.name, l.label ?? l.name]),
       ),
       done: new Set(),
+      sub: 0,
     };
     progress.set(id, p);
     useRunsStore.getState().patch(id, {
-      progress: { total: p.visible.size, done: 0, label: null, note: null },
+      progress: { total: p.visible.size, done: 0, fraction: 0, label: null, note: null },
     });
     return;
   }
   if (!p) return;
+  const prog = p;
   const store = useRunsStore.getState();
   const current = store.runs[id]?.progress;
+  const publish = (label: string | null | undefined, note: string | null | undefined) =>
+    store.patch(id, {
+      progress: {
+        total: prog.visible.size,
+        done: prog.done.size,
+        fraction: fractionOf(prog),
+        label,
+        note,
+      },
+    });
+
   if (e.type === "layer") {
     const layer = parse(e.data) as { name?: string; state?: string };
     if (!layer?.name || !p.visible.has(layer.name)) return;
     if (layer.state === "active") {
-      store.patch(id, {
-        progress: {
-          total: p.visible.size,
-          done: p.done.size,
-          label: p.visible.get(layer.name) ?? null,
-          note: null,
-        },
-      });
+      p.sub = 0;
+      publish(p.visible.get(layer.name) ?? null, null);
     } else if (
       layer.state === "completed" ||
       layer.state === "skipped" ||
       layer.state === "failed"
     ) {
       p.done.add(layer.name);
-      store.patch(id, {
-        progress: {
-          total: p.visible.size,
-          done: p.done.size,
-          label: current?.label,
-          note: current?.note,
-        },
-      });
+      p.sub = 0;
+      publish(current?.label, current?.note);
     }
   } else if (e.type === "status") {
-    store.patch(id, {
-      progress: { total: p.visible.size, done: p.done.size, label: current?.label, note: e.data },
-    });
+    publish(current?.label, e.data);
+  } else if (e.type === "stage") {
+    // Progress inside the running layer, measured by the backend.
+    const stage = parse(e.data) as { label?: string; fraction?: number } | null;
+    if (typeof stage?.fraction === "number") p.sub = Math.max(p.sub, stage.fraction);
+    publish(current?.label, stage?.label ?? current?.note);
+  } else if (e.type === "step") {
+    const step = parse(e.data) as { kind?: string; name?: string; state?: string } | null;
+    if (step?.state === "active" && step.name) {
+      const verb = STEP_VERB[step.kind ?? ""];
+      publish(current?.label, verb ? `${verb} · ${step.name}` : step.name);
+    }
   }
 }
 

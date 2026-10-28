@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import type { RebuildPrefill } from "./ToolTestDialog";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 interface RebuildResult {
   status?: string;
@@ -236,7 +237,10 @@ export function RebuildFromErrorDialog({
             {!runId ? (
               <Button size="sm" disabled={!canStart} onClick={() => void start()}>
                 {starting ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <Hammer className="size-3.5" />
                 )}

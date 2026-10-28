@@ -21,6 +21,7 @@ import { RuleParamsForm } from "./RuleParamsForm";
 import { AppliesPicker, CategoryPicker } from "./RuleScopingControls";
 import { appliesToFields, toneFor, useRuleCategories } from "./ruleScoping";
 import { ENFORCEMENT_META, RuleIcon, renderSummary } from "./RulePills";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const ENFORCEMENT_DOT: Record<RuleEnforcement, string> = {
   block: "bg-red",
@@ -410,7 +411,10 @@ export function RuleCreateDialog({
                 className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-brand px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
               >
                 {create.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <Plus className="size-3.5" />
                 )}

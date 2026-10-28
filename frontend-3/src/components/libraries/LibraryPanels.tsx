@@ -35,6 +35,7 @@ import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 function getFileIcon(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
@@ -230,7 +231,10 @@ export function DocumentsPanel({
           />
           <Button size="sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}>
             {upload.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Upload className="size-3.5" />
             )}
@@ -255,7 +259,10 @@ export function DocumentsPanel({
               disabled={!pageUrl.trim() || addWebpage.isPending}
             >
               {addWebpage.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Globe className="size-3.5" />
               )}

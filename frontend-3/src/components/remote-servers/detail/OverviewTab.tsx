@@ -14,6 +14,7 @@ import { DeploymentHistory } from "../Deployments";
 import { timeAgo } from "../status";
 import { containersUp, type ServerTab } from "./tabs";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type Go = (tab: ServerTab, workflow?: string) => void;
 
@@ -225,7 +226,12 @@ export function OverviewTab({
                   </div>
                   {isNext ? (
                     <Button size="sm" onClick={s.action.run} disabled={s.action.busy}>
-                      {s.action.busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                      {s.action.busy ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          <LivePercent />
+                        </>
+                      ) : null}
                       {s.action.label}
                       {s.action.busy ? null : <ArrowRight className="size-3.5" />}
                     </Button>

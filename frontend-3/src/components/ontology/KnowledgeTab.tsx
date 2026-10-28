@@ -21,6 +21,7 @@ import {
 import { Markdown } from "@/components/chat/Markdown";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground";
@@ -116,7 +117,10 @@ export function KnowledgeTab() {
                 title="Move agents still on the retired retrieval tools to the current knowledge tool. Agents opt in to the tool individually."
               >
                 {attach.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
                 ) : (
                   <Link2 className="size-3.5" />
                 )}
@@ -323,7 +327,10 @@ function RehearsalPanel({ concepts }: { concepts: Concept[] }) {
           </select>
           <Button type="submit" size="sm" className="w-full" disabled={!query.trim()}>
             {isFetching ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent mode="load" />
+              </>
             ) : (
               <Search className="size-3.5" />
             )}
@@ -484,7 +491,12 @@ function CreateEntryDialog({
             onClick={() => create.mutate()}
             disabled={create.isPending || !conceptId || !title.trim() || !body.trim()}
           >
-            {create.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {create.isPending ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                <LivePercent />
+              </>
+            ) : null}
             Save entry
           </Button>
         </DialogFooter>

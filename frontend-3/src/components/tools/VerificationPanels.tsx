@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const EXPECTATION_LABEL: Record<string, string> = {
   success: "must succeed",
@@ -214,7 +215,10 @@ export function VersionHistoryPanel({
                   disabled={activate.isPending}
                 >
                   {activate.isPending ? (
-                    <Loader2 className="size-3 animate-spin" />
+                    <>
+                      <Loader2 className="size-3 animate-spin" />
+                      <LivePercent />
+                    </>
                   ) : (
                     <RotateCcw className="size-3" />
                   )}

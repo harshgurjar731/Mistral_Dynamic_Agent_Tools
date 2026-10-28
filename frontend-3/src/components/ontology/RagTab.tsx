@@ -9,6 +9,7 @@ import { CreatedAt } from "@/components/shared/CreatedAt";
 import { SortSelect } from "@/components/shared/SortSelect";
 import { cn } from "@/lib/utils";
 import { docCount, libraryState } from "./libraryMeta";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 type Filter = "all" | "in_use" | "graphed";
 
@@ -151,7 +152,8 @@ export function RagTab() {
       {/* ── Cards ── */}
       {isLoading ? (
         <div className="py-16 text-center text-xs text-muted-foreground">
-          <Loader2 className="mx-auto mb-2 size-5 animate-spin" /> Loading libraries…
+          <Loader2 className="mx-auto mb-2 size-5 animate-spin" /> Loading libraries…{" "}
+          <LivePercent mode="load" />
         </div>
       ) : shown.length === 0 ? (
         <EmptyState

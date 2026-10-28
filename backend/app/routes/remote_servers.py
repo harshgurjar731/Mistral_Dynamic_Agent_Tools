@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app import progress
 from app.database import get_db
 from app.remote_server_model import RemoteServer, RemoteDeployment
 from app.remote_servers import accounts, checks, deployers, store
@@ -222,11 +223,18 @@ async def check_all(purpose: Optional[str] = None, db: Session = Depends(get_db)
     servers = q.all()
     sem = asyncio.Semaphore(6)
 
-    async def one(s: RemoteServer):
-        async with sem:
-            return await checks.run_checks(s.provider or "mcp_code_endpoint",
-                                           store.server_config(s), store.server_secrets(s))
+    finished = 0
 
+    async def one(s: RemoteServer):
+        nonlocal finished
+        async with sem:
+            result = await checks.run_checks(s.provider or "mcp_code_endpoint",
+                                             store.server_config(s), store.server_secrets(s))
+        finished += 1
+        progress.report(f"Checked {s.name}: {result['status']}", done=finished, total=len(servers))
+        return result
+
+    progress.report("Checking servers", done=0, total=len(servers))
     results = await asyncio.gather(*(one(s) for s in servers))
     summary = {"healthy": 0, "degraded": 0, "unreachable": 0}
     out = []

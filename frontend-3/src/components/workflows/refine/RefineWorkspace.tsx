@@ -17,6 +17,7 @@ import { RefineCanvas } from "./RefineCanvas";
 import { RefineConversation } from "./RefineConversation";
 import { useWorkflowRefine } from "./useWorkflowRefine";
 import { VersionHistorySheet } from "./VersionHistorySheet";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export function RefineWorkspace({
   workflowName,
@@ -97,7 +98,10 @@ export function RefineWorkspace({
             title="Go back to the previous version"
           >
             {refine.undo.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Undo2 className="size-3.5" />
             )}
@@ -127,7 +131,10 @@ export function RefineWorkspace({
               className="h-8 rounded-lg bg-gradient-brand text-xs text-primary-foreground hover:opacity-90"
             >
               {refine.publish.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Rocket className="size-3.5" />
               )}

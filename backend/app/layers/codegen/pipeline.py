@@ -23,6 +23,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Optional
 
+from app import progress
 from app.core.specs import CodeNeed, CodeRequirement, CodeResolution
 from app.layers.codegen.layers import (
     MAX_REAUTHORS,
@@ -236,13 +237,16 @@ async def resolve_code_needs(
     client = client or _default_client()
     gate = asyncio.Semaphore(max(1, concurrency))
 
-    async def one(need: CodeNeed) -> CodeResolution:
+    async def one(index: int, need: CodeNeed) -> CodeResolution:
         async with gate:
-            resolution = await resolve_code_need(need, client=client, on_event=on_event,
-                                                 catalogue=catalogue, code_check=code_check)
+            # Each need fills its own share of the bar, however far the others are.
+            with progress.part(index, len(needs),
+                               f"Building {need.purpose} {need.name_hint or ''}".strip()):
+                resolution = await resolve_code_need(need, client=client, on_event=on_event,
+                                                     catalogue=catalogue, code_check=code_check)
             if resolution.name and resolution.status in ("built", "pending_approval"):
                 catalogue.append({"name": resolution.name, "purpose": need.purpose,
                                   "status": "pending_approval"})
             return resolution
 
-    return list(await asyncio.gather(*(one(n) for n in needs)))
+    return list(await asyncio.gather(*(one(i, n) for i, n in enumerate(needs))))

@@ -34,6 +34,7 @@ import {
   type ResolvedField,
   type UploadedDocument,
 } from "./fieldModel";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 function formatSize(bytes: number): string {
   if (!bytes) return "";
@@ -235,7 +236,8 @@ export function DocumentInput({
               key={`pending-${i}`}
               className="flex items-center gap-2 rounded-md border border-border bg-background-elevated/40 px-2.5 py-2 text-[11px] text-muted-foreground"
             >
-              <Loader2 className="size-3.5 animate-spin" /> Uploading and reading the document…
+              <Loader2 className="size-3.5 animate-spin" /> Uploading and reading the document…{" "}
+              <LivePercent />
             </div>
           ))}
           {!full ? (

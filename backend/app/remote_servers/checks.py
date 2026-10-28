@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app import progress
 from app.remote_servers import ssh
 from app.remote_servers.providers import get_provider
 from app.remote_servers.edge import EDGE_BLOCK_ADVICE, edge_block
@@ -36,6 +37,7 @@ class _Report:
 
     def add(self, id_: str, label: str, status: str, detail: str = "", **extra) -> str:
         self.checks.append({"id": id_, "label": label, "status": status, "detail": detail, **extra})
+        progress.report(f"Checked {label}: {status}", detail=detail or None)
         return status
 
     def result(self, started: float) -> dict:

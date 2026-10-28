@@ -98,3 +98,8 @@ export async function del<T>(url: string, params?: Record<string, unknown>): Pro
   const res = await api.delete<T>(url, { params });
   return unwrap(res.data);
 }
+/** A multipart upload — through axios, so its bytes show as live upload progress. */
+export async function postForm<T>(url: string, form: FormData): Promise<T> {
+  const res = await api.post<T>(url, form, { headers: { "Content-Type": "multipart/form-data" } });
+  return unwrap(res.data);
+}

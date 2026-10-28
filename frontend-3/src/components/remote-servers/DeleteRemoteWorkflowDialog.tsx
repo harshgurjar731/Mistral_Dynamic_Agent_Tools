@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Confirm deleting a deployed workflow package from the server. The deletion
@@ -150,7 +151,10 @@ export function DeleteRemoteWorkflowDialog({
             disabled={confirm.trim() !== workflow.name || del.isPending}
           >
             {del.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Trash2 className="size-3.5" />
             )}

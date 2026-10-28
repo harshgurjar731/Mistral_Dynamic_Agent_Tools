@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import type { RuleRef, RuleScope, RuleSuggestion } from "@/types";
 import { RuleIcon, SourcePill } from "./RulePills";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * Pick the optional rules for one agent or workflow.
@@ -79,7 +80,7 @@ export function RuleSelector({
   if (rulesQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" /> Loading rules…
+        <Loader2 className="size-3.5 animate-spin" /> Loading rules… <LivePercent mode="load" />
       </div>
     );
   }
@@ -217,7 +218,10 @@ export function RuleSelector({
             className="inline-flex items-center gap-1.5 rounded-lg border border-purple/30 bg-purple/10 px-2.5 py-1.5 text-xs font-medium text-purple transition hover:bg-purple/15 disabled:opacity-50"
           >
             {suggesting ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <Sparkles className="size-3.5" />
             )}

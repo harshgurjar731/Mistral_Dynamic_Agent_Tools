@@ -30,6 +30,7 @@ import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
 import { isDeletableTool } from "@/lib/status";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export const Route = createFileRoute("/workflows/activities/")({
   head: () => ({
@@ -163,7 +164,7 @@ function ActivityGalleryPage() {
         >
           {synthesizeMut.busy ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing…
+              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent />
             </>
           ) : (
             <>
@@ -311,7 +312,10 @@ function ActivityGalleryPage() {
               className="gap-2"
             >
               {synthesizeMut.busy ? (
-                <Loader2 className="size-4 animate-spin" />
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <Sparkles className="size-4" />
               )}

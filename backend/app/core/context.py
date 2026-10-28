@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app import progress
 from app.core.events import SSEEvent
 from app.core.specs import AgentSpec, RequirementSpec, WorkflowRevisionSpec, WorkflowSpec
 
@@ -87,6 +88,9 @@ class PipelineContext:
         self.events.append(sse)
         if self.event_queue is not None:
             self.event_queue.put_nowait(sse)
+        else:
+            # A pipeline run inline by an ordinary request narrates into its op.
+            progress.pipeline_event(event, data)
 
     def set_layer_summary(self, name: str, text: str) -> None:
         """Record a layer's own account of what it decided.

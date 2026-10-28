@@ -30,6 +30,7 @@ import {
   type SimpleNode,
 } from "./GraphCanvas";
 import { kindColor, kindLabel } from "./graphTones";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 const EMPTY_PARAMS = {};
 /** Once the graph is narrowed, processes and their documents are drawn too. */
@@ -406,7 +407,10 @@ export function OverviewTab({ focus }: { focus?: string | undefined } = {}) {
           />
           <span className="inline-flex h-8 items-center rounded-lg border border-border/60 bg-background-elevated/90 px-2.5 text-[11px] text-muted-foreground tabular-nums backdrop-blur-md">
             {isFetching ? (
-              <Loader2 className="size-3 animate-spin" />
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                <LivePercent mode="load" />
+              </>
             ) : (
               `${nodes.length} nodes · ${visibleEdgeCount} links`
             )}

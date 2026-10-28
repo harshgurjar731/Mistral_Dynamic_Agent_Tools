@@ -5,6 +5,7 @@ import { ontologyApi, QK } from "@/api";
 import type { Concept } from "@/types";
 import { DomainCascadeSelect } from "./DomainCascadeSelect";
 import { Button } from "@/components/ui/button";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 export function DomainClassificationEditor({
   subjectType,
@@ -73,7 +74,8 @@ export function DomainClassificationEditor({
   if (isLoading) {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="size-3 animate-spin" /> Loading domain vocabulary…
+        <Loader2 className="size-3 animate-spin" /> Loading domain vocabulary…{" "}
+        <LivePercent mode="load" />
       </p>
     );
   }
@@ -101,7 +103,14 @@ export function DomainClassificationEditor({
           disabled={save.isPending}
           className="h-7 text-xs gap-1.5"
         >
-          {save.isPending ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+          {save.isPending ? (
+            <>
+              <Loader2 className="size-3 animate-spin" />
+              <LivePercent />
+            </>
+          ) : (
+            <Save className="size-3" />
+          )}
           Save Domain Classification
         </Button>
       )}

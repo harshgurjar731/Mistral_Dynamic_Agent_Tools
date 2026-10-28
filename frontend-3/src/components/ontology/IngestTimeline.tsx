@@ -5,6 +5,7 @@ import { ragApi } from "@/api";
 import type { TimelineEvent } from "@/types";
 import { formatDuration } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /**
  * What is happening to a document, while it happens.
@@ -218,7 +219,10 @@ export function IngestTimeline({
                     )}
                   >
                     {state === "running" ? (
-                      <Loader2 className="size-3 animate-spin" />
+                      <>
+                        <Loader2 className="size-3 animate-spin" />
+                        <LivePercent />
+                      </>
                     ) : state === "failed" ? (
                       <AlertTriangle className="size-3" />
                     ) : state === "skipped" ? (

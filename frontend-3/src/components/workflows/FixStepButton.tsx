@@ -14,6 +14,7 @@ import type { ExecutionStep, WorkflowDefinition, WorkflowStep } from "@/types";
 import { handOffRebuild } from "@/lib/rebuildHandoff";
 import { Button } from "@/components/ui/button";
 import type { StepActions } from "./ExecutionStepTimeline";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** The definition step a reported step ran, when it is an activity (tool) step. */
 function toolStepFor(definition: WorkflowDefinition, step: ExecutionStep): WorkflowStep | null {
@@ -88,7 +89,14 @@ export function FixStepButton({ step, toolStep }: { step: ExecutionStep; toolSte
         onClick={open}
         disabled={busy}
       >
-        {busy ? <Loader2 className="size-3 animate-spin" /> : <Hammer className="size-3" />}
+        {busy ? (
+          <>
+            <Loader2 className="size-3 animate-spin" />
+            <LivePercent />
+          </>
+        ) : (
+          <Hammer className="size-3" />
+        )}
         Fix this activity
       </Button>
     </div>

@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { providerIcon } from "./status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /*
  * Provider accounts: one login shared by every server of a provider — the
@@ -288,7 +289,10 @@ export function AccountLoginDialog({
             </Button>
             <Button type="submit" disabled={login.isPending || missing}>
               {login.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <LogIn className="size-3.5" />
               )}
@@ -345,7 +349,10 @@ function AccountRow({
           {status ? (
             <AccountStateBadge state={status.state} kind={spec.kind} />
           ) : refreshing ? (
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            <>
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <LivePercent />
+            </>
           ) : null}
           {spec.kind === "cli" && status?.token_saved ? (
             <span
@@ -392,7 +399,10 @@ function AccountRow({
               disabled={logout.isPending}
             >
               {logout.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <LogOut className="size-3.5" />
               )}
@@ -601,7 +611,10 @@ export function InstancePicker({
           disabled={start.isPending}
         >
           {start.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <LivePercent />
+            </>
           ) : (
             <Play className="size-3.5" />
           )}

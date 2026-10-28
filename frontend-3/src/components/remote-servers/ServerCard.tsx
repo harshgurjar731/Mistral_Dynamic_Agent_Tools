@@ -13,6 +13,7 @@ import {
   type ServerState,
 } from "./status";
 import { cn } from "@/lib/utils";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Strip the scheme so the address reads cleanly on one line. */
 function shortAddress(url: string): string {
@@ -154,7 +155,10 @@ export function ServerCard({ server }: { server: RemoteServer }) {
               className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
             >
               {check.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
               ) : (
                 <RefreshCw className="size-3.5" />
               )}

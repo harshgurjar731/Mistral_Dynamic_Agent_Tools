@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SelectItem } from "@/components/ui/select";
 import { CommandRunOutput, RemoteWorkflowSelect } from "./remoteShared";
+import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Radix Select items cannot have an empty value. */
 const DEPLOY_ROOT = "__root__";
@@ -179,7 +180,10 @@ export function RemoteConsole({ server }: { server: RemoteServer }) {
           </div>
           <Button type="submit" disabled={!command.trim() || run.isPending}>
             {run.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
             ) : (
               <SquareTerminal className="size-3.5" />
             )}
