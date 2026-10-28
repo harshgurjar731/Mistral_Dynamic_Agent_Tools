@@ -23,6 +23,7 @@ import { THEME_BOOT_SCRIPT, useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useResizablePanel } from "@/components/shared/ResizeHandle";
 import { cn } from "@/lib/utils";
+import { RunQuestions } from "@/components/runs/RunQuestions";
 
 const NAV_COLLAPSED_WIDTH = 64;
 const NAV_DEFAULT_WIDTH = 248;
@@ -226,6 +227,8 @@ function AppShell() {
         </div>
       </div>
       <BackgroundRuns />
+      {/* A run waiting on an answer, wherever you are — unless its page shows it. */}
+      <RunQuestions />
       <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} />
     </>
   );

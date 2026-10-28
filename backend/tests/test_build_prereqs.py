@@ -319,3 +319,103 @@ def test_pipelines_check_prerequisites_before_building(vault):
     assert wf.index("workflow_prerequisites") < wf.index("activity_gap")
     chat = chat_pipeline.layer_names
     assert chat.index("agent_prerequisites") < chat.index("capability_gap")
+
+
+# ── Standalone tool / activity synthesis ───────────────────────────────────
+
+
+class FakeSynthesisRun(FakeRun):
+    """A LiveRun as the synthesis runner uses it: emit() as well as put_nowait()."""
+
+    def emit(self, event, data):
+        self.events.append((event, data))
+
+
+def _synthesis(monkeypatch, *answers, built=None):
+    from app.runs import runners
+    from app.services.tool_resolver import tool_resolver
+
+    seen = {}
+
+    async def fake_build(task, purpose="tool", on_event=None, *, guidance=None, code_check=None):
+        seen.update(task=task, purpose=purpose, guidance=list(guidance or []),
+                    code_check=code_check)
+        return built or {"status": "approved", "tool_name": "fetch_weather", "version": 1}
+
+    async def no_refresh():
+        return None
+
+    monkeypatch.setattr(tool_resolver, "synthesize_from_task", fake_build)
+    monkeypatch.setattr("app.services.tool_registry.refresh_dynamic_tools", no_refresh)
+    monkeypatch.setattr("app.layers.codegen.pipeline._default_client", lambda: object())
+    run = FakeSynthesisRun(*answers)
+    outcome = asyncio.run(runners.synthesis(run, task="Weather for a city", purpose="tool"))
+    return run, outcome, seen
+
+
+def test_synthesis_asks_before_generating_and_passes_what_was_settled(vault, monkeypatch):
+    _model_says(monkeypatch, _WEATHER + [
+        {"category": "information", "key": "units", "label": "Temperature units"}])
+    entry = store.create_secret(name="OWM_KEY", value="the-key-12345678", service="Other")
+    run, outcome, seen = _synthesis(monkeypatch, {"choice": "continue", "answers": [
+        {"key": "OPENWEATHER_API_KEY", "action": "vault", "secret_id": entry["id"]},
+        {"key": "info_units", "action": "text", "text": "Celsius"}]})
+
+    assert outcome.status == "completed"
+    question = run.questions[0]
+    assert question["kind"] == "prerequisites" and question["stage"] == "tool"
+    # The code is told the exact vault name to read, and the fact.
+    assert any("kwargs['_secrets']['OWM_KEY']" in g for g in seen["guidance"])
+    assert any("Celsius" in g for g in seen["guidance"])
+    # R4b in the code pipeline can ask through the same run, and knows OWM_KEY.
+    assert seen["code_check"].can_ask and seen["code_check"].settled("OWM_KEY")
+    layers = [d["name"] for e, d in run.events if e == "layer" and d.get("state") == "completed"]
+    assert layers == ["tool_prerequisites", "synthesis"]
+
+
+def test_synthesis_stopped_at_prerequisites_builds_nothing(vault, monkeypatch):
+    _model_says(monkeypatch, _WEATHER)
+    run, outcome, seen = _synthesis(monkeypatch, {"choice": "cancel"})
+    assert outcome.status == "cancelled" and not seen
+    assert outcome.result["prerequisites"]["stopped"] == "cancel"
+    states = {d["name"]: d["state"] for e, d in run.events if e == "layer"}
+    assert states == {"tool_prerequisites": "failed", "synthesis": "skipped"}
+
+
+def test_synthesis_stopped_at_the_code_check_is_cancelled_not_failed(vault, monkeypatch):
+    _model_says(monkeypatch, [])
+    _, outcome, _ = _synthesis(monkeypatch, built={
+        "status": "failed", "reason": "prerequisites", "message": "Not built: you stopped it"})
+    assert outcome.status == "cancelled"
+
+
+def test_tool_requirements_route(vault, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.routes import vault as routes
+    from app.services.tool_resolver import tool_resolver
+
+    async def listing():
+        return [{"name": "fetch_weather", "secrets": ["OWM_KEY", "OWM_URL"]},
+                {"name": "add_numbers", "secrets": []}]
+
+    async def env_status(names):
+        return {n: {"allowed": n == "OWM_URL", "set": n == "OWM_URL"} for n in names}
+
+    monkeypatch.setattr(tool_resolver, "list_tools", listing)
+    monkeypatch.setattr(tool_resolver, "secrets_status", env_status)
+    from app.config import settings
+    monkeypatch.setattr(settings, "VAULT_ENV_FALLBACK", True)
+    store.create_secret(name="OWM_KEY", value="vault-value-123456")
+
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/api")
+    body = TestClient(app).get("/api/vault/tool-requirements",
+                               params={"tools": "fetch_weather@2,add_numbers,ghost"}).json()
+    rows = {r["tool"]: r for r in body["tools"]}
+    sources = {s["name"]: s["source"] for s in rows["fetch_weather"]["secrets"]}
+    assert sources == {"OWM_KEY": "vault", "OWM_URL": "environment"}
+    assert rows["add_numbers"]["secrets"] == [] and not rows["ghost"]["known"]
+    assert body["missing"] == 0
+    assert "vault-value" not in str(body)

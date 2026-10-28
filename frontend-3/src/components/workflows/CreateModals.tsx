@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ModelPicker } from "@/components/shared/ModelPicker";
+import { ToolCredentialsCheck } from "@/components/vault/ToolCredentialsCheck";
 
 /* ── Inline Agent Creation Modal ────────────────────────────────────── */
 
@@ -380,6 +381,7 @@ export function CreateAgentModal({
                     </div>
                   </div>
                 )}
+                <ToolCredentialsCheck tools={selectedTools} className="mt-2" />
               </div>
 
               <div>

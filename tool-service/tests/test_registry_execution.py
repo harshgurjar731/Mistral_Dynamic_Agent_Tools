@@ -175,3 +175,12 @@ def test_vault_callers_are_asked_for_secrets_and_win_over_the_environment(clean_
 
     # Callers without a vault behave as before.
     assert execute_tool(clean_db, "apply_gst", {"subtotal": 100})["result"]["data"]["key_tail"] == "NV"
+
+
+def test_listings_carry_the_secret_names_but_not_the_spec(clean_db):
+    from app.routes.management import _record_to_response
+
+    record = _install(clean_db, gst_spec(secrets=["GST_API_KEY"], output_schema=None), _KEYED)
+    listed = _record_to_response(record, full=False)
+    assert listed.secrets == ["GST_API_KEY"] and listed.spec is None
+    assert _record_to_response(record).spec["secrets"] == ["GST_API_KEY"]

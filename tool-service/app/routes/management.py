@@ -4,6 +4,7 @@ Management Routes — Tool listing, approval, rejection, and MCP publishing.
 
 import json
 import logging
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -39,6 +40,7 @@ def _loads(text):
 
 def _record_to_response(record: ToolRecord, *, full: bool = True) -> ToolResponse:
     """Convert a ToolRecord (one version) to a ToolResponse."""
+    spec = _loads(record.spec_json) or {}
     return ToolResponse(
         id=record.id,
         name=record.name,
@@ -58,8 +60,10 @@ def _record_to_response(record: ToolRecord, *, full: bool = True) -> ToolRespons
         kind=record.kind or "pure",
         side_effects=record.side_effects or "none",
         review_required=bool(record.review_required),
-        spec=_loads(record.spec_json) if full else None,
+        spec=spec if full and spec else None,
         report=_loads(record.report_json) if full else None,
+        secrets=[str(s) for s in (spec.get("secrets") or []) if str(s).strip()]
+        if isinstance(spec, dict) else [],
     )
 
 
@@ -265,3 +269,73 @@ def secrets_status(names: str = ""):
     wanted = [n.strip() for n in names.split(",") if n.strip()]
     return {"secrets": {n: {"allowed": n in allowed, "set": bool(os.environ.get(n))}
                         for n in wanted}}
+
+
+# ── Cleanup (Settings → Cleanup on the backend) ───────────────────────────
+#
+# Back to a fresh install: every synthesised tool and activity, every
+# synthesis job and every generated document goes. The predefined native tools
+# stay — a fresh install seeds them on boot — and are re-seeded afterwards in
+# case one was edited.
+
+_DOCUMENTS_DIR = "/app/documents"
+
+
+def _generated_documents() -> list[str]:
+    if not os.path.isdir(_DOCUMENTS_DIR):
+        return []
+    return [os.path.join(_DOCUMENTS_DIR, f) for f in os.listdir(_DOCUMENTS_DIR)
+            if os.path.isfile(os.path.join(_DOCUMENTS_DIR, f))]
+
+
+@router.get("/admin/cleanup")
+def cleanup_preview(db: Session = Depends(get_db)):
+    """What a cleanup would remove."""
+    from app.models import SynthesisJob
+    from app.services.synthesis_service import PREDEFINED_TOOL_NAMES
+
+    names = {r.name for r in db.query(ToolRecord.name).all()} - PREDEFINED_TOOL_NAMES
+    return {
+        "tools": len(names),
+        "tool_versions": db.query(ToolRecord).filter(~ToolRecord.name.in_(PREDEFINED_TOOL_NAMES)).count(),
+        "synthesis_jobs": db.query(SynthesisJob).count(),
+        "documents": len(_generated_documents()),
+    }
+
+
+@router.post("/admin/cleanup")
+def cleanup(db: Session = Depends(get_db)):
+    """Remove every synthesised tool, activity, synthesis job and generated document."""
+    from app.models import SynthesisJob
+    from app.seed_native_tools import seed_native_tools
+    from app.services.synthesis_service import PREDEFINED_TOOL_NAMES
+    from app.synthesis import registry
+
+    names = {r.name for r in db.query(ToolRecord.name).all()} - PREDEFINED_TOOL_NAMES
+    versions = sum(registry.delete_name(db, name) for name in sorted(names))
+
+    # A job still running would write its tool back moments later; leave it.
+    jobs = (db.query(SynthesisJob)
+            .filter(~SynthesisJob.status.in_(("queued", "running")))
+            .delete(synchronize_session=False))
+    running = db.query(SynthesisJob).count()
+    db.commit()
+
+    documents = 0
+    for path in _generated_documents():
+        try:
+            os.remove(path)
+            documents += 1
+        except OSError as e:
+            logger.warning("Could not delete %s: %s", path, e)
+
+    seed_native_tools(db)
+    logger.info("Cleanup: %d tool(s) (%d version(s)), %d job(s), %d document(s) removed",
+                len(names), versions, jobs, documents)
+    return {
+        "tools": len(names),
+        "tool_versions": versions,
+        "synthesis_jobs": jobs,
+        "synthesis_jobs_kept_running": running,
+        "documents": documents,
+    }

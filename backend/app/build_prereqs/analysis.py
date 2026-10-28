@@ -112,6 +112,13 @@ def workflow_user_prompt(goal: str, capabilities: list[Any]) -> str:
             f"{json.dumps(steps, indent=1)}\n\nVAULT CATALOGUE:\n{_vault_block()}")
 
 
+def tool_user_prompt(task: str, purpose: str) -> str:
+    what = ("a workflow activity — deterministic code that runs as one workflow step"
+            if purpose == "activity" else "an agent tool — a function an AI agent calls")
+    return (f"BUILDING: {what}. Its code will be generated from the request below.\n\n"
+            f"REQUEST:\n{task}\n\nVAULT CATALOGUE:\n{_vault_block()}")
+
+
 def agent_user_prompt(query: str, requirement_block: str) -> str:
     return (f"BUILDING: an agent that answers the request below, given tools generated for "
             f"it if needed.\n\nREQUEST:\n{query}\n\nANALYSED REQUIREMENT:\n{requirement_block}"

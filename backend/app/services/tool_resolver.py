@@ -406,19 +406,26 @@ class ToolResolver:
         except Exception:
             return None
 
-    async def synthesize_from_task(self, task: str, purpose: str = "tool", on_event=None) -> dict:
+    async def synthesize_from_task(self, task: str, purpose: str = "tool", on_event=None,
+                                   *, guidance: list[str] | None = None,
+                                   code_check=None) -> dict:
         """Build a tool or activity from a plain-English request.
 
         Runs the code-requirement pipeline: normalise the request, screen it,
         check the catalogue for something that already does it, author a v2
         specification (output contract, worked examples), and build it.
+
+        ``guidance``: what was settled with the user before building (vault
+        names, services to do without, facts); ``code_check``: how the
+        pipeline's credential check asks the user (``build_prereqs.code_check``).
         """
         from app.core.specs import CodeNeed
         from app.layers.codegen import resolve_code_need
 
         need = CodeNeed(purpose=purpose if purpose in ("tool", "activity") else "tool",
-                        origin="explicit", intent=str(task or "").strip())
-        resolution = await resolve_code_need(need, on_event=on_event)
+                        origin="explicit", intent=str(task or "").strip(),
+                        guidance=list(guidance or []))
+        resolution = await resolve_code_need(need, on_event=on_event, code_check=code_check)
         return resolution_to_result(resolution)
 
     async def list_mcp_servers(self) -> list:

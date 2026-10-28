@@ -53,6 +53,7 @@ import type {
   RuleRef,
   UploadResult,
 } from "@/types";
+import { ToolCredentialsCheck } from "@/components/vault/ToolCredentialsCheck";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -881,6 +882,7 @@ function AgentsIdPage() {
                       ))}
                     </div>
                   )}
+                  <ToolCredentialsCheck tools={form.toolNames} className="mt-3" />
                   <select
                     value=""
                     disabled={!canUseTools}

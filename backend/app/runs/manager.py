@@ -381,6 +381,10 @@ class RunManager:
     def live(self, run_id: str) -> Optional[LiveRun]:
         return self._runs.get(run_id)
 
+    def active(self) -> list[LiveRun]:
+        """Runs whose task is still going."""
+        return [r for r in self._runs.values() if r.task is not None and not r.task.done()]
+
     async def get(self, run_id: str) -> Optional[dict]:
         run = self._runs.get(run_id)
         if run:

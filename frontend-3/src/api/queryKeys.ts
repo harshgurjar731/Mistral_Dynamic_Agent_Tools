@@ -43,6 +43,8 @@ export const QK = {
   workflowRemoteDeployments: (name: string) => ["remote-deployments", "workflow", name] as const,
   health: () => ["health"] as const,
   settings: () => ["settings"] as const,
+  // Not under "settings": its counts query Mistral, too slow to refetch on every save.
+  cleanup: () => ["cleanup"] as const,
   // Under "settings" so saving the Settings page refreshes every picker.
   publicConfig: () => ["settings", "public"] as const,
   modelCatalog: () => ["settings", "catalog"] as const,

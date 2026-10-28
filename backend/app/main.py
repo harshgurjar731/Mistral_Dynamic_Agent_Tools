@@ -437,6 +437,9 @@ app.include_router(observability_routes.router, prefix=settings.API_PREFIX)
 from app.routes import settings as settings_routes  # noqa: E402
 app.include_router(settings_routes.router, prefix=settings.API_PREFIX)
 
+from app.routes import cleanup as cleanup_routes  # noqa: E402
+app.include_router(cleanup_routes.router, prefix=settings.API_PREFIX)
+
 from app.routes import processes as processes_routes  # noqa: E402
 app.include_router(processes_routes.router, prefix=settings.API_PREFIX)
 

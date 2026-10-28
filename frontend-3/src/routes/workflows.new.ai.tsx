@@ -63,6 +63,7 @@ import { stopRun, trackStartedRun } from "@/lib/runs/connections";
 import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useHostRunQuestions } from "@/lib/runs/questionHosts";
 
 const searchSchema = z.object({
   /** The background planning run on screen. */
@@ -302,6 +303,8 @@ function AiPlannerPage() {
   const tracked = useTrackedRun(runId);
   const { missing } = useRunView(runId);
   const view = useRunReducer(runId, reducePlanner, initPlannerView);
+  // This page shows the plan's questions itself (PlanDecisionDialog below).
+  useHostRunQuestions(runId);
 
   // Until the run's summary loads, a run without a replayed ending counts as live.
   const running =

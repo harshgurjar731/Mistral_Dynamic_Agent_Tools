@@ -161,6 +161,39 @@ async def status(names: str = Query("", description="Comma-separated names"),
     return {"secrets": await asyncio.to_thread(store.status, wanted, consumer)}
 
 
+@router.get("/tool-requirements")
+async def tool_requirements(tools: str = Query("", description="Comma-separated tool names")):
+    """The credentials each named tool or activity reads, and whether each would
+    reach it now — from the vault, or (when allowed) the Tool Service's
+    environment. For forms that attach tools directly, without a build."""
+    from app.config import settings
+    from app.services.tool_resolver import tool_resolver
+
+    wanted = [t.split("@", 1)[0].strip() for t in tools.split(",") if t.strip()]
+    if not wanted:
+        return {"tools": [], "missing": 0}
+    listing = {t.get("name"): t for t in await tool_resolver.list_tools()}
+    needs = {name: [str(s) for s in (listing.get(name) or {}).get("secrets") or []]
+             for name in wanted}
+    names = sorted({s for secrets in needs.values() for s in secrets})
+    env_status = (await tool_resolver.secrets_status(names) or {}
+                  if names and settings.VAULT_ENV_FALLBACK else {})
+    rows, missing = [], 0
+    for tool, secrets in needs.items():
+        status = await asyncio.to_thread(store.status, secrets, tool) if secrets else {}
+        items = []
+        for name in secrets:
+            info = status.get(name) or {}
+            env = env_status.get(name) or {}
+            source = ("vault" if info.get("usable") else
+                      "environment" if env.get("allowed") and env.get("set") else None)
+            missing += source is None
+            items.append({"name": name, "source": source, "reason": info.get("reason"),
+                          "id": info.get("id"), "label": info.get("label")})
+        rows.append({"tool": tool, "known": tool in listing, "secrets": items})
+    return {"tools": rows, "missing": missing}
+
+
 @router.get("/candidates")
 async def candidates(name: str = "", service: str = "", label: str = "", kind: str = "",
                      limit: int = Query(5, ge=1, le=20)):

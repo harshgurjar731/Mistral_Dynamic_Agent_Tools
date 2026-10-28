@@ -4,7 +4,10 @@ anything is built.
 
 Placed in the workflow pipeline after ExecutionModeLayer (the steps and how each
 runs are known; nothing has been created) and in the agent pipeline after
-RequirementAnalysisLayer (before CapabilityGapLayer can build a tool).
+RequirementAnalysisLayer (before CapabilityGapLayer can build a tool). A
+standalone tool or activity synthesis runs it on its own, stage "tool", before
+the code pipeline (``app.runs.runners.synthesis``); its request is in
+``ctx.query`` and its purpose in ``ctx.metadata["purpose"]``.
 
 The outcome is recorded in ``ctx.metadata["build_prerequisites"]``:
 
@@ -38,7 +41,7 @@ class BuildPrerequisitesLayer(Layer):
               "vault already holds, and asks you for the rest — before anything is built.")
 
     def __init__(self, stage: str):
-        self.stage = stage                      # workflow | agent
+        self.stage = stage                      # workflow | agent | tool
         self.name = f"{stage}_prerequisites"
 
     def should_run(self, ctx: PipelineContext) -> bool:
@@ -48,6 +51,8 @@ class BuildPrerequisitesLayer(Layer):
             from app.layers.workflow.base import workflow_ready
 
             return workflow_ready(ctx)
+        if self.stage == "tool":
+            return True
         return not ctx.agent_id and not ctx.conversation_id
 
     def _prompt(self, ctx: PipelineContext) -> tuple[str, set[str] | None, str]:
@@ -57,6 +62,10 @@ class BuildPrerequisitesLayer(Layer):
             return (analysis.workflow_user_prompt(spec.goal, spec.capabilities),
                     {c.id for c in spec.capabilities},
                     spec.workflow_name or "this workflow")
+        if self.stage == "tool":
+            purpose = str(ctx.metadata.get("purpose") or "tool")
+            return (analysis.tool_user_prompt(ctx.query, purpose), None,
+                    "this activity" if purpose == "activity" else "this tool")
         block = ctx.requirements.as_prompt_block() if ctx.requirements else "(not analysed)"
         return analysis.agent_user_prompt(ctx.query, block), None, "this agent"
 
@@ -144,6 +153,8 @@ class BuildPrerequisitesLayer(Layer):
             ctx.error = message
             return await next(ctx)
         ctx.error = message
-        ctx.emit("error", message)
-        # The agent layers do not check ctx.error, so the chain ends here.
+        if self.stage == "agent":
+            ctx.emit("error", message)
+        # The agent layers do not check ctx.error, so the chain ends here; a
+        # standalone synthesis reads STOPPED_KEY and builds nothing.
         return ctx

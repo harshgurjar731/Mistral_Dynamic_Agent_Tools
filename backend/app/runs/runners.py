@@ -114,16 +114,48 @@ async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
     announces one layer around it. That keeps every kind of run on the same
     protocol — the UI draws progress for all of them the same way.
     """
+    from app.build_prereqs import guidance as prerequisites
+    from app.build_prereqs.code_check import CodeCheck
+    from app.build_prereqs.layer import STOPPED_KEY, BuildPrerequisitesLayer
+    from app.core.context import PipelineContext
+    from app.layers.codegen.pipeline import _default_client
     from app.services.tool_registry import refresh_dynamic_tools
     from app.services.tool_resolver import tool_resolver
 
     noun = "activity" if purpose == "activity" else "agent tool"
-    run.emit("pipeline", {"layers": [{
+    check_layer = BuildPrerequisitesLayer("tool")
+    run.emit("pipeline", {"layers": [check_layer.describe(), {
         "name": "synthesis",
         "label": f"Synthesise the {noun}",
         "detail": "Designs the schema, generates the code and verifies it in the sandbox.",
         "hidden": False,
     }]})
+
+    # What the code needs from the user — credentials, service URLs, facts —
+    # settled before it is generated, as for agent and workflow builds. The
+    # context's event queue is this run, so the check can stop and ask.
+    ctx = PipelineContext(query=task, stream=True, client=_default_client())
+    ctx.event_queue = run
+    ctx.metadata["purpose"] = purpose
+    run.emit("layer", {"name": check_layer.name, "state": "active"})
+    checked = time.monotonic()
+
+    async def _done(c):
+        return c
+
+    await check_layer.process(ctx, _done)
+    stopped = ctx.metadata.get(STOPPED_KEY)
+    run.emit("layer", {"name": check_layer.name, "state": "failed" if stopped else "completed",
+                       "ms": round((time.monotonic() - checked) * 1000),
+                       "summary": ctx.layer_summary(check_layer.name),
+                       **({"error": ctx.error} if stopped else {})})
+    if stopped:
+        run.emit("layer", {"name": "synthesis", "state": "skipped"})
+        result = {"status": "cancelled", "message": ctx.error}
+        _prerequisites_stop(ctx, result)
+        run.emit("synthesis_result", result)
+        return RunOutcome(status="cancelled", result=result, error=ctx.error)
+
     run.emit("layer", {"name": "synthesis", "state": "active"})
     run.emit("status", "Designing the schema, generating code and verifying it in the sandbox…")
 
@@ -136,7 +168,9 @@ async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
                 "verify", "arbitrate", "test_plan", "review", "done")):
             run.emit("status", message[:300])
 
-    result = await tool_resolver.synthesize_from_task(task, purpose=purpose, on_event=relay)
+    result = await tool_resolver.synthesize_from_task(
+        task, purpose=purpose, on_event=relay, guidance=prerequisites.code_guidance(ctx),
+        code_check=CodeCheck(ctx))
     ms = round((time.monotonic() - started) * 1000)
     result = result if isinstance(result, dict) else {"status": "error", "message": str(result)}
 
@@ -145,7 +179,9 @@ async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
         message = str(result.get("message") or "Synthesis failed")
         run.emit("layer", {"name": "synthesis", "state": "failed", "ms": ms, "error": message})
         run.emit("synthesis_result", result)
-        return RunOutcome(status="failed", result=result, error=message)
+        # Stopped at the credential check (R4b): nothing was built, by choice.
+        status = "cancelled" if result.get("reason") == "prerequisites" else "failed"
+        return RunOutcome(status=status, result=result, error=message)
 
     name = result.get("tool_name") or result.get("name")
     run.emit("layer", {

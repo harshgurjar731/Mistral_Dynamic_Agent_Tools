@@ -31,6 +31,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   Workflow,
   Wrench,
   X,
@@ -62,6 +63,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { CleanupPanel } from "@/components/settings/CleanupPanel";
 import { SettingTile } from "@/components/settings/SettingControls";
 import { ProcessTemplatesPanel } from "@/components/settings/ProcessTemplatesPanel";
 import { ToolSafetyPanel } from "@/components/settings/ToolSafetyPanel";
@@ -123,7 +125,15 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
 };
 
 type CategoryId =
-  "overview" | "models" | "tool_service" | "platform" | "process" | "safety" | "vault" | "frontend";
+  | "overview"
+  | "models"
+  | "tool_service"
+  | "platform"
+  | "process"
+  | "safety"
+  | "vault"
+  | "frontend"
+  | "cleanup";
 
 const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIcon }[] = [
   {
@@ -179,6 +189,13 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     blurb:
       "Theme, typography, layout, branding and interface behaviour — applied as soon as you save.",
     icon: Palette,
+  },
+  {
+    id: "cleanup",
+    title: "Cleanup",
+    blurb:
+      "Delete agents, workflows, tools, data, images and history — by area, or everything at once to return the project to its starting point.",
+    icon: Trash2,
   },
 ];
 
@@ -606,6 +623,7 @@ function SettingsPage() {
                 <ProcessTemplatesPanel initialScope={search.scope} />
               ) : null}
               {category === "safety" ? <ToolSafetyPanel /> : null}
+              {category === "cleanup" ? <CleanupPanel /> : null}
               {category === "vault" ? (
                 <VaultPanel focusId={search.secret} createName={search.create} />
               ) : null}

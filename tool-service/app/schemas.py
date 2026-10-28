@@ -111,6 +111,9 @@ class ToolResponse(BaseModel):
     review_required: bool = False
     spec: Optional[dict] = None
     report: Optional[dict] = None
+    #: Names the code reads from ``_secrets`` — in listings too, so a caller can
+    #: check credentials without fetching every full specification.
+    secrets: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

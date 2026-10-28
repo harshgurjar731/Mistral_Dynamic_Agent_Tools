@@ -1,4 +1,4 @@
-import { get, post, put } from "./client";
+import { api, get, post, put, unwrap } from "./client";
 
 export type SettingTarget = "backend" | "tool_service";
 export type SettingType =
@@ -125,6 +125,36 @@ export interface SlimModel {
   capabilities: Record<string, boolean>;
 }
 
+/** One area Settings → Cleanup can delete. */
+export interface CleanupTarget {
+  id: string;
+  title: string;
+  description: string;
+  group: string;
+  /** Deletes on Mistral's side too, not only locally. */
+  remote: boolean;
+  /** What it holds now, by plain-language label. */
+  counts: Record<string, number>;
+  /** Why the counts could not be read (the cleanup itself may still work). */
+  error: string | null;
+}
+
+export interface CleanupPreview {
+  targets: CleanupTarget[];
+  /** Runs in progress — cleanup is refused until they finish. */
+  busy: string[];
+  confirm_phrase: string;
+}
+
+export interface CleanupResult {
+  id: string;
+  title: string;
+  ok: boolean;
+  removed: Record<string, number>;
+  errors: string[];
+  seconds: number;
+}
+
 export type SettingsChanges = Partial<Record<SettingTarget, Record<string, SettingValue>>>;
 
 export const settingsApi = {
@@ -141,4 +171,17 @@ export const settingsApi = {
       `/api/settings/models/review?apply=${apply}`,
     ),
   public: () => get<PublicConfig>("/api/settings/public"),
+  cleanupPreview: () => get<CleanupPreview>("/api/settings/cleanup"),
+  /** The vault token rides along: wiping the vault is a vault write. */
+  cleanup: async (
+    body: { targets?: string[]; everything?: boolean; confirm: string },
+    vaultToken?: string | null,
+  ) => {
+    const res = await api.post<{ results: CleanupResult[]; ok: boolean }>(
+      "/api/settings/cleanup",
+      body,
+      { headers: vaultToken ? { "X-Vault-Token": vaultToken } : {}, timeout: 900_000 },
+    );
+    return unwrap(res.data);
+  },
 };

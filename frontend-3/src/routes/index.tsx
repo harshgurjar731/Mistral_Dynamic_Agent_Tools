@@ -55,6 +55,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { useHostRunQuestions } from "@/lib/runs/questionHosts";
 
 const searchSchema = z.object({
   /** The background agent run on screen. */
@@ -241,6 +242,8 @@ function OrchestratorChat() {
   const tracked = useTrackedRun(runId);
   const { missing } = useRunView(runId);
   const view = useRunReducer(runId, reduceAgent, initAgentView);
+  // This page shows the build's questions itself (PlanDecisionDialog below).
+  useHostRunQuestions(runId);
 
   // Until the run's summary loads, a run without a replayed ending counts as live.
   const running =
