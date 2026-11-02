@@ -106,4 +106,11 @@ export const QK = {
   executionTrace: (id: string) => ["observability", "execution", id] as const,
   ruleVerdicts: (params: object) => ["observability", "rules", params] as const,
   tracedWorkflows: () => ["observability", "workflows"] as const,
+  // Knowledge: build guidance, reference items and their sources.
+  knowledgeItems: (params: Record<string, unknown> = {}) => ["knowledge", "items", params] as const,
+  knowledgeCounts: () => ["knowledge", "counts"] as const,
+  knowledgeVocabulary: () => ["knowledge", "vocabulary"] as const,
+  knowledgeSources: () => ["knowledge", "sources"] as const,
+  knowledgeFeedback: () => ["knowledge", "feedback"] as const,
+  reviews: (status: string | null = "pending") => ["reviews", status] as const,
 };

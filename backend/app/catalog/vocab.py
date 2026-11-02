@@ -29,6 +29,10 @@ class Scheme(str, Enum):
     #: they see. A process is tied to its domain by a ``part_of_domain`` link
     #: (``ontology_concept_links``), not by ``parent_id``.
     PROCESS = "process"
+    #: What shape of agent a capability needs, and the patterns layered on it.
+    #: Closed: the archetype layer and the runtime branch on them.
+    AGENT_TYPE = "agent_type"
+    AGENT_PATTERN = "agent_pattern"
 
 
 class SubjectType(str, Enum):
@@ -49,6 +53,9 @@ class Predicate(str, Enum):
     """
 
     HAS_TIER = "has_tier"
+    #: The archetype an agent was built as, and its patterns.
+    HAS_AGENT_TYPE = "has_agent_type"
+    HAS_PATTERN = "has_pattern"
     SERVES_DOMAIN = "serves_domain"
     HANDLES_DATA_CLASS = "handles_data_class"
 
@@ -129,6 +136,100 @@ class DataClass(str, Enum):
 
 #: Data classes that must not reach a third-party connector.
 RESTRICTED_DATA_CLASSES: frozenset[str] = frozenset({DataClass.PII.value, DataClass.FINANCIAL.value})
+
+
+class Capability(str, Enum):
+    """What a resource can do, or needs done. Closed: the rules engine reasons over it.
+
+    The hierarchy is in the dotted name — ``integration`` is covered by
+    ``integration.read`` — so coverage is a prefix test, not a tree walk.
+    """
+
+    REASONING = "capability.reasoning"
+    ASSESSMENT = "capability.reasoning.assessment"
+    EXTRACTION = "capability.reasoning.extraction"
+    SUMMARISATION = "capability.reasoning.summarisation"
+    GOVERNANCE = "capability.governance"
+    RETRIEVAL = "capability.retrieval"
+    INTEGRATION = "capability.integration"
+    INTEGRATION_READ = "capability.integration.read"
+    INTEGRATION_WRITE = "capability.integration.write"
+    COMPUTATION = "capability.computation"
+
+
+CAPABILITIES: frozenset[str] = frozenset(c.value for c in Capability)
+
+
+def capability_covers(required: str, provided: str) -> bool:
+    """True when ``provided`` satisfies ``required`` — itself or something more specific."""
+    return provided == required or provided.startswith(required + ".")
+
+
+#: Schemes whose members are fixed in code. The seed writes them so tags can
+#: point at them and the graph can draw them; the API refuses to edit them.
+CLOSED_SCHEMES: frozenset[str] = frozenset({
+    Scheme.AGENT_TIER.value, Scheme.CAPABILITY.value, Scheme.DATA_CLASS.value,
+    Scheme.AGENT_TYPE.value, Scheme.AGENT_PATTERN.value,
+})
+
+
+# ── Agent archetypes and governance ────────────────────────────────────────
+
+
+class AgentType(str, Enum):
+    """The primary shape of an agent. ``none`` means the work needs no agent."""
+
+    TASK = "task"
+    GOAL = "goal"
+    CONVERSATIONAL = "conversational"
+    NONE = "none"
+
+
+class AgentPattern(str, Enum):
+    """Patterns layered on a task or goal agent."""
+
+    TOOL_USING_REACT = "tool_using_react"
+    PLANNER_EXECUTOR = "planner_executor"
+    REFLECTIVE = "reflective"
+    MULTI_AGENT = "multi_agent"
+
+
+AGENT_TYPES: tuple[str, ...] = tuple(t.value for t in AgentType)
+AGENT_PATTERNS: tuple[str, ...] = tuple(p.value for p in AgentPattern)
+
+
+def agent_type_concept(value: str) -> str:
+    return f"{Scheme.AGENT_TYPE.value}.{value}"
+
+
+def agent_pattern_concept(value: str) -> str:
+    return f"{Scheme.AGENT_PATTERN.value}.{value}"
+
+
+class OversightModel(str, Enum):
+    HUMAN_IN_THE_LOOP = "human_in_the_loop"
+    HUMAN_ON_THE_LOOP = "human_on_the_loop"
+    HUMAN_OUT_OF_THE_LOOP = "human_out_of_the_loop"
+    NOT_APPLICABLE = "not_applicable"
+
+
+OVERSIGHT_APPLIES_TO: tuple[str, ...] = ("every_transaction", "exceptions_only", "sample", "threshold_based")
+ACTION_AUTHORITIES: tuple[str, ...] = ("read_only", "recommend", "draft", "write", "transact")
+REVERSIBILITY: tuple[str, ...] = ("none", "reversible", "financial_impact", "irreversible")
+
+#: Authority at or above which an action changes something outside the platform.
+WRITING_AUTHORITIES: frozenset[str] = frozenset({"write", "transact"})
+#: Reversibility at or above which a wrong action costs money or cannot be undone.
+COSTLY_REVERSIBILITY: frozenset[str] = frozenset({"financial_impact", "irreversible"})
+
+
+# ── The catalog tree ───────────────────────────────────────────────────────
+
+#: Level names of the one tree, top down. Domains read industry › domain ›
+#: subdomain by depth; processes hang under a domain node and read process ›
+#: subprocess. Storage keeps processes in their own scheme joined by a
+#: ``part_of_domain`` link, which ``store.tree_parent`` reads as the parent.
+TREE_LEVELS: tuple[str, ...] = ("industry", "domain", "subdomain", "process", "subprocess")
 
 
 # ── Presentation + prompt generation ───────────────────────────────────────

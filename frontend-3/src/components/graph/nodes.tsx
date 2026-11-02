@@ -14,6 +14,7 @@ import {
   Info,
   Plug,
   Sparkles,
+  UserCheck,
   Wrench,
 } from "lucide-react";
 import { STEP_TYPE_IDENTITY } from "@/lib/status";
@@ -28,6 +29,7 @@ const TYPE_ICON: Record<StepType, typeof Bot> = {
   connector: Plug,
   condition: GitBranch,
   transform: Code,
+  human_review: UserCheck,
 };
 
 const MAX_CHIPS = 4;

@@ -83,7 +83,7 @@ async def _load_process_knowledge(ctx: PipelineContext, workflow_name: str) -> N
     Only workflows built with process knowledge carry an ``implements_process``
     annotation, so every other workflow revises exactly as before.
     """
-    from app.process_knowledge import context as pk_context, pipeline as pk, resolver
+    from app.process import context as pk_context, pipeline as pk, resolver
 
     try:
         docs = await asyncio.to_thread(resolver.documents_for_subject, "workflow", workflow_name)
@@ -93,6 +93,17 @@ async def _load_process_knowledge(ctx: PipelineContext, workflow_name: str) -> N
     if docs:
         ctx.metadata[pk.CONTEXT_KEY] = pk_context.build(docs, mode="workflow")
         ctx.metadata[pk.USAGE_KEY] = {}
+
+    # Build guidance follows the same rule as process knowledge: none in scope,
+    # nothing set, and the revision prompt is unchanged.
+    from app.knowledge.retrieval import facts_from
+    from app.layers.knowledge_context_layer import resolve_guidance
+
+    spec = ctx.revision_spec
+    goal = " ".join(filter(None, [spec.instruction, (spec.base or {}).get("description", "")]))
+    await resolve_guidance(
+        ctx, goal=goal, concept_ids=[d.get("concept_id") for d in docs or []],
+        facts=facts_from((docs[0].get("content") if docs else None)), subject="workflow")
 
 
 async def _catalog(ctx: PipelineContext) -> dict:

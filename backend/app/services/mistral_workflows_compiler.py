@@ -128,7 +128,7 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "if backend_dir not in sys.path:",
         "    sys.path.insert(0, backend_dir)",
         "",
-        "from app.services.workflow_engine.step_runners import run_step",
+        "from app.services.workflow_engine.step_runners import open_mistral_review, run_step",
         "from app.services.workflow_engine.models import WorkflowStep, StepType",
         "",
     ]
@@ -173,6 +173,22 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         step_json_repr = _lit(json.dumps(step.model_dump(mode="json")))
 
         slot_var = connector_slots.get(_connector_slot_key(step)) if step.type == StepType.CONNECTOR else None
+
+        if step.type == StepType.HUMAN_REVIEW:
+            # Opens the review row and returns at once; the workflow waits for
+            # the decision itself (durably), not this activity.
+            lines += [
+                "@workflows.activity(",
+                "    start_to_close_timeout=timedelta(seconds=60),",
+                "    retry_policy_max_attempts=3,",
+                ")",
+                f"async def {fn}(variables: Dict[str, Any]) -> Any:",
+                f"    \"\"\"Activity for step: {_doc(step.id)} (opens a human review)\"\"\"",
+                f"    step_def = WorkflowStep.model_validate(json.loads({step_json_repr}))",
+                "    return open_mistral_review(step_def, variables)",
+                "",
+            ]
+            continue
 
         if slot_var:
             # Connector activities cannot delegate to run_step(): the SDK
@@ -256,6 +272,18 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
         "        self._progress: List[str] = []",
         "        self._user_signals: List[str] = []",
         "        self._last_result: Any = None",
+        "        self._reviews: Dict[str, Any] = {}",
+        "        self._pending_review: Optional[str] = None",
+        "",
+        "    @workflows.workflow.signal",
+        "    def review_decision(self, payload: Dict[str, Any]) -> None:",
+        "        \"\"\"A person's decision on a human review step.\"\"\"",
+        "        self._reviews[str(payload.get(\"step_id\"))] = payload",
+        "",
+        "    @workflows.workflow.query",
+        "    def get_pending_review(self) -> Optional[str]:",
+        "        \"\"\"The human review step this execution is waiting on, if any.\"\"\"",
+        "        return self._pending_review",
         "",
         "    # ── Signals (async fire-and-forget from UI / le Chat) ──────────",
         "    @workflows.workflow.signal",
@@ -341,6 +369,39 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
                 lines.append(f"                current_step = {_lit(group_steps[0].next_steps[0])}")
             else:
                 lines.append("                current_step = None")
+            lines.append("")
+            continue
+
+        # ── Human review: open it, then wait for the signal ──────────────────
+        if step.type == StepType.HUMAN_REVIEW:
+            sid = _lit(step.id)
+            lines += [
+                f"            elif current_step == {sid}:",
+                f"                self._progress.append({sid})",
+                f"                _opened = await {_fn_name(workflow_def.name, step.id)}(variables)",
+                "                if _opened.get(\"skip\"):",
+                f"                    self._reviews[{sid}] = {{\"decision\": \"not_sampled\"}}",
+                f"                self._pending_review = {sid}",
+                "                try:",
+                f"                    await workflow.wait_condition(lambda: {sid} in self._reviews,",
+                "                                                  timeout=_opened.get(\"sla_seconds\") or 86400)",
+                "                except Exception:",
+                f"                    self._reviews[{sid}] = {{\"decision\": \"timed_out\"}}",
+                "                self._pending_review = None",
+                f"                _review = self._reviews.get({sid}) or {{}}",
+                "                _decision = _review.get(\"decision\")",
+                "                if _decision == \"timed_out\" and _opened.get(\"on_timeout\") == \"approve\":",
+                "                    _decision = \"approve\"",
+                "                if _decision in (\"reject\", \"timed_out\"):",
+                f"                    raise RuntimeError(f\"Human review {step.id}: {{_decision}} — \" + str(_review.get(\"comment\") or \"\"))",
+                "                output = {\"review\": _review, **(_review.get(\"edits\") or {})}",
+                f"                outputs[{sid}] = output",
+                "                self._last_result = output",
+                f"                variables[{_lit(f'step_{step.id}_output')}] = output",
+                "                variables.update(output)",
+            ]
+            lines.append(f"                current_step = {_lit(step.next_steps[0])}" if step.next_steps
+                         else "                current_step = None")
             lines.append("")
             continue
 

@@ -1,7 +1,7 @@
 """
 Persistence for documents, drafts and rules.
 
-Same shape as ``app.ontology.store``: every function opens and closes its own
+Same shape as ``app.catalog.store``: every function opens and closes its own
 session and returns plain dicts, never ORM instances. Callers are request
 handlers and background tasks that share no transaction, and a detached
 instance whose attributes raise on access is a worse bug than the extra query.

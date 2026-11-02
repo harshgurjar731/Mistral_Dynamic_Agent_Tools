@@ -98,6 +98,8 @@ function defaultConfig(type: StepType): Record<string, unknown> {
       return { expression: "", true_step: "", false_step: "" };
     case "transform":
       return { transform_code: "" };
+    case "human_review":
+      return { review_of: "", reviewer_role: "", sla_seconds: 86400, on_timeout: "fail", editable: [] };
     default:
       return {};
   }

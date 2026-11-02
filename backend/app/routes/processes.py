@@ -56,10 +56,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.ontology import store as ontology_store
-from app.ontology.store import VocabularyError
-from app.ontology.vocab import SYSTEM_DOMAIN, Scheme
-from app.process_knowledge import resolver, store, templates, validation
+from app.catalog import store as ontology_store
+from app.catalog.store import VocabularyError
+from app.catalog.vocab import SYSTEM_DOMAIN, Scheme
+from app.process import resolver, store, templates, validation
 
 logger = logging.getLogger(__name__)
 
@@ -379,7 +379,7 @@ def _save_unfiled(data: Any, *, filename: str, source: str, goal: str = "",
     """Store an orchestration-page upload, checked against the template of
     where it is classified — the chosen node, what the document names, or what
     the request is about (see ``classifier``)."""
-    from app.process_knowledge import classifier
+    from app.process import classifier
 
     classification = None
     if not template_id and not (replace_id and not classify_as and not goal):
@@ -435,7 +435,7 @@ async def validate_upload(file: UploadFile = File(...), concept_id: Optional[str
                           classify_as: Optional[str] = Form(None)):
     """Check a file without storing it — against its process's template, or
     for an unfiled one, that of where it is classified."""
-    from app.process_knowledge import classifier
+    from app.process import classifier
 
     data = await _read(file)
     classification = None
@@ -457,7 +457,7 @@ async def validate_upload(file: UploadFile = File(...), concept_id: Optional[str
 async def classify_upload(file: UploadFile = File(...), goal: str = Form(""),
                           classify_as: Optional[str] = Form(None)):
     """Where an upload would be classified, and the template that would check it."""
-    from app.process_knowledge import classifier
+    from app.process import classifier
 
     data = await _read(file)
     classification = await asyncio.to_thread(classifier.classify, data, goal=goal,
@@ -562,9 +562,9 @@ def _template_or_404(template_id: Optional[int], scope: Optional[str] = None) ->
 @router.post("/fix")
 async def fix_document(body: FixRequest):
     from app.dependencies import get_mistral_client
-    from app.process_knowledge import ai
+    from app.process import ai
 
-    from app.process_knowledge import classifier
+    from app.process import classifier
 
     raw, concept_id, scope = body.raw, body.concept_id, None
     if body.document_id:
@@ -591,7 +591,7 @@ async def fix_document(body: FixRequest):
 @router.post("/draft")
 async def draft_document(body: DraftRequest):
     from app.dependencies import get_mistral_client
-    from app.process_knowledge import ai
+    from app.process import ai
 
     try:
         return await ai.draft(get_mistral_client(), body.text,
@@ -773,7 +773,7 @@ async def usage(document_id: Optional[int] = None, concept_id: Optional[str] = N
 @router.get("/resolve")
 async def resolve(goal: str = Query(..., min_length=1)):
     """What the process-knowledge layer would pick for this goal, without building."""
-    from app.ontology import matcher
+    from app.catalog import match as matcher
 
     scope = matcher.scope_for_goal(goal)
     result = await asyncio.to_thread(resolver.resolve, goal, scope, None)

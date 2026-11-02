@@ -22,6 +22,8 @@ from app.layers.workflow.base import WorkflowStepLayer
 
 from app.layers.workflow import plan_control
 
+from app.layers.agent import archetype
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +75,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
 
     async def process(self, ctx: PipelineContext, next):
         from app.config import map_model_name
-        from app.ontology import autotag as ontology_autotag
+        from app.catalog import tagging
         from app.rag.rag_tools import with_rag_tools
         from app.services.agent_service import build_guardrails
         from app.services.tool_registry import get_tools
@@ -137,6 +139,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                             agent_spec.document_library_ids or []
                         ) + [libraries[cap.id]]
                 config = agent_spec.to_config()
+                config["model"] = archetype.model_for(cap.archetype, config["model"])
 
                 # The same creation gate the chat pipeline uses, in pipeline
                 # mode — see app.rules.apply.
@@ -178,6 +181,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                             "workflow_goal": spec.goal[:200],
                             "source": "workflow_planner",
                             "tier": config["tier"],
+                            **({"agent_type": cap.archetype.primary_type} if cap.archetype else {}),
                         },
                     }
                     if tool_definitions:
@@ -206,7 +210,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         # agents were unclassified the moment they were made.
                         await asyncio.to_thread(
                             partial(
-                                ontology_autotag.annotate_agent,
+                                tagging.annotate_agent,
                                 agent_obj.id,
                                 name=config["agent_name"],
                                 description=config["description"],
@@ -218,6 +222,7 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         rule_summary = rules_apply.finish_agent(
                             agent_obj.id, prepared, config.get("rules") or [], default_source="ai"
                         )
+                        await asyncio.to_thread(archetype.tag, "agent", agent_obj.id, cap.archetype)
                     except Exception:
                         # Half-made: remove it, so a retry does not leave a
                         # duplicate behind.
@@ -323,6 +328,11 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                 break
 
         spec.provisioned_agents = provisioned
+        from app.layers.workflow.pattern_expansion_layer import wire_handoffs
+
+        wired = await wire_handoffs(ctx)
+        if wired:
+            ctx.emit("handoffs", json.dumps({"parents": wired}))
         logger.info(
             "Provisioned %d agents (%d reused, %d created)",
             len(provisioned),

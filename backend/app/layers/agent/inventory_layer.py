@@ -35,7 +35,7 @@ class AgentInventoryLayer(Layer):
         return self.enabled and not ctx.agent_id and not ctx.conversation_id
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
-        from app.ontology import matcher as ontology_matcher
+        from app.catalog import match as ontology_matcher
         from app.rag import inventory as library_inventory
         from app.services import connector_service
         from app.services.tool_registry import AVAILABLE_TOOL_KEYS, get_tool_descriptions

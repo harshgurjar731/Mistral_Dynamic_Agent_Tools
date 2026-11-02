@@ -5,6 +5,7 @@ import {
   GitBranch,
   HardDrive,
   Library,
+  Lightbulb,
   Network,
   Plug,
   ScrollText,
@@ -12,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Terminal,
+  UserCheck,
   Workflow,
   Wrench,
   Zap,
@@ -119,6 +121,16 @@ export const NAV_ITEMS: NavItem[] = [
     },
   },
   {
+    label: "Reviews",
+    to: "/reviews",
+    icon: UserCheck,
+    page: {
+      title: "Human reviews",
+      description: "Workflow steps waiting for a person to approve, correct or reject.",
+      tab: "Reviews",
+    },
+  },
+  {
     label: "Logs",
     to: "/logs",
     icon: ScrollText,
@@ -130,14 +142,25 @@ export const NAV_ITEMS: NavItem[] = [
     },
   },
   {
-    label: "Ontology",
+    label: "Catalog",
     to: "/ontology",
     icon: Network,
     page: {
-      title: "Ontology",
+      title: "Catalog",
       description:
-        "A shared vocabulary the planner narrows on before it chooses agents. Concepts live in schemes; annotations bind them to agents, tools, connectors, workflows and libraries.",
-      tab: "Ontology",
+        "Where everything belongs: one tree of industries, domains and processes, and the tags that file agents, tools, connectors, workflows and libraries under it. The planner narrows on it before it chooses agents; the graphs show it whole.",
+      tab: "Catalog",
+    },
+  },
+  {
+    label: "Knowledge",
+    to: "/knowledge",
+    icon: Lightbulb,
+    page: {
+      title: "Knowledge",
+      description:
+        "Build guidance the orchestrator follows when it designs agents and workflows, and the reference knowledge built agents read at run time.",
+      tab: "Knowledge",
     },
   },
   {

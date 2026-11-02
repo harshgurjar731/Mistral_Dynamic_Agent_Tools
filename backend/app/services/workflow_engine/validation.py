@@ -179,7 +179,31 @@ def _validate_transform_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
         )
 
 
+def _validate_human_review_step(step: WorkflowStep, step_ids) -> Iterable[ValidationIssue]:
+    cfg = step.config or {}
+    if step.parallel_group:
+        yield _issue(
+            "error", "human_review.parallel",
+            "A human review cannot run inside a parallel group — it waits, and the group would wait with it.",
+            step.id, "parallel_group",
+        )
+    if cfg.get("review_of") and cfg["review_of"] not in step_ids:
+        yield _issue(
+            "error", "human_review.unknown_subject",
+            f"The review is of '{cfg['review_of']}', which is not a step in this workflow.",
+            step.id, "review_of",
+        )
+    if cfg.get("on_timeout") not in (None, "fail", "approve", "escalate"):
+        yield _issue("error", "human_review.on_timeout",
+                     "on_timeout must be fail, approve or escalate.", step.id, "on_timeout")
+    if not cfg.get("reviewer_role"):
+        yield _issue("warning", "human_review.no_reviewer",
+                     "No reviewer role is named, so anyone with access may decide it.",
+                     step.id, "reviewer_role")
+
+
 _STEP_VALIDATORS = {
+    StepType.HUMAN_REVIEW: _validate_human_review_step,
     StepType.AGENT: lambda s, ids: _validate_agent_step(s),
     StepType.TOOL: lambda s, ids: _validate_tool_step(s),
     StepType.CONNECTOR: lambda s, ids: _validate_connector_step(s),

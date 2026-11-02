@@ -1,7 +1,7 @@
 """
 Graph RAG — documents in, a knowledge graph out, both retrieved at query time.
 
-The industry-knowledge feature (``app.ontology.knowledge``) answers "what does
+The industry-knowledge feature (``app.knowledge.reference``) answers "what does
 this industry involve" from a corpus we wrote by hand. This package answers
 "what do *these documents* say" from a corpus the user uploads, and it keeps two
 retrieval paths over the same upload:

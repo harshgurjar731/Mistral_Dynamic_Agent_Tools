@@ -18,6 +18,8 @@ from app.config import settings
 from app.core.context import PipelineContext
 from app.layers.workflow.base import WorkflowDecisionLayer
 
+from app.layers.agent import archetype
+
 logger = logging.getLogger(__name__)
 
 # REUSE_MIN_CONFIDENCE (Settings page): below it the model is guessing, and a
@@ -180,6 +182,12 @@ class CapabilityReuseLayer(WorkflowDecisionLayer):
                     f"An existing agent matched on purpose but its safety posture "
                     f"was insufficient: {gap or 'the gap was not stated'}."
                 )
+
+            if action == "reuse" and agent_id and not archetype.compatible(agent_id, cap.archetype):
+                logger.info("Reuse of %s for '%s' vetoed: built as a different agent type", agent_id, cap.id)
+                agent_id = None
+                cap.reuse_reason = (f"An existing agent matched on purpose but was built as a different "
+                                    f"agent type than the {cap.archetype.primary_type} agent this needs.")
 
             if action == "reuse" and agent_id:
                 cap.reuse_agent_id = agent_id

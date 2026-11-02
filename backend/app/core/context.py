@@ -42,6 +42,9 @@ class PipelineContext:
     #: ``{"enabled": bool, "document_ids": [int]}`` from the orchestration page's
     #: process-knowledge toggle. None or disabled: the feature is off for the run.
     process_request: Optional[dict] = None
+    #: ``{"mode": "auto"|"off"|"selected", "item_ids": [int]}`` for build
+    #: guidance. None: the configured default (auto — used when any is in scope).
+    guidance_request: Optional[dict] = None
 
     # ── Accumulated state (layers write here) ───────────────────────────
     # Flattened view of ``agent_spec``, published by AgentAssemblyLayer. Kept

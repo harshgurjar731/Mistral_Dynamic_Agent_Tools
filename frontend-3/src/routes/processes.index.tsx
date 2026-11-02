@@ -26,6 +26,7 @@ import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, type SortOption, useSortKey } from "@/lib/sorting";
 import { deleteNodeFlow, NodeFormDialog } from "@/components/processes/NodeFormDialog";
 import { TemplateDownloadMenu } from "@/components/processes/shared";
+import { RecommendationImportDialog } from "@/components/processes/RecommendationImportDialog";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +70,7 @@ function ProcessesIndexPage() {
   const [search, setSearch] = useState("");
   const [onlyWithProcesses, setOnlyWithProcesses] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState<IndustryCard | null>(null);
   const [sort, setSort] = useSortKey("processes", "name_asc");
 
@@ -176,6 +178,11 @@ function ProcessesIndexPage() {
           <RefreshCw className={cards.isFetching ? "size-3.5 animate-spin" : "size-3.5"} />
           Refresh
         </Button>
+        <Button size="sm" variant="outline" onClick={() => setImporting(true)}>
+          <FileJson className="size-3.5" />
+          Import recommendations
+        </Button>
+        <RecommendationImportDialog open={importing} onOpenChange={setImporting} />
         {all.length > 0 ? (
           <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">
             {totals.processes} processes · {totals.documents} with a valid document

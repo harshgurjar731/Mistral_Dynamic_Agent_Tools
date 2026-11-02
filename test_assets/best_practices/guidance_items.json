@@ -1,0 +1,69 @@
+[
+  {
+    "kind": "guidance", "category": "archetype", "strength": "must", "subject": "agent", "audience": "builder",
+    "title": "Task agent for fixed-step extraction",
+    "body": "Use a task agent with a strict output schema for document extraction whose steps are fixed and whose inputs are standard forms.",
+    "conditions": [
+      {"attr": "execution_profile.workflow_determinism", "op": "eq", "value": "fixed_steps"},
+      {"attr": "execution_profile.input_variability", "op": "in", "value": ["structured", "standard_forms"]}
+    ],
+    "effect": {"archetype.primary_type": "task", "archetype.max_tool_rounds": 4},
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "archetype", "strength": "should", "subject": "agent", "audience": "builder",
+    "title": "Conversational agent for dialogue",
+    "body": "When the user works through dialogue, build a conversational agent that clarifies ambiguous requests before drafting anything.",
+    "conditions": [{"attr": "execution_profile.interaction_mode", "op": "eq", "value": "user_dialogue"}],
+    "effect": {"archetype.primary_type": "conversational"},
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "governance", "strength": "must", "subject": "agent", "audience": "builder",
+    "title": "Self-check anything with financial impact",
+    "body": "Any agent that writes to the ERP or whose mistakes have financial impact must check its own output: totals reconcile and every amount is traceable to the source document.",
+    "conditions": [{"attr": "governance.reversibility", "op": "in", "value": ["financial_impact", "irreversible"]}],
+    "effect": {"archetype.patterns.add": ["reflective"]},
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "governance", "strength": "avoid", "subject": "workflow", "audience": "builder",
+    "title": "No payments without human review",
+    "body": "Never let an agent post a payment or change vendor bank details without a human review step (segregation of duties, SOX).",
+    "effect": {"archetype.oversight.model": "human_in_the_loop"},
+    "conditions": [{"attr": "governance.action_authority", "op": "eq", "value": "transact"}],
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "workflow_pattern", "strength": "should", "subject": "workflow", "audience": "builder",
+    "title": "Planner–executor for mixed-format comparisons",
+    "body": "When documents arrive in mixed formats and the comparison takes many steps, plan first and execute second so the plan can be reviewed.",
+    "conditions": [{"attr": "execution_profile.input_variability", "op": "in", "value": ["mixed_formats", "unstructured"]}],
+    "effect": {"archetype.patterns.add": ["planner_executor"]},
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "anti_pattern", "strength": "avoid", "subject": "workflow", "audience": "builder",
+    "title": "No agents for rules or analytics",
+    "body": "Budget checks, threshold checks and process-mining queries are deterministic: build them as activities, not agents.",
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "naming", "strength": "should", "subject": "agent", "audience": "builder",
+    "title": "Name agents by business domain",
+    "body": "Agent names reflect the business domain, not the product or vendor: 'Invoice Extraction Agent', not 'SAP Invoice Bot'.",
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "data_handling", "strength": "must", "subject": "both", "audience": "both",
+    "title": "Redact bank and tax identifiers",
+    "body": "Bank account numbers and tax IDs are redacted from logs and never sent to third-party services without a data processing agreement.",
+    "status": "active"
+  },
+  {
+    "kind": "guidance", "category": "best_practice", "strength": "should", "subject": "agent", "audience": "builder",
+    "title": "State the input contract",
+    "body": "Instructions state the input contract, the output schema and what to do outside the contract: return a structured error rather than guess.",
+    "status": "proposed"
+  }
+]

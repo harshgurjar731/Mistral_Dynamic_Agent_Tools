@@ -13,6 +13,11 @@ pre-emptively.
 Scoping never returns nothing. A goal that matches no domain falls back to the
 full inventory rather than an empty candidate set: showing the planner too much
 degrades quality, showing it nothing breaks the request outright.
+
+``tokens`` is the one tokenizer every lexical matcher in the platform uses —
+catalog scoping, process-document resolution, knowledge search and guidance
+ranking. They differ only in which words carry no signal for the kind of text
+they match, so each names its stopword set rather than keeping its own copy.
 """
 
 import logging
@@ -28,7 +33,7 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 # Words that carry no discriminating signal in a workflow goal. Without this,
 # "process" and "data" match half the vocabulary.
-_STOPWORDS = frozenset(
+GOAL_STOPWORDS = frozenset(
     """
     a an the and or of for to in on with from by at is are be that this it as
     will can should must workflow agent step process run create build make
@@ -36,9 +41,28 @@ _STOPWORDS = frozenset(
     """.split()
 )
 
+# Matching a goal against process documents: "process" is in every one of them.
+PROCESS_STOPWORDS = GOAL_STOPWORDS | {"processes", "please", "want", "need"}
+
+# A knowledge query is a question, not a workflow goal, so "process" and "data"
+# are legitimate search terms there.
+QUESTION_STOPWORDS = frozenset(
+    """
+    a an the and or of for to in on with from by at is are be that this it as
+    what how why when which who does do can should must please tell me about
+    """.split()
+)
+
+_STOPWORDS = GOAL_STOPWORDS
+
+
+def tokens(text: str, stopwords: frozenset = GOAL_STOPWORDS) -> set[str]:
+    """Lower-cased word tokens longer than two characters, minus ``stopwords``."""
+    return {w for w in _WORD.findall((text or "").lower()) if w not in stopwords and len(w) > 2}
+
 
 def _tokens(text: str) -> set[str]:
-    return {w for w in _WORD.findall((text or "").lower()) if w not in _STOPWORDS and len(w) > 2}
+    return tokens(text, GOAL_STOPWORDS)
 
 
 def _phrases(concept: dict) -> list[str]:

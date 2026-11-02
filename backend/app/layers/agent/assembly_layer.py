@@ -18,6 +18,7 @@ from functools import partial
 
 from app.core.context import PipelineContext
 from app.core.layer import Layer, NextFn
+from app.layers.agent import archetype
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class AgentAssemblyLayer(Layer):
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         from app.config import map_model_name
-        from app.ontology import autotag as ontology_autotag
+        from app.catalog import tagging
         from app.rag.rag_tools import with_rag_tools
         from app.services.agent_service import build_guardrails
         from app.services.tool_registry import get_tools
@@ -73,6 +74,7 @@ class AgentAssemblyLayer(Layer):
             "libraries": libraries,
             "knowledge_graph": config["knowledge_graph"],
             "tier": config["tier"],
+            "archetype": spec.archetype.to_dict() if spec.archetype else None,
             "guardrails": spec.guardrails.describe() if spec.guardrails else None,
             "rationale": config["rationale"],
         }))
@@ -82,6 +84,12 @@ class AgentAssemblyLayer(Layer):
         # the loop bound.
         if spec.guardrails:
             ctx.metadata[MAX_TOOL_ROUNDS_KEY] = spec.guardrails.max_tool_rounds
+        if spec.archetype is not None:
+            # The archetype narrows the budget (a task agent needs few rounds)
+            # and may prefer a model; it never raises the envelope's ceiling.
+            ctx.metadata[MAX_TOOL_ROUNDS_KEY] = archetype.tool_rounds(
+                spec.archetype, ctx.metadata.get(MAX_TOOL_ROUNDS_KEY, 5))
+            config["model"] = archetype.model_for(spec.archetype, config["model"])
 
         ctx.emit("status", f"Creating {config['agent_name']}…")
 
@@ -132,6 +140,7 @@ class AgentAssemblyLayer(Layer):
                 "dynamic": "true",
                 "source_query": ctx.query[:200],
                 "tier": config["tier"],
+                **({"agent_type": spec.archetype.primary_type} if spec.archetype else {}),
             },
         }
         if tool_definitions:
@@ -180,7 +189,7 @@ class AgentAssemblyLayer(Layer):
         # any other agent to the planner, so it needs the same annotations.
         await asyncio.to_thread(
             partial(
-                ontology_autotag.annotate_agent,
+                tagging.annotate_agent,
                 agent.id,
                 name=config["agent_name"],
                 description=config["description"],
@@ -189,5 +198,6 @@ class AgentAssemblyLayer(Layer):
                 goal=ctx.query,
             )
         )
+        await asyncio.to_thread(archetype.tag, "agent", agent.id, spec.archetype)
 
         return await next(ctx)

@@ -55,6 +55,8 @@ export { revisionsApi } from "./revisions";
 export { observabilityApi } from "./observability";
 export { settingsApi } from "./settings";
 export { processesApi } from "./processes";
+export { knowledgeApi, recommendationsApi, reviewsApi } from "./knowledge";
+export type * from "./knowledge";
 export { safetyApi } from "./safety";
 export { vaultApi, vaultToken } from "./vault";
 export type * from "./processes";

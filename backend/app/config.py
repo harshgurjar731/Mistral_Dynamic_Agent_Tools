@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # Every one of these is editable on the Settings page, which also lists
     # where each is read (app/app_settings/registry.py).
     DEFAULT_AGENT_MODEL: str = "mistral-large-latest"
+    #: For agents whose archetype prefers reasoning (goal agents, planners).
+    AGENT_MODEL_REASONING: str = "magistral-medium-latest"
     CHAT_DEFAULT_MODEL: str = "mistral-large-latest"
     # The agent designers' prompts choose a tier by these labels
     # (mistral-large-latest / -medium- / -small-); each resolves to the model
@@ -88,6 +90,25 @@ class Settings(BaseSettings):
     PROCESS_KNOWLEDGE_DEFAULT: bool = False
     PROCESS_DOC_MAX_KB: int = 512
     PROCESS_MATCH_MIN_SCORE: float = 3.0
+
+    # Knowledge (Knowledge page): build guidance and reference items.
+    # GUIDANCE_DEFAULT_MODE: auto — used whenever active guidance is in scope;
+    # off — only when a request asks for it.
+    GUIDANCE_DEFAULT_MODE: str = "auto"
+    # Distilled items wait for review unless this is on (then high-confidence ones go live).
+    GUIDANCE_AUTO_APPROVE: bool = False
+    GUIDANCE_PACK_SIZE: int = 24
+    GUIDANCE_VIEW_SIZE: int = 6
+    KNOWLEDGE_EMBED_MODEL: str = "mistral-embed"
+    KNOWLEDGE_OCR_MODEL: str = "mistral-ocr-latest"
+    KNOWLEDGE_DISTILL_MODEL: str = "mistral-large-latest"
+    KNOWLEDGE_SOURCE_MAX_MB: int = 25
+
+    # Governance runtime: human review steps and reflective agents.
+    HUMAN_REVIEW_TIMEOUT_SECONDS: int = 86400
+    REFLECTION_MODEL: str = "mistral-medium-latest"
+    #: Iterations a goal agent may take before it must stop and report.
+    GOAL_MAX_ITERATIONS: int = 3
 
     # Vault (Settings → Vault): encrypted credentials and service URLs that
     # tools, activities and connectors receive at run time. The master keys

@@ -1,0 +1,50 @@
+{
+  "template_version": "2.0",
+  "process": {"id": "invoice_extraction_and_verification", "name": "Invoice Extraction and Verification",
+              "level": "subprocess", "parent_process": "invoice_processing", "owner": "Accounts Payable"},
+  "classification": {"industry": "Manufacturing", "domain": "Procurement and Accounts Payable Operations",
+                     "process": "Invoice Processing", "subprocess": "Invoice Extraction and Verification"},
+  "objective": "Capture every supplier invoice, match it to its purchase order and goods receipt, and post matched invoices to SAP with exceptions routed to an AP clerk.",
+  "triggers": ["An invoice arrives in the AP shared inbox"],
+  "actors": [
+    {"id": "ap_clerk", "name": "AP clerk", "type": "human", "responsibilities": ["Resolve match exceptions"]},
+    {"id": "sap", "name": "SAP S/4HANA FI", "type": "system"}
+  ],
+  "stages": [
+    {"id": "capture", "name": "Capture invoice", "purpose": "Read the invoice and extract vendor, amount, PO number and lines.",
+     "actor_type": "agent", "execution": "agent", "uses": ["ocr"], "inputs": ["invoice_file"], "outputs": ["invoice_fields"]},
+    {"id": "match", "name": "Three-way match", "purpose": "Compare invoice, PO and goods receipt within tolerance.",
+     "actor_type": "system", "execution": "activity", "uses": ["sap_fi"], "depends_on": ["capture"],
+     "inputs": ["invoice_fields"], "outputs": ["match_result"], "controls": ["c_three_way"],
+     "decision": {"question": "Does the invoice match?", "outcomes": [
+       {"label": "matched", "next_stage": "post"},
+       {"label": "exception", "next_stage": "exception_review"}]}},
+    {"id": "exception_review", "name": "Exception review", "purpose": "AP clerk resolves invoices that fail the match.",
+     "actor_type": "human", "actor": "ap_clerk", "execution": "human_task", "depends_on": ["match"], "is_oversight_point": true},
+    {"id": "post", "name": "Post invoice", "purpose": "Post the matched invoice to SAP.",
+     "actor_type": "system", "execution": "connector", "uses": ["sap_post"], "depends_on": ["match"]}
+  ],
+  "controls": [{"id": "c_three_way", "description": "Three-way match before any invoice is posted.", "mandatory": true,
+                "applies_to": ["match"], "regulation": "sox"}],
+  "exceptions": [{"id": "ex_unreadable", "condition": "The invoice cannot be read", "handling": "Send to the AP clerk queue",
+                  "applies_to": ["capture"], "escalate_to": "AP supervisor"}],
+  "regulations": [{"id": "sox", "name": "Sarbanes-Oxley", "requirement": "Segregation of duties over payments."}],
+  "data_entities": [{"name": "invoice_fields", "fields": ["vendor", "amount", "po_number", "bank_account"], "classification": "financial"}],
+  "kpis": [{"name": "Touchless rate", "target": ">= 70%"}],
+  "intervention": {"category": "intelligent_document_processing", "implementation_type": "agent", "mode": "automate"},
+  "execution_profile": {"workflow_determinism": "fixed_steps", "interaction_mode": "event_triggered",
+                        "trigger": {"type": "document_arrival", "source": "AP shared inbox"},
+                        "task_horizon": "few_steps", "input_variability": "standard_forms"},
+  "integrations": {
+    "systems": [{"id": "sap_fi", "name": "SAP S/4HANA FI", "access": "write", "operations": ["read PO", "read GRN", "post invoice"]}],
+    "connectors": [{"id": "sap_post", "name": "SAP invoice posting", "kind": "remote_mcp_server", "target": "sap_fi",
+                    "status": "to_build",
+                    "operations": [{"name": "post_invoice", "direction": "write", "side_effect": "financial_impact", "requires_approval": true}]}],
+    "third_party_services": [{"id": "ocr", "name": "Mistral Document AI", "service_type": "ocr_document_ai",
+                              "purpose": "Read scanned invoices", "data_shared": ["financial"], "dpa_in_place": true}]
+  },
+  "governance": {"action_authority": "write", "reversibility": "financial_impact",
+                 "human_oversight": {"model": "human_in_the_loop", "applies_to": "exceptions_only",
+                                     "reviewer_role": "AP clerk", "approval_sla": "4 hours"},
+                 "validation": {"criteria": ["Three-way match passes", "Invoice total equals the sum of its lines"]}}
+}

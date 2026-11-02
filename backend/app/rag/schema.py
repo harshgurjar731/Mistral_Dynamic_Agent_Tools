@@ -6,7 +6,7 @@ project has no migration tool — so a field added after a table first existed h
 to be introduced explicitly or every read of it fails with "no such column".
 
 The knowledge feature learned this the hard way with ``as_of``
-(``app.ontology.knowledge.ensure_schema``). This is the same idea generalised:
+(``app.knowledge.reference.ensure_schema``). This is the same idea generalised:
 declare what each table should have, add what is missing, and stay silent when
 everything already matches. Additive and idempotent, so it is safe on every
 boot; it never drops or retypes a column, because losing a user's drafts to an

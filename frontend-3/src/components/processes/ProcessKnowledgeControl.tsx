@@ -9,8 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { BookOpenCheck, FolderInput, Loader2, Paperclip, Search, Sparkles, X } from "lucide-react";
-import { errorMessage, processesApi, QK } from "@/api";
+import { BookOpenCheck, FolderInput, Lightbulb, Loader2, Paperclip, Search, Sparkles, X } from "lucide-react";
+import { errorMessage, knowledgeApi, processesApi, QK } from "@/api";
 import type { ProcessDocument, ProcessKnowledgeRequest } from "@/api/processes";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +39,18 @@ export interface AttachedDoc {
 }
 
 const storageKey = (page: string) => `process_knowledge:${page}`;
+const guidanceKey = (page: string) => `guidance_mode:${page}`;
+
+type GuidanceMode = "auto" | "off";
+
+function readGuidance(page: string): GuidanceMode | null {
+  try {
+    const v = window.localStorage.getItem(guidanceKey(page));
+    return v === "auto" || v === "off" ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 function readStored(page: string): boolean | null {
   try {
@@ -58,8 +70,19 @@ export function useProcessKnowledge(page: "agent" | "workflow") {
   });
   const [stored, setStored] = useState<boolean | null>(null);
   const [attached, setAttached] = useState<AttachedDoc[]>([]);
+  const [guidance, setGuidanceState] = useState<GuidanceMode>("auto");
 
   useEffect(() => setStored(readStored(page)), [page]);
+  useEffect(() => setGuidanceState(readGuidance(page) ?? "auto"), [page]);
+
+  const setGuidance = (mode: GuidanceMode) => {
+    setGuidanceState(mode);
+    try {
+      window.localStorage.setItem(guidanceKey(page), mode);
+    } catch {
+      // Storage disabled: the choice lasts for this visit only.
+    }
+  };
 
   const enabled = stored ?? Boolean(config.data?.default_enabled);
   const setEnabled = (on: boolean) => {
@@ -72,8 +95,12 @@ export function useProcessKnowledge(page: "agent" | "workflow") {
   };
 
   const request: ProcessKnowledgeRequest = useMemo(
-    () => ({ enabled, document_ids: enabled ? attached.map((d) => d.id) : [] }),
-    [enabled, attached],
+    () => ({
+      enabled,
+      document_ids: enabled ? attached.map((d) => d.id) : [],
+      guidance: { mode: guidance },
+    }),
+    [enabled, attached, guidance],
   );
 
   const attach = (doc: AttachedDoc) =>
@@ -82,7 +109,18 @@ export function useProcessKnowledge(page: "agent" | "workflow") {
   const replace = (doc: AttachedDoc) =>
     setAttached((prev) => prev.map((d) => (d.id === doc.id ? doc : d)));
 
-  return { enabled, setEnabled, attached, attach, detach, replace, request, config: config.data };
+  return {
+    enabled,
+    setEnabled,
+    attached,
+    attach,
+    detach,
+    replace,
+    request,
+    guidance,
+    setGuidance,
+    config: config.data,
+  };
 }
 
 export type ProcessKnowledgeState = ReturnType<typeof useProcessKnowledge>;
@@ -231,6 +269,8 @@ export function ProcessKnowledgeControl({
           Builds exactly as before. Turn on to ground the design in a business process.
         </span>
       )}
+
+      <GuidanceToggle state={state} disabled={disabled} />
 
       <AttachDialog
         open={attachOpen}
@@ -463,5 +503,42 @@ function FileUnderDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+/**
+ * Build guidance — best practices from the Knowledge page. Auto uses whatever
+ * active guidance is in scope for the request; with none it changes nothing.
+ */
+function GuidanceToggle({ state, disabled }: { state: ProcessKnowledgeState; disabled?: boolean | undefined }) {
+  const counts = useQuery({
+    queryKey: QK.knowledgeCounts(),
+    queryFn: knowledgeApi.counts,
+    staleTime: 60_000,
+  });
+  const active = counts.data?.counts.guidance?.active ?? 0;
+  const on = state.guidance === "auto";
+  return (
+    <label
+      className="ml-auto flex cursor-pointer items-center gap-2 border-l border-border/60 pl-2"
+      title={
+        active
+          ? `${active} active guidance item(s) on the Knowledge page; the ones in scope are applied.`
+          : "No active guidance yet — add some on the Knowledge page."
+      }
+    >
+      <Switch
+        checked={on}
+        onCheckedChange={(v) => state.setGuidance(v ? "auto" : "off")}
+        disabled={disabled}
+        aria-label="Build with guidance"
+      />
+      <span className={cn("font-medium", on ? "text-amber" : "text-muted-foreground")}>
+        <Lightbulb className="mr-1 inline size-3.5" />
+        Guidance {on ? "auto" : "off"}
+        <span className="ml-1 text-[10px] text-muted-foreground">({active})</span>
+      </span>
+    </label>
   );
 }

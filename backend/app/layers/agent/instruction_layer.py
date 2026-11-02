@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 _MIN_INSTRUCTION_CHARS = 400
 
 
+def _archetype_block(ctx: PipelineContext) -> str:
+    """How the decided agent type should be written into the instructions; "" when undecided."""
+    from app.layers.agent.archetype import describe
+
+    text = describe(ctx.agent_spec.archetype)
+    return "\n\n" + text if text else ""
+
+
 class InstructionAuthoringLayer(AgentDecisionLayer):
     """Author the six-section system instructions for the assembled agent."""
 
@@ -71,7 +79,7 @@ class InstructionAuthoringLayer(AgentDecisionLayer):
                 connector_detail=caps["connector_detail"],
                 library_detail=caps["library_detail"],
                 knowledge_graph=caps["knowledge_graph"],
-            ),
+            ) + _archetype_block(ctx),
         )
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:

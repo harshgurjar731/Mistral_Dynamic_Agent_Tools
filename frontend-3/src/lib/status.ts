@@ -112,6 +112,14 @@ export const STEP_TYPE_IDENTITY: Record<StepType, StatusIdentity & { icon: strin
     bg: "bg-emerald/10",
     border: "border-emerald/30",
   },
+  human_review: {
+    // Waits for a person to approve, correct or reject what came before.
+    label: "Human review",
+    icon: "UserCheck",
+    text: "text-indigo",
+    bg: "bg-indigo/10",
+    border: "border-indigo/30",
+  },
 };
 
 /** Colour/icon mapping only — the tier list itself comes from /api/ontology/tiers. */

@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
     # this project has no migration tool, and the loader is what keeps the
     # YAML and the database in step.
     try:
-        from app.ontology.seed_loader import load_seed
+        from app.catalog.seed_loader import load_seed
         summary = load_seed()
         logger.info("✅ Ontology seeded: %s", summary)
     except Exception as e:
@@ -131,9 +131,9 @@ async def lifespan(app: FastAPI):
     # no model call) and idempotent — annotate_workflow skips anything a human
     # has already confirmed, so this cannot undo review work.
     try:
-        from app.ontology import autotag
-        from app.ontology.vocab import SubjectType
-        from app.ontology import store as ontology_store
+        from app.catalog import tagging
+        from app.catalog.vocab import SubjectType
+        from app.catalog import store as ontology_store
         from app.services.workflow_engine.engine import list_workflows
 
         tagged = 0
@@ -143,7 +143,7 @@ async def lifespan(app: FastAPI):
             step_text = " ".join(
                 f"{s.id.replace('_', ' ')} {s.description or ''}" for s in workflow.steps
             )
-            if autotag.annotate_workflow(
+            if tagging.annotate_workflow(
                 workflow.name,
                 description=workflow.description or "",
                 step_text=step_text,
@@ -163,9 +163,9 @@ async def lifespan(app: FastAPI):
     # seconds later and then persists.
     try:
         from app.dependencies import get_mistral_client
-        from app.ontology import autotag
-        from app.ontology import store as ontology_store
-        from app.ontology.vocab import (
+        from app.catalog import tagging
+        from app.catalog import store as ontology_store
+        from app.catalog.vocab import (
             SYSTEM_DOMAIN,
             AgentTier,
             Predicate,
@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
             current = annotated.get(agent_id, {}).get(Predicate.SERVES_DOMAIN.value) or []
             if current == [SYSTEM_DOMAIN]:
                 continue
-            written = autotag.annotate_agent(
+            written = tagging.annotate_agent(
                 agent_id,
                 name=agent.get("name") or "",
                 description=agent.get("description") or "",
@@ -453,6 +453,12 @@ app.include_router(cleanup_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import processes as processes_routes  # noqa: E402
 app.include_router(processes_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import knowledge as knowledge_routes  # noqa: E402
+app.include_router(knowledge_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import reviews as reviews_routes  # noqa: E402
+app.include_router(reviews_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import safety as safety_routes  # noqa: E402
 app.include_router(safety_routes.router, prefix=settings.API_PREFIX)

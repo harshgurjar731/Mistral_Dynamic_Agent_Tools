@@ -1,0 +1,57 @@
+# Agent archetypes — mirrors AgentType and AgentPattern in vocab.py.
+#
+# Closed vocabularies: the API refuses to edit them. They are seeded so an
+# agent's archetype can be a tag (has_agent_type / has_pattern) like its tier,
+# which is what lets reuse match on it and the graph draw it.
+
+schemes:
+  - id: agent_type
+    label: Agent type
+    description: >-
+      The primary shape of an agent — a bounded task, a goal it plans towards,
+      or a dialogue. Decided per capability by the archetype layer.
+
+  - id: agent_pattern
+    label: Agent pattern
+    description: >-
+      Patterns layered on a task or goal agent: tool use, planning before
+      executing, checking its own output, delegating to sub-agents.
+
+concepts:
+  - id: agent_type.task
+    scheme: agent_type
+    label: Task agent
+    definition: A well-defined, bounded job with a clear start and end, through a fixed workflow.
+    synonyms: [task agent, bounded, fixed workflow]
+
+  - id: agent_type.goal
+    scheme: agent_type
+    label: Goal agent
+    definition: Given an outcome rather than steps; plans, executes and re-plans until done.
+    synonyms: [goal agent, autonomous, open-ended]
+
+  - id: agent_type.conversational
+    scheme: agent_type
+    label: Conversational agent
+    definition: Built around dialogue; clarifies, answers and keeps context across turns.
+    synonyms: [conversational, chat, copilot, assistant]
+
+  - id: agent_pattern.tool_using_react
+    scheme: agent_pattern
+    label: Tool-using (ReAct)
+    definition: Alternates reasoning and tool calls in a loop.
+
+  - id: agent_pattern.planner_executor
+    scheme: agent_pattern
+    label: Planner–executor
+    definition: One part makes an inspectable plan, another carries out its steps.
+
+  - id: agent_pattern.reflective
+    scheme: agent_pattern
+    label: Reflective
+    definition: Checks and corrects its own output against criteria and sources before returning.
+
+  - id: agent_pattern.multi_agent
+    scheme: agent_pattern
+    label: Multi-agent
+    definition: Delegates sub-tasks to sub-agents and combines their results.

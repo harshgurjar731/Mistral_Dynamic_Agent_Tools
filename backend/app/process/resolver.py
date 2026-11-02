@@ -16,30 +16,21 @@ model call here would add latency to every build to save a few synonyms.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Iterable, Optional
 
 from app.catalog import store as ontology_store
+from app.catalog.match import PROCESS_STOPWORDS, tokens
 from app.catalog.vocab import Scheme
 from app.process import store
 
 logger = logging.getLogger(__name__)
-
-_WORD = re.compile(r"[a-z0-9]+")
-_STOPWORDS = frozenset(
-    """
-    a an the and or of for to in on with from by at is are be that this it as will can
-    should must workflow agent step run create build make handle system data new use
-    using get set process processes please want need
-    """.split()
-)
 
 #: Related subprocess documents carried with the primary one.
 _MAX_RELATED = 3
 
 
 def _tokens(text: str) -> set[str]:
-    return {w for w in _WORD.findall((text or "").lower()) if w not in _STOPWORDS and len(w) > 2}
+    return tokens(text, PROCESS_STOPWORDS)
 
 
 def breadcrumb(concept_id: Optional[str]) -> str:

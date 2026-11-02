@@ -30,8 +30,8 @@ import asyncio
 import logging
 from typing import Iterable, Optional
 
-from app.ontology import store as ontology_store
-from app.ontology.vocab import Predicate, SubjectType
+from app.catalog import store as ontology_store
+from app.catalog.vocab import Predicate, SubjectType
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,8 @@ async def classify(
     library precisely. Falling back to name and description alone still works
     for a library that has no ontology yet.
     """
-    from app.ontology.classifier import apply_classification
-    from app.ontology.classifier import classify as classify_resource
+    from app.catalog.tagging import apply_classification
+    from app.catalog.tagging import classify as classify_resource
     from app.rag import library_ontology
 
     ontology = library_ontology.get_approved(library_id) or library_ontology.get_draft(
@@ -226,7 +226,7 @@ def in_scope(library_ids: Iterable[str], scope: Optional[dict]) -> set[str]:
     unannotated agents: dropping them would make a half-finished backfill look
     like a broken planner, and the failure would be silent.
     """
-    from app.ontology import matcher
+    from app.catalog import match as matcher
 
     ids = {lid for lid in library_ids if lid}
     if not scope or not scope.get("scoped"):

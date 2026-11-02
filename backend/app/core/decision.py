@@ -263,9 +263,14 @@ class DecisionLayer(Layer):
     status_message: str = ""
 
     #: Which view of the run's process knowledge this decision reads (see
-    #: ``app.process_knowledge.context.render``). None: it reads none. When the
+    #: ``app.process.context.render``). None: it reads none. When the
     #: feature is off for a run the block is empty and the prompt is unchanged.
     process_view: Optional[str] = None
+
+    #: Which view of the run's build guidance this decision reads (see
+    #: ``app.knowledge.retrieval.CATEGORY_VIEWS``). None: the same as
+    #: ``process_view``. With no guidance in scope the block is empty.
+    guidance_view: Optional[str] = None
 
     #: Whether this decision is told the build prerequisites settled with the
     #: user (``app.build_prereqs.guidance``). Empty when there are none.
@@ -284,9 +289,18 @@ class DecisionLayer(Layer):
         """Process knowledge appended to the user prompt; "" when there is none."""
         if not self.process_view:
             return ""
-        from app.process_knowledge import pipeline as process_knowledge
+        from app.process import pipeline as process_knowledge
 
         return process_knowledge.block(ctx, self.process_view)
+
+    def guidance_block(self, ctx: PipelineContext) -> str:
+        """Build guidance appended to the user prompt; "" when there is none."""
+        view = self.guidance_view or self.process_view
+        if not view:
+            return ""
+        from app.knowledge import pipeline as guidance
+
+        return guidance.block(ctx, view)
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:
         """Write the parsed decision onto the context."""
@@ -305,6 +319,9 @@ class DecisionLayer(Layer):
             process_block = self.process_block(ctx)
             if process_block:
                 user = user + process_block
+            guidance_block = self.guidance_block(ctx)
+            if guidance_block:
+                user = user + guidance_block
             if self.uses_prerequisites:
                 from app.build_prereqs import guidance as prerequisites
 
@@ -323,9 +340,13 @@ class DecisionLayer(Layer):
                 raise ValueError(f"{self.phase} returned non-object JSON")
             self.apply(ctx, data)
             if process_block:
-                from app.process_knowledge import pipeline as process_knowledge
+                from app.process import pipeline as process_knowledge
 
                 process_knowledge.record_refs(ctx, self.name, data)
+            if guidance_block:
+                from app.knowledge import pipeline as guidance
+
+                guidance.record_refs(ctx, self.name, data)
             # Shown under this layer's row in the timeline. Every decision
             # prompt is required to justify itself, and this is where that
             # justification surfaces to the user.

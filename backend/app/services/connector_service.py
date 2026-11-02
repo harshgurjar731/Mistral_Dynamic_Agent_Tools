@@ -184,8 +184,8 @@ def _annotate_connector(connector_id: str | None, domains: list[str] | None) -> 
     if not connector_id:
         return
     try:
-        from app.ontology import store as ontology_store
-        from app.ontology.vocab import Predicate, SubjectType
+        from app.catalog import store as ontology_store
+        from app.catalog.vocab import Predicate, SubjectType
 
         ontology_store.set_annotations(
             SubjectType.CONNECTOR.value, connector_id,
@@ -513,8 +513,8 @@ async def describe_for_prompt(scope: dict | None = None) -> tuple[str, list[str]
 
     if scope and scope.get("scoped"):
         try:
-            from app.ontology import matcher as ontology_matcher
-            from app.ontology.vocab import Predicate, SubjectType
+            from app.catalog import match as ontology_matcher
+            from app.catalog.vocab import Predicate, SubjectType
 
             keep = ontology_matcher.filter_subjects(
                 SubjectType.CONNECTOR.value,

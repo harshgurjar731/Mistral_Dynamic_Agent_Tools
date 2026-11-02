@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 def prepare_database(*, seed_rules: bool = True) -> None:
     # Imported for their side effect: each registers its tables with Base,
     # and create_all() creates only the tables it knows about.
-    import app.ontology.models
-    import app.process_knowledge.models
+    import app.catalog.models
+    import app.knowledge.models
+    import app.process.models
     import app.safety.models
     import app.vault.models
     import app.rag.models
@@ -28,13 +29,14 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     import app.runs.models
     import app.workflow_inputs.models
     import app.workflow_revisions.models  # noqa: F401
+    import app.services.workflow_engine.reviews  # noqa: F401
     from app.database import create_tables
 
     create_tables()
 
     # Before anything reads or seeds rules: the Rule model has columns an
     # older rules table lacks. Likewise for the other additive migrations.
-    from app.ontology import knowledge as ontology_knowledge
+    from app.knowledge import reference as ontology_knowledge
     from app.rag import schema as rag_schema
     from app.remote_servers import schema as remote_servers_schema
     from app.rules import schema as rules_schema
@@ -46,7 +48,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
 
     # The built-in process template, so process documents can be checked
     # before anyone uploads a template of their own.
-    from app.process_knowledge import templates as process_templates
+    from app.process import templates as process_templates
 
     process_templates.ensure_schema()
     process_templates.ensure_builtin()

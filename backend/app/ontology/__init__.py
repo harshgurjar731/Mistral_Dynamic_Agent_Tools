@@ -1,20 +1,13 @@
 """
-Ontology — the platform's controlled vocabulary and the relations over it.
+Ontology graph views.
 
-Two things live here, and the distinction matters:
-
-* **Taxonomy** — hierarchical `is-a` classification. Agent tiers, business
-  domains, capability families. Its job is retrieval: narrowing a 40-agent
-  inventory to the handful a planning request should actually consider.
-* **Ontology** — typed relations between resources (`requires`, `provides`,
-  `egresses-to`). Its job is inference and constraint checking: proving an
-  agent can reach the service it needs, before a workflow runs.
-
-`vocab` holds the closed enums that code branches on. Everything open-ended —
-domains, capabilities — lives in the database so it can grow without a deploy.
+The taxonomy, tags and tagging moved to :mod:`app.catalog`, and industry
+knowledge to :mod:`app.knowledge`. What stays here is the graph built over
+them (``graph``); the other modules in this package alias their new homes so
+old imports keep working.
 """
 
-from app.ontology.vocab import (  # noqa: F401
+from app.catalog.vocab import (  # noqa: F401
     AGENT_TIERS,
     AgentTier,
     DataClass,

@@ -75,7 +75,7 @@ async def search(
             return {"available": False, "reason": str(e)[:200]}
 
     async def _corpus() -> dict:
-        from app.ontology import knowledge
+        from app.knowledge import reference as knowledge
 
         try:
             with timeline.stage(
@@ -181,7 +181,7 @@ def render(result: dict, *, scope_note: str = "") -> str:
     # ── The industry corpus ─────────────────────────────────────────────
     entries = corpus.get("entries") or []
     if entries:
-        from app.ontology import store as ontology_store
+        from app.catalog import store as ontology_store
 
         lines = ["### Industry knowledge"]
         for entry in entries:
@@ -219,7 +219,7 @@ def has_coverage(library_ids: Iterable[str], domains: Iterable[str]) -> bool:
     enough to make the tool worth carrying, and an agent with documents but no
     industry knowledge is the common case.
     """
-    from app.ontology import knowledge
+    from app.knowledge import reference as knowledge
     from app.rag import graph_store
 
     libraries = [lid for lid in (library_ids or []) if lid]

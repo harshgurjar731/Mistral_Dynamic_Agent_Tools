@@ -242,7 +242,7 @@ async def _execute_domain_search(arguments: dict) -> str:
     gets mortgage material because of what it *is*.
     """
     from app.dependencies import get_mistral_client
-    from app.ontology import knowledge
+    from app.knowledge import reference as knowledge
     from app.rag import domain_search, scope, timeline
 
     query = str(arguments.get("query") or "").strip()

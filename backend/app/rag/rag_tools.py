@@ -144,7 +144,7 @@ def agent_has_coverage(tools: Iterable[Any], agent_id: str = "") -> bool:
     no curated knowledge for its domain is the common case, and so is the
     reverse.
     """
-    from app.ontology import knowledge
+    from app.knowledge import reference as knowledge
     from app.rag import domain_search
 
     domains = knowledge.domains_for_agent(agent_id) if agent_id else []

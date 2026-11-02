@@ -42,7 +42,7 @@ def _str_list(value) -> list[str]:
 
 def _stage_ref(ctx: PipelineContext, value) -> str | None:
     """A capability's process stage, only if it names a real stage."""
-    from app.process_knowledge import pipeline as process_knowledge
+    from app.process import pipeline as process_knowledge
 
     pc = process_knowledge.active(ctx)
     if not pc or not value:
@@ -53,7 +53,7 @@ def _stage_ref(ctx: PipelineContext, value) -> str | None:
 
 def _record_stage_mapping(ctx: PipelineContext, layer: str, capabilities: list) -> None:
     """Which stage each capability covers — and which stages none covers."""
-    from app.process_knowledge import pipeline as process_knowledge
+    from app.process import pipeline as process_knowledge
 
     pc = process_knowledge.active(ctx)
     if not pc:
@@ -93,7 +93,7 @@ class GoalDecompositionLayer(DecisionLayer):
         )
 
     def process_block(self, ctx: PipelineContext) -> str:
-        from app.process_knowledge import pipeline as process_knowledge
+        from app.process import pipeline as process_knowledge
 
         return process_knowledge.block(
             ctx, self.process_view,

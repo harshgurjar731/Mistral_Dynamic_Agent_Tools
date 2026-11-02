@@ -51,7 +51,8 @@ class WorkflowAgentRulesLayer(WorkflowStepLayer):
 
         ctx.emit("status", f"Choosing rules for {len(to_select)} agent(s)…")
         semaphore = asyncio.Semaphore(max(1, settings.RULE_SELECTION_CONCURRENCY))
-        from app.process_knowledge import pipeline as process_knowledge
+        from app.knowledge import pipeline as guidance
+        from app.process import pipeline as process_knowledge
 
         async def _one(cap):
             async with semaphore:
@@ -69,9 +70,11 @@ class WorkflowAgentRulesLayer(WorkflowStepLayer):
                 )
                 result = await select.select_rules(
                     ctx.client, "agent", subject, phase=f"rule selection ({cap.id})",
-                    extra=process_knowledge.block(ctx, "rules", focus=cap.process_stage),
+                    extra=process_knowledge.block(ctx, "rules", focus=cap.process_stage)
+                    + guidance.block(ctx, "agent_rules"),
                 )
                 process_knowledge.record_refs(ctx, self.name, result, target=cap.id)
+                guidance.record_refs(ctx, self.name, result, target=cap.id)
                 return cap, result
 
         results = await asyncio.gather(*[_one(c) for c in to_select], return_exceptions=True)
@@ -115,15 +118,17 @@ class WorkflowRuleSelectionLayer(WorkflowStepLayer):
             return await next(ctx)
 
         ctx.emit("status", "Choosing workflow rules…")
-        from app.process_knowledge import pipeline as process_knowledge
+        from app.knowledge import pipeline as guidance
+        from app.process import pipeline as process_knowledge
 
         result = await select.select_rules(
             ctx.client, "workflow",
             select.workflow_subject(spec.dag, goal=spec.goal, guardrail_review=spec.guardrails),
             phase="workflow rule selection",
-            extra=process_knowledge.block(ctx, "rules"),
+            extra=process_knowledge.block(ctx, "rules") + guidance.block(ctx, "rules"),
         )
         process_knowledge.record_refs(ctx, self.name, result)
+        guidance.record_refs(ctx, self.name, result)
         spec.dag["rules"] = [
             {"rule_id": s["rule_id"], "source": "ai", "reason": s.get("reason", "")}
             for s in result["selected"]

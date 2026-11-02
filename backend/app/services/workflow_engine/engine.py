@@ -161,7 +161,7 @@ def _annotate_workflow(definition: WorkflowDefinition) -> None:
     what the classification reads and those are exactly what editing changes.
     """
     try:
-        from app.ontology import autotag
+        from app.catalog import tagging
 
         # Step ids and their agent/tool references say what a workflow actually
         # does; its name is frequently generic ("demo1") and its description
@@ -176,7 +176,7 @@ def _annotate_workflow(definition: WorkflowDefinition) -> None:
             ]))
             for step in definition.steps
         )
-        autotag.annotate_workflow(
+        tagging.annotate_workflow(
             definition.name,
             description=definition.description or "",
             step_text=step_text,

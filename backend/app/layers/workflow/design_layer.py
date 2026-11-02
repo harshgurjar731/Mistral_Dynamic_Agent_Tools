@@ -104,8 +104,10 @@ class AgentDesignLayer(WorkflowStepLayer):
             ]
             return json.dumps(items, indent=2) if items else "Nothing — this is a terminal step."
 
-        from app.process_knowledge import pipeline as process_knowledge
+        from app.process import pipeline as process_knowledge
         from app.build_prereqs import guidance as prerequisites
+        from app.knowledge import pipeline as guidance
+        from app.layers.agent.archetype import design_block as archetype_block
         from app.safety import apply as safety
 
         design_system = safety.apply(AGENT_DESIGN_SYSTEM_PROMPT, "workflow_agent_design")
@@ -119,6 +121,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                     extra_instruction=" Write the controls and exceptions that apply into "
                                       "agent_instructions.",
                 )
+                guidance_text = guidance.block(ctx, "design") + archetype_block(cap)
                 raw = await decide(
                     ctx.client,
                     model=settings.MISTRAL_ORCHESTRATOR_MODEL,
@@ -141,7 +144,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                         connector_ids=json.dumps(inv.get("connector_ids", [])),
                         library_descriptions=inv.get("library_descriptions", ""),
                         library_ids=json.dumps(inv.get("library_ids", [])),
-                    ) + process_block + prerequisites.block(ctx, cap.id),
+                    ) + process_block + guidance_text + prerequisites.block(ctx, cap.id),
                     phase=f"agent design ({cap.id})",
                     timeout_ms=LONG_TIMEOUT_MS,
                     temperature=0.2,
@@ -149,6 +152,8 @@ class AgentDesignLayer(WorkflowStepLayer):
                 data = parse_json(raw, None)
                 if process_block:
                     process_knowledge.record_refs(ctx, self.name, data, target=cap.id)
+                if guidance_text:
+                    guidance.record_refs(ctx, self.name, data, target=cap.id)
                 return cap, data
 
         results = await asyncio.gather(

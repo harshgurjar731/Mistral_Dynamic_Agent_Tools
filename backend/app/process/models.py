@@ -87,4 +87,7 @@ class ProcessUsage(Base):
     #: stage:affordability, control:C3, …
     element = Column(String, nullable=False)
     how = Column(Text, nullable=True)
+    #: process — ``document_id`` is a process document | guidance | reference —
+    #: it is a knowledge item. One table, so "used by" reads one place.
+    source_type = Column(String, nullable=False, default="process", server_default="process")
     created_at = Column(DateTime, server_default=func.now())

@@ -268,6 +268,8 @@ export interface ProcessConfig {
 export interface ProcessKnowledgeRequest {
   enabled: boolean;
   document_ids: number[];
+  /** Build guidance for the run: auto (whatever is in scope), off, or selected items. */
+  guidance?: { mode: "auto" | "off" | "selected"; item_ids?: number[] };
 }
 
 /** One element a layer used — attached to its timeline row. */

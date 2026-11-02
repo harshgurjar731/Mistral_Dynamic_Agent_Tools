@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.catalog.models import Annotation, Concept, ConceptLink, ConceptScheme
-from app.catalog.vocab import ConceptLinkPredicate, Predicate, Scheme, SubjectType
+from app.catalog.vocab import CLOSED_SCHEMES, ConceptLinkPredicate, Predicate, Scheme, SubjectType
 
 logger = logging.getLogger(__name__)
 
@@ -489,8 +489,17 @@ class VocabularyError(Exception):
     """A vocabulary edit was rejected. The message is meant for a user."""
 
 
+def _refuse_closed(scheme_id: str | None) -> None:
+    """Closed vocabularies are fixed in ``vocab``; the seed writes them, nothing else."""
+    if scheme_id in CLOSED_SCHEMES:
+        raise VocabularyError(
+            f"'{scheme_id}' is a closed vocabulary — it is defined in code (app/catalog/vocab.py)."
+        )
+
+
 def create_scheme(scheme_id: str, label: str, description: str | None = None) -> dict:
     """Add a concept scheme."""
+    _refuse_closed((scheme_id or "").strip())
     scheme_id = (scheme_id or "").strip()
     if not scheme_id:
         raise VocabularyError("A scheme id is required.")
@@ -507,6 +516,7 @@ def create_scheme(scheme_id: str, label: str, description: str | None = None) ->
 
 
 def update_scheme(scheme_id: str, label: str | None = None, description: str | None = None) -> dict:
+    _refuse_closed(scheme_id)
     with _session() as db:
         if db is None:
             raise VocabularyError("The ontology database is unavailable.")
@@ -523,6 +533,7 @@ def update_scheme(scheme_id: str, label: str | None = None, description: str | N
 
 def delete_scheme(scheme_id: str, cascade: bool = False) -> dict:
     """Remove a scheme. Refuses to strand its concepts unless ``cascade``."""
+    _refuse_closed(scheme_id)
     with _session() as db:
         if db is None:
             raise VocabularyError("The ontology database is unavailable.")
@@ -586,6 +597,7 @@ def create_concept(
     synonyms: Iterable[str] | None = None,
 ) -> dict:
     """Add a concept to a scheme."""
+    _refuse_closed(scheme_id)
     concept_id = (concept_id or "").strip()
     if not concept_id:
         raise VocabularyError("A concept id is required.")
@@ -633,6 +645,7 @@ def update_concept(
     clear_parent: bool = False,
 ) -> dict:
     """Edit a concept. ``clear_parent`` promotes it to a root."""
+    _refuse_closed((get_concept(concept_id) or {}).get("scheme_id"))
     with _session() as db:
         if db is None:
             raise VocabularyError("The ontology database is unavailable.")
@@ -719,6 +732,7 @@ def delete_concept(concept_id: str, cascade: bool = False) -> dict:
     both failures are silent: an orphaned annotation matches nothing and a
     stranded child drops out of every hierarchy walk.
     """
+    _refuse_closed((get_concept(concept_id) or {}).get("scheme_id"))
     usage = concept_usage(concept_id)
     if (usage["children"] or usage["annotations"] or usage["processes"]
             or usage["documents"]) and not cascade:
@@ -1046,3 +1060,102 @@ def processes_under(domain_ids: Iterable[str], include_ancestors: bool = True) -
     for root in roots:
         out |= descendants(root)
     return out
+
+
+# ── The one tree ───────────────────────────────────────────────────────────
+#
+# Readers see a single tree: industry › domain › subdomain › process ›
+# subprocess. Storage keeps processes in their own scheme with a
+# ``part_of_domain`` link on each root process; these functions read that link
+# as the root process's parent, so nothing above them needs to know.
+
+
+def tree_parent(concept_id: str) -> str | None:
+    """The node above this one in the tree, crossing from a root process to its domain."""
+    concept = get_concept(concept_id)
+    if not concept:
+        return None
+    if concept["parent_id"]:
+        return concept["parent_id"]
+    if concept["scheme_id"] == Scheme.PROCESS.value:
+        return domain_of(concept_id)
+    return None
+
+
+def tree_path(concept_id: str) -> list[dict]:
+    """Root first, ending at this node. Each entry is a concept dict with ``level_name``."""
+    path: list[dict] = []
+    cursor, guard = concept_id, 0
+    while cursor and guard < 24:
+        concept = get_concept(cursor)
+        if not concept:
+            break
+        path.append(concept)
+        cursor = tree_parent(cursor)
+        guard += 1
+    return list(reversed(path))
+
+
+def tree_children(concept_id: str) -> list[str]:
+    """Direct children: concepts parented here, plus root processes linked here."""
+    with _session() as db:
+        if db is None:
+            return []
+        out = [r[0] for r in db.query(Concept.id).filter(Concept.parent_id == concept_id).all()]
+        out += [
+            r[0] for r in db.query(ConceptLink.source_concept_id).filter(
+                ConceptLink.target_concept_id == concept_id,
+                ConceptLink.predicate == ConceptLinkPredicate.PART_OF_DOMAIN.value,
+            ).all()
+        ]
+    return sorted(set(out))
+
+
+def tree_descendants(concept_id: str, include_self: bool = True) -> set[str]:
+    """Everything below a node, processes under a domain included."""
+    out = set(descendants(concept_id, include_self=include_self))
+    concept = get_concept(concept_id)
+    if concept and concept["scheme_id"] == Scheme.DOMAIN.value:
+        out |= processes_under([concept_id], include_ancestors=False)
+    return out
+
+
+def tree_ancestors(concept_id: str, include_self: bool = False) -> set[str]:
+    """Everything above a node, a process's domains included."""
+    ids = {c["id"] for c in tree_path(concept_id)}
+    if not include_self:
+        ids.discard(concept_id)
+    return ids
+
+
+def ensure_tree_path(domain_id: str, process_names: list[str], *, source: str = "import") -> list[str]:
+    """Find or create a chain of process nodes under a domain. Returns their ids, top down.
+
+    Used by imports that name a process hierarchy (L1 › L2 › L3) by label. An
+    existing node is matched by label under the same parent; anything missing
+    is created as a process concept, the root one linked to ``domain_id``.
+    """
+    created: list[str] = []
+    parent: str | None = None
+    domain_slug = domain_id.split(".", 1)[-1]
+    for name in (n.strip() for n in process_names if n and n.strip()):
+        siblings = tree_children(parent or domain_id)
+        found = None
+        for sid in siblings:
+            concept = get_concept(sid)
+            if (concept and concept["scheme_id"] == Scheme.PROCESS.value
+                    and concept["label"].strip().lower() == name.lower()):
+                found = sid
+                break
+        if not found:
+            slug = "_".join(t for t in "".join(ch if ch.isalnum() else " " for ch in name.lower()).split())
+            base = f"process.{domain_slug}.{slug}" if parent is None else f"{parent}.{slug}"
+            found, n = base, 2
+            while get_concept(found):
+                found, n = f"{base}_{n}", n + 1
+            create_concept(found, Scheme.PROCESS.value, name, parent)
+            if parent is None:
+                link_concepts(found, domain_id, source=source)
+        created.append(found)
+        parent = found
+    return created

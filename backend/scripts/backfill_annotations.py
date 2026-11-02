@@ -5,7 +5,7 @@ Backfill the ontology from the live inventory.
     python scripts/backfill_annotations.py show      # summarise it
     python scripts/backfill_annotations.py apply     # commit it
 
-`propose` writes to app/ontology/seed/backfill_review.json and changes nothing
+`propose` writes to app/catalog/seed/backfill_review.json and changes nothing
 else. Read that file — especially the entries marked "low" confidence, which
 matched no domain — correct or delete what is wrong, then `apply`.
 
@@ -20,9 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.database import create_tables                     # noqa: E402
-import app.ontology.models                                  # noqa: E402,F401
-from app.ontology import backfill                           # noqa: E402
-from app.ontology.seed_loader import load_seed              # noqa: E402
+import app.catalog.models                                  # noqa: E402,F401
+from app.catalog import tagging as backfill                           # noqa: E402
+from app.catalog.seed_loader import load_seed              # noqa: E402
 
 
 async def _gather() -> list[dict]:

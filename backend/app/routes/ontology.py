@@ -22,11 +22,11 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_mistral_client
-from app.ontology import (
-    classifier, graph as ontology_graph, knowledge, matcher, store,
-)
-from app.ontology.store import VocabularyError
-from app.ontology.vocab import Predicate, Scheme, SubjectType, tier_labels
+from app.catalog import match as matcher, store, tagging
+from app.ontology import graph as ontology_graph
+from app.knowledge import reference as knowledge
+from app.catalog.store import VocabularyError
+from app.catalog.vocab import Predicate, Scheme, SubjectType, tier_labels
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Ontology"])
@@ -353,7 +353,7 @@ async def scope_goal(goal: str = Query(..., min_length=1)):
     concepts = [c for c in (store.get_concept(cid) for cid in sorted(scope["concepts"])) if c]
     try:
         from app.config import settings
-        from app.process_knowledge import resolver
+        from app.process import resolver
 
         processes = resolver.candidates_for(goal, scope)
         threshold = float(settings.PROCESS_MATCH_MIN_SCORE)
@@ -409,7 +409,7 @@ async def classify_resource(request: ClassifyRequest):
     to preview it.
     """
     client = get_mistral_client()
-    result = await classifier.classify(
+    result = await tagging.classify(
         client,
         name=request.name,
         description=request.description,
@@ -421,7 +421,7 @@ async def classify_resource(request: ClassifyRequest):
 
     written = {}
     if request.subject_type and request.subject_id:
-        written = classifier.apply_classification(
+        written = tagging.apply_classification(
             request.subject_type, request.subject_id, result,
             include_tier=(request.subject_type == SubjectType.AGENT.value),
         )

@@ -383,6 +383,64 @@ def _semantic_issues(doc: dict) -> list[dict]:
             "A subprocess should name its parent process.",
             fix="Set parent_process to the parent process id.",
         ))
+    out += _v2_issues(doc, stages)
+    return out
+
+
+def _v2_issues(doc: dict, stages: list) -> list[dict]:
+    """Consistency of the v2 sections. Warnings only: a document is still usable,
+    but the build would have to guess where these disagree."""
+    out: list[dict] = []
+    integ = doc.get("integrations") if isinstance(doc.get("integrations"), dict) else {}
+    known = set(_ids(integ.get("systems"))) | set(_ids(integ.get("connectors"))) | set(
+        _ids(integ.get("third_party_services")))
+    for i, stage in enumerate(stages):
+        if not isinstance(stage, dict):
+            continue
+        for ref in stage.get("uses") or []:
+            if ref not in known:
+                out.append(_issue(
+                    "warning", "unknown_integration", f"stages[{i}].uses",
+                    f"Stage '{stage.get('id')}' uses '{ref}', which is not declared in integrations.",
+                    expected=sorted(known) or "a declared system, connector or service", found=ref,
+                    fix="Declare it under integrations, or remove it from `uses`.",
+                ))
+    for i, conn in enumerate(integ.get("connectors") or []):
+        if isinstance(conn, dict) and conn.get("target") and conn["target"] not in known:
+            out.append(_issue(
+                "warning", "unknown_connector_target", f"integrations.connectors[{i}].target",
+                f"Connector '{conn.get('id')}' targets '{conn['target']}', which is not declared.",
+                fix="Point it at a systems or third_party_services id.",
+            ))
+
+    gov = doc.get("governance") if isinstance(doc.get("governance"), dict) else {}
+    oversight = gov.get("human_oversight") if isinstance(gov.get("human_oversight"), dict) else {}
+    human_stage = any(isinstance(s, dict) and (s.get("actor_type") == "human" or s.get("is_oversight_point"))
+                      for s in stages)
+    if oversight.get("model") == "human_in_the_loop" and stages and not human_stage:
+        out.append(_issue(
+            "warning", "oversight_without_human_stage", "governance.human_oversight",
+            "Human-in-the-loop is declared but no stage is performed or reviewed by a person.",
+            fix="Add a human stage, or mark the review stage with is_oversight_point.",
+        ))
+    writes = gov.get("action_authority") in ("write", "transact")
+    costly = gov.get("reversibility") in ("financial_impact", "irreversible")
+    if writes and costly and oversight.get("model") in (None, "", "human_out_of_the_loop", "not_applicable"):
+        out.append(_issue(
+            "warning", "unguarded_costly_action", "governance",
+            "The solution may write or transact with financial or irreversible impact, but no "
+            "human oversight is declared.",
+            fix="Declare human_oversight (in or on the loop), or lower action_authority.",
+        ))
+
+    evidence = doc.get("evidence") if isinstance(doc.get("evidence"), dict) else {}
+    if evidence.get("origin") in ("market_research", "industry_benchmark") and evidence.get("confidence") == "high":
+        out.append(_issue(
+            "warning", "overconfident_evidence", "evidence.confidence",
+            "Evidence from generic market research is rated high confidence.",
+            expected="low or medium", found="high",
+            fix="Lower the confidence, or cite client evidence.",
+        ))
     return out
 
 

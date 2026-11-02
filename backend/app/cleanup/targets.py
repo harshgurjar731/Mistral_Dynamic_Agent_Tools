@@ -451,7 +451,7 @@ async def _count_processes() -> Counts:
 
 
 async def _purge_processes() -> dict[str, Any]:
-    from app.process_knowledge import templates
+    from app.process import templates
 
     removed = _clear_tables("process_usage", "process_documents", "process_templates")
     templates.ensure_builtin()
@@ -581,7 +581,7 @@ async def _count_ontology() -> Counts:
 
 
 async def _purge_ontology() -> dict[str, Any]:
-    from app.ontology.seed_loader import load_seed
+    from app.catalog.seed_loader import load_seed
     from app.rag import unified_graph
 
     removed = _clear_tables(

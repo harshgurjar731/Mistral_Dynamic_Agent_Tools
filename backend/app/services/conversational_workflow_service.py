@@ -20,8 +20,8 @@ from typing import Any
 
 from mistralai.client import Mistral
 from app.config import settings
-from app.ontology import autotag
-from app.ontology.vocab import AgentTier
+from app.catalog import tagging
+from app.catalog.vocab import AgentTier
 from app.prompts import CONVERSATIONAL_GATEWAY_SYSTEM_PROMPT, CONVERSATIONAL_GATEWAY_USER_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ async def create_conversational_agent(
         # instructions, which describe plumbing rather than a business area.
         await asyncio.to_thread(
             partial(
-                autotag.annotate_agent,
+                tagging.annotate_agent,
                 agent_id,
                 name=agent_name,
                 description=create_kwargs.get("description", ""),

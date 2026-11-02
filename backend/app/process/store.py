@@ -21,6 +21,9 @@ from app.database import SessionLocal
 from app.process import templates, validation
 from app.process.models import ProcessDocument, ProcessUsage
 
+#: Usage rows about process documents, as opposed to knowledge items.
+_PROCESS_ROWS = ProcessUsage.source_type == "process"
+
 logger = logging.getLogger(__name__)
 
 
@@ -259,14 +262,14 @@ def delete_document(document_id: int, *, force: bool = False) -> dict:
             raise LookupError(f"Document {document_id} not found.")
         users = db.query(ProcessUsage.subject_type, ProcessUsage.subject_id,
                          ProcessUsage.subject_name).filter(
-            ProcessUsage.document_id == document_id).distinct().all()
+            ProcessUsage.document_id == document_id, _PROCESS_ROWS).distinct().all()
         if users and not force:
             names = ", ".join(sorted({f"{t} {n or s}" for t, s, n in users}))[:400]
             raise PermissionError(
                 f"Used by {len(users)} build(s): {names}. Delete with force=true to remove it and "
                 f"its usage history.")
         was_active, concept_id = row.is_active, row.concept_id
-        db.query(ProcessUsage).filter(ProcessUsage.document_id == document_id).delete(
+        db.query(ProcessUsage).filter(ProcessUsage.document_id == document_id, _PROCESS_ROWS).delete(
             synchronize_session=False)
         db.delete(row)
         db.flush()
@@ -301,7 +304,7 @@ def delete_for_concepts(concept_ids: list[str]) -> int:
         doc_ids = [r[0] for r in db.query(ProcessDocument.id).filter(
             ProcessDocument.concept_id.in_(concept_ids)).all()]
         if doc_ids:
-            db.query(ProcessUsage).filter(ProcessUsage.document_id.in_(doc_ids)).delete(
+            db.query(ProcessUsage).filter(ProcessUsage.document_id.in_(doc_ids), _PROCESS_ROWS).delete(
                 synchronize_session=False)
         removed = db.query(ProcessDocument).filter(
             ProcessDocument.concept_id.in_(concept_ids)).delete(synchronize_session=False)
@@ -413,6 +416,7 @@ def record_usage(rows: list[dict]) -> int:
                 concept_id=r.get("concept_id"), subject_type=r["subject_type"],
                 subject_id=str(r["subject_id"]), subject_name=r.get("subject_name"),
                 layer=r["layer"], element=r["element"], how=(r.get("how") or "")[:1000],
+                source_type=r.get("source_type") or "process",
             ))
         db.commit()
         return len(rows)
@@ -429,19 +433,22 @@ def _usage_dict(row: ProcessUsage) -> dict:
         "document_id": row.document_id, "document_version": row.document_version,
         "concept_id": row.concept_id, "subject_type": row.subject_type,
         "subject_id": row.subject_id, "subject_name": row.subject_name, "layer": row.layer,
-        "element": row.element, "how": row.how,
+        "element": row.element, "how": row.how, "source_type": row.source_type or "process",
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 
 def usage(*, document_id: Optional[int] = None, concept_ids: Optional[list[str]] = None,
           subject_type: Optional[str] = None, subject_id: Optional[str] = None,
-          limit: int = 500) -> list[dict]:
+          limit: int = 500, source_type: Optional[str] = "process") -> list[dict]:
+    """Usage rows, newest first. ``source_type=None`` returns every kind."""
     if SessionLocal is None:
         return []
     db = SessionLocal()
     try:
         q = db.query(ProcessUsage)
+        if source_type:
+            q = q.filter(ProcessUsage.source_type == source_type)
         if document_id:
             q = q.filter(ProcessUsage.document_id == document_id)
         if concept_ids is not None:

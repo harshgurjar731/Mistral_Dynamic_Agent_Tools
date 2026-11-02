@@ -211,7 +211,7 @@ def _import_graph(data: dict, timeout: float) -> str:
 
 def _rekey(table: str, row: dict, agent_ids: dict[str, str]) -> dict:
     """The deployed agents can have new ids; what is attached to them follows."""
-    from app.ontology.vocab import SubjectType
+    from app.catalog.vocab import SubjectType
 
     if (table == "ontology_annotations" and row.get("subject_type") == SubjectType.AGENT.value
             and row.get("subject_id") in agent_ids):

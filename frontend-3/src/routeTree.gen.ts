@@ -11,9 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as LibrariesRouteImport } from './routes/libraries'
 import { Route as OntologyRouteImport } from './routes/ontology'
 import { Route as PlaygroundRouteImport } from './routes/playground'
+import { Route as ReviewsRouteImport } from './routes/reviews'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
@@ -58,6 +60,11 @@ const HealthRoute = HealthRouteImport.update({
   path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KnowledgeRoute = KnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LibrariesRoute = LibrariesRouteImport.update({
   id: '/libraries',
   path: '/libraries',
@@ -71,6 +78,11 @@ const OntologyRoute = OntologyRouteImport.update({
 const PlaygroundRoute = PlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewsRoute = ReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -249,9 +261,11 @@ const WorkflowsNewVisualRoute = WorkflowsNewVisualRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -289,8 +303,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/knowledge': typeof KnowledgeRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -329,9 +345,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
+  '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -371,9 +389,11 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/health'
+    | '/knowledge'
     | '/libraries'
     | '/ontology'
     | '/playground'
+    | '/reviews'
     | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
@@ -411,8 +431,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/health'
+    | '/knowledge'
     | '/ontology'
     | '/playground'
+    | '/reviews'
     | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
@@ -450,9 +472,11 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/health'
+    | '/knowledge'
     | '/libraries'
     | '/ontology'
     | '/playground'
+    | '/reviews'
     | '/settings'
     | '/agents/$id'
     | '/connectors/$id'
@@ -491,9 +515,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
+  KnowledgeRoute: typeof KnowledgeRoute
   LibrariesRoute: typeof LibrariesRouteWithChildren
   OntologyRoute: typeof OntologyRoute
   PlaygroundRoute: typeof PlaygroundRoute
+  ReviewsRoute: typeof ReviewsRoute
   SettingsRoute: typeof SettingsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
@@ -543,6 +569,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/knowledge': {
+      id: '/knowledge'
+      path: '/knowledge'
+      fullPath: '/knowledge'
+      preLoaderRoute: typeof KnowledgeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/libraries': {
       id: '/libraries'
       path: '/libraries'
@@ -562,6 +595,13 @@ declare module '@tanstack/react-router' {
       path: '/playground'
       fullPath: '/playground'
       preLoaderRoute: typeof PlaygroundRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reviews': {
+      id: '/reviews'
+      path: '/reviews'
+      fullPath: '/reviews'
+      preLoaderRoute: typeof ReviewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -815,9 +855,11 @@ const LibrariesRouteWithChildren = LibrariesRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
+  KnowledgeRoute: KnowledgeRoute,
   LibrariesRoute: LibrariesRouteWithChildren,
   OntologyRoute: OntologyRoute,
   PlaygroundRoute: PlaygroundRoute,
+  ReviewsRoute: ReviewsRoute,
   SettingsRoute: SettingsRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,

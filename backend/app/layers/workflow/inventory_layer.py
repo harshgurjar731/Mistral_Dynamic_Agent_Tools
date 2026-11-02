@@ -57,8 +57,8 @@ class ResourceInventoryLayer(Layer):
 
     async def process(self, ctx: PipelineContext, next: NextFn) -> PipelineContext:
         from app.config import settings
-        from app.ontology import matcher as ontology_matcher
-        from app.ontology.vocab import (
+        from app.catalog import match as ontology_matcher
+        from app.catalog.vocab import (
             SYSTEM_DOMAIN,
             AgentTier,
             Predicate,

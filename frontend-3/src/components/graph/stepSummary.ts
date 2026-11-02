@@ -144,5 +144,22 @@ export function summarizeStep(step: WorkflowStep, catalog?: BuilderCatalog): Ste
         ...(!code.trim() ? { problem: "No code" } : {}),
       };
     }
+
+    case "human_review": {
+      const sla = Number(cfg["sla_seconds"] ?? 0);
+      const rate = cfg["sample_rate"];
+      const facts: StepFact[] = [];
+      if (str(cfg["review_of"])) facts.push({ label: "reviews", value: str(cfg["review_of"]) });
+      if (str(cfg["reviewer_role"])) facts.push({ label: "by", value: str(cfg["reviewer_role"]) });
+      if (sla) facts.push({ label: "within", value: `${Math.round(sla / 3600)}h` });
+      if (rate != null) facts.push({ label: "sample", value: `${Math.round(Number(rate) * 100)}%` });
+      return {
+        title: step.id,
+        facts,
+        chips: [],
+        ...(str(cfg["title"]) ? { preview: str(cfg["title"]) } : {}),
+        ...(!str(cfg["reviewer_role"]) ? { problem: "No reviewer role" } : {}),
+      };
+    }
   }
 }

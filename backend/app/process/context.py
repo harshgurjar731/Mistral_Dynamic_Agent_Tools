@@ -82,8 +82,30 @@ def build(documents: list[dict], *, mode: str, message: str = "",
         "triggers": content.get("triggers") or [],
         "glossary": content.get("glossary") or {},
         **merged,
+        **_v2_sections(primary, content, refs),
         "refs": refs,
     }
+
+
+#: Template-v2 sections carried as-is from the primary document.
+V2_SECTIONS = ("intervention", "execution_profile", "integrations", "governance", "agent_design",
+               "knowledge", "data", "evidence", "recommendation")
+_INTEGRATION_PREFIX = {"systems": "system", "connectors": "connector", "third_party_services": "service"}
+
+
+def _v2_sections(primary: dict, content: dict, refs: dict) -> dict:
+    """The v2 sections, and reference ids for each declared integration."""
+    out = {key: content.get(key) or {} for key in V2_SECTIONS}
+    integ = out["integrations"] if isinstance(out["integrations"], dict) else {}
+    for section, prefix in _INTEGRATION_PREFIX.items():
+        for i, item in enumerate(integ.get(section) or []):
+            if not isinstance(item, dict):
+                continue
+            ref = f"{prefix}:{_item_id(item, i)}"
+            refs.setdefault(ref, {"type": prefix, "label": item.get("name") or item.get("id") or ref,
+                                  "document_id": primary["id"], "document_version": primary.get("version"),
+                                  "concept_id": primary.get("concept_id")})
+    return out
 
 
 # ── Views ──────────────────────────────────────────────────────────────────
@@ -241,6 +263,9 @@ def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
         if ctx.get("glossary"):
             add("Glossary: " + "; ".join(f"{k} = {v}" for k, v in list(ctx["glossary"].items())[:20]))
 
+    for text in _v2_view(ctx, view, stages):
+        add(text)
+
     body = "\n\n".join(p for p in parts if p)
     if not body:
         return ""
@@ -255,6 +280,85 @@ def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
         "A reference process for this request. Follow it where it fits; the user's request "
         "wins on any conflict. Ids in [brackets] are reference ids.\n\n" + body
     )
+
+
+def _kv(title: str, data: Any, keys: tuple[str, ...]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    lines = []
+    for key in keys:
+        value = data.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, dict):
+            value = ", ".join(f"{k}={v}" for k, v in value.items() if v not in (None, "", [], {}))
+        elif isinstance(value, list):
+            value = ", ".join(map(str, value))
+        lines.append(f"- {key.replace('_', ' ')}: {value}")
+    return _section(title, lines)
+
+
+def _integration_lines(ctx: dict) -> list[str]:
+    integ = ctx.get("integrations") if isinstance(ctx.get("integrations"), dict) else {}
+    lines = []
+    for section, prefix in _INTEGRATION_PREFIX.items():
+        for i, item in enumerate(integ.get(section) or []):
+            if not isinstance(item, dict):
+                continue
+            ref = f"{prefix}:{_item_id(item, i)}"
+            bits = [str(item.get("name") or item.get("id"))]
+            for key in ("access", "kind", "status", "service_type", "target"):
+                if item.get(key):
+                    bits.append(f"{key}={item[key]}")
+            ops = [o.get("name") + (f" ({o['side_effect']})" if o.get("side_effect") else "")
+                   for o in item.get("operations") or [] if isinstance(o, dict) and o.get("name")]
+            if ops:
+                bits.append("ops: " + ", ".join(ops))
+            if item.get("data_shared"):
+                bits.append("shares: " + ", ".join(map(str, item["data_shared"])))
+            lines.append(f"- [{ref}] " + "; ".join(bits))
+    return lines
+
+
+def _v2_view(ctx: dict, view: str, stages: list[dict]) -> list[str]:
+    """Template-v2 facts for a view. Empty for a v1 document, so v1 views are unchanged."""
+    gov = ctx.get("governance") or {}
+    profile = ctx.get("execution_profile") or {}
+    out: list[str] = []
+    profile_keys = ("workflow_determinism", "interaction_mode", "trigger", "task_horizon",
+                    "input_variability", "memory_need", "volume", "latency")
+    gov_keys = ("action_authority", "reversibility", "human_oversight", "risk")
+    if view in ("agent_archetype", "execution_mode"):
+        out.append(_kv("Intervention", ctx.get("intervention"), ("category", "implementation_type", "mode")))
+        out.append(_kv("How the work runs", profile, profile_keys))
+        if view == "agent_archetype":
+            out.append(_kv("Governance", gov, gov_keys + ("validation",)))
+            out.append(_kv("Declared agent design", ctx.get("agent_design"),
+                           ("primary_type", "patterns", "sub_agents", "model_preference")))
+        if any(s.get("execution") for s in stages):
+            out.append(_section("How each stage runs", [
+                f"- [{s['_ref']}] {s.get('name')}: {s.get('execution')}"
+                + (" (oversight point)" if s.get("is_oversight_point") else "")
+                for s in stages if s.get("execution")]))
+    if view in ("agent_archetype", "execution_mode", "agent_tools", "agent_connectors", "design"):
+        out.append(_section("Integrations (systems, connectors, third-party services)",
+                            _integration_lines(ctx)))
+    if view == "agent_libraries":
+        sources = (ctx.get("knowledge") or {}).get("sources") or []
+        out.append(_section("Knowledge sources", [
+            f"- {k.get('name')} ({k.get('type', 'source')}, use: {k.get('use', 'grounding')})"
+            for k in sources if isinstance(k, dict)]))
+    if view in ("guardrail", "agent_guardrail", "rules", "agent_rules"):
+        out.append(_kv("Governance", gov, gov_keys + ("segregation_of_duties",)))
+    if view in ("design", "agent_instructions"):
+        out.append(_kv("Declared agent design", ctx.get("agent_design"), ("primary_type", "patterns")))
+        out.append(_kv("Validation and oversight", gov, ("validation", "human_oversight", "action_authority")))
+    if view in ("topology", "oversight"):
+        out.append(_kv("Human oversight", gov.get("human_oversight"),
+                       ("model", "applies_to", "threshold", "sample_rate", "reviewer_role", "approval_sla")))
+        points = [s for s in stages if s.get("is_oversight_point") or s.get("actor_type") == "human"]
+        out.append(_section("Where people take part", [f"- [{s['_ref']}] {s.get('name')}" for s in points]))
+    return [o for o in out if o]
 
 
 def refs_instruction(extra: str = "") -> str:

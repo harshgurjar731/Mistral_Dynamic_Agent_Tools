@@ -24,15 +24,14 @@ would double the latency of every agent turn that uses it.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Iterable, Optional
 
-from app.database import SessionLocal
 from app.catalog import store
-from app.catalog.models import KnowledgeEntry
+from app.catalog.match import QUESTION_STOPWORDS, tokens
 from app.catalog.vocab import Scheme
+from app.database import SessionLocal  # noqa: F401  (kept: tests patch it on this module)
+from app.knowledge import store as knowledge_store
 
 logger = logging.getLogger(__name__)
 
@@ -41,76 +40,41 @@ KINDS = (
     "risk", "best_practice", "glossary",
 )
 
-_WORD = re.compile(r"[a-z0-9]+")
-
-# Words that match everything and discriminate nothing. Shorter than the goal
-# matcher's list: a knowledge query is a question, not a workflow goal, so
-# "process" and "data" are legitimate search terms here.
-_STOPWORDS = frozenset(
-    """
-    a an the and or of for to in on with from by at is are be that this it as
-    what how why when which who does do can should must please tell me about
-    """.split()
-)
-
 
 def _tokens(text: str) -> set[str]:
-    return {w for w in _WORD.findall((text or "").lower()) if w not in _STOPWORDS and len(w) > 2}
+    return tokens(text, QUESTION_STOPWORDS)
 
 
-def _loads(raw: Optional[str]) -> list[str]:
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-        return [str(v) for v in value] if isinstance(value, list) else []
-    except Exception:
-        return []
+def _to_dict(item: dict) -> dict:
+    """A knowledge item in the shape this module has always returned.
 
-
-def _to_dict(entry: KnowledgeEntry) -> dict:
+    ``kind`` here is the item's category (regulation, metric, …) — what the
+    routes, the runtime tool and the prompt renderer have always called kind.
+    """
     return {
-        "id": entry.id,
-        "concept_id": entry.concept_id,
-        "kind": entry.kind,
-        "title": entry.title,
-        "body": entry.body,
-        "tags": _loads(entry.tags),
-        "as_of": entry.as_of,
-        "source": entry.source,
+        "id": item["id"],
+        "concept_id": item["concept_id"],
+        "kind": item["category"],
+        "title": item["title"],
+        "body": item["body"],
+        "tags": item["tags"],
+        "as_of": item["as_of"],
+        "source": item["origin"],
     }
 
 
 def ensure_schema() -> None:
-    """Add columns this module expects but an older table lacks.
-
-    ``create_all()`` creates missing *tables*, never missing *columns*, and this
-    project has no migration tool — so a field added after the table first
-    existed has to be introduced explicitly or every read of it fails with
-    "no such column". Additive and idempotent, so it is safe on every boot.
-    """
-    if SessionLocal is None:
-        return
-    from sqlalchemy import text
-
-    db = SessionLocal()
-    try:
-        existing = {
-            row[1] for row in db.execute(text("PRAGMA table_info(industry_knowledge)"))
-        }
-        if not existing:
-            return  # table not created yet; create_all will do it correctly
-        if "as_of" not in existing:
-            db.execute(text("ALTER TABLE industry_knowledge ADD COLUMN as_of VARCHAR"))
-            db.commit()
-            logger.info("industry_knowledge: added as_of column")
-    except Exception as e:
-        logger.warning("Could not migrate industry_knowledge schema: %s", e)
-    finally:
-        db.close()
+    """Additive migrations — see ``app.knowledge.store.ensure_schema``."""
+    knowledge_store.ensure_schema()
 
 
 # ── CRUD ───────────────────────────────────────────────────────────────────
+#
+# Reference knowledge is every active item a built agent may read at run time:
+# kind ``reference``, plus guidance whose audience includes the runtime (the
+# old ``best_practice`` entries, which agents always searched).
+
+_RUNTIME_AUDIENCES = ("runtime", "both")
 
 
 def list_entries(
@@ -118,19 +82,11 @@ def list_entries(
     kind: Optional[str] = None,
     limit: int = 500,
 ) -> list[dict]:
-    if SessionLocal is None:
-        return []
-    db = SessionLocal()
-    try:
-        query = db.query(KnowledgeEntry)
-        if concept_id:
-            query = query.filter(KnowledgeEntry.concept_id == concept_id)
-        if kind:
-            query = query.filter(KnowledgeEntry.kind == kind)
-        rows = query.order_by(KnowledgeEntry.concept_id, KnowledgeEntry.title).limit(limit).all()
-        return [_to_dict(r) for r in rows]
-    finally:
-        db.close()
+    items = knowledge_store.list_items(
+        concept_id=concept_id, category=kind, status="active",
+        audiences=_RUNTIME_AUDIENCES, limit=limit,
+    )
+    return [_to_dict(i) for i in items]
 
 
 def upsert_entry(
@@ -143,63 +99,31 @@ def upsert_entry(
     as_of: Optional[str] = None,
 ) -> dict:
     """Create or update one entry, keyed on (concept, title)."""
-    if SessionLocal is None:
-        raise RuntimeError("The knowledge database is unavailable.")
     if not concept_id or not title.strip() or not body.strip():
         raise ValueError("concept_id, title and body are all required.")
     if not store.get_concept(concept_id):
         raise ValueError(f"Concept '{concept_id}' does not exist.")
-
-    db = SessionLocal()
+    guidance = kind == "best_practice"
     try:
-        entry = (
-            db.query(KnowledgeEntry)
-            .filter(KnowledgeEntry.concept_id == concept_id, KnowledgeEntry.title == title)
-            .first()
-        )
-        if entry:
-            entry.body = body
-            entry.kind = kind
-            entry.tags = json.dumps(list(tags or []))
-            entry.source = source
-            entry.as_of = as_of
-        else:
-            entry = KnowledgeEntry(
-                concept_id=concept_id, title=title, body=body, kind=kind,
-                tags=json.dumps(list(tags or [])), source=source, as_of=as_of,
-            )
-            db.add(entry)
-        db.commit()
-        db.refresh(entry)
-        return _to_dict(entry)
-    finally:
-        db.close()
+        item = knowledge_store.upsert_item({
+            "kind": "guidance" if guidance else "reference",
+            "category": kind if kind in KINDS else "definition",
+            "concept_id": concept_id, "title": title.strip(), "body": body.strip(),
+            "tags": list(tags or []), "audience": "both" if guidance else "runtime",
+            "origin": source, "as_of": as_of, "status": "active",
+        }, key=("concept_id", "title"))
+    except knowledge_store.KnowledgeError as e:
+        raise ValueError(str(e)) from e
+    return _to_dict(item)
 
 
 def delete_entry(entry_id: int) -> bool:
-    if SessionLocal is None:
-        return False
-    db = SessionLocal()
-    try:
-        entry = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
-        if not entry:
-            return False
-        db.delete(entry)
-        db.commit()
-        return True
-    finally:
-        db.close()
+    return knowledge_store.delete_item(entry_id)
 
 
 def counts() -> dict:
-    if SessionLocal is None:
-        return {"entries": 0, "concepts": 0}
-    db = SessionLocal()
-    try:
-        rows = db.query(KnowledgeEntry.concept_id).all()
-        return {"entries": len(rows), "concepts": len({r[0] for r in rows})}
-    finally:
-        db.close()
+    rows = list_entries(limit=100000)
+    return {"entries": len(rows), "concepts": len({r["concept_id"] for r in rows})}
 
 
 # ── Retrieval ──────────────────────────────────────────────────────────────

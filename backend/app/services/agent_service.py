@@ -18,8 +18,8 @@ from mistralai.client.models.moderationllmv2categorythresholds import Moderation
 from mistralai.client.models.moderationllmv2config import ModerationLlmv2Config
 from app.config import settings, map_model_name
 from app.exceptions import MistralAPIError, AgentNotFoundError
-from app.ontology import store as annotation_store
-from app.ontology.vocab import DEFAULT_TIER, AgentTier, Predicate, SubjectType, coerce_tier
+from app.catalog import store as annotation_store
+from app.catalog.vocab import DEFAULT_TIER, AgentTier, Predicate, SubjectType, coerce_tier
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +368,7 @@ def schedule_classification(
     ones, for a benefit the user never sees at that moment.
     """
     try:
-        from app.ontology.classifier import classify_and_apply
+        from app.catalog.tagging import classify_and_apply
 
         task = asyncio.create_task(
             classify_and_apply(

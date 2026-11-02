@@ -43,13 +43,13 @@ export const Route = createFileRoute("/ontology")({
   validateSearch: searchSchema,
   head: () => ({
     meta: [
-      { title: "Ontology — Agentic AI Design Patterns" },
+      { title: "Catalog — Agentic AI Design Patterns" },
       {
         name: "description",
         content:
           "The SKOS-lite vocabulary that scopes planning: schemes, concepts, annotations and the knowledge the tool retrieves.",
       },
-      { property: "og:title", content: "Ontology — Agentic AI Design Patterns" },
+      { property: "og:title", content: "Catalog — Agentic AI Design Patterns" },
       {
         property: "og:description",
         content:
@@ -220,7 +220,7 @@ function OntologyPage() {
             onClick={() => open(undefined)}
             className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
           >
-            <ArrowLeft className="size-3.5" /> Ontology
+            <ArrowLeft className="size-3.5" /> Catalog
           </button>
           <span className="h-5 w-px bg-border" aria-hidden />
           <span className={cn("grid size-8 place-items-center rounded-lg border", tone.tile)}>
@@ -293,13 +293,14 @@ function OntologyHub({
         <div>
           <h1 className="font-display text-3xl font-bold">
             <FeatureTitle route="/ontology">
-              <span className="text-gradient-brand">Ontology</span>
+              <span className="text-gradient-brand">Catalog</span>
             </FeatureTitle>
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
             <FeatureDescription route="/ontology">
-              A shared vocabulary the planner narrows on before it chooses agents. Concepts live in
-              schemes; annotations bind them to agents, tools, connectors, workflows and libraries.
+              Where everything belongs: one tree of industries, domains and processes, and the tags
+              that file agents, tools, connectors, workflows and libraries under it. Build guidance
+              lives on the Knowledge page.
             </FeatureDescription>
           </p>
         </div>

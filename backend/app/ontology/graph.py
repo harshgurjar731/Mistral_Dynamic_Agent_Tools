@@ -22,8 +22,8 @@ import asyncio
 import logging
 from typing import Any, Iterable, Optional
 
-from app.ontology import store
-from app.ontology.vocab import ConceptLinkPredicate, Predicate, Scheme, SubjectType
+from app.catalog import store
+from app.catalog.vocab import ConceptLinkPredicate, Predicate, Scheme, SubjectType
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ _EDGE_LABELS = {
     Predicate.HANDLES_DATA_CLASS.value: "handles",
     Predicate.EGRESSES_TO.value: "egresses",
     Predicate.IMPLEMENTS_PROCESS.value: "implements",
+    Predicate.HAS_AGENT_TYPE.value: "type",
+    Predicate.HAS_PATTERN.value: "pattern",
 }
 
 #: Kinds that only appear once the graph is filtered. The unfiltered view is
@@ -47,12 +49,16 @@ _EDGE_LABELS = {
 #: double its size, so they are revealed by narrowing to where they live.
 PROCESS_KINDS = frozenset({"process", "subprocess", "process_document"})
 
+#: Knowledge items, drawn on the same terms as processes: when the graph is
+#: narrowed, each filed on its catalog node by an ``about`` edge.
+KNOWLEDGE_KINDS = frozenset({"guidance", "reference"})
+
 #: Node kinds the client can filter on. Concept kinds are the *level names* of
 #: the domain tree so "industry" and "subdomain" are filterable separately.
 NODE_KINDS = (
     "industry", "domain", "subdomain", "process", "subprocess", "process_document",
-    "capability", "data_class", "agent_tier",
-    "agent", "tool", "connector", "workflow", "library",
+    "capability", "data_class", "agent_tier", "agent_type", "agent_pattern",
+    "agent", "tool", "connector", "workflow", "library", "guidance", "reference",
 )
 
 
@@ -73,6 +79,10 @@ def _concept_kind(concept: dict) -> str:
         return "data_class"
     if scheme == Scheme.AGENT_TIER.value:
         return "agent_tier"
+    if scheme == Scheme.AGENT_TYPE.value:
+        return "agent_type"
+    if scheme == Scheme.AGENT_PATTERN.value:
+        return "agent_pattern"
     return "concept"
 
 
@@ -383,7 +393,7 @@ def _process_documents(concept_ids: list[str]) -> dict[str, dict]:
     if not concept_ids:
         return {}
     try:
-        from app.process_knowledge import store as process_store
+        from app.process import store as process_store
 
         out: dict[str, dict] = {}
         for doc in process_store.list_documents(concept_ids=concept_ids):
@@ -434,6 +444,30 @@ def _prune_to_reachable(
     return kept_nodes, kept_edges
 
 
+def _add_knowledge_items(nodes: dict[str, dict], edges: list[dict]) -> None:
+    """Active knowledge items as nodes, each ``about`` the node it is filed on."""
+    try:
+        from app.knowledge import store as knowledge_store
+
+        items = knowledge_store.list_items(status="active", limit=2000)
+    except Exception as e:
+        logger.debug("Knowledge items not drawn: %s", e)
+        return
+    for item in items:
+        node_id = f"knowledge:{item['id']}"
+        nodes[node_id] = _node(
+            node_id, item["kind"], item["title"], item_id=item["id"],
+            category=item["category"], strength=item.get("strength"),
+            concept_id=item.get("concept_id"), audience=item.get("audience"),
+        )
+        if item.get("concept_id") in nodes:
+            edges.append({
+                "id": f"k:{node_id}->{item['concept_id']}",
+                "source": node_id, "target": item["concept_id"],
+                "kind": "about", "label": "about", "reveal": "reverse",
+            })
+
+
 async def build_graph(
     client,
     kinds: Optional[Iterable[str]] = None,
@@ -458,7 +492,7 @@ async def build_graph(
     if include_processes is None:
         include_processes = bool(
             root_concept or search or scheme == Scheme.PROCESS.value
-            or (kinds and PROCESS_KINDS & {k for k in kinds if k})
+            or (kinds and (PROCESS_KINDS | KNOWLEDGE_KINDS) & {k for k in kinds if k})
         )
     concepts = store.list_concepts(scheme)
     process_links = store.all_links(ConceptLinkPredicate.PART_OF_DOMAIN.value)
@@ -567,6 +601,9 @@ async def build_graph(
                     "source": doc_node, "target": concept_id,
                     "kind": "documents", "label": "documents", "reveal": "reverse",
                 })
+
+    if include_processes:
+        _add_knowledge_items(nodes, edges)
 
     # ── Narrowing ────────────────────────────────────────────────────────
     if root_concept:

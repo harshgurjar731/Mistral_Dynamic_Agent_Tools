@@ -358,6 +358,72 @@ export function StepInspector({
           </Field>
         ) : null}
 
+        {step.type === "human_review" ? (
+          <>
+            <Field label="Reviews the output of" hint="The step whose result the reviewer is shown.">
+              <select
+                className={SELECT_CLASS}
+                value={String(cfg["review_of"] ?? "")}
+                onChange={(e) => setCfg({ review_of: e.target.value })}
+              >
+                <option value="">— previous outputs —</option>
+                {otherSteps.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Reviewer role">
+                <Input
+                  value={String(cfg["reviewer_role"] ?? "")}
+                  onChange={(e) => setCfg({ reviewer_role: e.target.value })}
+                  placeholder="e.g. AP clerk"
+                />
+              </Field>
+              <Field label="Decide within (hours)">
+                <Input
+                  type="number"
+                  min={1}
+                  value={Math.round(Number(cfg["sla_seconds"] ?? 86400) / 3600)}
+                  onChange={(e) => setCfg({ sla_seconds: Math.max(1, Number(e.target.value) || 24) * 3600 })}
+                />
+              </Field>
+              <Field label="If no decision">
+                <select
+                  className={SELECT_CLASS}
+                  value={String(cfg["on_timeout"] ?? "fail")}
+                  onChange={(e) => setCfg({ on_timeout: e.target.value })}
+                >
+                  <option value="fail">Stop the run</option>
+                  <option value="approve">Continue</option>
+                  <option value="escalate">Escalate and stop</option>
+                </select>
+              </Field>
+              <Field label="Sample (%)" hint="Blank: every run is reviewed.">
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={cfg["sample_rate"] == null ? "" : Math.round(Number(cfg["sample_rate"]) * 100)}
+                  onChange={(e) =>
+                    setCfg({ sample_rate: e.target.value ? Math.min(100, Number(e.target.value)) / 100 : null })
+                  }
+                />
+              </Field>
+            </div>
+            <Field label="Fields the reviewer may correct" hint="Comma-separated output fields.">
+              <Input
+                value={((cfg["editable"] as string[] | undefined) ?? []).join(", ")}
+                onChange={(e) =>
+                  setCfg({ editable: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })
+                }
+              />
+            </Field>
+          </>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-3 border-t border-border pt-4">
           <Field label="Tier">
             <select

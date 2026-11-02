@@ -178,7 +178,9 @@ class StepTopologyLayer(WorkflowDecisionLayer):
                 "parallelisable": c.parallelisable,
                 "bound_activity": (ctx.metadata.get("activity_bindings") or {}).get(c.id),
             }
-            for c in spec.capabilities
+            # Sub-agents added by PatternExpansionLayer are reached by handoff
+            # from their parent, never as steps of their own.
+            for c in spec.capabilities if not c.expanded_from
         ]
 
         return (
@@ -370,7 +372,7 @@ class StepTopologyLayer(WorkflowDecisionLayer):
         by_capability = {a["capability_id"]: a["agent_id"] for a in spec.provisioned_agents}
         bindings = ctx.metadata.get("activity_bindings") or {}
 
-        ordered = sorted(spec.capabilities, key=lambda c: len(c.depends_on))
+        ordered = sorted((c for c in spec.capabilities if not c.expanded_from), key=lambda c: len(c.depends_on))
         steps = []
         for index, cap in enumerate(ordered):
             config: dict = {}

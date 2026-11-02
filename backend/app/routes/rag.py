@@ -298,8 +298,8 @@ async def get_library_domains(library_id: str):
     lets industry knowledge, document search and the graph all narrow to the
     same subject.
     """
-    from app.ontology import store as ontology_store
-    from app.ontology.vocab import Scheme
+    from app.catalog import store as ontology_store
+    from app.catalog.vocab import Scheme
 
     return {
         "library_id": library_id,

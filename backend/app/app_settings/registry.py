@@ -90,7 +90,7 @@ DEFS: list[SettingDef] = [
                    "layers/workflow/*.py — workflow planner layers via core/decision.py",
                    "layers/workflow/design_layer.py — agent design for workflow steps",
                    "rules/select.py — rule selection",
-                   "ontology/classifier.py — domain classification",
+                   "catalog/tagging.py — domain classification",
                    "rag/optimizer.py — RAG query optimiser agent",
                    "rag/ontology_agent.py — ontology architect agent",
                    "services/conversational_workflow_service.py — conversational gateway",

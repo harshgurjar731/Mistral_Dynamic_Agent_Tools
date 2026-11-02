@@ -1,7 +1,7 @@
 import type { StepType, WorkflowDefinition } from "@/types";
 
 /** Palette order — also the order the inspector's type list follows. */
-export const STEP_TYPES: StepType[] = ["agent", "tool", "connector", "condition", "transform"];
+export const STEP_TYPES: StepType[] = ["agent", "tool", "connector", "condition", "transform", "human_review"];
 
 /** Mirrors the backend's `_NAME_RE`, so the UI refuses names the API would. */
 export const WORKFLOW_NAME_RE = /^[a-z][a-z0-9_]{2,63}$/;

@@ -159,7 +159,7 @@ async def create_workflow(request: CreateWorkflowRequest):
     # LLM pass, which is what a hand-built workflow needs: its steps were named
     # by a person and may describe the work without ever using a vocabulary term.
     from app.services.agent_service import schedule_classification
-    from app.ontology.vocab import SubjectType
+    from app.catalog.vocab import SubjectType
 
     schedule_classification(
         get_mistral_client(),
@@ -452,8 +452,8 @@ async def get_builder_catalog():
     agent_domains: dict[str, list[str]] = {}
     if not isinstance(agents_resp, Exception):
         try:
-            from app.ontology import store as ontology_store
-            from app.ontology.vocab import Predicate, SubjectType
+            from app.catalog import store as ontology_store
+            from app.catalog.vocab import Predicate, SubjectType
 
             ids = [a["id"] for a in agents_resp.get("items", []) if a.get("id")]
             bulk = ontology_store.annotations_for_many(SubjectType.AGENT.value, ids)
@@ -569,8 +569,8 @@ async def get_builder_catalog():
     # Only domains that actually have agents — an empty facet is noise.
     domains: list[CatalogDomain] = []
     try:
-        from app.ontology import store as ontology_store
-        from app.ontology.vocab import Scheme
+        from app.catalog import store as ontology_store
+        from app.catalog.vocab import Scheme
 
         used = Counter(d for ds in agent_domains.values() for d in ds)
         for concept in ontology_store.list_concepts(Scheme.DOMAIN.value):

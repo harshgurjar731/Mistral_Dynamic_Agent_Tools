@@ -30,10 +30,17 @@ router = APIRouter(tags=["Runs"])
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
+class GuidanceRequest(BaseModel):
+    """Build guidance for the run: auto (whatever is in scope), off, or selected items."""
+    mode: Literal["auto", "off", "selected"] = "auto"
+    item_ids: list[int] = Field(default_factory=list)
+
+
 class ProcessKnowledgeRequest(BaseModel):
-    """The orchestration page's process-knowledge toggle and attachments."""
+    """The orchestration page's knowledge controls: process documents and build guidance."""
     enabled: bool = False
     document_ids: list[int] = Field(default_factory=list)
+    guidance: Optional[GuidanceRequest] = None
 
 
 class WorkflowPlanRun(BaseModel):

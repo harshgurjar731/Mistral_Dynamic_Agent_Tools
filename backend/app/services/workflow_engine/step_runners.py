@@ -10,7 +10,7 @@ import logging
 import re
 import base64
 
-from typing import Any
+from typing import Any, Optional
 from app.services.workflow_engine.models import WorkflowStep, StepResult, StepType
 
 # NOTE: every other import in this module is deliberately deferred into the
@@ -141,8 +141,8 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
         # Classify the stand-in too. It is created by name from a workflow step,
         # so the step's own name is the only signal available — thin, but it
         # beats leaving the agent invisible to scoping entirely.
-        from app.ontology import autotag
-        autotag.annotate_agent(
+        from app.catalog import tagging
+        tagging.annotate_agent(
             real_id,
             name=agent_id,
             description=f"Auto-created workflow agent: {agent_id}",
@@ -741,6 +741,214 @@ async def _agent_complete_with_backoff(client, base_kwargs: dict, messages: list
             delay *= 2
 
 
+
+REFLECTION_SYSTEM_PROMPT = """\
+You check an agent's answer before anything downstream uses it. Compare the ANSWER with the
+REQUEST it answers and the CRITERIA it must meet. Do not add new content; only correct what
+is wrong, unsupported or missing against the criteria.
+
+Return JSON: {"verdict": "pass" | "revise", "issues": ["<what is wrong>"],
+              "revised": "<the corrected answer, in the same format as the original; empty when pass>"}
+"""
+
+
+async def reflect(client: Any, step_id: str, request: str, answer: str, criteria: list[str],
+                  *, max_passes: int = 1) -> tuple[str, dict]:
+    """A reflective agent's self-check: verify the answer, and correct it when it fails.
+
+    Returns the (possibly revised) answer and what the check found. Never raises:
+    a check that cannot run leaves the answer as it was, and says so.
+    """
+    from app.config import settings
+    from app.core.decision import decide, parse_json
+
+    passes, issues, revised = 0, [], False
+    for _ in range(max(1, min(3, max_passes))):
+        passes += 1
+        try:
+            raw = await decide(
+                client, model=settings.REFLECTION_MODEL, system=REFLECTION_SYSTEM_PROMPT,
+                user=(f"REQUEST:\n{request[:6000]}\n\nCRITERIA:\n"
+                      + ("\n".join(f"- {c}" for c in criteria) or "- Correct, complete and supported by the request")
+                      + f"\n\nANSWER:\n{answer[:12000]}"),
+                phase=f"reflection ({step_id})", temperature=0.0)
+        except Exception as e:
+            logger.warning("Step '%s' — reflection could not run: %s", step_id, e)
+            return answer, {"passes": passes, "verdict": "skipped", "error": str(e)[:200]}
+        data = parse_json(raw, {}) or {}
+        issues.extend(str(i) for i in data.get("issues") or [])
+        if data.get("verdict") != "revise" or not str(data.get("revised") or "").strip():
+            return answer, {"passes": passes, "verdict": "revised" if revised else "pass", "issues": issues}
+        answer, revised = str(data["revised"]), True
+    return answer, {"passes": passes, "verdict": "revised", "issues": issues}
+
+
+
+def _sampled_out(config: dict) -> bool:
+    """True when a sampling review skips this run. No rate: every run is reviewed."""
+    import random
+
+    rate = config.get("sample_rate")
+    return rate is not None and random.random() >= float(rate)
+
+
+def open_monitoring_entry(step: WorkflowStep, output: Any) -> None:
+    """Human-on-the-loop: record the result for a person to look over, without waiting."""
+    from app.services.workflow_engine import execution_logs, reviews
+
+    execution_id = execution_logs.CURRENT_EXECUTION.get()
+    if not execution_id:
+        return
+    try:
+        reviews.open_review(execution_id=execution_id, step_id=step.id, engine="monitor",
+                            title=f"Monitor: {step.description or step.id}",
+                            instructions="Look over this result; it has already been used.",
+                            payload=output)
+    except Exception as e:
+        logger.debug("Monitoring entry not recorded for %s: %s", step.id, e)
+
+
+def open_mistral_review(step: WorkflowStep, variables: dict) -> dict:
+    """The worker side of a human review: open the review row, return what the wait needs.
+
+    Runs as a short activity; the waiting itself happens in the workflow
+    (``workflow.wait_condition``), so no activity is held open for hours.
+    """
+    from app.config import settings
+    from app.observability import tracing
+    from app.services.workflow_engine import reviews
+
+    config = step.config or {}
+    info = tracing.temporal_activity_info() or {}
+    execution_id = info.get("execution_id") or "unknown"
+    review_of = config.get("review_of")
+    payload = variables.get(f"step_{review_of}_output") if review_of else None
+    if payload is None:
+        payload = {k: v for k, v in variables.items() if k.startswith("step_") and k.endswith("_output")}
+    sla = int(config.get("sla_seconds") or settings.HUMAN_REVIEW_TIMEOUT_SECONDS)
+    if _sampled_out(config):
+        return {"skip": True, "sla_seconds": sla, "on_timeout": "approve"}
+    review = reviews.open_review(
+        execution_id=execution_id, step_id=step.id, workflow_name=config.get("workflow_name"),
+        engine="mistral", title=config.get("title") or step.description or f"Review: {step.id}",
+        instructions=config.get("instructions") or "", reviewer_role=config.get("reviewer_role") or "",
+        payload=payload, editable=config.get("editable") or [], sla_seconds=sla)
+    return {"review_id": review["id"], "sla_seconds": sla,
+            "on_timeout": config.get("on_timeout") or "fail"}
+
+
+async def run_human_review_step(step: WorkflowStep, variables: dict) -> StepResult:
+    """Wait for a person to approve, correct or reject what came before.
+
+    Local engine only: on Mistral Workflows the compiled workflow waits at
+    workflow level instead (see ``mistral_workflows_compiler``).
+    """
+    from app.config import settings
+    from app.services.workflow_engine import execution_logs, reviews
+
+    start = time.time()
+    config = step.config or {}
+    execution_id = execution_logs.CURRENT_EXECUTION.get()
+    if not execution_id:
+        return StepResult(step_id=step.id, status="failed",
+                          error="A human review needs a running execution to wait in.")
+    review_of = config.get("review_of")
+    payload = variables.get(f"step_{review_of}_output") if review_of else None
+    if payload is None:
+        payload = {k: v for k, v in variables.items() if k.startswith("step_") and k.endswith("_output")}
+    sla = int(config.get("sla_seconds") or settings.HUMAN_REVIEW_TIMEOUT_SECONDS)
+    if _sampled_out(config):
+        return StepResult(step_id=step.id, status="completed", duration_ms=(time.time() - start) * 1000,
+                          output={"review": {"decision": "not_sampled"}},
+                          output_preview="Not sampled for review")
+    review = reviews.open_review(
+        execution_id=execution_id, step_id=step.id, workflow_name=config.get("workflow_name"),
+        engine="local", title=config.get("title") or step.description or f"Review: {step.id}",
+        instructions=config.get("instructions") or "", reviewer_role=config.get("reviewer_role") or "",
+        payload=payload, editable=config.get("editable") or [], sla_seconds=sla)
+    settled = await reviews.wait(execution_id, step.id, review["id"], sla)
+    status = settled.get("status")
+    decision = {"decision": status, "comment": settled.get("comment"),
+                "decided_by": settled.get("decided_by"), "review_id": review["id"]}
+    duration = (time.time() - start) * 1000
+
+    if status == "timed_out":
+        on_timeout = config.get("on_timeout") or "fail"
+        if on_timeout == "approve":
+            status = "approved"
+        else:
+            if on_timeout == "escalate":
+                reviews.mark_escalated(review["id"])
+            target = config.get("escalate_to")
+            note = f" — escalated to {target}." if on_timeout == "escalate" and target else "."
+            return StepResult(step_id=step.id, status="failed", duration_ms=duration,
+                              output={"review": decision},
+                              error=f"No review decision within {sla}s{note}")
+    if status == "rejected":
+        return StepResult(step_id=step.id, status="failed", duration_ms=duration, output={"review": decision},
+                          error=f"Rejected by the reviewer: {settled.get('comment') or 'no reason given'}")
+    output = {"review": {**decision, "decision": status}, **(settled.get("edits") or {})}
+    return StepResult(step_id=step.id, status="completed", output=output, duration_ms=duration,
+                      output_preview=f"{status} by {settled.get('decided_by') or 'reviewer'}")
+
+
+
+def _entry_text(entry: Any) -> str:
+    content = getattr(entry, "content", None)
+    if isinstance(content, str):
+        return content
+    parts = []
+    for chunk in content or []:
+        text = getattr(chunk, "text", None) if not isinstance(chunk, dict) else chunk.get("text")
+        if text:
+            parts.append(text)
+    return "".join(parts)
+
+
+async def run_with_handoffs(client: Any, agent_id: str, query: str, step_id: str,
+                            max_rounds: int) -> tuple[str, int, bool, list[str]]:
+    """Run an agent that delegates to sub-agents, through the Conversations API.
+
+    Mistral executes handoffs server-side; function tools are still ours, so
+    their calls come back here, run through the tool router, and are appended.
+    Returns ``(answer, last_round, hit_limit, agents_seen)``.
+    """
+    from app.services.tool_registry import execute_tool
+
+    response = await asyncio.to_thread(
+        client.beta.conversations.start, agent_id=agent_id, inputs=query, handoff_execution="server")
+    answer, seen = "", []
+    for round_num in range(max(1, max_rounds)):
+        calls = []
+        for entry in getattr(response, "outputs", None) or []:
+            kind = getattr(entry, "type", "")
+            if kind == "message.output":
+                answer = _entry_text(entry) or answer
+                if getattr(entry, "agent_id", None):
+                    seen.append(entry.agent_id)
+            elif kind == "function.call":
+                calls.append(entry)
+            elif kind == "agent.handoff":
+                seen.append(getattr(entry, "next_agent_id", "") or "")
+        if not calls:
+            return answer, round_num, False, [s for s in dict.fromkeys(seen) if s]
+        results = []
+        for call in calls:
+            raw = getattr(call, "arguments", "") or "{}"
+            try:
+                arguments = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except Exception:
+                arguments = {}
+            logger.info("Step '%s' — handoff run calls tool '%s'", step_id, call.name)
+            result = await execute_tool(call.name, arguments)
+            results.append({"type": "function.result", "tool_call_id": call.tool_call_id,
+                            "result": result if isinstance(result, str) else json.dumps(result, default=str)})
+        response = await asyncio.to_thread(
+            client.beta.conversations.append, conversation_id=response.conversation_id,
+            inputs=results, handoff_execution="server")
+    return answer, max(0, max_rounds - 1), True, [s for s in dict.fromkeys(seen) if s]
+
+
 async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
     """
     Execute an agent step.
@@ -813,12 +1021,22 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             wf_rules = wf_rules_ctx.rules if wf_rules_ctx else []
             agent_rules = await asyncio.to_thread(rules_store.rules_for_agent, resolved_id)
             agent_rules_ctx, rules_token = rules_runtime.activate(agent_rules, "agent", resolved_id)
+            # The step's archetype sets its budget (a task agent needs few
+            # rounds); the workflow's and the agent's rules still cap it.
+            archetype = config.get("archetype") or {}
             MAX_TOOL_ROUNDS = rules_engine.tool_round_limit(
-                agent_rules, rules_engine.agent_step_tool_limit(wf_rules, 10)
+                agent_rules, rules_engine.agent_step_tool_limit(
+                    wf_rules, int(archetype.get("max_tool_rounds") or 10))
             )
             hit_tool_limit = False
+            handoff_agents: list[str] = []
+            if archetype.get("handoffs"):
+                # A multi-agent step: Mistral routes sub-tasks to its sub-agents.
+                result_text, round_num, hit_tool_limit, handoff_agents = await run_with_handoffs(
+                    client, resolved_id, query, step.id, MAX_TOOL_ROUNDS)
+                content = result_text
 
-            for round_num in range(MAX_TOOL_ROUNDS):
+            for round_num in range(0 if archetype.get("handoffs") else MAX_TOOL_ROUNDS):
                 # The Mistral client here is the synchronous one, and a single
                 # completion can take tens of seconds. Running it on the event
                 # loop froze the whole API for the duration of every step —
@@ -942,6 +1160,14 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 result_text = f"Step '{step.id}' completed (agent {agent_id} produced no text output)."
                 logger.warning("Step '%s' — agent returned empty content after tool loop", step.id)
 
+            # Reflective agents check their answer before anything downstream
+            # reads it, and before the rules below see it.
+            reflection: dict = {}
+            if "reflective" in (archetype.get("patterns") or []):
+                result_text, reflection = await reflect(
+                    client, step.id, query, result_text, archetype.get("reflection_criteria") or [],
+                    max_passes=int(archetype.get("reflection_passes") or 1))
+
             # Rule outcomes for this step: the agent's own tool budget and
             # answer rules, then the workflow's result redaction — applied
             # before later steps can read the result.
@@ -1006,6 +1232,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             if parsed_dict is not None:
                 output = parsed_dict
 
+            if (archetype.get("oversight") or {}).get("model") == "human_on_the_loop":
+                open_monitoring_entry(step, output)
+
             from app.observability import annotate
 
             annotate({
@@ -1017,6 +1246,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 "app.agent.tool_round_limit": MAX_TOOL_ROUNDS,
                 "app.agent.hit_tool_limit": hit_tool_limit,
                 "app.agent.rules": [r.get("name") for r in agent_rules] or None,
+                "app.agent.type": archetype.get("primary_type"),
+                "app.agent.handoffs": handoff_agents or None,
+                "app.agent.reflection": reflection or None,
             })
 
             duration = (time.time() - start) * 1000
@@ -1144,6 +1376,84 @@ async def _recover_missing_activity(step: WorkflowStep, tool_name: str) -> tuple
         step.config.pop("tool_version", None)
         return True, f"rebuilt '{tool_name}' as version {resolution.version}"
     return False, f"Activity '{tool_name}' is missing and could not be rebuilt: {resolution.message}"
+
+
+
+GOAL_EVALUATION_PROMPT = """\
+You judge whether an agent working towards a GOAL has reached it. Compare the RESULT with the
+GOAL and the STOP CRITERIA. Be strict: "done" only when every criterion is met.
+
+Return JSON: {"done": true | false, "remaining": ["<what is still missing>"],
+              "reason": "<one sentence>"}
+"""
+
+
+async def run_goal_step(step: WorkflowStep, variables: dict) -> StepResult:
+    """A goal agent: work, check against the stop criteria, re-plan from what remains — bounded.
+
+    Each iteration is an ordinary agent run whose prompt carries the progress so
+    far and what is still missing. The loop stops when the evaluator says the
+    goal is met, or at the iteration budget; either way it says which.
+    """
+    from app.config import settings
+    from app.core.decision import decide, parse_json
+    from app.dependencies import get_mistral_client
+
+    config = step.config or {}
+    archetype = config.get("archetype") or {}
+    budget = max(1, min(6, int(archetype.get("goal_iterations") or settings.GOAL_MAX_ITERATIONS)))
+    criteria = archetype.get("reflection_criteria") or ["The goal stated in the request is fully achieved"]
+    template = config.get("query_template", config.get("query", ""))
+    goal_text = substitute_double_brackets(template, variables)
+    history: list[dict] = []
+    result: Optional[StepResult] = None
+    client = get_mistral_client()
+
+    for iteration in range(1, budget + 1):
+        run_config = {**config, "archetype": {**archetype, "primary_type": "goal_iteration"}}
+        run_vars = dict(variables)
+        if history:
+            run_config["query_template"] = (
+                template + "\n\nPROGRESS SO FAR (your previous attempt):\n{{__goal_progress}}"
+                "\n\nWHAT REMAINS:\n{{__goal_remaining}}\n\nRe-plan from here, continue the work, and "
+                "return the complete result — not only the new part.")
+            run_vars["__goal_progress"] = history[-1]["answer"][:8000]
+            run_vars["__goal_remaining"] = "\n".join(f"- {r}" for r in history[-1]["remaining"]) or "- (unstated)"
+        result = await run_agent_step(step.model_copy(update={"config": run_config}), run_vars)
+        if result.status != "completed":
+            return result
+        answer = result.output if isinstance(result.output, str) else json.dumps(result.output, default=str)
+        try:
+            raw = await decide(
+                client, model=settings.REFLECTION_MODEL, system=GOAL_EVALUATION_PROMPT,
+                user=(f"GOAL:\n{goal_text[:6000]}\n\nSTOP CRITERIA:\n" + "\n".join(f"- {c}" for c in criteria)
+                      + f"\n\nRESULT:\n{answer[:12000]}"),
+                phase=f"goal check ({step.id}, {iteration}/{budget})", temperature=0.0)
+            verdict = parse_json(raw, {}) or {}
+        except Exception as e:
+            logger.warning("Step '%s' — goal check failed, stopping: %s", step.id, e)
+            verdict = {"done": True, "reason": f"The goal check could not run ({str(e)[:120]}); stopped."}
+        history.append({"iteration": iteration, "answer": answer, "done": bool(verdict.get("done")),
+                        "remaining": [str(r) for r in verdict.get("remaining") or []],
+                        "reason": str(verdict.get("reason") or "")})
+        if verdict.get("done"):
+            break
+
+    goal = {"iterations": len(history), "budget": budget, "done": history[-1]["done"],
+            "reason": history[-1]["reason"], "remaining": history[-1]["remaining"]}
+    if isinstance(result.output, dict):
+        result.output = {**result.output, "_goal": goal}
+    result.output_preview = ((result.output_preview or "")[:900]
+                             + f"\n[goal {'met' if goal['done'] else 'not met'} after {goal['iterations']} "
+                               f"of {budget} iteration(s)]")
+    return result
+
+
+async def run_agent_or_goal_step(step: WorkflowStep, variables: dict) -> StepResult:
+    """Agent steps: a goal agent runs its bounded loop; every other type runs once."""
+    if ((step.config or {}).get("archetype") or {}).get("primary_type") == "goal":
+        return await run_goal_step(step, variables)
+    return await run_agent_step(step, variables)
 
 
 async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
@@ -1498,11 +1808,12 @@ async def run_connector_step(step: WorkflowStep, variables: dict) -> StepResult:
 # ── Step Runner Dispatcher ─────────────────────────────────────────────────
 
 STEP_RUNNERS = {
-    StepType.AGENT: run_agent_step,
+    StepType.AGENT: run_agent_or_goal_step,
     StepType.TOOL: run_tool_step,
     StepType.CONNECTOR: run_connector_step,
     StepType.CONDITION: run_condition_step,
     StepType.TRANSFORM: run_transform_step,
+    StepType.HUMAN_REVIEW: run_human_review_step,
 }
 
 

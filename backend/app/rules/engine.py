@@ -482,7 +482,7 @@ def _issue(rule: dict, message: str, step_id: str | None = None, field: str | No
 
 
 def _labels(concept_ids) -> str:
-    from app.ontology import store
+    from app.catalog import store
 
     out = []
     for cid in concept_ids:
@@ -493,8 +493,8 @@ def _labels(concept_ids) -> str:
 
 def _capability_coverage(rule, definition, agents_by_id, connectors_by_id) -> list:
     """Recreated from the ontology check: each agent can reach what it needs."""
-    from app.ontology import store
-    from app.ontology.vocab import Predicate, SubjectType
+    from app.catalog import store
+    from app.catalog.vocab import Predicate, SubjectType, capability_covers
     from app.services.workflow_engine.models import StepType
 
     out = []
@@ -521,7 +521,7 @@ def _capability_coverage(rule, definition, agents_by_id, connectors_by_id) -> li
             if name:
                 provided |= set(store.annotations_for(SubjectType.TOOL.value, name)
                                 .get(Predicate.PROVIDES_CAPABILITY.value, []))
-        missing = {c for c in required if not (store.descendants(c) & provided)}
+        missing = {c for c in required if not any(capability_covers(c, p) for p in provided)}
         missing = {c for c in missing if not c.startswith("capability.reasoning")}
         if not missing:
             continue
@@ -539,8 +539,8 @@ def _capability_coverage(rule, definition, agents_by_id, connectors_by_id) -> li
 
 def _data_classes_in_path(definition) -> dict[str, set[str]]:
     """Data classes each step inherits from the steps before it."""
-    from app.ontology import store
-    from app.ontology.vocab import Predicate, SubjectType
+    from app.catalog import store
+    from app.catalog.vocab import Predicate, SubjectType
     from app.services.workflow_engine.models import StepType
 
     steps_by_id = {s.id: s for s in definition.steps}
@@ -575,8 +575,8 @@ def _data_classes_in_path(definition) -> dict[str, set[str]]:
 
 
 def _sensitive_data_internal(rule, definition, agents_by_id, connectors_by_id) -> list:
-    from app.ontology import store
-    from app.ontology.vocab import Predicate, SubjectType
+    from app.catalog import store
+    from app.catalog.vocab import Predicate, SubjectType
     from app.services.workflow_engine.models import StepType
 
     restricted_classes = set(rule["params"].get("data_classes") or [])
@@ -607,7 +607,7 @@ def _sensitive_data_internal(rule, definition, agents_by_id, connectors_by_id) -
 
 
 def _screen_input_first(rule, definition, agents_by_id, connectors_by_id) -> list:
-    from app.ontology import store
+    from app.catalog import store
     from app.services.workflow_engine.models import StepType
 
     entry = next((s for s in definition.steps if s.id == definition.entry_step), None)
@@ -630,8 +630,8 @@ def _screen_input_first(rule, definition, agents_by_id, connectors_by_id) -> lis
 
 
 def _documents_match_domain(rule, definition, agents_by_id, connectors_by_id) -> list:
-    from app.ontology import store
-    from app.ontology.vocab import Predicate, SubjectType
+    from app.catalog import store
+    from app.catalog.vocab import Predicate, SubjectType
     from app.rag import library_domain
     from app.services.workflow_engine.models import StepType
 
@@ -794,8 +794,8 @@ def check_connector_step(step, connector_id: str, rules: list[dict]) -> tuple[li
                     outcomes.append(_outcome(rule, "step", "passed", "Connector allowed."))
                 continue
 
-            from app.ontology import store
-            from app.ontology.vocab import Predicate, SubjectType
+            from app.catalog import store
+            from app.catalog.vocab import Predicate, SubjectType
 
             if not store.annotations_for(SubjectType.CONNECTOR.value, connector_id).get(
                 Predicate.EGRESSES_TO.value

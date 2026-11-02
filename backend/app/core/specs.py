@@ -194,6 +194,62 @@ class GuardrailSpec:
         }
 
 
+
+@dataclass
+class OversightSpec:
+    """Where a person takes part in what an agent does."""
+
+    model: str = "not_applicable"       # human_in_the_loop | human_on_the_loop | human_out_of_the_loop | not_applicable
+    applies_to: str = "every_transaction"   # | exceptions_only | sample | threshold_based
+    threshold: str = ""
+    sample_rate: float = 0.0
+    reviewer_role: str = ""
+    approval_sla: str = ""
+
+    def to_dict(self) -> dict:
+        return {"model": self.model, "applies_to": self.applies_to, "threshold": self.threshold,
+                "sample_rate": self.sample_rate, "reviewer_role": self.reviewer_role,
+                "approval_sla": self.approval_sla}
+
+
+@dataclass
+class ArchetypeSpec:
+    """What shape of agent a capability needs — decided by AgentArchetypeLayer.
+
+    ``source`` names the tier that decided ``primary_type``: document (the
+    process document declared it), guidance (a best-practice item's effect),
+    rules (the built-in mapping from the execution profile), llm, or default.
+    """
+
+    primary_type: str = "task"          # task | goal | conversational | none
+    patterns: list[str] = field(default_factory=list)
+    sub_agents: list[dict] = field(default_factory=list)
+    action_authority: str = "draft"
+    reversibility: str = "reversible"
+    oversight: OversightSpec = field(default_factory=OversightSpec)
+    reflection_criteria: list[str] = field(default_factory=list)
+    model_preference: str = "platform_default"
+    #: A request, not a guarantee: the rules engine's limit still caps it.
+    max_tool_rounds: Optional[int] = None
+    source: str = "default"
+    confidence: str = "medium"
+    rationale: str = ""
+    #: Guidance items that decided or shaped this archetype.
+    guidance_ids: list[int] = field(default_factory=list)
+    #: Where the tiers disagreed, in words — shown to the user.
+    conflicts: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "primary_type": self.primary_type, "patterns": list(self.patterns),
+            "sub_agents": list(self.sub_agents), "action_authority": self.action_authority,
+            "reversibility": self.reversibility, "oversight": self.oversight.to_dict(),
+            "reflection_criteria": list(self.reflection_criteria),
+            "model_preference": self.model_preference, "max_tool_rounds": self.max_tool_rounds,
+            "source": self.source, "confidence": self.confidence, "rationale": self.rationale,
+            "guidance_ids": list(self.guidance_ids), "conflicts": list(self.conflicts),
+        }
+
 @dataclass
 class AgentSpec:
     """One agent's full configuration, assembled facet by facet.
@@ -240,6 +296,9 @@ class AgentSpec:
 
     # AgentAssemblyLayer
     agent_id: Optional[str] = None
+
+    # AgentArchetypeLayer — the agent's type, patterns and oversight.
+    archetype: Optional[ArchetypeSpec] = None
 
     # Per-facet reasoning, keyed by layer name. Surfaced to the UI so a user
     # can see why each decision went the way it did.
@@ -318,6 +377,12 @@ class CapabilitySpec:
     #: "insufficient" forces a create — see the reuse layer.
     guardrail_fit: Optional[str] = None
     guardrail_gap: Optional[str] = None
+
+    # Filled by AgentArchetypeLayer, for kind "agent": what shape of agent.
+    archetype: Optional[ArchetypeSpec] = None
+    #: Set by PatternExpansionLayer on a capability it added (a planner or a
+    #: sub-agent), naming the capability it was expanded from.
+    expanded_from: Optional[str] = None
 
     # Filled by AgentDesignLayer.
     spec: Optional[AgentSpec] = None

@@ -1,0 +1,13 @@
+{
+  "_comment": "Run inputs for the invoice workflow. 'clean' should pass the gate without review; 'exception' should stop at the AP clerk review (amount over 10,000 and PO mismatch).",
+  "clean": {
+    "invoice_text": "INVOICE INV-2026-0412\nVendor: Northwind Packaging Ltd\nPO number: PO-778120\nDate: 2026-10-28\nLines:\n  1. Corrugated boxes 40x30x30, 2,000 units @ 0.85 USD = 1,700.00\n  2. Pallet wrap, 40 rolls @ 12.50 USD = 500.00\nSubtotal: 2,200.00 USD\nTax (8%): 176.00 USD\nTotal: 2,376.00 USD\nBank: account ending 4471",
+    "purchase_order": {"po_number": "PO-778120", "vendor": "Northwind Packaging Ltd", "total": 2376.00, "currency": "USD"},
+    "goods_receipt": {"po_number": "PO-778120", "received_qty_ok": true}
+  },
+  "exception": {
+    "invoice_text": "INVOICE INV-2026-0519\nVendor: Contoso Industrial Supply\nPO number: PO-778455\nDate: 2026-10-30\nLines:\n  1. Hydraulic pump HP-200, 4 units @ 2,950.00 USD = 11,800.00\nSubtotal: 11,800.00 USD\nTax (8%): 944.00 USD\nTotal: 12,744.00 USD\nBank: account ending 9902 (NEW ACCOUNT - please update)",
+    "purchase_order": {"po_number": "PO-778455", "vendor": "Contoso Industrial Supply", "total": 11210.00, "currency": "USD"},
+    "goods_receipt": {"po_number": "PO-778455", "received_qty_ok": false, "note": "3 of 4 pumps received"}
+  }
+}

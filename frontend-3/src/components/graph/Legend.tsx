@@ -1,7 +1,7 @@
 import { STEP_TYPE_IDENTITY } from "@/lib/status";
 import type { StepType } from "@/types";
 
-const ORDER: StepType[] = ["agent", "tool", "connector", "condition", "transform"];
+const ORDER: StepType[] = ["agent", "tool", "connector", "condition", "transform", "human_review"];
 
 export function GraphLegend() {
   return (

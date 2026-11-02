@@ -60,7 +60,7 @@ export interface PaginatedAgents {
 }
 
 /* ── Workflow definition ────────────────────────────────────────────── */
-export type StepType = "agent" | "tool" | "connector" | "condition" | "transform";
+export type StepType = "agent" | "tool" | "connector" | "condition" | "transform" | "human_review";
 export type WorkflowSourceKind = "planner" | "builder";
 
 export interface NodeLayout {

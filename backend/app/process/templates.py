@@ -222,6 +222,179 @@ DEFAULT_SCHEMA: dict = {
     },
 }
 
+
+# ── Template v2: how the work runs, what it touches, how it is governed ─────
+#
+# Every addition is optional, so a v1 document is a valid v2 document. These
+# sections are what lets a build choose an agent type, wire integrations and
+# place human oversight from facts rather than from wording.
+
+
+def _enum(*values: str, description: str = "") -> dict:
+    out: dict = {"type": "string", "enum": list(values)}
+    if description:
+        out["description"] = description
+    return out
+
+
+_AUTH = _enum("oauth2", "api_key", "basic", "certificate", "saml", "service_account", "none")
+_SIDE_EFFECT = _enum("none", "reversible", "financial_impact", "irreversible")
+_LEVEL = _enum("low", "medium", "high")
+_DATA_CLASS = _enum("public", "internal", "confidential", "financial", "pii", "special_category")
+
+
+def _obj(properties: dict, required: tuple = (), description: str = "") -> dict:
+    out: dict = {"type": "object", "properties": properties}
+    if required:
+        out["required"] = list(required)
+    if description:
+        out["description"] = description
+    return out
+
+
+def _list_of(item: dict) -> dict:
+    return {"type": "array", "items": item}
+
+
+V2_PROPERTIES: dict = {
+    "recommendation": _obj({
+        "id": {"type": "string"}, "title": {"type": "string"},
+        "phase": _enum("quick_win", "phase_1", "phase_2", "phase_3", "future"),
+        "priority": {"type": "integer", "minimum": 1},
+        "depends_on": _STR_LIST, "related_to": _STR_LIST, "pain_point": {"type": "string"},
+    }, description="When the document came from a transformation recommendation."),
+    "intervention": _obj({
+        "category": _enum("artificial_intelligence", "intelligent_document_processing",
+                          "workflow_automation", "process_mining", "rpa", "integration",
+                          "analytics", "policy_change"),
+        "implementation_type": _enum("agent", "hybrid", "rules_engine", "workflow_config",
+                                     "integration", "analytics", "manual_process_change",
+                                     description="Whether this gets an agent at all."),
+        "mode": _enum("assist", "augment", "automate", "disrupt"),
+        "type": {"type": "string"}, "description": {"type": "string"},
+    }),
+    "evidence": _obj({
+        "source": {"type": "string"},
+        "origin": _enum("client_sop", "client_interview", "client_data", "market_research",
+                        "industry_benchmark", "expert_judgement"),
+        "type": _enum("explicit", "inferred"), "confidence": _LEVEL,
+    }),
+    "value": _obj({
+        "metrics_impacted": _STR_LIST, "expected_benefits": {"type": "string"},
+        "benefit_basis": _enum("client_specific", "industry_benchmark", "estimate"),
+    }),
+    "feasibility": _obj({"rating": _LEVEL, "drivers": _STR_LIST, "assumptions": _STR_LIST,
+                         "constraints": _STR_LIST, "effort_estimate": {"type": "string"}}),
+    "execution_profile": _obj({
+        "workflow_determinism": _enum("fixed_steps", "variable_steps", "open_ended"),
+        "interaction_mode": _enum("user_dialogue", "batch", "event_triggered", "scheduled",
+                                  "embedded_assist"),
+        "trigger": _obj({"type": _enum("user_request", "document_arrival", "schedule", "system_event",
+                                       "upstream_step", "manual"),
+                         "source": {"type": "string"}, "schedule": {"type": "string"}}),
+        "task_horizon": _enum("single_step", "few_steps", "many_steps", "long_running", "multi_day"),
+        "input_variability": _enum("structured", "standard_forms", "mixed_formats", "unstructured"),
+        "memory_need": _enum("none", "session", "persistent"),
+        "volume": _obj({"per_day": {"type": "integer", "minimum": 0},
+                        "peak_per_hour": {"type": "integer", "minimum": 0}}),
+        "latency": _obj({"mode": _enum("synchronous", "asynchronous", "batch"),
+                         "target": {"type": "string"}}),
+        "channels": _STR_LIST,
+    }, description="How the work runs — what decides the agent type."),
+    "integrations": _obj({
+        "systems": _list_of(_obj({
+            "id": _ID, "name": {"type": "string"}, "category": {"type": "string"},
+            "vendor": {"type": "string"}, "access": _enum("read", "write", "read_write", "transact"),
+            "operations": _STR_LIST, "integration_method": {"type": "string"},
+            "auth_method": _AUTH, "api_available": {"type": "boolean"},
+        }, ("id", "name"))),
+        "connectors": _list_of(_obj({
+            "id": _ID, "name": {"type": "string"},
+            "kind": _enum("mistral_connector", "mistral_builtin", "remote_mcp_server",
+                          "generated_tool", "workflow_activity"),
+            "target": {"type": "string", "description": "A systems or third_party_services id"},
+            "status": _enum("available", "needs_auth", "to_build", "to_procure"),
+            "endpoint": {"type": "string"},
+            "auth": _obj({"method": _AUTH, "secret_ref": {"type": "string"}, "scopes": _STR_LIST,
+                          "run_as": _enum("service_account", "end_user")}),
+            "operations": _list_of(_obj({
+                "name": {"type": "string"}, "direction": _enum("read", "write"),
+                "side_effect": _SIDE_EFFECT, "requires_approval": {"type": "boolean"},
+            }, ("name",))),
+        }, ("id", "name"))),
+        "third_party_services": _list_of(_obj({
+            "id": _ID, "name": {"type": "string"}, "provider": {"type": "string"},
+            "service_type": {"type": "string"}, "purpose": {"type": "string"},
+            "endpoint": {"type": "string"}, "auth_method": _AUTH,
+            "data_shared": _list_of(_DATA_CLASS), "dpa_in_place": {"type": "boolean"},
+            "fallback": {"type": "string"},
+            "procurement_status": _enum("contracted", "trial", "to_procure", "free_public"),
+        }, ("id", "name"))),
+    }),
+    "knowledge": _obj({"sources": _list_of(_obj({
+        "name": {"type": "string"},
+        "type": _enum("policy", "sop", "regulation", "historical_data", "master_data",
+                      "market_feed", "contract", "catalog"),
+        "use": _enum("rag_library", "grounding", "validation_reference", "few_shot_examples", "lookup"),
+        "location": {"type": "string"},
+    }, ("name",)))}),
+    "data": _obj({
+        "input_artifacts": _list_of(_obj({
+            "name": {"type": "string"}, "formats": _STR_LIST, "source": {"type": "string"},
+            "standardised": {"type": "boolean"}, "sample_available": {"type": "boolean"},
+        }, ("name",))),
+        "output_artifacts": _list_of(_obj({
+            "name": {"type": "string"}, "format": {"type": "string"}, "destination": {"type": "string"},
+        }, ("name",))),
+        "residency": {"type": "string"}, "redaction_required": {"type": "boolean"},
+    }),
+    "agent_design": _obj({
+        "primary_type": _enum("task", "goal", "conversational", "none"),
+        "patterns": _list_of(_enum("tool_using_react", "planner_executor", "reflective", "multi_agent")),
+        "sub_agents": _list_of(_obj({
+            "name": {"type": "string"}, "role": {"type": "string"},
+            "type": _enum("task", "goal", "conversational", "critic", "planner"), "stages": _STR_LIST,
+        }, ("name",))),
+        "model_preference": _enum("reasoning", "large", "medium", "small", "code", "ocr", "vision",
+                                  "platform_default"),
+        "max_tool_rounds": {"type": "integer", "minimum": 1, "maximum": 20},
+        "mapping_rationale": {"type": "string"},
+    }, description="A declared agent type; the build uses it as given."),
+    "governance": _obj({
+        "risk": _obj({"rating": _LEVEL, "reason": {"type": "string"}, "categories": _STR_LIST}),
+        "action_authority": _enum("read_only", "recommend", "draft", "write", "transact"),
+        "reversibility": _SIDE_EFFECT,
+        "human_oversight": _obj({
+            "model": _enum("human_in_the_loop", "human_on_the_loop", "human_out_of_the_loop",
+                           "not_applicable"),
+            "applies_to": _enum("every_transaction", "exceptions_only", "sample", "threshold_based"),
+            "threshold": {"type": "string"},
+            "sample_rate": {"type": "number", "minimum": 0, "maximum": 1},
+            "reviewer_role": {"type": "string"}, "approval_sla": {"type": "string"},
+        }),
+        "validation": _obj({"criteria": _STR_LIST, "accuracy_threshold": {"type": "string"}}),
+        "segregation_of_duties": _STR_LIST,
+        "governance_controls": _STR_LIST,
+    }),
+    "operations": _obj({"business_owner": {"type": "string"}, "fallback_mode": {"type": "string"},
+                        "rollout": _enum("pilot", "phased", "big_bang")}),
+}
+
+V2_STAGE_PROPERTIES: dict = {
+    "execution": _enum("agent", "activity", "connector", "human_task",
+                       description="How the platform runs the stage."),
+    "uses": {**_STR_LIST, "description": "Ids from integrations.systems / connectors / third_party_services"},
+    "is_oversight_point": {"type": "boolean",
+                           "description": "A person reviews here before the work continues."},
+}
+
+DEFAULT_SCHEMA["properties"].update(V2_PROPERTIES)
+DEFAULT_SCHEMA["properties"]["stages"]["items"]["properties"].update(V2_STAGE_PROPERTIES)
+DEFAULT_SCHEMA["properties"]["exceptions"]["items"]["properties"]["escalate_to"] = {"type": "string"}
+DEFAULT_SCHEMA["description"] += (" Optionally: how the work runs, what it integrates with, and how "
+                                  "it is governed — which decides the agent type and oversight.")
+
+
 DEFAULT_EXAMPLE: dict = {
     "template_version": "1.0",
     "process": {"id": "residential_mortgage_approval", "name": "Residential mortgage approval",
@@ -521,7 +694,13 @@ def ensure_builtin() -> None:
         return
     db = SessionLocal()
     try:
-        if not db.query(ProcessTemplate).filter(ProcessTemplate.builtin.is_(True)).first():
+        builtin_row = db.query(ProcessTemplate).filter(ProcessTemplate.builtin.is_(True)).first()
+        if builtin_row is not None and json.loads(builtin_row.schema or "{}") != DEFAULT_SCHEMA:
+            # The built-in template is owned by code. Its changes are additive
+            # (v2 adds optional sections), so a document valid before stays valid.
+            builtin_row.schema = json.dumps(DEFAULT_SCHEMA)
+            db.flush()
+        if not builtin_row:
             db.add(ProcessTemplate(
                 name="Standard process template", version=1,
                 description="The built-in format: identity, classification, stages, controls, "

@@ -45,7 +45,7 @@ def sync_taxonomy(limit_concepts: int = 2000) -> dict:
     if not graph_store.available():
         return {"synced": False, "reason": "knowledge graph unavailable"}
 
-    from app.ontology import store as ontology_store
+    from app.catalog import store as ontology_store
     from app.rag import library_domain
 
     try:
@@ -135,7 +135,73 @@ def sync_taxonomy(limit_concepts: int = 2000) -> dict:
     logger.info(
         "Taxonomy mirrored: %d concepts, %d library links", len(concepts), linked
     )
-    return {"synced": True, "concepts": len(concepts), "library_links": linked}
+    extra = sync_knowledge()
+    return {"synced": True, "concepts": len(concepts), "library_links": linked, **extra}
+
+
+def sync_knowledge() -> dict:
+    """Mirror what the catalog adds on top of the concept tree. Additive and rebuilt each time.
+
+    * ``(:Concept)-[:PART_OF_DOMAIN]->(:Concept)`` — a root process to its
+      domain, so the one tree is connected in the mirror too.
+    * ``(:KnowledgeItem)-[:ABOUT]->(:Concept)`` — active knowledge items on
+      the node they are filed on.
+    * ``(:KnowledgeItem)-[:DERIVED_FROM]->(:Document)`` — an item distilled
+      from a library document, traceable to that document and its entities.
+    """
+    if not graph_store.available():
+        return {}
+    from app.catalog import store as ontology_store
+    from app.catalog.vocab import ConceptLinkPredicate
+
+    out = {"process_links": 0, "knowledge_items": 0}
+    try:
+        links = ontology_store.all_links(ConceptLinkPredicate.PART_OF_DOMAIN.value)
+        if links:
+            graph_store._run(
+                """
+                UNWIND $rows AS row
+                MATCH (p:Concept {id: row.source})
+                MATCH (d:Concept {id: row.target})
+                MERGE (p)-[:PART_OF_DOMAIN]->(d)
+                """,
+                rows=[{"source": link["source"], "target": link["target"]} for link in links],
+            )
+            out["process_links"] = len(links)
+    except Exception as e:
+        logger.debug("Could not mirror process links: %s", e)
+
+    try:
+        from app.knowledge import store as knowledge_store
+
+        items = knowledge_store.list_items(status="active", limit=5000)
+        sources = {s["id"]: s for s in knowledge_store.list_sources()}
+        graph_store._run("MATCH (k:KnowledgeItem) DETACH DELETE k")
+        rows = [{
+            "id": i["id"], "title": i["title"], "kind": i["kind"], "category": i["category"],
+            "strength": i.get("strength") or "", "concept_id": i.get("concept_id") or "",
+            "document_id": (sources.get(i.get("source_id")) or {}).get("document_id") or "",
+        } for i in items]
+        if rows:
+            graph_store._run(
+                """
+                UNWIND $rows AS row
+                MERGE (k:KnowledgeItem {id: row.id})
+                SET k.title = row.title, k.kind = row.kind, k.category = row.category,
+                    k.strength = row.strength
+                WITH k, row
+                OPTIONAL MATCH (c:Concept {id: row.concept_id})
+                FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END | MERGE (k)-[:ABOUT]->(c))
+                WITH k, row
+                OPTIONAL MATCH (d:Document {id: row.document_id})
+                FOREACH (_ IN CASE WHEN d IS NULL THEN [] ELSE [1] END | MERGE (k)-[:DERIVED_FROM]->(d))
+                """,
+                rows=rows,
+            )
+        out["knowledge_items"] = len(rows)
+    except Exception as e:
+        logger.debug("Could not mirror knowledge items: %s", e)
+    return out
 
 
 def link_library(library_id: str, concept_ids: Iterable[str]) -> bool:
@@ -217,7 +283,7 @@ def snapshot(
     # it to the top of the tree.
     concept_scope: Optional[set[str]] = None
     if library_id:
-        from app.ontology import store as ontology_store
+        from app.catalog import store as ontology_store
         from app.rag import library_domain
 
         concept_scope = set()

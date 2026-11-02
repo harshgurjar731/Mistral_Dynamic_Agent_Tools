@@ -49,7 +49,7 @@ def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> l
     (decomposition maps capabilities to stages, and capability ids become step
     ids). Records both outcomes as process-knowledge usage.
     """
-    from app.process_knowledge import pipeline as process_knowledge
+    from app.process import pipeline as process_knowledge
 
     pc = process_knowledge.active(ctx)
     if not pc:
@@ -92,6 +92,8 @@ class WorkflowValidationLayer(WorkflowStepLayer):
 
     async def process(self, ctx: PipelineContext, next):
         from app.services.workflow_engine.models import WorkflowDefinition, WorkflowSource
+        from app.knowledge import pipeline as guidance
+        from app.layers.workflow import governance_checks
         from app.services.workflow_engine.validation import validate_workflow
 
         spec = ctx.workflow_spec
@@ -161,6 +163,11 @@ class WorkflowValidationLayer(WorkflowStepLayer):
             # Advisory only: a mandatory control of the run's process that no
             # step performs. Never blocks — the user's goal may rightly omit it.
             *_process_coverage(ctx, self.name, step_ids),
+            # Governance (reflection and review where actions are costly) and
+            # the must/avoid guidance the build applied.
+            *governance_checks.governance_issues(spec, definition),
+            *governance_checks.guidance_compliance(
+                spec, guidance.items(ctx), ctx.metadata.get("archetype_conflicts") or []),
         ]
         if contract_issues:
             from app.services.workflow_engine.models import ValidationIssue

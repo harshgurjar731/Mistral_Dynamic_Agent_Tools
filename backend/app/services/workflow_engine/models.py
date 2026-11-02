@@ -16,6 +16,8 @@ class StepType(str, Enum):
     CONNECTOR = "connector"
     CONDITION = "condition"
     TRANSFORM = "transform"
+    #: Waits for a person to approve, correct or reject what came before.
+    HUMAN_REVIEW = "human_review"
 
 
 class WorkflowStatus(str, Enum):

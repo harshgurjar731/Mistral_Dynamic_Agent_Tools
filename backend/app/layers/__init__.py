@@ -38,7 +38,10 @@ from app.layers.agent import (
     ToolSelectionLayer,
 )
 from app.layers.cleanup_layer import CleanupLayer
-from app.layers.process_knowledge_layer import ProcessKnowledgeLayer
+from app.layers.agent.archetype_layer import AgentArchetypeLayer
+from app.layers.knowledge_context_layer import KnowledgeContextLayer
+from app.layers.workflow.oversight_layer import OversightPlacementLayer
+from app.layers.workflow.pattern_expansion_layer import PatternExpansionLayer
 from app.layers.execution_layer import ExecutionLayer
 from app.layers.revision import (
     RevisionApplyLayer,
@@ -100,8 +103,12 @@ chat_pipeline.add(BuildPrerequisitesLayer("agent"))
 chat_pipeline.add(CapabilityGapLayer())
 chat_pipeline.add(AgentInventoryLayer())
 # After inventory (it resolves the scope this reads), before the facet group so
-# every branch shares one process context. Off unless the request turns it on.
-chat_pipeline.add(ProcessKnowledgeLayer("agent"))
+# every branch shares one process context and one guidance pack. Each source is
+# off when it has nothing to give, and the prompts are then unchanged.
+chat_pipeline.add(KnowledgeContextLayer("agent"))
+# After knowledge (it reads the process facts and guidance), before the facets so
+# model, tools and instructions are chosen for the agent type.
+chat_pipeline.add(AgentArchetypeLayer("agent"))
 chat_pipeline.add(ParallelGroup(
     "agent_facets",
     [
@@ -134,16 +141,24 @@ chat_pipeline.add(ExecutionLayer())
 
 workflow_pipeline = Pipeline("workflow_design")
 workflow_pipeline.add(ResourceInventoryLayer())
-workflow_pipeline.add(ProcessKnowledgeLayer("workflow"))
+workflow_pipeline.add(KnowledgeContextLayer("workflow"))
 workflow_pipeline.add(GoalDecompositionLayer())
 workflow_pipeline.add(ExecutionModeLayer())
+# Only capabilities routed to "agent" need a type; decided before prerequisites so a
+# type that needs something (a reasoning model, a connector) is caught early.
+workflow_pipeline.add(AgentArchetypeLayer("workflow"))
 workflow_pipeline.add(BuildPrerequisitesLayer("workflow"))
 workflow_pipeline.add(CapabilityReuseLayer())
+# After reuse (only capabilities being created are expanded), before design so
+# the sub-agents are designed and created like any other agent.
+workflow_pipeline.add(PatternExpansionLayer())
 workflow_pipeline.add(ActivityGapLayer())
 workflow_pipeline.add(AgentDesignLayer())
 workflow_pipeline.add(WorkflowAgentRulesLayer())
 workflow_pipeline.add(AgentProvisioningLayer())
 workflow_pipeline.add(StepTopologyLayer())
+# After the graph exists, before data flow wires the review steps it adds.
+workflow_pipeline.add(OversightPlacementLayer())
 workflow_pipeline.add(DataFlowLayer())
 workflow_pipeline.add(WorkflowGuardrailLayer())
 workflow_pipeline.add(WorkflowRuleSelectionLayer())

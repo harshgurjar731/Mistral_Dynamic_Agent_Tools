@@ -172,7 +172,7 @@ def forget_in_graph(subject_type: str, subject_id: str) -> dict:
     deleted, not just hidden.
     """
     try:
-        from app.ontology import store as ontology_store
+        from app.catalog import store as ontology_store
 
         return {"annotations_removed":
                 ontology_store.delete_subject_annotations(subject_type, subject_id)["removed"]}

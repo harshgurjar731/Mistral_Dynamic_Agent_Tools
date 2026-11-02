@@ -19,7 +19,7 @@ export type PaletteItem =
   | { kind: "activity"; activity: CatalogTool };
 
 /** Control-flow steps; agents and activities come from their own lists. */
-const LOGIC_TYPES: StepType[] = ["condition", "transform"];
+const LOGIC_TYPES: StepType[] = ["condition", "transform", "human_review"];
 
 export const PALETTE_MIME = "application/x-workflow-item";
 
