@@ -4,6 +4,7 @@ import { errorMessage, runsApi } from "@/api";
 import type { TrackedRun } from "@/stores/runs";
 import { focusRun, trackStartedRun } from "./connections";
 import { useTrackedRun } from "./useRun";
+import { useRunningSynthesisId } from "./synthesis";
 
 /**
  * Agent tool / activity synthesis as a background run, for a dialog that starts
@@ -15,11 +16,26 @@ export function useSynthesisRun(
   {
     watching,
     onFinished,
-  }: { watching: boolean; onFinished?: ((run: TrackedRun, watching: boolean) => void) | undefined },
+    adopt = false,
+  }: {
+    watching: boolean;
+    onFinished?: ((run: TrackedRun, watching: boolean) => void) | undefined;
+    /**
+     * Pick up a synthesis of this purpose that is already running — started
+     * before the page was left, reloaded, or from another tab — so its dialog
+     * can be reopened on it.
+     */
+    adopt?: boolean | undefined;
+  },
 ) {
   const [runId, setRunId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const run = useTrackedRun(runId);
+
+  const runningId = useRunningSynthesisId(purpose, adopt);
+  useEffect(() => {
+    if (!runId && runningId) setRunId(runningId);
+  }, [runId, runningId]);
 
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
@@ -57,11 +73,14 @@ export function useSynthesisRun(
   );
 
   const clear = useCallback(() => setRunId(null), []);
+  /** Show this (running) run in the dialog. */
+  const attach = useCallback((id: string) => setRunId(id), []);
 
   return {
     run,
     start,
     clear,
+    attach,
     starting,
     busy: starting || run?.status === "running",
   };

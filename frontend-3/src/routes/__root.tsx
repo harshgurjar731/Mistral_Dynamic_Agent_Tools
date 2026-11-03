@@ -239,7 +239,7 @@ function AppShell() {
       <BackgroundRuns />
       {/* A run waiting on an answer, wherever you are — unless its page shows it. */}
       <RunQuestions />
-      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} />
+      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} closeButton />
     </>
   );
 }

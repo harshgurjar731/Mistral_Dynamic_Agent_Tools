@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import { RunProgressCard } from "@/components/runs/RunProgress";
 import { stopRun } from "@/lib/runs/connections";
 import { runOutputName } from "@/components/runs/runMeta";
 import { useSynthesisRun } from "@/lib/runs/useSynthesisRun";
+import { isRebuildRun, synthesisTask, useRunOpenRequest } from "@/lib/runs/synthesis";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -55,6 +56,7 @@ function ToolsPage() {
   const [purposeFilter, setPurposeFilter] = useState<string>("all");
   const [synthesizeOpen, setSynthesizeOpen] = useState(false);
   const [task, setTask] = useState("");
+  const [tab, setTab] = useState<"active" | "pending">("active");
 
   const toolsQuery = useQuery({ queryKey: QK.tools(), queryFn: toolsApi.list });
   const pendingQuery = useQuery({ queryKey: QK.pendingTools(), queryFn: toolsApi.pending });
@@ -62,23 +64,51 @@ function ToolsPage() {
   const [synthError, setSynthError] = useState<string | null>(null);
   // A background run: closing the dialog does not stop it, and the global
   // notification reports the outcome if the dialog is no longer open.
+  // It is also picked back up after leaving the page, so the dialog can be
+  // reopened on it from the header button, its progress notice, or a toast.
   const synthesize = useSynthesisRun("tool", {
     watching: synthesizeOpen,
+    adopt: true,
     onFinished: (run, watching) => {
       synthesize.clear();
       if (run.status === "completed") {
         setTask("");
+        setTab("pending");
         if (watching) {
           toast.success(
             `Agent tool “${runOutputName(run) ?? "new"}” synthesised and sent to Pending Review.`,
           );
           setSynthesizeOpen(false);
         }
-      } else if (watching && run.status !== "cancelled") {
+      } else if (run.status !== "cancelled") {
+        // Kept for when the dialog is reopened, with the task, to edit and retry.
         setSynthError(run.error ?? "Synthesis failed.");
+        setTask((t) => t || synthesisTask(run));
       }
     },
   });
+
+  // A run picked up from elsewhere brings its task into the (disabled) box.
+  const adoptedTask = synthesize.run?.status === "running" ? synthesisTask(synthesize.run) : "";
+  useEffect(() => {
+    if (adoptedTask) setTask((t) => t || adoptedTask);
+  }, [adoptedTask]);
+
+  useRunOpenRequest(
+    (run) => run.kind === "tool_synthesis" && !isRebuildRun(run),
+    (run) => {
+      if (run.status === "running") {
+        synthesize.attach(run.id);
+        setSynthesizeOpen(true);
+      } else if (run.status === "completed") {
+        setTab("pending");
+      } else {
+        setTask(synthesisTask(run));
+        setSynthError(run.status === "cancelled" ? null : (run.error ?? "Synthesis failed."));
+        setSynthesizeOpen(true);
+      }
+    },
+  );
 
   const filterTool = (t: { name: string; description?: string; purpose?: string }) => {
     if (
@@ -147,12 +177,13 @@ function ToolsPage() {
         <button
           type="button"
           onClick={() => setSynthesizeOpen(true)}
+          title={synthesize.busy ? "Show the synthesis progress" : undefined}
           className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
         >
           <Sparkles className="size-4" />
           {synthesize.busy ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent />
+              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
             </>
           ) : (
             "Synthesize Tool"
@@ -214,7 +245,7 @@ function ToolsPage() {
 
       {/* ── Tabs + Grid ── */}
       <div className="mt-8">
-        <Tabs defaultValue="active">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "active" | "pending")}>
           <TabsList>
             <TabsTrigger value="active">Active Tools ({activeTools.length})</TabsTrigger>
             <TabsTrigger value="pending">Pending Review ({pendingTools.length})</TabsTrigger>

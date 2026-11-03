@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
 import { createSSEStream, type SSEEvent } from "@/api/sse";
 import { eventsUrl, runsApi, type BackgroundRun, type RunStatus } from "@/api/runs";
-import { useRunLogVersion, useRunsStore, type TrackedRun } from "@/stores/runs";
+import { useRunLogVersion, useRunsStore, useRunUiStore, type TrackedRun } from "@/stores/runs";
 
 export interface RunLog {
   events: SSEEvent[];
@@ -71,11 +71,14 @@ function scheduleBump(id: string) {
 
 /** Register a view of a run. Returns the release function. */
 export function focusRun(id: string): () => void {
-  focusCount.set(id, (focusCount.get(id) ?? 0) + 1);
+  const n = (focusCount.get(id) ?? 0) + 1;
+  focusCount.set(id, n);
+  useRunUiStore.getState().setFocusCount(id, n);
   return () => {
-    const n = (focusCount.get(id) ?? 1) - 1;
-    if (n <= 0) focusCount.delete(id);
-    else focusCount.set(id, n);
+    const left = (focusCount.get(id) ?? 1) - 1;
+    if (left <= 0) focusCount.delete(id);
+    else focusCount.set(id, left);
+    useRunUiStore.getState().setFocusCount(id, Math.max(left, 0));
   };
 }
 

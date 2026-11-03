@@ -13,7 +13,8 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 import type { RunKind, RunStatus } from "@/api/runs";
-import type { TrackedRun } from "@/stores/runs";
+import { useRunUiStore, type TrackedRun } from "@/stores/runs";
+import { isRebuildRun, rebuildToolId } from "@/lib/runs/synthesis";
 
 export const RUN_KIND_META: Record<
   RunKind,
@@ -125,11 +126,14 @@ export function formatElapsed(ms: number | null | undefined): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/** Open the page that shows a run. */
+/**
+ * Open the page that shows a run. A synthesis or rebuild has no page of its
+ * own — its page is asked to reopen the dialog on it (`requestOpen`).
+ */
 export function useOpenRun() {
   const navigate = useNavigate();
   return useCallback(
-    (run: Pick<TrackedRun, "id" | "kind">) => {
+    (run: Pick<TrackedRun, "id" | "kind" | "title" | "request">) => {
       switch (run.kind) {
         case "workflow_plan":
           void navigate({ to: "/workflows/new/ai", search: { run: run.id } });
@@ -138,11 +142,20 @@ export function useOpenRun() {
           void navigate({ to: "/", search: { run: run.id } });
           break;
         case "tool_synthesis":
-          void navigate({ to: "/tools" });
+        case "activity_synthesis": {
+          useRunUiStore.getState().requestOpen(run.id);
+          const activity = run.kind === "activity_synthesis";
+          const toolId = isRebuildRun(run) ? rebuildToolId(run) : null;
+          if (toolId != null) {
+            void navigate({
+              to: activity ? "/workflows/activities/$id" : "/tools/$id",
+              params: { id: String(toolId) },
+            });
+          } else {
+            void navigate({ to: activity ? "/workflows/activities" : "/tools" });
+          }
           break;
-        case "activity_synthesis":
-          void navigate({ to: "/workflows/activities" });
-          break;
+        }
       }
     },
     [navigate],

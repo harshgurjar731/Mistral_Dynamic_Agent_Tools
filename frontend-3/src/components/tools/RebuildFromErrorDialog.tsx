@@ -9,13 +9,14 @@
  */
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Hammer, Loader2, Undo2, XCircle } from "lucide-react";
 import { errorMessage, QK, runsApi } from "@/api";
 import type { Tool } from "@/types";
 import { focusRun, trackStartedRun } from "@/lib/runs/connections";
 import { useTrackedRun } from "@/lib/runs/useRun";
+import { useRunningRebuild } from "@/lib/runs/synthesis";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,12 +55,15 @@ export function RebuildFromErrorDialog({
   onOpenChange,
   prefill,
   detailPath,
+  resumeRunId,
 }: {
   tool: Tool;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prefill?: RebuildPrefill | null | undefined;
   detailPath: "/workflows/activities/$id" | "/tools/$id";
+  /** Open on this rebuild run (from its notice or a toast) instead of a new form. */
+  resumeRunId?: string | null | undefined;
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -73,17 +77,43 @@ export function RebuildFromErrorDialog({
   const run = useTrackedRun(runId);
   const noun = tool.purpose === "activity" ? "activity" : "tool";
 
-  // Each opening starts from the prefill (a failed test, or a failed workflow step).
+  // A rebuild of this tool still going (closed with "keep it running", or
+  // started before the page was left) is what the dialog reopens on.
+  const runningRebuild = useRunningRebuild(tool);
+  const runningRebuildRef = useRef<string | null>(null);
+  runningRebuildRef.current = runningRebuild?.id ?? null;
+
+  // Each opening resumes the rebuild in progress, if any; otherwise it starts
+  // from the prefill (a failed test, or a failed workflow step).
   useEffect(() => {
     if (!open) return;
-    setError(prefill?.error ?? "");
-    setInputText(prefill?.failingInput ? JSON.stringify(prefill.failingInput, null, 2) : "");
-    setExpectedText(
-      prefill?.expectedOutput !== undefined ? JSON.stringify(prefill.expectedOutput, null, 2) : "",
-    );
-    setComment("");
+    const resume = resumeRunId ?? runningRebuildRef.current;
+    if (!resume || prefill) {
+      setError(prefill?.error ?? "");
+      setInputText(prefill?.failingInput ? JSON.stringify(prefill.failingInput, null, 2) : "");
+      setExpectedText(
+        prefill?.expectedOutput !== undefined
+          ? JSON.stringify(prefill.expectedOutput, null, 2)
+          : "",
+      );
+      setComment("");
+    }
+    setRunId(resume ?? null);
+  }, [open, prefill, resumeRunId]);
+
+  /** Back to the form, filled with what the finished run was asked, to edit and retry. */
+  const editAndRetry = () => {
+    const req = run?.request ?? {};
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    const json = (v: unknown) => (v === undefined || v === null ? "" : JSON.stringify(v, null, 2));
+    if (!error.trim() && !comment.trim()) {
+      setError(str(req["error"]));
+      setComment(str(req["comment"]));
+      if (!inputText.trim()) setInputText(json(req["failing_input"]));
+      if (!expectedText.trim()) setExpectedText(json(req["expected_output"]));
+    }
     setRunId(null);
-  }, [open, prefill]);
+  };
 
   useEffect(() => {
     if (!open || !runId) return;
@@ -257,7 +287,7 @@ export function RebuildFromErrorDialog({
                 Open v{result.version}
               </Button>
             ) : finished ? (
-              <Button size="sm" variant="outline" onClick={() => setRunId(null)}>
+              <Button size="sm" variant="outline" onClick={editAndRetry}>
                 Edit and try again
               </Button>
             ) : null}

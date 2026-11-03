@@ -53,6 +53,7 @@ import {
 import { ToolTestDialog, type RebuildPrefill } from "@/components/tools/ToolTestDialog";
 import { RebuildFromErrorDialog } from "@/components/tools/RebuildFromErrorDialog";
 import { takeRebuildHandoff } from "@/lib/rebuildHandoff";
+import { isRebuildOf, useRunningRebuild, useRunOpenRequest } from "@/lib/runs/synthesis";
 import { LivePercent } from "@/components/activity/LiveProgress";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
@@ -127,11 +128,19 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   // failed workflow step handed over from a run (see lib/rebuildHandoff).
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [rebuildPrefill, setRebuildPrefill] = useState<RebuildPrefill | null>(null);
-  const openRebuild = (prefill: RebuildPrefill | null) => {
+  // A specific rebuild run to open on (from its progress notice or a toast).
+  const [rebuildRunId, setRebuildRunId] = useState<string | null>(null);
+  const openRebuild = (prefill: RebuildPrefill | null, runId: string | null = null) => {
     setRebuildPrefill(prefill);
+    setRebuildRunId(runId);
     setTestOpen(false);
     setRebuildOpen(true);
   };
+  const runningRebuild = useRunningRebuild(tool);
+  useRunOpenRequest(
+    (run) => Boolean(tool) && isRebuildOf(run, tool!),
+    (run) => openRebuild(null, run.id),
+  );
 
   const invalidateLists = () => {
     qc.invalidateQueries({ queryKey: QK.tools() });
@@ -322,8 +331,22 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
                 <Play className="size-3.5 text-primary" /> Test
               </Button>
               {editable && (
-                <Button size="sm" variant="outline" onClick={() => openRebuild(null)}>
-                  <Hammer className="size-3.5" /> Rebuild from error
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openRebuild(null)}
+                  title={runningRebuild ? "Show the rebuild progress" : undefined}
+                >
+                  {runningRebuild ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin text-primary" /> Rebuilding…{" "}
+                      <LivePercent /> · View
+                    </>
+                  ) : (
+                    <>
+                      <Hammer className="size-3.5" /> Rebuild from error
+                    </>
+                  )}
                 </Button>
               )}
               {editable && !editing && (
@@ -620,6 +643,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
             onOpenChange={setRebuildOpen}
             prefill={rebuildPrefill}
             detailPath={detailPath}
+            resumeRunId={rebuildRunId}
           />
         </>
       ) : null}

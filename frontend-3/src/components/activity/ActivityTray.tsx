@@ -10,10 +10,15 @@ import {
   ChevronDown,
   CircleDashed,
   Loader2,
+  Maximize2,
+  Minus,
   MinusCircle,
   Radio,
+  X,
 } from "lucide-react";
 import { formatElapsed } from "@/components/runs/runMeta";
+import { RunNotice } from "@/components/runs/RunNotices";
+import { useRunNotices } from "@/lib/runs/synthesis";
 import { opActivity, opCount, opDetail, opFraction } from "@/lib/ops/describe";
 import { cn } from "@/lib/utils";
 import { useOpsStore, type OpLayer, type OpStep, type TrackedOp } from "@/stores/ops";
@@ -69,8 +74,14 @@ function rows(op: TrackedOp): Row[] {
   }));
 }
 
+const iconButton =
+  "shrink-0 rounded p-0.5 text-muted-foreground transition hover:bg-surface-hover hover:text-foreground";
+
 function OpCard({ op, now }: { op: TrackedOp; now: number }) {
   const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  // Closing only hides the card; the request itself carries on.
+  const dismiss = () => useOpsStore.getState().remove(op.id);
   const pending = op.status === "pending";
   const elapsed = (op.finishedAt ?? now) - op.startedAt;
   const detail = opDetail(op);
@@ -117,51 +128,72 @@ function OpCard({ op, now }: { op: TrackedOp; now: number }) {
             <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
           </button>
         ) : null}
+        <button
+          type="button"
+          onClick={() => setMinimized((m) => !m)}
+          aria-label={minimized ? "Expand notification" : "Minimise notification"}
+          title={minimized ? "Expand" : "Minimise"}
+          className={iconButton}
+        >
+          {minimized ? <Maximize2 className="size-3" /> : <Minus className="size-3.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label="Close notification"
+          title={pending ? "Close — it keeps going" : "Close"}
+          className={iconButton}
+        >
+          <X className="size-3.5" />
+        </button>
       </div>
 
       <LiveBar value={opFraction(op)} tone={tone} className="mt-2" />
+      {minimized ? null : (
+        <>
+          <p
+            className={cn(
+              "mt-1.5 truncate text-[11px]",
+              op.status === "failed" ? "text-red" : "text-muted-foreground",
+            )}
+            title={opActivity(op)}
+          >
+            {opActivity(op)}
+          </p>
+          {detail ? (
+            <p className="line-clamp-2 text-[10px] text-muted-foreground/80" title={detail}>
+              {detail}
+            </p>
+          ) : null}
 
-      <p
-        className={cn(
-          "mt-1.5 truncate text-[11px]",
-          op.status === "failed" ? "text-red" : "text-muted-foreground",
-        )}
-        title={opActivity(op)}
-      >
-        {opActivity(op)}
-      </p>
-      {detail ? (
-        <p className="line-clamp-2 text-[10px] text-muted-foreground/80" title={detail}>
-          {detail}
-        </p>
-      ) : null}
-
-      {open && list.length ? (
-        <ol className="custom-scrollbar mt-2 max-h-48 space-y-1 overflow-y-auto border-t border-border/60 pt-2">
-          {list.map((r) => {
-            const Icon = STATE_ICON[r.state];
-            return (
-              <li key={r.key} className="flex items-center gap-2 text-[11px]">
-                <Icon className={cn("size-3 shrink-0", STATE_TONE[r.state])} />
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    r.state === "pending" ? "text-muted-foreground/70" : "text-foreground",
-                  )}
-                  title={r.label}
-                >
-                  {r.label}
-                </span>
-                {r.ms !== undefined ? (
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
-                    {r.ms < 1000 ? `${r.ms}ms` : `${(r.ms / 1000).toFixed(1)}s`}
-                  </span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
-      ) : null}
+          {open && list.length ? (
+            <ol className="custom-scrollbar mt-2 max-h-48 space-y-1 overflow-y-auto border-t border-border/60 pt-2">
+              {list.map((r) => {
+                const Icon = STATE_ICON[r.state];
+                return (
+                  <li key={r.key} className="flex items-center gap-2 text-[11px]">
+                    <Icon className={cn("size-3 shrink-0", STATE_TONE[r.state])} />
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        r.state === "pending" ? "text-muted-foreground/70" : "text-foreground",
+                      )}
+                      title={r.label}
+                    >
+                      {r.label}
+                    </span>
+                    {r.ms !== undefined ? (
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
+                        {r.ms < 1000 ? `${r.ms}ms` : `${(r.ms / 1000).toFixed(1)}s`}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -174,7 +206,8 @@ export function ActivityTray() {
   const now = useNow(actions.some((o) => o.status === "pending"));
 
   const visible = actions.filter((o) => (o.finishedAt ?? now) - o.startedAt >= SHOW_AFTER_MS);
-  if (!visible.length) return null;
+  const notices = useRunNotices();
+  if (!visible.length && !notices.length) return null;
   const hidden = visible.length - MAX_CARDS;
 
   return (
@@ -185,6 +218,9 @@ export function ActivityTray() {
       {hidden > 0 ? (
         <p className="px-1 text-[11px] text-muted-foreground">+{hidden} more in progress</p>
       ) : null}
+      {notices.map((run) => (
+        <RunNotice key={run.id} run={run} />
+      ))}
       {visible.slice(-MAX_CARDS).map((op) => (
         <OpCard key={op.id} op={op} now={now} />
       ))}

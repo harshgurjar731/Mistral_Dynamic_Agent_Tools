@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Zap, Inbox, Search, Sparkles, Loader2 } from "lucide-react";
@@ -9,6 +9,7 @@ import { RunProgressCard } from "@/components/runs/RunProgress";
 import { stopRun } from "@/lib/runs/connections";
 import { runOutputName } from "@/components/runs/runMeta";
 import { useSynthesisRun } from "@/lib/runs/useSynthesisRun";
+import { isRebuildRun, synthesisTask, useRunOpenRequest } from "@/lib/runs/synthesis";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -123,8 +124,11 @@ function ActivityGalleryPage() {
   const [synthError, setSynthError] = useState<string | null>(null);
   // A background run: closing the dialog does not stop it, and the global
   // notification reports the outcome if the dialog is no longer open.
+  // It is also picked back up after leaving the page, so the dialog can be
+  // reopened on it from the header button, its progress notice, or a toast.
   const synthesizeMut = useSynthesisRun("activity", {
     watching: synthesizeOpen,
+    adopt: true,
     onFinished: (run, watching) => {
       synthesizeMut.clear();
       if (run.status === "completed") {
@@ -136,11 +140,36 @@ function ActivityGalleryPage() {
           );
           setSynthesizeOpen(false);
         }
-      } else if (watching && run.status !== "cancelled") {
+      } else if (run.status !== "cancelled") {
+        // Kept for when the dialog is reopened, with the task, to edit and retry.
         setSynthError(run.error ?? "Synthesis failed.");
+        setTask((t) => t || synthesisTask(run));
       }
     },
   });
+
+  // A run picked up from elsewhere brings its task into the (disabled) box.
+  const adoptedTask =
+    synthesizeMut.run?.status === "running" ? synthesisTask(synthesizeMut.run) : "";
+  useEffect(() => {
+    if (adoptedTask) setTask((t) => t || adoptedTask);
+  }, [adoptedTask]);
+
+  useRunOpenRequest(
+    (run) => run.kind === "activity_synthesis" && !isRebuildRun(run),
+    (run) => {
+      if (run.status === "running") {
+        synthesizeMut.attach(run.id);
+        setSynthesizeOpen(true);
+      } else if (run.status === "completed") {
+        setTab("pending");
+      } else {
+        setTask(synthesisTask(run));
+        setSynthError(run.status === "cancelled" ? null : (run.error ?? "Synthesis failed."));
+        setSynthesizeOpen(true);
+      }
+    },
+  );
 
   return (
     <div className="px-6 py-8">
@@ -160,11 +189,12 @@ function ActivityGalleryPage() {
         </div>
         <Button
           onClick={() => setSynthesizeOpen(true)}
+          title={synthesizeMut.busy ? "Show the synthesis progress" : undefined}
           className="bg-primary hover:bg-primary/90 self-start sm:self-auto gap-1.5"
         >
           {synthesizeMut.busy ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent />
+              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
             </>
           ) : (
             <>
