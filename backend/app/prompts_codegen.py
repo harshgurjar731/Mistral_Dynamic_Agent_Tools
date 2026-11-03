@@ -73,6 +73,15 @@ Return ONLY a JSON object:
 JSON Schema rules: types are string, number, integer, boolean, array, object —
 never float/int/str/dict/list. Every array has "items"; every object parameter
 has "properties". Property names are snake_case Python identifiers.
+
+Robustness — most code that passes its tests and then fails in production
+fails on input the specification never mentioned:
+- Mark a field "required" only when the function cannot work without it.
+  Real callers (an agent, an earlier workflow step) omit optional fields,
+  send null, or send an empty list — say in the description what happens then.
+- Use ["<type>", "null"] for a field real data may leave empty.
+- Describe the exact behaviour for empty lists, zero, missing nested fields and
+  malformed values, so the code and its tests agree on them.
 """
 
 TOOL_SPEC_SYSTEM = """\
@@ -119,3 +128,63 @@ Rules:
 
 <<TOOL_SAFETY_RULES>>
 """ + _SPEC_SHAPE
+
+# ── Rebuild from an error — specification revision ────────────────────────
+
+SPEC_REVISION_SYSTEM = """\
+A <<NOUN>> failed (or did the wrong thing) when it ran, and the user is
+rebuilding it. You revise its SPECIFICATION — the contract new code is
+generated from and tested against — so the rebuilt version does exactly what
+the user asked and cannot fail the same way. You do not write code.
+
+You are given the current specification, the error seen at run time, the
+user's instructions, and possibly the input it failed on and the code that
+failed.
+
+Rules:
+1. The user's instructions are authoritative. Every change they ask for must
+   show up in the specification: the description (rules, formulas, rounding,
+   units, edge-case behaviour), the schemas if they ask for a different input
+   or output, and the worked examples.
+2. Keep "name", "purpose" and "side_effects" unchanged.
+3. Keep the input and output schemas unless (a) the user asks to change them,
+   or (b) the error or the failing input proves the schema is wrong — e.g. a
+   field real callers omit or send as null must become optional / nullable,
+   a list field must accept an empty list, a nested record needs the fields
+   it really has. Never remove or rename an output field unless the user asks:
+   later workflow steps read those fields by name.
+4. Worked examples must agree with the revised rules EXACTLY. When a change
+   alters what an existing example produces (new rounding, a new field, a new
+   rule), recompute that example's output step by step and put the arithmetic
+   in its "note". Keep at least as many examples as before. Add the failing
+   input as an example only when its expected output follows unambiguously
+   from the rules (or the user stated it).
+5. Make the description precise enough that two engineers would write the
+   same function: state how missing, null, empty and malformed values behave.
+6. "directives": the user's instructions rewritten as a short checklist of
+   concrete, testable requirements for the code (one per item, imperative,
+   no duplicates). Include the fix for the run-time error as one item.
+
+Return ONLY a JSON object:
+{
+  "specification": {
+    "name": "<unchanged>",
+    "description": "string",
+    "kind": "pure" | "http",
+    "input_schema": {"type": "object", "properties": {...}, "required": [...]},
+    "output_schema": {"type": "object", "properties": {...}, "required": [...]},
+    "examples": [{"input": {...}, "output": {...}, "note": "<how the output follows>"}],
+    "api_details": "string",
+    "http_fixtures": [],
+    "secrets": [],
+    "side_effects": "<unchanged>"
+  },
+  "directives": ["<concrete requirement>"],
+  "contract_changed": true | false,
+  "reasoning": "<what you changed and why, in two or three sentences>"
+}
+
+JSON Schema rules: types are string, number, integer, boolean, array, object,
+null — never float/int/str/dict/list. Every array has "items"; every object
+has "properties". Property names are snake_case Python identifiers.
+"""

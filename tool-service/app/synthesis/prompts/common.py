@@ -68,6 +68,28 @@ bool is a subclass of int in Python: check isinstance(x, bool) first when a
 number is expected.
 """)
 
+ROBUSTNESS = section("RUN-TIME ROBUSTNESS — what breaks code after it ships", """
+Real inputs are messier than the examples. The code must survive all of these
+without raising (each is a frequent cause of a version that passed its tests
+and then failed in production):
+  * an optional field — top level or nested — that is absent, None or "";
+  * an empty list, a list with one item, or many items;
+  * a nested record missing a key you expected: use .get() with a default and
+    decide explicitly what a missing value means;
+  * division by zero, or a ratio over an empty set — handle it explicitly;
+  * a number that arrives as text ("1,250.50", "£1,200", "12%"): convert it
+    when the meaning is unambiguous, otherwise return a validation_error that
+    says which field and what was expected;
+  * a date in a common format (YYYY-MM-DD, DD/MM/YYYY, ISO 8601 with time):
+    parse what is unambiguous, reject the rest with a validation_error;
+  * text with surprising case or surrounding whitespace in an enum-like field.
+Never use bare indexing (x["k"], items[0]) on data you did not construct.
+Never let an exception escape run(): the outermost handler returns the
+unexpected_error envelope, but a specific, explanatory error is always better.
+Every required output field is always present on success, with its declared
+type — never None unless the output schema allows null.
+""")
+
 HTTP_RULES = section("HTTP RULES", """
 Use `requests` with timeout=REQUEST_TIMEOUT on every call. Pass query values via
 params=, never by string interpolation; quote path segments with
@@ -84,6 +106,39 @@ configuration_error envelope.
 
 def imports_section() -> str:
     return section("IMPORTS", policy.render_imports_section())
+
+
+def directives_of(spec: SynthesisSpec) -> list[str]:
+    """The user's rebuild instructions as a list (the comment when none were split out)."""
+    feedback = spec.feedback or {}
+    items = [str(d) for d in (feedback.get("directives") or []) if str(d).strip()]
+    comment = str(feedback.get("comment") or "").strip()
+    return items or ([comment] if comment else [])
+
+
+def user_instructions(spec: SynthesisSpec) -> str:
+    """The user's explicit instructions for this version, as a mandatory checklist.
+
+    Shown in the system prompt — where it outranks everything else — and again
+    in every repair round, because a repair that fixes a test by undoing what
+    the user asked for is the commonest way such an instruction gets lost.
+    """
+    items = directives_of(spec)
+    if not items:
+        return ""
+    lines = "\n".join(f"  {i}. {item}" for i, item in enumerate(items, 1))
+    body = (
+        "The user rebuilding this module gave these instructions. Each one is\n"
+        "MANDATORY and takes precedence over the defaults in this prompt (the\n"
+        "envelope, sandbox and import rules still apply). The task's schemas\n"
+        "already reflect any change to inputs or outputs the user asked for.\n"
+        + lines
+        + "\nBefore answering, check your module against every item above."
+    )
+    comment = str((spec.feedback or {}).get("comment") or "").strip()
+    if comment and (spec.feedback or {}).get("directives"):
+        body += "\n\nThe user's own words:\n" + comment
+    return section("USER'S INSTRUCTIONS — MANDATORY", body)
 
 
 def describe_plan(plan: TestPlan) -> str:
@@ -149,18 +204,23 @@ def spec_block(spec: SynthesisSpec) -> str:
 def feedback_block(feedback: dict) -> str:
     """The previous version's failure, for a rebuild: fix this, keep the contract."""
     lines = ["## The previous version failed — fix it",
-             "Write a corrected module. Keep the same name, input schema and output "
-             "schema; change the implementation so the failure below cannot happen, and "
-             "follow the user's comment."]
+             "Write a corrected module that implements the name, input schema and output "
+             "schema given above exactly (they already include any change the user asked "
+             "for). Find the root cause of the failure below and change the implementation "
+             "so it cannot happen again, and carry out every instruction the user gave."]
+    if feedback.get("directives"):
+        lines.append("### The user's instructions (each one is mandatory)\n"
+                     + "\n".join(f"{i}. {d}" for i, d in enumerate(feedback["directives"], 1)))
     if feedback.get("runtime_error"):
         lines.append("### Error seen at run time\n" + feedback["runtime_error"])
     if feedback.get("failing_input"):
         lines.append("### Input it failed on (must now succeed)\n"
                      + json.dumps(feedback["failing_input"], indent=2, default=str))
     if feedback.get("comment"):
-        lines.append("### What the user wants changed\n" + feedback["comment"])
+        lines.append("### What the user wants changed (their words)\n" + feedback["comment"])
     if feedback.get("previous_code"):
-        lines.append("### The code that failed (for reference — do not copy its bug)\n"
+        lines.append("### The code that failed (for reference — keep what works, do not copy "
+                     "its bug, and do not keep anything the user asked to change)\n"
                      + feedback["previous_code"])
     return "\n\n".join(lines)
 

@@ -134,6 +134,14 @@ def _from_record(record) -> WorkflowDefinition:
 def save_workflow(definition: WorkflowDefinition) -> str:
     """Upsert a workflow definition to SQLite. Returns workflow name."""
     forget_deleted_workflow(definition.name)
+    try:
+        # The run form is built from input_schema: keep it accurate whatever
+        # edited the workflow (app.workflow_inputs.designer).
+        from app.workflow_inputs.designer import finalise_definition
+
+        finalise_definition(definition)
+    except Exception as e:  # noqa: BLE001 — never block a save over the run form
+        logger.warning("Input schema check skipped for '%s': %s", definition.name, e)
     payload = definition.model_dump_json(exclude=_RECORD_ONLY)
     with _Session() as db:
         record = db.get(_WorkflowRecord, definition.name)

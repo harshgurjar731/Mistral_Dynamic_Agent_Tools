@@ -213,9 +213,12 @@ async def retrieve(body: RetrieveBody, client=Depends(get_mistral_client)):
     if vector is None:
         for c in candidates:
             c.pop("embedding", None)
+    from app.layers.knowledge_context_layer import view_min
+
     ranked = retrieval.select(body.goal, concept_ids=body.concept_ids, facts=body.facts,
                               subject=body.subject, query_vector=vector,
-                              limit=settings.GUIDANCE_PACK_SIZE, items=candidates)
+                              limit=settings.GUIDANCE_PACK_SIZE, items=candidates,
+                              view_min=view_min())
     pack = retrieval.build_pack(ranked, mode="preview")
     return {"items": ranked, "views": pack["views"],
             "rendered": {view: retrieval.render(pack, view, limit=settings.GUIDANCE_VIEW_SIZE)

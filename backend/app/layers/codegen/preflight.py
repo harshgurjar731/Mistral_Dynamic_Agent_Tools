@@ -30,6 +30,9 @@ def fix_types(schema: Any) -> Any:
         for key, value in schema.items():
             if key == "type" and isinstance(value, str):
                 out[key] = _TYPE_FIXES.get(value.lower(), value.lower())
+            elif key == "type" and isinstance(value, list):
+                # A nullable field: ["number", "null"].
+                out[key] = [_TYPE_FIXES.get(str(v).lower(), str(v).lower()) for v in value]
             else:
                 out[key] = fix_types(value)
         return out

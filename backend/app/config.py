@@ -12,7 +12,14 @@ class Settings(BaseSettings):
 
     # Mistral AI
     MISTRAL_API_KEY: str = ""
-    MISTRAL_ORCHESTRATOR_MODEL: str = "mistral-large-latest"
+    #: Every planning decision (workflow and agent layers, rule selection,
+    #: refine-with-AI) runs on this — the largest Mistral model by default.
+    MISTRAL_ORCHESTRATOR_MODEL: str = "mistral-large-4"
+    #: Reasoning effort for decisions on the orchestrator model: high | medium |
+    #: low | none | omit. A model that rejects the value is retried without it.
+    ORCHESTRATOR_REASONING_EFFORT: str = "high"
+    #: Tried once when the orchestrator model fails for a non-transient reason.
+    ORCHESTRATOR_FALLBACK_MODEL: str = "mistral-medium-2604"
     # Retired: code-related decisions now use model routes (app/llm_routes.py,
     # override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
     MISTRAL_CODING_MODEL: str = "codestral-latest"
@@ -33,7 +40,8 @@ class Settings(BaseSettings):
     # Comma-separated: the models every model picker offers. (open-mistral-nemo
     # was dropped: Mistral's /v1/models no longer lists it.)
     AGENT_MODEL_CHOICES: str = (
-        "mistral-large-latest,mistral-medium-latest,mistral-small-latest,codestral-latest"
+        "mistral-large-4,mistral-large-latest,mistral-medium-latest,mistral-small-latest,"
+        "codestral-latest"
     )
 
     # ── Model catalog (read from Mistral's /v1/models) ──────────────────
@@ -99,6 +107,25 @@ class Settings(BaseSettings):
     GUIDANCE_AUTO_APPROVE: bool = False
     GUIDANCE_PACK_SIZE: int = 24
     GUIDANCE_VIEW_SIZE: int = 6
+    #: Every layer view keeps at least this many candidates in the pack. 0: off.
+    GUIDANCE_VIEW_MIN: int = 3
+    # Picking guidance with process knowledge (app/knowledge/retrieval.py).
+    #: Rank guidance against the run's process document as well as the goal.
+    GUIDANCE_PROCESS_RANKING: bool = True
+    #: Re-rank a workflow agent's guidance for its own process stage.
+    GUIDANCE_STAGE_RANKING: bool = True
+    #: Workflow builds: complexity / task type from the process document, so
+    #: guidance conditioned on them is checked rather than "unknown".
+    GUIDANCE_PROCESS_REQUIREMENTS: bool = True
+    # Ranking weights. The goal should stay the strongest signal.
+    GUIDANCE_GOAL_WEIGHT: float = 6.0
+    GUIDANCE_PROCESS_WEIGHT: float = 3.5
+    GUIDANCE_PROCESS_WORD_WEIGHT: float = 0.4
+    GUIDANCE_PROCESS_WORDS_MAX: int = 6
+    GUIDANCE_STAGE_WEIGHT: float = 5.0
+    GUIDANCE_STAGE_WORD_WEIGHT: float = 0.6
+    GUIDANCE_STAGE_WORDS_MAX: int = 8
+    GUIDANCE_CONDITION_BOOST: float = 3.0
     KNOWLEDGE_EMBED_MODEL: str = "mistral-embed"
     KNOWLEDGE_OCR_MODEL: str = "mistral-ocr-latest"
     KNOWLEDGE_DISTILL_MODEL: str = "mistral-large-latest"

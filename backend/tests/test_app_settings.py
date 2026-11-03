@@ -47,7 +47,9 @@ def test_overrides_persist_to_disk(tmp_path):
 
 
 def test_route_override_wins_over_code_default():
-    assert route_for("spec_author").model == "mistral-medium-2604"
+    from app.llm_routes import PRIMARY
+
+    assert route_for("spec_author").model == PRIMARY == "mistral-large-4"
     get_store().update({"ROUTE_SPEC_AUTHOR_MODEL": "mistral-large-2512",
                         "ROUTE_SPEC_AUTHOR_EFFORT": "omit",
                         "ROUTE_SPEC_AUTHOR_FALLBACK": "none"})
@@ -201,3 +203,37 @@ def test_every_setting_is_described():
         assert defn.description.strip(), f"{key} has no description"
         assert defn.impact, f"{key} has no impact areas"
         assert defn.used_in, f"{key} has no code locations"
+
+
+def test_every_guidance_and_process_knowledge_setting_is_on_the_settings_page():
+    from app.config import Settings
+
+    feature = [k for k in Settings.model_fields
+               if k.startswith(("GUIDANCE_", "KNOWLEDGE_", "PROCESS_"))]
+    missing = [k for k in feature if k not in get_store().defs]
+    assert not missing, f"not on the Settings page: {missing}"
+
+
+def test_guidance_switches_and_weights_apply_live():
+    from app.knowledge import retrieval
+
+    store = get_store()
+    store.update({"GUIDANCE_GOAL_WEIGHT": 9.5, "GUIDANCE_PROCESS_RANKING": False})
+    assert retrieval.weight("GUIDANCE_GOAL_WEIGHT") == 9.5
+    assert settings.GUIDANCE_PROCESS_RANKING is False
+    store.reset()
+    assert retrieval.weight("GUIDANCE_GOAL_WEIGHT") == 6.0
+
+
+def test_every_numeric_setting_has_bounds_and_what_they_mean():
+    from app.app_settings.registry import EFFECTS
+
+    store = get_store()
+    for key, defn in store.defs.items():
+        if defn.type not in ("int", "float"):
+            continue
+        assert defn.minimum is not None and defn.maximum is not None, f"{key} needs min and max"
+        assert defn.low_effect and defn.high_effect, f"{key} needs min/max effects"
+        row = store.describe(key)
+        assert row["min_effect"] == defn.low_effect and row["max_effect"] == defn.high_effect
+    assert not set(EFFECTS) - set(store.defs), "effects for settings that do not exist"

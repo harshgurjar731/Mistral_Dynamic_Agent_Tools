@@ -58,6 +58,9 @@ class RevisionNormaliseLayer(RevisionStepLayer):
         spec = ctx.revision_spec
         notes = ops.normalise(spec.proposed)
         notes += ops.dangling_references(spec.proposed)
+        from app.layers.revision.repair_layer import finalise_inputs
+
+        notes += finalise_inputs(spec.proposed)
         spec.notes = notes
         ctx.set_layer_summary(self.name, " ".join(notes) if notes else "Nothing needed repairing.")
         return await next(ctx)

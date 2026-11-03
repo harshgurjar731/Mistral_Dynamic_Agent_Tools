@@ -132,6 +132,51 @@ _ROUTE_JOBS = {
 }
 
 
+#: Numeric settings: (at the minimum, at the maximum) — one short sentence each,
+#: shown on the backend's Settings page with the default, minimum and maximum.
+#: Every int and float setting must have one (tests/test_rebuild_directives.py).
+EFFECTS: dict[str, tuple[str, str]] = {
+    "TOOL_MODEL_MAX_ATTEMPTS": (
+        "One try per model call; a brief network error goes straight to the fallback model.",
+        "Up to 10 tries per call — a model outage is waited out for a long time."),
+    "TOOL_SYNTHESIS_MAX_ATTEMPTS": (
+        "One generation, no repair — any first-draft bug fails the build.",
+        "Up to 20 generate/repair passes — succeeds more often, but builds can take long."),
+    "SYNTHESIS_WALL_CLOCK_SECONDS": (
+        "One minute per job — reasoning models rarely finish; most builds fail.",
+        "Up to 2 hours per job — a stuck build holds a worker that long."),
+    "SYNTHESIS_WORKERS": (
+        "One build at a time — tools needed together queue behind each other.",
+        "16 builds at once — heavy CPU, memory and model-quota use."),
+    "SYNTHESIZE_WAIT_SECONDS": (
+        "The legacy call answers with a job id almost at once.",
+        "Waits up to 170 s — close to the backend's HTTP timeout."),
+    "SANDBOX_TIMEOUT_SECONDS": (
+        "Code is killed after 1 s — anything calling an API will time out.",
+        "A runaway tool can run for 10 minutes before it is stopped."),
+    "SANDBOX_MEMORY_MB": (
+        "64 MB — tools using pandas or large data run out of memory.",
+        "8 GB per execution — a single tool can starve the container."),
+}
+
+#: Every model route's timeout shares these.
+ROUTE_TIMEOUT_EFFECT = (
+    "5 s — a reasoning model rarely answers in time; calls fail or fall back.",
+    "Up to 30 min per call — a hung call holds the build that long.")
+
+
+def all_defs() -> list[SettingDef]:
+    from dataclasses import replace
+
+    out = []
+    for d in DEFS + _route_defs():
+        effect = EFFECTS.get(d.key) or (
+            ROUTE_TIMEOUT_EFFECT if d.key.startswith("ROUTE_") and d.key.endswith("_TIMEOUT_MS")
+            else None)
+        out.append(replace(d, low_effect=effect[0], high_effect=effect[1]) if effect else d)
+    return out
+
+
 def _route_defs() -> list[SettingDef]:
     from app.llm.routes import _ROUTES
 
@@ -171,7 +216,7 @@ def get_store() -> SettingsStore:
     global _store
     if _store is None:
         path = os.environ.get("RUNTIME_SETTINGS_PATH") or os.path.join("db", "runtime_settings.json")
-        _store = SettingsStore(SECTIONS, DEFS + _route_defs(), path, target="tool_service")
+        _store = SettingsStore(SECTIONS, all_defs(), path, target="tool_service")
     return _store
 
 

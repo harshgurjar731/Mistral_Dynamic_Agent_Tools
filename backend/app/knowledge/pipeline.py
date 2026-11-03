@@ -30,15 +30,20 @@ def items(ctx) -> list[dict]:
     return list(pack["items"]) if pack else []
 
 
-def block(ctx, view: Optional[str]) -> str:
-    """The guidance text for ``view``; "" when inactive or the view has none."""
+def block(ctx, view: Optional[str], *, focus: Optional[str] = None) -> str:
+    """The guidance text for ``view``; "" when inactive or the view has none.
+
+    ``focus``: the process stage the decision is for (a workflow agent's
+    ``process_stage``); the view is then ranked for that stage.
+    """
     pack = active(ctx)
     if not pack or not view:
         return ""
     from app.config import settings
 
     try:
-        text = retrieval.render(pack, view, limit=max(1, int(settings.GUIDANCE_VIEW_SIZE)))
+        text = retrieval.render(pack, view, limit=max(1, int(settings.GUIDANCE_VIEW_SIZE)),
+                                focus=focus)
     except Exception as e:
         logger.warning("Guidance view '%s' could not be rendered: %s", view, e)
         return ""

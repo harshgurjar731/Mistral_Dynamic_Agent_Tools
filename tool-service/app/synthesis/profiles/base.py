@@ -120,6 +120,15 @@ class CodeProfile:
             if spec.kind == "http" and isinstance(fixture.get("for_input"), dict):
                 plan.add(TestCase(f"fixture_{i}", "fixture", fixture["for_input"], EXPECT_SUCCESS,
                                   note="the canned API response answers exactly this input"))
+        failing = (spec.feedback or {}).get("failing_input")
+        if (isinstance(failing, dict) and failing
+                and not any(e.input == failing for e in spec.examples)
+                and validate_input(spec.input_schema, failing) is None):
+            # A rebuild: the input the previous version failed on is held to
+            # success inside the build loop, not only after installation.
+            plan.add(TestCase("failed_input", "feedback", failing, EXPECT_SUCCESS,
+                              check_repeat=self.check_determinism(spec),
+                              note="the input the previous version failed on at run time"))
         for i, inputs in enumerate(llm_inputs, 1):
             plan.add(TestCase(f"realistic_{i}", "llm", inputs, EXPECT_SUCCESS,
                               check_repeat=self.check_determinism(spec)))

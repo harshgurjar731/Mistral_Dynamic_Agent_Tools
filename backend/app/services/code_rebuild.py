@@ -71,6 +71,9 @@ def build_request(record: dict, *, error: str, comment: str,
         "runtime_error": error,
         "comment": comment,
         **({"failing_input": failing_input} if failing_input else {}),
+        # Read by the specification revision (layers/codegen/feedback.py); the
+        # tool service ignores it — the example above already carries it.
+        **({"expected_output": expected_output} if expected_output is not None else {}),
     }
     guidance = [g for g in (comment, f"Error seen at run time: {error}" if error else "") if g]
     return requirement, guidance

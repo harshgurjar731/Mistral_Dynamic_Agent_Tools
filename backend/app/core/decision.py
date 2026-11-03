@@ -28,11 +28,14 @@ logger = logging.getLogger(__name__)
 # tools does this agent need" produces a short answer. The generous budget is
 # for the tail, not the median: the DAG and instruction layers can still emit
 # a few thousand tokens.
-DEFAULT_TIMEOUT_MS = 120_000
+#
+# Decisions run on a reasoning model (ORCHESTRATOR_REASONING_EFFORT), which
+# thinks before it answers, so the budgets allow for that.
+DEFAULT_TIMEOUT_MS = 180_000
 
 # The DAG and instruction-authoring layers write substantially more than a
 # facet layer does, and are given room accordingly.
-LONG_TIMEOUT_MS = 180_000
+LONG_TIMEOUT_MS = 300_000
 
 
 class DecisionTimeout(Exception):
@@ -151,6 +154,12 @@ async def decide(
         if r.temperature is not None:
             temperature = r.temperature
         fallback = r.fallback_model
+    elif model and model == settings.MISTRAL_ORCHESTRATOR_MODEL:
+        # A planning decision on the orchestrator model: reason before
+        # answering (when the model can), and fall back to a second model
+        # rather than to a default.
+        effort = _orchestrator_effort() if reasoning_capable(model) is not False else None
+        fallback = _orchestrator_fallback()
     if not model:
         raise ValueError("decide() needs a model or a route")
 
@@ -211,6 +220,57 @@ async def decide(
     ) from last_rate_limit
 
 
+_capability_cache: dict = {"stamp": None, "index": {}}
+
+
+def reasoning_capable(model: str) -> Optional[bool]:
+    """Whether Mistral's model list marks ``model`` as a reasoning model.
+
+    None when the cached catalog does not know it — the effort is then sent
+    and dropped on rejection. Read from the cached ``/v1/models`` answer
+    (``app.app_settings.catalog``), reloaded only when the file changes.
+    """
+    try:
+        from app.app_settings import catalog
+
+        path = catalog._path()
+        stamp = path.stat().st_mtime if path.exists() else None
+        if stamp != _capability_cache["stamp"]:
+            _capability_cache.update(stamp=stamp, index=catalog.index() if stamp else {})
+        card = _capability_cache["index"].get(model)
+    except Exception:  # noqa: BLE001 — unknown, not an error
+        return None
+    if not card:
+        return None
+    return bool((card.get("capabilities") or {}).get("reasoning"))
+
+
+def _orchestrator_effort() -> Optional[str]:
+    from app.config import settings
+
+    value = str(getattr(settings, "ORCHESTRATOR_REASONING_EFFORT", "") or "").strip().lower()
+    return None if value in ("", "omit") else value
+
+
+def _orchestrator_fallback() -> Optional[str]:
+    from app.config import settings
+
+    value = str(getattr(settings, "ORCHESTRATOR_FALLBACK_MODEL", "") or "").strip()
+    return None if value.lower() in ("", "none") else value
+
+
+def rejects_effort(exc: Exception) -> bool:
+    """The model refused the ``reasoning_effort`` value, or reasoning altogether.
+
+    Seen verbatim: "reasoning_effort none is not supported for this model"
+    (mistral-large-4) and "reasoning_effort is not enabled for this model"
+    (mistral-large-2512).
+    """
+    text = str(exc).lower()
+    return "reasoning_effort" in text and any(
+        marker in text for marker in ("not supported", "not enabled", "invalid", "unsupported"))
+
+
 async def _complete(client: Any, model: str, system: str, user: str, temperature: float,
                     timeout_ms: int, effort: Optional[str], fallback: Optional[str]):
     """One completion, with the route's reasoning effort and fallback model.
@@ -234,12 +294,15 @@ async def _complete(client: Any, model: str, system: str, user: str, temperature
         return await asyncio.to_thread(client.chat.complete, **_kwargs(model, True))
     except Exception as e:
         text = str(e).lower()
-        if effort and "reasoning_effort" in text and "not supported" in text:
-            return await asyncio.to_thread(client.chat.complete, **_kwargs(model, False))
+        if effort and rejects_effort(e):
+            try:
+                return await asyncio.to_thread(client.chat.complete, **_kwargs(model, False))
+            except Exception as retry_error:
+                e, text = retry_error, str(retry_error).lower()
         transient = ("timed out" in text or "timeout" in text
                      or _rate_limit_retry_after(e) is not None)
         if transient or not fallback or fallback == model:
-            raise
+            raise e
         logger.warning("Decision model %s failed (%s) — trying %s", model, type(e).__name__, fallback)
         return await asyncio.to_thread(client.chat.complete, **_kwargs(fallback, False))
 
@@ -261,6 +324,10 @@ class DecisionLayer(Layer):
 
     #: Emitted before the call, so the UI can name the decision in flight.
     status_message: str = ""
+
+    #: A model route (``app/llm_routes.py``) for this decision. None: the
+    #: orchestrator model with its reasoning effort and fallback.
+    route: Optional[str] = None
 
     #: Which view of the run's process knowledge this decision reads (see
     #: ``app.process.context.render``). None: it reads none. When the
@@ -328,7 +395,8 @@ class DecisionLayer(Layer):
                 user = user + prerequisites.block(ctx)
             raw = await decide(
                 ctx.client,
-                model=self.model_for(ctx),
+                model=None if self.route else self.model_for(ctx),
+                route=self.route,
                 system=system,
                 user=user,
                 phase=self.phase,

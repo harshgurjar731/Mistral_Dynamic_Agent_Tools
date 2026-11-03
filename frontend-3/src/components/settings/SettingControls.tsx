@@ -485,6 +485,7 @@ export function SettingTile({
           catalog={catalog}
         />
         <ModelWarning item={item} value={value} catalog={catalog} />
+        <NumericRange item={item} />
         {hint ? (
           <p className="mt-1 flex items-start gap-1 text-[11px] text-amber">
             <AlertTriangle className="mt-px size-3 shrink-0" />
@@ -511,7 +512,7 @@ export function SettingTile({
             </div>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            {item.type !== "secret" ? (
+            {item.type !== "secret" && !isNumeric(item) ? (
               <span>
                 Default{" "}
                 <span className="font-mono text-foreground/80">{displayValue(item.default)}</span>
@@ -539,6 +540,44 @@ export function SettingTile({
             </ul>
           ) : null}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function isNumeric(item: SettingItem): boolean {
+  return item.type === "int" || item.type === "float";
+}
+
+/** Default, minimum and maximum of a numeric setting, and what each end does. */
+function NumericRange({ item }: { item: SettingItem }) {
+  if (!isNumeric(item)) return null;
+  const unit = item.unit ? ` ${item.unit}` : "";
+  const show = (v: SettingValue | undefined) =>
+    v === null || v === undefined || v === "" ? "no limit" : `${displayValue(v)}${unit}`;
+  const fallback = item.default ?? item.builtin_default;
+  return (
+    <div className="mt-2 space-y-1 rounded-md border border-border/50 bg-secondary/30 px-2.5 py-2 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+        <span>
+          Default <span className="font-mono text-foreground/85">{show(fallback)}</span>
+        </span>
+        <span>
+          Min <span className="font-mono text-foreground/85">{show(item.min)}</span>
+        </span>
+        <span>
+          Max <span className="font-mono text-foreground/85">{show(item.max)}</span>
+        </span>
+      </div>
+      {item.min_effect ? (
+        <p className="leading-snug">
+          <span className="font-medium text-foreground/80">At min:</span> {item.min_effect}
+        </p>
+      ) : null}
+      {item.max_effect ? (
+        <p className="leading-snug">
+          <span className="font-medium text-foreground/80">At max:</span> {item.max_effect}
+        </p>
       ) : null}
     </div>
   );

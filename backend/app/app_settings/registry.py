@@ -47,6 +47,15 @@ SECTIONS = [
     Section("process_knowledge", "Matching & limits",
             "Whether builds use process knowledge by default, how closely a process must match a "
             "request to be used, and the largest document accepted.", "workflow", "process"),
+    Section("guidance", "Build guidance",
+            "The best-practice guidance builds follow: whether it is used, how many items a build "
+            "and each decision get, how new items are reviewed, and the models that read and "
+            "distil guidance sources.", "box", "process"),
+    Section("guidance_ranking", "Guidance ranking with process knowledge",
+            "How guidance is picked when a build has a process document: ranked against the "
+            "process as well as the request, re-ranked for each workflow agent's own stage, and "
+            "checked against what the process says about the work. The weights say how much "
+            "each signal counts; the request should stay the strongest.", "gauge", "process"),
     # ── Vault & build prerequisites ────────────────────────────────────
     Section("vault", "Vault behaviour",
             "How stored credentials are protected, shown, kept and handed to the code that "
@@ -70,6 +79,8 @@ _APPLIER = "frontend components/layout/AppConfigApplier.tsx"
 
 _EFFORT_LABELS = (
     ("high", "High — reasoning on"),
+    ("medium", "Medium — some reasoning"),
+    ("low", "Low — brief reasoning"),
     ("none", "None — reasoning off"),
     ("omit", "Omit — do not send the parameter"),
 )
@@ -95,6 +106,20 @@ DEFS: list[SettingDef] = [
                    "rag/ontology_agent.py — ontology architect agent",
                    "services/conversational_workflow_service.py — conversational gateway",
                )),
+    SettingDef("ORCHESTRATOR_REASONING_EFFORT", "models", "Orchestrator reasoning effort",
+               "How hard the orchestrator model thinks before each planning decision. High "
+               "plans most accurately; a model that does not reason ignores it.",
+               type="enum", options=("high", "medium", "low", "none", "omit"),
+               option_labels=_EFFORT_LABELS, default="high",
+               impact=("Agent creation (Orchestrator chat)", "Workflow planning (AI builder)",
+                       "Refine with AI"),
+               used_in=("core/decision.py — decide() on the orchestrator model",)),
+    SettingDef("ORCHESTRATOR_FALLBACK_MODEL", "models", "Orchestrator fallback model",
+               "Tried once when the orchestrator model fails for a reason other than a timeout "
+               "or a rate limit; 'none' disables.",
+               type="model", capability="chat", allow_none=True, default="mistral-medium-2604",
+               impact=("Agent creation (Orchestrator chat)", "Workflow planning (AI builder)"),
+               used_in=("core/decision.py — decide() on the orchestrator model",)),
     SettingDef("DEFAULT_AGENT_MODEL", "models", "Default agent model",
                "The model a new agent runs on when nothing else chose one: the default in the "
                "Create Agent form, stand-in agents created for workflow steps, deployment "
@@ -400,6 +425,118 @@ DEFS: list[SettingDef] = [
                "scores for any goal.", type="float", minimum=0, maximum=50,
                impact=("Process matching",), used_in=("process_knowledge/resolver.py",)),
 
+    # ── Build guidance ─────────────────────────────────────────────────
+    SettingDef("GUIDANCE_DEFAULT_MODE", "guidance", "Use guidance",
+               "Auto: every build follows the active guidance in its scope. Off: only a build "
+               "that asks for guidance gets it.", type="enum", options=("auto", "off"),
+               option_labels=(("auto", "Auto — whenever guidance is in scope"),
+                              ("off", "Off — only when a build asks")),
+               impact=("Agent creation", "Workflow planning", "Refine with AI"),
+               used_in=("layers/knowledge_context_layer.py — resolve_guidance",
+                        "routes/knowledge.py — config")),
+    SettingDef("GUIDANCE_PACK_SIZE", "guidance", "Guidance per build",
+               "How many of the best-ranked guidance items one build takes into account. Each "
+               "decision then sees only the ones for its kind of decision.",
+               type="int", minimum=1, maximum=200, unit="items",
+               impact=("Agent creation", "Workflow planning"),
+               used_in=("layers/knowledge_context_layer.py — resolve_guidance",
+                        "routes/knowledge.py — retrieve")),
+    SettingDef("GUIDANCE_VIEW_SIZE", "guidance", "Guidance per decision",
+               "The most guidance items shown to any one decision (agent design, instructions, "
+               "rules, topology…). More is more context per call, and more to follow.",
+               type="int", minimum=1, maximum=30, unit="items",
+               impact=("Agent creation", "Workflow planning"),
+               used_in=("knowledge/pipeline.py — block", "routes/knowledge.py — retrieve")),
+    SettingDef("GUIDANCE_VIEW_MIN", "guidance", "Places kept for every kind of decision",
+               "After the best items are taken, each kind of decision that has fewer than this "
+               "many gets the next-best items for it, so common guidance cannot crowd rarer "
+               "guidance out (for example naming or data handling). 0 turns this off. Never "
+               "more than 'Guidance per decision'.",
+               type="int", minimum=0, maximum=30, unit="items",
+               impact=("Agent creation", "Workflow planning"),
+               used_in=("knowledge/retrieval.py — select (view_min)",
+                        "layers/knowledge_context_layer.py — view_min")),
+    SettingDef("GUIDANCE_AUTO_APPROVE", "guidance", "Auto-approve distilled guidance",
+               "Off: guidance distilled from a source waits for review on the Knowledge page. "
+               "On: high-confidence items go live at once.", type="bool",
+               impact=("Knowledge sources",), used_in=("knowledge/ingest.py",)),
+    SettingDef("KNOWLEDGE_SOURCE_MAX_MB", "guidance", "Max guidance source size",
+               "Largest file accepted as a guidance or reference source on the Knowledge page.",
+               type="int", minimum=1, maximum=500, unit="MB",
+               impact=("Knowledge sources",), used_in=("routes/knowledge.py — add_source",)),
+    SettingDef("KNOWLEDGE_DISTILL_MODEL", "guidance", "Distillation model",
+               "The model that turns a source document into guidance and reference items.",
+               type="model", capability="chat", impact=("Knowledge sources",),
+               used_in=("knowledge/distill.py",)),
+    SettingDef("KNOWLEDGE_OCR_MODEL", "guidance", "Document reading (OCR) model",
+               "Reads PDFs and images added as knowledge sources.", type="model",
+               capability="ocr", impact=("Knowledge sources",), used_in=("knowledge/extract.py",)),
+    SettingDef("KNOWLEDGE_EMBED_MODEL", "guidance", "Embedding model",
+               "Turns guidance, requests and processes into vectors so guidance can be matched "
+               "by meaning, not only by shared words. Changing it needs items to be re-embedded.",
+               type="model", impact=("Agent creation", "Workflow planning", "Knowledge sources"),
+               used_in=("knowledge/embed.py",)),
+
+    # ── Guidance ranking with process knowledge ────────────────────────
+    SettingDef("GUIDANCE_PROCESS_RANKING", "guidance_ranking", "Rank against the process",
+               "When a build has a process document, also match guidance to its stages, "
+               "controls, risks, regulations and data — not only to the request. Finds guidance "
+               "the request never mentions (KYC screening for 'vendor onboarding'). One extra "
+               "embedding call per build.", type="bool",
+               impact=("Agent creation", "Workflow planning", "Refine with AI"),
+               used_in=("layers/knowledge_context_layer.py — resolve_guidance",
+                        "process/context.py — query_text")),
+    SettingDef("GUIDANCE_STAGE_RANKING", "guidance_ranking", "Rank per stage for workflow agents",
+               "Re-rank the guidance each workflow agent sees for the process stage it "
+               "performs, so the payment agent gets payment guidance and the intake agent "
+               "intake guidance. Applies to agent design and agent rule choice.", type="bool",
+               impact=("Workflow planning",),
+               used_in=("knowledge/retrieval.py — render(focus)",
+                        "layers/workflow/design_layer.py", "layers/workflow/rule_layers.py")),
+    SettingDef("GUIDANCE_PROCESS_REQUIREMENTS", "guidance_ranking",
+               "Task facts from the process (workflows)",
+               "Workflow builds have no request analysis, so guidance that applies only to "
+               "complex or conversational work could not be checked. On: the process "
+               "document's number of steps and interaction style stand in for it.",
+               type="bool", impact=("Workflow planning", "Refine with AI"),
+               used_in=("layers/knowledge_context_layer.py — derived_requirements",
+                        "process/context.py — derived_requirements")),
+    SettingDef("GUIDANCE_GOAL_WEIGHT", "guidance_ranking", "Weight: meaning of the request",
+               "How much matching the request's meaning counts. Keep it the largest weight so "
+               "the request leads.", type="float", minimum=0, maximum=50,
+               impact=("Guidance ranking",), used_in=("knowledge/retrieval.py — select",)),
+    SettingDef("GUIDANCE_PROCESS_WEIGHT", "guidance_ranking", "Weight: meaning of the process",
+               "How much matching the process document's meaning counts.", type="float",
+               minimum=0, maximum=50, impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — select",)),
+    SettingDef("GUIDANCE_PROCESS_WORD_WEIGHT", "guidance_ranking",
+               "Weight: each word shared with the process",
+               "Added for every word a guidance item shares with the process but not with the "
+               "request.", type="float", minimum=0, maximum=10, impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — select",)),
+    SettingDef("GUIDANCE_PROCESS_WORDS_MAX", "guidance_ranking", "Most process words counted",
+               "Cap on the shared process words counted per item, so a long document cannot "
+               "outweigh the request.", type="int", minimum=0, maximum=50, unit="words",
+               impact=("Guidance ranking",), used_in=("knowledge/retrieval.py — select",)),
+    SettingDef("GUIDANCE_STAGE_WEIGHT", "guidance_ranking", "Weight: meaning of the agent's stage",
+               "How much matching the stage's meaning counts when a workflow agent's guidance is "
+               "re-ranked.", type="float", minimum=0, maximum=50, impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — rank_for_stage",)),
+    SettingDef("GUIDANCE_STAGE_WORD_WEIGHT", "guidance_ranking",
+               "Weight: each word shared with the stage",
+               "Added for every word an item shares with the agent's stage.", type="float",
+               minimum=0, maximum=10, impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — rank_for_stage",)),
+    SettingDef("GUIDANCE_STAGE_WORDS_MAX", "guidance_ranking", "Most stage words counted",
+               "Cap on the shared stage words counted per item.", type="int", minimum=0,
+               maximum=50, unit="words", impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — rank_for_stage",)),
+    SettingDef("GUIDANCE_CONDITION_BOOST", "guidance_ranking", "Bonus: conditions confirmed",
+               "Added to an item whose conditions (risk level, data kind, complexity…) were all "
+               "checked against the build and hold — it is clearly about this build.",
+               type="float", minimum=0, maximum=50, impact=("Guidance ranking",),
+               used_in=("knowledge/retrieval.py — select",)),
+
     # ── Vault ──────────────────────────────────────────────────────────
     SettingDef("VAULT_ENABLED", "vault", "Vault on",
                "Off: nothing is read from or offered from the vault — tools fall back to the "
@@ -619,6 +756,18 @@ _ROUTE_JOBS = {
                        "Decides in the Orchestrator chat whether a missing capability needs a "
                        "new tool.",
                        "layers/agent/capability_gap_layer.py"),
+    "spec_revision": ("Rebuild specification revision",
+                      "When a tool or activity is rebuilt from an error, revises its "
+                      "specification so the new version does exactly what you asked.",
+                      "layers/codegen/feedback.py — rebuild-from-error"),
+    "input_schema": ("Workflow input schema",
+                     "Designs a workflow's run inputs — fields, types, nested shapes — and one "
+                     "realistic, consistent example to fill the run form with.",
+                     "layers/workflow/input_schema_layer.py"),
+    "workflow_revision": ("Refine with AI",
+                          "Turns an instruction into edits of a saved workflow, and repairs "
+                          "edits that would leave it invalid.",
+                          "layers/revision/intent_layer.py, layers/revision/repair_layer.py"),
     "prerequisite_analysis": ("Build prerequisites",
                               "Works out, before an agent or workflow is built, which "
                               "credentials, service URLs and facts it needs from you.",
@@ -638,6 +787,8 @@ def _route_defs() -> list[SettingDef]:
         used = (where, "core/decision.py — decide(route=…)", "llm_routes.py — route_for")
         impact = (("Tool & activity synthesis", "Orchestrator chat") if role == "capability_gap"
                   else ("Agent creation", "Workflow planning") if role == "prerequisite_analysis"
+                  else ("Workflow planning", "Workflow run form") if role == "input_schema"
+                  else ("Refine with AI",) if role == "workflow_revision"
                   else ("Tool & activity synthesis (code pipeline)",))
         defs += [
             SettingDef(f"{prefix}_MODEL", "model_routes", "Model", job, type="model",
@@ -646,7 +797,8 @@ def _route_defs() -> list[SettingDef]:
             SettingDef(f"{prefix}_EFFORT", "model_routes", "Reasoning effort",
                        "High thinks before answering (slower, better); None answers directly; "
                        "Omit leaves it to the model.", type="enum",
-                       options=("high", "none", "omit"), option_labels=_EFFORT_LABELS,
+                       options=("high", "medium", "low", "none", "omit"),
+                       option_labels=_EFFORT_LABELS,
                        default=route.reasoning_effort or "omit", group=title,
                        impact=impact, used_in=used),
             SettingDef(f"{prefix}_TIMEOUT_MS", "model_routes", "Timeout",
@@ -661,8 +813,158 @@ def _route_defs() -> list[SettingDef]:
     return defs
 
 
+#: Numeric settings: (at the minimum, at the maximum) — one short sentence each,
+#: shown under the control with the default, minimum and maximum. Every int and
+#: float setting must have an entry (tests/test_app_settings.py).
+EFFECTS: dict[str, tuple[str, str]] = {
+    "MODEL_CATALOG_REFRESH_HOURS": (
+        "0 turns automatic refresh off; the model list only updates when you press Refresh.",
+        "The list is re-read only once a month; new or deprecated models are noticed late."),
+    "TOOL_SERVICE_WAIT_SECONDS": (
+        "0 fails at once when the Tool Service is restarting — runs fail during a rebuild.",
+        "A call can hang up to 15 minutes when the Tool Service is really down."),
+    "DECISION_CONCURRENCY": (
+        "One planning call at a time — slow builds, but never rate limited.",
+        "Many calls at once — fastest, but a modest quota will hit rate limits."),
+    "DECISION_MAX_RETRIES": (
+        "A rate-limited call is not retried; the step falls back to its default at once.",
+        "Keeps retrying for a long time before giving up — builds stay slow under limits."),
+    "DECISION_RETRY_BASE_SECONDS": (
+        "Retries almost immediately and may be rate limited again.",
+        "Waits a minute or more between retries — builds stall under rate limits."),
+    "WORKFLOW_DESIGN_CONCURRENCY": (
+        "Agents of a workflow are designed one by one — slowest planning.",
+        "All agents designed at once — fastest, but heavy on the rate limit."),
+    "AGENT_CREATION_CONCURRENCY": (
+        "Agents are created on Mistral one by one.",
+        "All agents created at once — may hit Mistral's rate limit."),
+    "RULE_SELECTION_CONCURRENCY": (
+        "Rules are chosen for one agent at a time.",
+        "Rules chosen for all agents at once — may hit the rate limit."),
+    "TOOL_SYNTHESIS_CONCURRENCY": (
+        "Missing tools are built one at a time — long planning when several are needed.",
+        "Many tools built at once — heavy load on the Tool Service and the model quota."),
+    "REUSE_MIN_CONFIDENCE": (
+        "Any existing agent that looks related is reused, even a poor fit.",
+        "Existing agents are almost never reused; a new agent is designed every time."),
+    "WORKFLOW_REGISTRATION_WAIT": (
+        "Publishing reports 'pending' at once without waiting for the worker.",
+        "Publishing can wait up to 10 minutes for the worker to register the workflow."),
+    "WORKFLOW_MAX_VERSIONS": (
+        "Only the current version is kept — nothing to roll back to.",
+        "A long history is kept; the database grows with every save."),
+    "RAG_CHUNK_CHARS": (
+        "Small chunks: precise entities, but many more extraction calls per document.",
+        "Huge chunks: few calls, but entities and relations are extracted less precisely."),
+    "RAG_CHUNK_OVERLAP": (
+        "No overlap — facts split across a chunk boundary can be lost.",
+        "Large overlap — the same text is extracted again and again, wasting calls."),
+    "RAG_MAX_CHUNKS_PER_DOC": (
+        "Only the first chunk of each document is read.",
+        "A very large document can spend up to 1,000 extraction calls."),
+    "RAG_EXTRACTION_CONCURRENCY": (
+        "Chunks are extracted one at a time — slow ingestion.",
+        "Many chunks at once — fast, but likely to hit the rate limit."),
+    "RAG_TEXT_POLL_SECONDS": (
+        "Checks every second whether the document's text is ready — many requests.",
+        "Checks only every 2 minutes — ingestion starts later than it could."),
+    "RAG_TEXT_POLL_ATTEMPTS": (
+        "Gives up after one check — slow documents are reported as failed.",
+        "Keeps checking for a very long time before reporting a failure."),
+    "OBSERVABILITY_MAX_ATTR_CHARS": (
+        "Inputs and outputs in traces are clipped heavily — hard to debug.",
+        "Full inputs and outputs are kept — traces become very large."),
+    "OBSERVABILITY_MAX_LOG_LINES": (
+        "Only a few log lines are kept per span.",
+        "Very many log lines per span — large traces, slower Logs page."),
+    "UPLOAD_MAX_MB": (
+        "Only tiny files (1 MB) can be uploaded.",
+        "Files up to 500 MB are accepted — uploads and processing get slow."),
+    "PROCESS_DOC_MAX_KB": (
+        "Only very short process documents are accepted.",
+        "Process documents up to 10 MB are accepted — more prompt text per build."),
+    "PROCESS_MATCH_MIN_SCORE": (
+        "Any process that matches a single word may be used — wrong processes can be picked.",
+        "Only near-exact matches are used — process knowledge is rarely found automatically."),
+    "GUIDANCE_PACK_SIZE": (
+        "Only the single best guidance item is considered per build.",
+        "Up to 200 items considered — most decisions see more, weaker guidance."),
+    "GUIDANCE_VIEW_SIZE": (
+        "Each decision sees one guidance item — little context, easy to follow.",
+        "Each decision sees up to 30 items — long prompts, harder to follow them all."),
+    "GUIDANCE_VIEW_MIN": (
+        "0: no places are kept — common guidance can push rarer kinds out entirely.",
+        "Every kind of decision is topped up to its full share — larger, noisier packs."),
+    "KNOWLEDGE_SOURCE_MAX_MB": (
+        "Only tiny source files (1 MB) can be added on the Knowledge page.",
+        "Sources up to 500 MB — distilling them takes many model calls."),
+    "GUIDANCE_GOAL_WEIGHT": (
+        "0: the meaning of the request is ignored when ranking guidance.",
+        "The request's meaning outweighs everything else, process and stage included."),
+    "GUIDANCE_PROCESS_WEIGHT": (
+        "0: the process document's meaning is ignored when ranking guidance.",
+        "The process can outrank the request — guidance may drift from what was asked."),
+    "GUIDANCE_PROCESS_WORD_WEIGHT": (
+        "0: words shared with the process do not count.",
+        "Shared process words dominate — wordy items rank high whatever they say."),
+    "GUIDANCE_PROCESS_WORDS_MAX": (
+        "0: no process words are counted at all.",
+        "Up to 50 shared words count — a long process document can drown the request."),
+    "GUIDANCE_STAGE_WEIGHT": (
+        "0: a stage's meaning does not change an agent's guidance order.",
+        "The stage decides the order almost alone — the request barely matters."),
+    "GUIDANCE_STAGE_WORD_WEIGHT": (
+        "0: words shared with the agent's stage do not count.",
+        "Shared stage words dominate the order of an agent's guidance."),
+    "GUIDANCE_STAGE_WORDS_MAX": (
+        "0: no stage words are counted.",
+        "Up to 50 shared stage words count — long stages dominate the order."),
+    "GUIDANCE_CONDITION_BOOST": (
+        "0: confirmed conditions give no extra rank.",
+        "Items whose conditions hold always come first, however unrelated otherwise."),
+    "VAULT_AUDIT_RETENTION_DAYS": (
+        "0 keeps audit events forever — the audit table only grows.",
+        "Events are kept for up to 10 years."),
+    "VAULT_VERSION_HISTORY": (
+        "0 keeps no earlier values — a bad change cannot be rolled back.",
+        "50 earlier values are kept per entry (encrypted)."),
+    "VAULT_DEFAULT_EXPIRY_DAYS": (
+        "0: new entries never expire.",
+        "New entries expire after 10 years — effectively never."),
+    "VAULT_ROTATION_REMINDER_DAYS": (
+        "0 turns rotation reminders off.",
+        "Reminds only after 10 years — effectively never."),
+    "UI_API_TIMEOUT_SECONDS": (
+        "The browser gives up after 10 s — planning and tool builds will appear to fail.",
+        "Waits up to an hour for one call — a stuck request is noticed late."),
+    "UI_HEALTH_POLL_SECONDS": (
+        "Status checked every 5 s — current, but constant requests.",
+        "Status checked hourly — the indicator can be badly out of date."),
+    "UI_HEALTH_PAGE_POLL_SECONDS": (
+        "Health page refreshes every 5 s.",
+        "Health page refreshes hourly — reload it to see changes."),
+}
+
+#: Every model route's timeout (one per route) shares these.
+ROUTE_TIMEOUT_EFFECT = (
+    "5 s — a reasoning model rarely answers in time; calls fail or fall back.",
+    "Up to 30 min per call — a hung call holds the build that long.")
+
+
+def _with_effects(defs: list[SettingDef]) -> list[SettingDef]:
+    from dataclasses import replace
+
+    out = []
+    for d in defs:
+        effect = EFFECTS.get(d.key) or (
+            ROUTE_TIMEOUT_EFFECT if d.key.startswith("ROUTE_") and d.key.endswith("_TIMEOUT_MS")
+            else None)
+        out.append(replace(d, low_effect=effect[0], high_effect=effect[1]) if effect else d)
+    return out
+
+
 def all_defs() -> list[SettingDef]:
-    return DEFS + _route_defs()
+    return _with_effects(DEFS + _route_defs())
 
 
 #: Settings the frontend reads from /settings/public.

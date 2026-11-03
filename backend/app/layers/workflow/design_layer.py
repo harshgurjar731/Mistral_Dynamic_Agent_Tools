@@ -121,7 +121,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                     extra_instruction=" Write the controls and exceptions that apply into "
                                       "agent_instructions.",
                 )
-                guidance_text = guidance.block(ctx, "design") + archetype_block(cap)
+                guidance_text = guidance.block(ctx, "design", focus=cap.process_stage) + archetype_block(cap)
                 raw = await decide(
                     ctx.client,
                     model=settings.MISTRAL_ORCHESTRATOR_MODEL,

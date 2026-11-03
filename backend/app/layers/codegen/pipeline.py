@@ -173,6 +173,13 @@ async def _run_feedback(ctx: RequirementContext) -> CodeResolution:
     if ctx.resolution:
         return ctx.resolution
 
+    # Make the specification say what the user asked before anything is built,
+    # and turn their instructions into the checklist the generator follows.
+    from app.layers.codegen.feedback import revise_for_feedback
+
+    feedback = ctx.requirement.feedback or {}
+    await revise_for_feedback(ctx, expected_output=feedback.get("expected_output"))
+
     for attempt in range(1, MAX_FEEDBACK_BUILDS + 1):
         ctx.issues, ctx.smoke_problems = [], []
         await _R6.run(ctx)

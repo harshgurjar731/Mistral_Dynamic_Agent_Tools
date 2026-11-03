@@ -18,6 +18,7 @@ Chain, as assembled in ``app.layers``:
     AgentProvisioningLayer      create them                         (no LLM)
     StepTopologyLayer           what shape is the graph
     DataFlowLayer               how does data move through it
+    InputSchemaLayer            what a run needs from you, with a valid example
     WorkflowGuardrailLayer      what does the assembled path expose
     WorkflowRuleSelectionLayer  which optional workflow rules apply
     WorkflowValidationLayer     is it runnable, and does it follow its rules (no LLM)
@@ -42,6 +43,7 @@ from app.layers.workflow.finalize_layers import (
     WorkflowValidationLayer,
 )
 from app.layers.workflow.guardrail_layer import WorkflowGuardrailLayer
+from app.layers.workflow.input_schema_layer import InputSchemaLayer
 from app.layers.workflow.inventory_layer import ResourceInventoryLayer
 from app.layers.workflow.provisioning_layer import AgentProvisioningLayer
 from app.layers.workflow.reuse_layer import CapabilityReuseLayer
@@ -61,6 +63,7 @@ __all__ = [
     "AgentProvisioningLayer",
     "StepTopologyLayer",
     "DataFlowLayer",
+    "InputSchemaLayer",
     "WorkflowGuardrailLayer",
     "WorkflowValidationLayer",
     "WorkflowPersistenceLayer",

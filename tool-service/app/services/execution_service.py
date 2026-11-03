@@ -57,8 +57,12 @@ def _coerce_value(value: Any, definition: dict, lenient: bool) -> Any:
             except ValueError:
                 pass
     if ptype in ("number", "integer") and isinstance(value, str):
+        # Thousands separators and a leading currency sign are unambiguous in
+        # both policies: a workflow template renders 250000 as "250,000" or
+        # "$250,000" often enough that refusing it failed real runs.
+        text = value.strip().replace(",", "").lstrip("$£€¥₹").strip()
         try:
-            number = float(value.strip().replace(",", "")) if lenient else float(value.strip())
+            number = float(text)
             if ptype == "integer" and number.is_integer():
                 return int(number)
             if ptype == "number":

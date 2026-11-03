@@ -69,6 +69,7 @@ export type PlannerStepType =
   | "library_provisioned"
   | "topology"
   | "data_flow"
+  | "input_schema"
   | "workflow_guardrails"
   | "validation"
   | "tool_exists"
@@ -116,6 +117,7 @@ export const PLANNER_CARD_OWNER: Partial<Record<PlannerStepType, string>> = {
   agent_rules_selected: "agent_rule_selection",
   topology: "step_topology",
   data_flow: "data_flow",
+  input_schema: "input_schema",
   workflow_guardrails: "workflow_guardrail",
   workflow_rules_selected: "workflow_rule_selection",
   validation: "workflow_validation",
@@ -974,6 +976,56 @@ function DataFlowCard({ data }: { data: DataFlowData }) {
   );
 }
 
+interface InputSchemaData {
+  input_schema?: Array<{
+    name: string;
+    type?: string;
+    label?: string;
+    required?: boolean;
+    format?: string;
+    description?: string;
+  }>;
+  example_payload?: Record<string, unknown>;
+  reasoning?: string;
+}
+
+function exampleText(value: unknown): string {
+  if (value === undefined) return "upload";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+}
+
+function InputSchemaCard({ data }: { data: InputSchemaData }) {
+  const inputs = data.input_schema ?? [];
+  const example = data.example_payload ?? {};
+  return (
+    <CardShell icon={<ArrowRight className="size-3" />} title="Run inputs">
+      {inputs.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">This workflow needs no inputs to run.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {inputs.map((i) => (
+            <div key={i.name} className="text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium text-foreground">{i.label || i.name}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {i.type}
+                  {i.format ? ` · ${i.format}` : ""}
+                  {i.required === false ? " · optional" : ""}
+                </span>
+              </div>
+              <p className="truncate font-mono text-[10px] text-muted-foreground">
+                e.g. {exampleText(example[i.name])}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+      <Rationale text={data.reasoning} />
+    </CardShell>
+  );
+}
+
 function WorkflowGuardrailCard({ data }: { data: WorkflowGuardrailData }) {
   if (data.reviewed === false) {
     return (
@@ -1649,6 +1701,8 @@ export function renderPlannerCard(step: PlannerStep): ReactNode {
       return <TopologyCard data={c as TopologyData} />;
     case "data_flow":
       return <DataFlowCard data={c as DataFlowData} />;
+    case "input_schema":
+      return <InputSchemaCard data={c as InputSchemaData} />;
     case "workflow_guardrails":
       return <WorkflowGuardrailCard data={c as WorkflowGuardrailData} />;
     case "validation":

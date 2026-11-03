@@ -45,8 +45,14 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _rejects_effort(exc: Exception) -> bool:
+    """The model refused the ``reasoning_effort`` value (or reasoning altogether).
+
+    Seen verbatim: "reasoning_effort none is not supported for this model" and
+    "reasoning_effort is not enabled for this model".
+    """
     text = str(exc).lower()
-    return "reasoning_effort" in text and ("not supported" in text or "invalid" in text)
+    return "reasoning_effort" in text and any(
+        marker in text for marker in ("not supported", "not enabled", "invalid", "unsupported"))
 
 
 def extract_text(content: Any) -> str:

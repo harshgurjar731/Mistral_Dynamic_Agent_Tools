@@ -24,6 +24,41 @@ def _issue_key(issue: dict) -> tuple:
     return issue.get("code"), issue.get("step_id")
 
 
+async def validation_of(base_issues: list[dict], proposed: dict, client) -> dict:
+    """The proposal's validation, with the issues it introduces and resolves.
+
+    Shared by the validation layer and the repair loop, so a repair is judged
+    by exactly the checks the user's proposal is.
+    """
+    from pydantic import ValidationError
+
+    from app.services.workflow_engine.models import WorkflowDefinition
+    from app.services.workflow_engine.rule_validation import validate_with_rules
+
+    try:
+        definition = WorkflowDefinition(**proposed)
+    except ValidationError as e:
+        first = e.errors()[0] if e.errors() else {}
+        message = f"{'.'.join(str(p) for p in first.get('loc', ()))}: {first.get('msg', e)}"
+        issue = {"severity": "error", "code": "workflow.malformed",
+                 "message": f"The edited workflow is malformed — {message}",
+                 "step_id": None, "field": None}
+        return {"valid": False, "error_count": 1, "warning_count": 0,
+                "issues": [issue], "introduced": [issue], "resolved": []}
+
+    result = await validate_with_rules(definition, client=client)
+    issues = [i.model_dump() for i in result.issues]
+    before_all = {_issue_key(i) for i in base_issues}
+    after_all = {_issue_key(i) for i in issues}
+    return {
+        **result.model_dump(),
+        "issues": issues,
+        # Problems this change creates, and ones it clears.
+        "introduced": [i for i in issues if _issue_key(i) not in before_all],
+        "resolved": [i for i in base_issues if _issue_key(i) not in after_all],
+    }
+
+
 class RevisionValidationLayer(RevisionStepLayer):
     """Validate the proposed definition, and compare its issues with the base's."""
 
@@ -32,48 +67,22 @@ class RevisionValidationLayer(RevisionStepLayer):
     detail = "Runs the same structural checks and workflow rules as publishing."
 
     async def process(self, ctx: PipelineContext, next):
-        from pydantic import ValidationError
-
-        from app.services.workflow_engine.models import WorkflowDefinition
-        from app.services.workflow_engine.rule_validation import validate_with_rules
-
         spec = ctx.revision_spec
-        try:
-            definition = WorkflowDefinition(**spec.proposed)
-        except ValidationError as e:
-            first = e.errors()[0] if e.errors() else {}
-            message = f"{'.'.join(str(p) for p in first.get('loc', ()))}: {first.get('msg', e)}"
-            spec.validation = {
-                "valid": False, "error_count": 1, "warning_count": 0,
-                "issues": [{"severity": "error", "code": "workflow.malformed",
-                            "message": f"The edited workflow is malformed — {message}",
-                            "step_id": None, "field": None}],
-                "introduced": [], "resolved": [],
-            }
+        spec.validation = await validation_of(spec.base_issues, spec.proposed, ctx.client)
+        if any(i.get("code") == "workflow.malformed" for i in spec.validation["issues"]):
             ctx.set_layer_summary(self.name, "The edits produced a malformed workflow.")
             return await next(ctx)
 
-        result = await validate_with_rules(definition, client=ctx.client)
-        issues = [i.model_dump() for i in result.issues]
-
+        issues = spec.validation["issues"]
         before_errors = {_issue_key(i) for i in spec.base_issues if i.get("severity") == "error"}
         after_errors = {_issue_key(i) for i in issues if i.get("severity") == "error"}
-        before_all = {_issue_key(i) for i in spec.base_issues}
-        after_all = {_issue_key(i) for i in issues}
-
-        spec.validation = {
-            **result.model_dump(),
-            "issues": issues,
-            # Problems this change creates, and ones it clears.
-            "introduced": [i for i in issues if _issue_key(i) not in before_all],
-            "resolved": [i for i in spec.base_issues if _issue_key(i) not in after_all],
-        }
         fixed = len(before_errors - after_errors)
         added = len(after_errors - before_errors)
         ctx.set_layer_summary(
             self.name,
-            ("Valid" if result.valid else f"{result.error_count} error(s)")
-            + f", {result.warning_count} warning(s)"
+            ("Valid" if spec.validation.get("valid") else
+             f"{spec.validation.get('error_count', 0)} error(s)")
+            + f", {spec.validation.get('warning_count', 0)} warning(s)"
             + (f" — fixes {fixed} error(s)" if fixed else "")
             + (f" — introduces {added} error(s)" if added else ""),
         )

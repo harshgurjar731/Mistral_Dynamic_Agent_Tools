@@ -85,6 +85,10 @@ class SettingDef:
     group: Optional[str] = None
     #: A model setting that also accepts "none" (no fallback model).
     allow_none: bool = False
+    #: Numeric settings: what happens at the minimum and at the maximum, in a
+    #: short sentence each — shown under the control next to default/min/max.
+    low_effect: str = ""
+    high_effect: str = ""
 
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -293,6 +297,8 @@ class SettingsStore:
             "option_labels": dict(defn.option_labels),
             "min": defn.minimum,
             "max": defn.maximum,
+            "min_effect": defn.low_effect,
+            "max_effect": defn.high_effect,
             "unit": defn.unit,
             "capability": defn.capability,
             "group": defn.group,

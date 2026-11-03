@@ -48,6 +48,8 @@ export interface ResolvedField {
   undeclared: boolean;
   /** Steps that read this input, so the user sees why it is asked for. */
   usedBy: Array<{ id: string; type: string }>;
+  /** For JSON inputs with a declared schema: the expected value, as a placeholder. */
+  shape: string;
 }
 
 /* ── Inference ────────────────────────────────────────────────────────── */
@@ -227,9 +229,12 @@ export function resolveFields(def: WorkflowDefinition | undefined): ResolvedFiel
       placeholder:
         example !== undefined && example !== null && typeof example !== "object"
           ? String(example)
-          : (PLACEHOLDER[control] ?? ""),
+          : control === "json" && example !== undefined && example !== null
+            ? JSON.stringify(example, null, 2)
+            : (PLACEHOLDER[control] ?? ""),
       type,
       itemType: f.items === "number" || f.items === "integer" ? "number" : "string",
+      shape: shapeOf(f),
       inferred,
       undeclared: undeclared.has(f.name) && !declared.some((d) => d.name === f.name),
       usedBy: stepRefs
@@ -438,7 +443,7 @@ export function validate(r: ResolvedField, v: FieldValue | undefined): string | 
           (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
         )
           return "Must be a JSON object";
-        return null;
+        return schemaProblem(r.field.schema, parsed);
       } catch {
         return "Invalid JSON";
       }
@@ -571,13 +576,131 @@ export function exampleValue(r: ResolvedField): FieldValue {
       return r.options[0] ?? "";
     case "list":
       return r.itemType === "number" ? ["1", "2"] : ["first item", "second item"];
-    case "json":
+    case "json": {
+      const sample = r.field.schema ? sampleFromSchema(r.field.schema, r.name) : undefined;
+      if (sample !== undefined) return JSON.stringify(sample, null, 2);
       return r.type === "array" ? "[]" : "{}";
+    }
     case "long_text":
-      return r.description ? `Example: ${r.description}` : `Example ${r.label.toLowerCase()}`;
+      return `Sample ${r.label.toLowerCase()} for a test run — replace it with the real one.`;
     default:
-      return `Example ${r.label.toLowerCase()}`;
+      return `Sample ${r.label.toLowerCase()}`;
   }
+}
+
+/** The whole example run, as the JSON editor shows it. Documents are left out. */
+export function examplePayload(fields: ResolvedField[]): Record<string, unknown> {
+  const values: FormValues = {};
+  for (const r of fields) if (r.control !== "file") values[r.name] = exampleValue(r);
+  return buildPayload(
+    fields.filter((r) => r.control !== "file"),
+    values,
+  );
+}
+
+/* ── Nested schemas (object / array inputs) ───────────────────────────── */
+
+type Schema = Record<string, unknown>;
+
+function typeOf(schema: Schema): string {
+  const t = schema["type"];
+  if (Array.isArray(t)) return String(t.find((x) => x !== "null") ?? "string");
+  if (typeof t === "string") return t;
+  return schema["properties"] ? "object" : "string";
+}
+
+function propsOf(schema: Schema): Record<string, Schema> {
+  const p = schema["properties"];
+  return p && typeof p === "object" ? (p as Record<string, Schema>) : {};
+}
+
+function requiredOf(schema: Schema): string[] {
+  const r = schema["required"];
+  return Array.isArray(r) ? r.map(String) : [];
+}
+
+/** A value matching the schema — the shape a person has to fill in. */
+export function sampleFromSchema(schema: Schema, name = "", depth = 0): unknown {
+  if (depth > 5) return undefined;
+  if (schema["example"] !== undefined) return schema["example"];
+  const en = schema["enum"];
+  if (Array.isArray(en) && en.length) return en[0];
+  switch (typeOf(schema)) {
+    case "object": {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(propsOf(schema)))
+        out[k] = sampleFromSchema(v ?? {}, k, depth + 1);
+      return out;
+    }
+    case "array": {
+      const items = (schema["items"] as Schema | undefined) ?? { type: "string" };
+      return [sampleFromSchema(items, name, depth + 1)];
+    }
+    case "boolean":
+      return false;
+    case "integer":
+    case "number": {
+      const min = schema["minimum"];
+      return typeof min === "number" ? min : 0;
+    }
+    default:
+      return "";
+  }
+}
+
+/** The expected shape of a JSON input, for its placeholder. */
+function shapeOf(f: InputField): string {
+  if (!f.schema) return "";
+  const sample = sampleFromSchema(f.schema, f.name);
+  return sample === undefined ? "" : JSON.stringify(sample, null, 2);
+}
+
+/**
+ * The first missing required field or wrong-typed value against the input's
+ * schema, in words — the backend enforces the full schema; this catches the
+ * common mistakes before the run is sent.
+ */
+export function schemaProblem(
+  schema: Schema | undefined,
+  value: unknown,
+  path = "",
+): string | null {
+  if (!schema) return null;
+  const at = path ? `“${path}”` : "The value";
+  const t = typeOf(schema);
+  if (value === null || value === undefined) return null;
+  if (t === "object") {
+    if (typeof value !== "object" || Array.isArray(value)) return `${at} must be an object`;
+    const record = value as Record<string, unknown>;
+    for (const key of requiredOf(schema))
+      if (!(key in record) || record[key] === null || record[key] === "")
+        return `Missing required field “${path ? `${path}.` : ""}${key}”`;
+    for (const [k, v] of Object.entries(propsOf(schema))) {
+      if (!(k in record)) continue;
+      const problem = schemaProblem(v, record[k], path ? `${path}.${k}` : k);
+      if (problem) return problem;
+    }
+    return null;
+  }
+  if (t === "array") {
+    if (!Array.isArray(value)) return `${at} must be a list`;
+    const items = schema["items"] as Schema | undefined;
+    for (let i = 0; i < value.length; i++) {
+      const problem = schemaProblem(items, value[i], `${path}[${i}]`);
+      if (problem) return problem;
+    }
+    return null;
+  }
+  if ((t === "number" || t === "integer") && typeof value !== "number")
+    return `${at} must be a number`;
+  if (t === "integer" && typeof value === "number" && !Number.isInteger(value))
+    return `${at} must be a whole number`;
+  if (t === "boolean" && typeof value !== "boolean") return `${at} must be true or false`;
+  if (t === "string" && typeof value !== "string") return `${at} must be text`;
+  const en = schema["enum"];
+  if (Array.isArray(en) && en.length && !en.includes(value as never))
+    return `${at} must be one of: ${en.join(", ")}`;
+  return null;
 }
 
 /* ── Last input ───────────────────────────────────────────────────────── */

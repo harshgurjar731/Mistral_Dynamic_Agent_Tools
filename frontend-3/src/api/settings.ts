@@ -36,6 +36,9 @@ export interface SettingItem {
   unit: string | null;
   min: number | null;
   max: number | null;
+  /** Numeric settings: what happens at the minimum / maximum, in a sentence. */
+  min_effect?: string;
+  max_effect?: string;
   capability: string | null;
   group: string | null;
   allow_none: boolean;

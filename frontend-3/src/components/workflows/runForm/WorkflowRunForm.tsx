@@ -41,6 +41,7 @@ import { DocumentInput } from "./DocumentInput";
 import {
   buildPayload,
   emptyDocuments,
+  examplePayload,
   exampleValue,
   initialValue,
   isDocumentValue,
@@ -360,7 +361,7 @@ function FieldControl({
             rows={5}
             spellCheck={false}
             value={text}
-            placeholder={r.type === "array" ? "[]" : "{}"}
+            placeholder={r.shape || r.placeholder || (r.type === "array" ? "[]" : "{}")}
             onChange={(e) => onChange(e.target.value)}
             onBlur={onBlur}
             className={cn(base, "font-mono")}
@@ -750,6 +751,20 @@ export function WorkflowRunForm({
   };
 
   const fillExample = () => {
+    if (mode === "json") {
+      // The editor gets the whole example run, merged under anything typed.
+      let current: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(jsonText || "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+          current = parsed as Record<string, unknown>;
+      } catch {
+        /* invalid text is replaced by the example */
+      }
+      setJsonText(JSON.stringify({ ...examplePayload(fields), ...current }, null, 2));
+      setJsonError(null);
+      return;
+    }
     setValues((prev) => {
       const next = { ...prev };
       // Documents are left alone: an example cannot stand in for one, and an
@@ -873,7 +888,7 @@ export function WorkflowRunForm({
         ) : null}
 
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {usesForm && mode === "form" ? (
+          {usesForm ? (
             <button
               type="button"
               onClick={fillExample}

@@ -50,6 +50,7 @@ from app.layers.revision import (
     RevisionIntentLayer,
     RevisionNormaliseLayer,
     RevisionProposalLayer,
+    RevisionRepairLayer,
     RevisionValidationLayer,
 )
 from app.layers.workflow import (
@@ -58,6 +59,7 @@ from app.layers.workflow import (
     AgentProvisioningLayer,
     CapabilityReuseLayer,
     DataFlowLayer,
+    InputSchemaLayer,
     ExecutionModeLayer,
     GoalDecompositionLayer,
     ResourceInventoryLayer,
@@ -160,6 +162,8 @@ workflow_pipeline.add(StepTopologyLayer())
 # After the graph exists, before data flow wires the review steps it adds.
 workflow_pipeline.add(OversightPlacementLayer())
 workflow_pipeline.add(DataFlowLayer())
+# Its own decision: the run form's inputs and a valid, coherent example.
+workflow_pipeline.add(InputSchemaLayer())
 workflow_pipeline.add(WorkflowGuardrailLayer())
 workflow_pipeline.add(WorkflowRuleSelectionLayer())
 workflow_pipeline.add(WorkflowValidationLayer())
@@ -182,5 +186,7 @@ revision_pipeline.add(RevisionIntentLayer())
 revision_pipeline.add(RevisionApplyLayer())
 revision_pipeline.add(RevisionNormaliseLayer())
 revision_pipeline.add(RevisionValidationLayer())
+# Model-made edits that failed or introduced errors go back to the editor once or twice.
+revision_pipeline.add(RevisionRepairLayer())
 revision_pipeline.add(RevisionDiffLayer())
 revision_pipeline.add(RevisionProposalLayer())

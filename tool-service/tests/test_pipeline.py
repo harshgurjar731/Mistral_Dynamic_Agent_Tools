@@ -23,7 +23,9 @@ def test_activity_built_first_time(clean_db, fake_llm):
     assert result["version"] == 1 and result["tool_id"]
     record = clean_db.get(ToolRecord, result["tool_id"])
     assert record.is_active and record.purpose == "activity" and record.output_schema_json
-    assert fake.roles() == ["codegen"]  # two worked examples → no test-plan call
+    # Realistic inputs are always planned for an activity (the scripted model
+    # has none, so the plan degrades to examples + schema cases).
+    assert fake.roles() == ["testplan", "codegen"]
 
 
 def test_repair_uses_the_diagnostic(clean_db, fake_llm):
@@ -40,7 +42,7 @@ def test_same_failure_twice_restarts_fresh(clean_db, fake_llm, monkeypatch):
     fake = fake_llm([ALWAYS_REJECTS, ALWAYS_REJECTS, GOOD_GST])
     result = run_synthesis(gst_spec(), SessionLocal)
     assert result["status"] == "approved", result
-    assert [r for r in fake.roles()] == ["codegen", "repair", "codegen_fresh"]
+    assert [r for r in fake.roles()] == ["testplan", "codegen", "repair", "codegen_fresh"]
     fresh_messages = fake.calls[-1][1]
     assert len(fresh_messages) == 2, "a fresh restart must not carry the old conversation"
     assert "Earlier attempts" in fresh_messages[-1]["content"]
@@ -93,7 +95,7 @@ def test_reference_agreeing_with_code_corrects_the_example(clean_db, fake_llm):
     fake = fake_llm([GOOD_GST, REFERENCE_GST])
     result = run_synthesis(gst_spec(examples=WRONG_EXAMPLES), SessionLocal)
     assert result["status"] == "approved", result
-    assert fake.roles() == ["codegen", "arbiter"], "no repair: the code was right"
+    assert fake.roles() == ["testplan", "codegen", "arbiter"], "no repair: the code was right"
     assert result["corrected_examples"][0]["case_id"] == "example_1"
     assert result["examples"][0]["output"] == {"gst_amount": 18.0, "grand_total": 118.0}
     assert any("example_1 corrected" in w for w in result["warnings"])
@@ -119,7 +121,7 @@ def test_reference_agreeing_with_example_drives_repair(clean_db, fake_llm):
     fake = fake_llm([WRONG_RATE_GST, REFERENCE_GST, GOOD_GST])
     result = run_synthesis(gst_spec(), SessionLocal)
     assert result["status"] == "approved", result
-    assert fake.roles() == ["codegen", "arbiter", "repair"]
+    assert fake.roles() == ["testplan", "codegen", "arbiter", "repair"]
     assert "reference implementation confirms" in fake.calls[-1][1][-1]["content"]
 
 

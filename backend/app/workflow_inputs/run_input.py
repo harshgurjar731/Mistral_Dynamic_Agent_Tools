@@ -104,7 +104,9 @@ def _check_field(definition, field: dict, value: Any) -> list[str]:
         return [] if isinstance(value, bool) else [f"{label} must be true or false"]
 
     if kind == "object":
-        return [] if isinstance(value, dict) else [f"{label} must be a JSON object"]
+        if not isinstance(value, dict):
+            return [f"{label} must be a JSON object"]
+        return _nested_problems(label, field, value)
 
     if kind == "array":
         if not isinstance(value, list):
@@ -114,9 +116,43 @@ def _check_field(definition, field: dict, value: Any) -> list[str]:
             return [f"every entry of {label} must be a number"]
         if items == "string" and not all(isinstance(v, str) for v in value):
             return [f"every entry of {label} must be text"]
-        return []
+        return _nested_problems(label, field, value)
 
     return []
+
+
+def _nested_problems(label: str, field: dict, value: Any) -> list[str]:
+    """A structured input's value against its nested ``schema``, when it declares one.
+
+    The schema comes from the activity parameter the input feeds
+    (``app.workflow_inputs.designer``): a record missing a field the activity
+    requires is refused here, with the field named, instead of failing inside
+    the activity after the run has started.
+    """
+    nested = field.get("schema")
+    if not isinstance(nested, dict):
+        return []
+    try:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator(nested)
+        errors = sorted(validator.iter_errors(value), key=lambda e: list(e.absolute_path))
+    except ImportError:  # pragma: no cover — declared in requirements
+        return []
+    except Exception:  # noqa: BLE001 — an unusable nested schema checks nothing
+        return []
+    problems = []
+    for error in errors[:3]:
+        where = ".".join(str(p) for p in error.absolute_path)
+        problems.append(f"{label}{'.' + where if where else ''}: {error.message}")
+    return problems
+
+
+def check_value(field: dict, value: Any) -> list[str]:
+    """The run check for one non-document field's value, without a workflow."""
+    if schema.normalise_type(field.get("type")) == "file":
+        return []
+    return _check_field(None, {**field, "name": str(field.get("name") or "input")}, value)
 
 
 def _documents_ok(workflow_name: str, field_name: str, refs: list[dict]) -> list[str]:

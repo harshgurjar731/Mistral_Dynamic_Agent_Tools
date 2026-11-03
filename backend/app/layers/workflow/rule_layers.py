@@ -71,7 +71,7 @@ class WorkflowAgentRulesLayer(WorkflowStepLayer):
                 result = await select.select_rules(
                     ctx.client, "agent", subject, phase=f"rule selection ({cap.id})",
                     extra=process_knowledge.block(ctx, "rules", focus=cap.process_stage)
-                    + guidance.block(ctx, "agent_rules"),
+                    + guidance.block(ctx, "agent_rules", focus=cap.process_stage),
                 )
                 process_knowledge.record_refs(ctx, self.name, result, target=cap.id)
                 guidance.record_refs(ctx, self.name, result, target=cap.id)

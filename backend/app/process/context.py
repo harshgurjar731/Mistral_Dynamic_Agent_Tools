@@ -361,6 +361,83 @@ def _v2_view(ctx: dict, view: str, stages: list[dict]) -> list[str]:
     return [o for o in out if o]
 
 
+# ── Text for ranking build guidance ────────────────────────────────────────
+#
+# Guidance is ranked against what the build is about. The goal is one line;
+# the process says far more — its stages, controls, risks, regulations and
+# data — so these give retrieval that text, for the whole process and for
+# each stage. Plain words only: no reference ids, no layout.
+
+
+def _words(item: dict, *keys: str) -> str:
+    parts = []
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, (list, tuple)):
+            parts.extend(str(v) for v in value if v not in (None, ""))
+        elif value not in (None, "", {}):
+            parts.append(str(value))
+    return " ".join(parts)
+
+
+def query_text(ctx: dict, *, limit: int = 4000) -> str:
+    """The process in words, for ranking guidance against it."""
+    if not ctx:
+        return ""
+    head = ctx.get("process") or {}
+    parts = [str(head.get("name") or ""), str(ctx.get("objective") or "")]
+    parts += [_words(s, "name", "purpose", "inputs", "outputs") for s in ctx.get("stages") or []]
+    parts += [_words(c, "description", "regulation") for c in ctx.get("controls") or []]
+    parts += [_words(r, "description", "mitigation") for r in ctx.get("risks") or []]
+    parts += [_words(r, "name", "requirement") for r in ctx.get("regulations") or []]
+    parts += [_words(d, "name", "classification", "fields") for d in ctx.get("data_entities") or []]
+    parts += [_words(e, "condition", "handling") for e in ctx.get("exceptions") or []]
+    return " ".join(p for p in parts if p.strip())[:limit]
+
+
+def stage_texts(ctx: dict, *, limit: int = 1500) -> dict[str, str]:
+    """``{stage ref: text}`` — each stage with the controls, risks and data that concern it."""
+    out: dict[str, str] = {}
+    if not ctx:
+        return out
+    for stage in ctx.get("stages") or []:
+        sid = str(stage.get("id") or "")
+        own_controls = {str(c) for c in stage.get("controls") or []}
+        controls = _related_to(ctx.get("controls") or [], {sid}, own_controls)
+        risks = _related_to(ctx.get("risks") or [], {sid}, set())
+        io = {str(v).lower() for v in (stage.get("inputs") or []) + (stage.get("outputs") or [])}
+        data = [d for d in ctx.get("data_entities") or []
+                if str(d.get("name") or "").lower() in io or sid in map(str, d.get("applies_to") or [])]
+        parts = [_words(stage, "name", "purpose", "inputs", "outputs", "actor", "actor_type")]
+        parts += [_words(c, "description", "regulation") for c in controls]
+        parts += [_words(r, "description", "mitigation") for r in risks]
+        parts += [_words(d, "name", "classification", "fields") for d in data]
+        out[stage["_ref"]] = " ".join(p for p in parts if p.strip())[:limit]
+    return out
+
+
+#: What a process document says about the work, mapped to the requirement
+#: facts guidance conditions use (``requirements.complexity`` / ``.task_type``).
+_HORIZON_COMPLEXITY = {"single_step": "simple", "few_steps": "moderate", "many_steps": "complex",
+                       "long_running": "complex", "multi_day": "complex"}
+_MODE_TASK = {"user_dialogue": "conversation"}
+
+
+def derived_requirements(content: Optional[dict]) -> dict:
+    """Requirement facts a process document settles; only the ones it does."""
+    profile = (content or {}).get("execution_profile") or {}
+    if not isinstance(profile, dict):
+        return {}
+    out = {}
+    complexity = _HORIZON_COMPLEXITY.get(str(profile.get("task_horizon") or "").lower())
+    if complexity:
+        out["complexity"] = complexity
+    task = _MODE_TASK.get(str(profile.get("interaction_mode") or "").lower())
+    if task:
+        out["task_type"] = task
+    return out
+
+
 def refs_instruction(extra: str = "") -> str:
     return (
         "\n\nPROCESS REFERENCES: also include in your JSON output a top-level \"process_refs\" "

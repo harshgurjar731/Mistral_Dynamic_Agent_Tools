@@ -8,6 +8,7 @@ that trades one defect for another; the evidence invites a fix.
 
 from __future__ import annotations
 
+from app.synthesis.prompts.common import directives_of
 from app.synthesis.spec import Candidate, SynthesisSpec, Verdict
 
 _GUIDANCE = {
@@ -35,9 +36,21 @@ def repair_request(spec: SynthesisSpec, verdict: Verdict) -> str:
         f"Your module failed verification at the '{verdict.stage}' check.\n\n"
         f"{verdict.diagnostic}\n\n"
         f"{guidance}\n"
+        "Find the root cause (read the traceback and the failing input) and fix that, "
+        "not the symptom; keep everything that already passes."
+        f"{_instructions_reminder(spec)}\n"
         f"Return the COMPLETE corrected module — `def run(**kwargs) -> dict` — "
         f"with no fences and no explanation."
     )
+
+
+def _instructions_reminder(spec: SynthesisSpec) -> str:
+    """The user's rebuild instructions, restated so a repair cannot undo them."""
+    items = directives_of(spec)
+    if not items:
+        return ""
+    return ("\n\nThe user's instructions still apply in full — the fix must keep every one:\n"
+            + "\n".join(f"  {i}. {item}" for i, item in enumerate(items, 1)))
 
 
 def fresh_summary(candidate: Candidate) -> str:

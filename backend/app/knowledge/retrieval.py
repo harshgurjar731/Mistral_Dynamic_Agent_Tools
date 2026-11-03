@@ -8,8 +8,13 @@ Runs once per build, with no model call (one optional embedding call):
     conditions  checked against the run's facts; an item whose conditions are
                 false is dropped, an unknown condition keeps it (marked)
     rank        lexical overlap with the goal, strength, specificity, and cosine
-                similarity when the items and the goal have embeddings
-    pack        the top items, sliced per layer view by category
+                similarity when the items and the goal have embeddings — plus,
+                when the run has a process document, the same two signals
+                against the process (weighted below the goal, so the request
+                still leads)
+    pack        the top items, with a few places kept for every layer view,
+                sliced per view by category; a view asked for one process
+                stage is re-ranked for that stage
 
 The pack is what layers read (``app.knowledge.pipeline.block``). An empty pack
 means no guidance: nothing is set, and every prompt is unchanged.
@@ -26,6 +31,26 @@ from app.catalog.match import GOAL_STOPWORDS, tokens
 logger = logging.getLogger(__name__)
 
 STRENGTH_WEIGHT = {"must": 3.0, "avoid": 2.5, "should": 1.5, "may": 0.5}
+
+#: Ranking weights: Settings → Process knowledge → Guidance ranking. The goal is
+#: what was asked; the process and a stage say what the work involves. Process
+#: and stage signals are capped and weighted below the goal by default so a
+#: long document cannot drown the request. Read on every call (live).
+_WEIGHT_DEFAULTS = {
+    "GUIDANCE_GOAL_WEIGHT": 6.0, "GUIDANCE_PROCESS_WEIGHT": 3.5,
+    "GUIDANCE_PROCESS_WORD_WEIGHT": 0.4, "GUIDANCE_PROCESS_WORDS_MAX": 6,
+    "GUIDANCE_STAGE_WEIGHT": 5.0, "GUIDANCE_STAGE_WORD_WEIGHT": 0.6,
+    "GUIDANCE_STAGE_WORDS_MAX": 8, "GUIDANCE_CONDITION_BOOST": 3.0,
+}
+
+
+def weight(name: str) -> float:
+    from app.config import settings
+
+    try:
+        return float(getattr(settings, name))
+    except (AttributeError, TypeError, ValueError):
+        return float(_WEIGHT_DEFAULTS[name])
 STRENGTH_LABEL = {"must": "MUST", "avoid": "AVOID", "should": "SHOULD", "may": "MAY"}
 
 #: Which layer views each guidance category is shown to, unless an item names
@@ -175,8 +200,17 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def select(goal: str, *, concept_ids: Iterable[str] = (), facts: Optional[dict] = None,
            subject: str = "both", item_ids: Optional[Iterable[int]] = None,
            query_vector: Optional[list[float]] = None, limit: int = 24,
-           items: Optional[list[dict]] = None) -> list[dict]:
-    """Rank the guidance for a run. Each result carries ``score`` and ``applies``."""
+           items: Optional[list[dict]] = None, process_text: str = "",
+           process_vector: Optional[list[float]] = None, view_min: int = 0,
+           keep_vectors: bool = False) -> list[dict]:
+    """Rank the guidance for a run. Each result carries ``score`` and ``applies``.
+
+    ``process_text`` / ``process_vector``: the run's process, as extra ranking
+    signals. ``view_min``: after the top ``limit``, add the next-best items of
+    any layer view left with fewer than this many, so one category cannot
+    crowd another out. ``keep_vectors``: keep each item's embedding (as
+    ``_vector``) for per-stage re-ranking.
+    """
     from app.knowledge import store as knowledge_store
 
     if items is None:
@@ -186,6 +220,10 @@ def select(goal: str, *, concept_ids: Iterable[str] = (), facts: Optional[dict] 
     facts = facts or {}
     scope = scope_concepts(concept_ids)
     goal_tokens = tokens(goal, GOAL_STOPWORDS)
+    process_tokens = tokens(process_text, GOAL_STOPWORDS) - goal_tokens if process_text else set()
+    w_goal, w_process = weight("GUIDANCE_GOAL_WEIGHT"), weight("GUIDANCE_PROCESS_WEIGHT")
+    w_word, words_max = weight("GUIDANCE_PROCESS_WORD_WEIGHT"), int(weight("GUIDANCE_PROCESS_WORDS_MAX"))
+    w_condition = weight("GUIDANCE_CONDITION_BOOST")
     depth_cache: dict[str, int] = {}
 
     def depth(cid: Optional[str]) -> int:
@@ -218,17 +256,46 @@ def select(goal: str, *, concept_ids: Iterable[str] = (), facts: Optional[dict] 
         score = STRENGTH_WEIGHT.get(item.get("strength") or "should", 1.0)
         score += overlap * 1.0
         if applies == "true" and item.get("conditions"):
-            score += 3.0  # its conditions were checked and hold: it is about this run
+            score += w_condition  # its conditions were checked and hold: it is about this run
         score += depth(cid) * 0.5
+        if process_tokens:
+            score += w_word * min(len(process_tokens & text_tokens), words_max)
         if query_vector is not None and item.get("embedding"):
-            score += 6.0 * max(0.0, _cosine(query_vector, item["embedding"]))
+            score += w_goal * max(0.0, _cosine(query_vector, item["embedding"]))
+        if process_vector is not None and item.get("embedding"):
+            score += w_process * max(0.0, _cosine(process_vector, item["embedding"]))
         out = {k: v for k, v in item.items() if k != "embedding"}
+        if keep_vectors and item.get("embedding"):
+            out["_vector"] = item["embedding"]
         out["score"] = round(score, 3)
         out["applies"] = applies
         scored.append((score, out))
 
     scored.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
-    return [entry for _, entry in scored[: max(1, limit)]]
+    ranked = [entry for _, entry in scored]
+    chosen = ranked[: max(1, limit)]
+    if view_min > 0 and len(ranked) > len(chosen):
+        chosen = _fill_views(chosen, ranked[len(chosen):], view_min, extra=max(1, limit // 2))
+    return chosen
+
+
+def _fill_views(chosen: list[dict], rest: list[dict], view_min: int, *, extra: int) -> list[dict]:
+    """Give every view at least ``view_min`` items, taking the best of the rest."""
+    counts: dict[str, int] = {}
+    for item in chosen:
+        for view in views_for(item):
+            counts[view] = counts.get(view, 0) + 1
+    added = 0
+    for item in rest:
+        if added >= extra:
+            break
+        if not any(counts.get(v, 0) < view_min for v in views_for(item)):
+            continue
+        chosen.append(item)
+        added += 1
+        for view in views_for(item):
+            counts[view] = counts.get(view, 0) + 1
+    return chosen
 
 
 # ── Pack and views ─────────────────────────────────────────────────────────
@@ -242,12 +309,16 @@ def views_for(item: dict) -> tuple[str, ...]:
     return tuple(item.get("layers") or ()) or CATEGORY_VIEWS.get(item.get("category") or "", ("design",))
 
 
-def build_pack(items: list[dict], *, mode: str, message: str = "") -> dict:
+def build_pack(items: list[dict], *, mode: str, message: str = "",
+               stages: Optional[dict[str, dict]] = None) -> dict:
+    """The run's guidance. ``stages``: ``{stage ref: {"text", "vector"?}}`` for
+    re-ranking a view for one process stage (``render(..., focus=)``)."""
     views: dict[str, list[int]] = {}
     for item in items:
         for view in views_for(item):
             views.setdefault(view, []).append(item["id"])
     return {
+        "stages": stages or {},
         "enabled": True,
         "mode": mode,
         "message": message,
@@ -259,13 +330,49 @@ def build_pack(items: list[dict], *, mode: str, message: str = "") -> dict:
     }
 
 
-def render(pack: dict, view: str, *, limit: int = 6) -> str:
-    """The guidance block for one view; "" when the view has none."""
+def _stage_key(focus: Optional[str]) -> str:
+    focus = str(focus or "").strip()
+    if not focus:
+        return ""
+    return focus if focus.startswith("stage:") else f"stage:{focus.split(':', 1)[-1]}"
+
+
+def rank_for_stage(items: list[dict], stage: Optional[dict]) -> list[dict]:
+    """``items`` re-ordered for one process stage: its words and meaning added
+    to each item's run score. Unchanged without the stage."""
+    if not stage or not (stage.get("text") or stage.get("vector")):
+        return list(items)
+    stage_tokens = tokens(stage.get("text") or "", GOAL_STOPWORDS)
+    vector = stage.get("vector")
+    w_stage, w_word = weight("GUIDANCE_STAGE_WEIGHT"), weight("GUIDANCE_STAGE_WORD_WEIGHT")
+    words_max = int(weight("GUIDANCE_STAGE_WORDS_MAX"))
+
+    def score(item: dict) -> float:
+        text_tokens = tokens(" ".join([item.get("title", ""), item.get("body", ""),
+                                       " ".join(item.get("tags") or [])]), GOAL_STOPWORDS)
+        value = float(item.get("score") or 0.0)
+        value += w_word * min(len(stage_tokens & text_tokens), words_max)
+        if vector is not None and item.get("_vector"):
+            value += w_stage * max(0.0, _cosine(vector, item["_vector"]))
+        return value
+
+    return sorted(items, key=lambda i: (-score(i), i["id"]))
+
+
+def render(pack: dict, view: str, *, limit: int = 6, focus: Optional[str] = None) -> str:
+    """The guidance block for one view; "" when the view has none.
+
+    ``focus``: a process stage (``stage:intake``). The view's items are then
+    re-ranked for that stage, so each agent of a workflow gets the guidance
+    for its own part of the process.
+    """
     ids = (pack.get("views") or {}).get(view) or []
     if not ids:
         return ""
     by_id = {i["id"]: i for i in pack.get("items") or []}
-    chosen = [by_id[i] for i in ids if i in by_id][:limit]
+    candidates = [by_id[i] for i in ids if i in by_id]
+    stage = (pack.get("stages") or {}).get(_stage_key(focus))
+    chosen = rank_for_stage(candidates, stage)[:limit]
     if not chosen:
         return ""
     lines = ["## Build guidance — best practices for this decision"]

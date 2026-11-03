@@ -42,7 +42,10 @@ class ActivityProfile(CodeProfile):
                           "use a connector step for that")
 
     def wants_llm_cases(self, spec: SynthesisSpec) -> bool:
-        return len([e for e in spec.examples if e.output is not None]) < 2
+        # Always: worked examples pin the arithmetic, but the inputs a step
+        # really receives (upstream agents' JSON, rows with optional fields
+        # missing) are what break an activity at run time.
+        return True
 
     def check_determinism(self, spec: SynthesisSpec) -> bool:
         return spec.kind == "pure"

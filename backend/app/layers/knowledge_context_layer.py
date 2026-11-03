@@ -40,8 +40,14 @@ def guidance_request(ctx: PipelineContext) -> dict:
 
 
 async def resolve_guidance(ctx: PipelineContext, *, goal: str, concept_ids: Iterable[str],
-                           facts: Optional[dict] = None, subject: str = "both") -> Optional[dict]:
+                           facts: Optional[dict] = None, subject: str = "both",
+                           process: Optional[dict] = None) -> Optional[dict]:
     """Build and attach the run's guidance pack. Returns it, or None when there is none.
+
+    ``process``: the run's process context (``app.process.context.build``).
+    With it, guidance is ranked against the process as well as the goal, and
+    each stage's text is kept so a view can be ranked for one stage. Without
+    it, ranking is exactly the goal-only ranking.
 
     Never raises: guidance improves a build, it never stops one.
     """
@@ -61,11 +67,26 @@ async def resolve_guidance(ctx: PipelineContext, *, goal: str, concept_ids: Iter
             ids=item_ids if mode == "selected" else None, embedding=True)
         if not candidates:
             return None
-        query_vector = None
+        from app.process import context as pk_context
+
+        use_process = bool(process) and settings.GUIDANCE_PROCESS_RANKING
+        use_stages = bool(process) and settings.GUIDANCE_STAGE_RANKING
+        process_text = pk_context.query_text(process) if use_process else ""
+        stage_texts = pk_context.stage_texts(process) if use_stages else {}
+        query_vector = process_vector = None
+        stage_vectors: dict[str, list[float]] = {}
         if any(c.get("embedding") for c in candidates):
             from app.knowledge import embed
 
             query_vector = await embed.embed_query(ctx.client, goal)
+            if query_vector is not None and (process_text or stage_texts):
+                # One call for the process and all of its stages.
+                keys = list(stage_texts)
+                texts = ([process_text] if process_text else []) + [stage_texts[k] for k in keys]
+                vectors = await embed.embed_texts(ctx.client, [t[:4000] or "-" for t in texts]) or []
+                if process_text and vectors:
+                    process_vector, vectors = vectors[0], vectors[1:]
+                stage_vectors = dict(zip(keys, vectors))
         if query_vector is None:
             for c in candidates:
                 c.pop("embedding", None)
@@ -73,16 +94,37 @@ async def resolve_guidance(ctx: PipelineContext, *, goal: str, concept_ids: Iter
             retrieval.select, goal, concept_ids=list(concept_ids), facts=facts or {},
             subject=subject, item_ids=item_ids if mode == "selected" else None,
             query_vector=query_vector, limit=max(1, int(settings.GUIDANCE_PACK_SIZE)),
-            items=candidates)
+            items=candidates, process_text=process_text, process_vector=process_vector,
+            view_min=view_min(),
+            keep_vectors=bool(stage_vectors))
     except Exception as e:
         logger.warning("Guidance resolution failed: %s", e, exc_info=True)
         return None
     if not ranked:
         return None
-    pack = retrieval.build_pack(ranked, mode=mode)
+    stages = {ref: {"text": text, **({"vector": stage_vectors[ref]} if ref in stage_vectors else {})}
+              for ref, text in stage_texts.items() if text}
+    pack = retrieval.build_pack(ranked, mode=mode, stages=stages)
     ctx.metadata[guidance.CONTEXT_KEY] = pack
     ctx.metadata[guidance.USAGE_KEY] = {}
     return pack
+
+
+def view_min() -> int:
+    """Places every layer view keeps in the pack (Settings: GUIDANCE_VIEW_MIN), ≤ the view size."""
+    from app.config import settings
+
+    return max(0, min(int(settings.GUIDANCE_VIEW_MIN), max(1, int(settings.GUIDANCE_VIEW_SIZE))))
+
+
+def derived_requirements(content) -> Optional[dict]:
+    """Requirement facts from the process document, when that is switched on."""
+    from app.config import settings
+    from app.process import context as pk_context
+
+    if not settings.GUIDANCE_PROCESS_REQUIREMENTS:
+        return None
+    return pk_context.derived_requirements(content) or None
 
 
 def _guidance_event(pack: Optional[dict], *, mode: str) -> dict:
@@ -176,10 +218,16 @@ class KnowledgeContextLayer(Layer):
         pc, process_summary = await self._resolve_process(ctx, goal, scope)
 
         process_concepts = [d.get("concept_id") for d in (pc or {}).get("documents") or []]
-        facts = facts_from((pc or {}).get("facts"), ctx.requirements if self.pipeline == "agent" else None)
+        requirements = ctx.requirements if self.pipeline == "agent" else None
+        if requirements is None and pc:
+            # A workflow build has no requirement analysis; what the process
+            # document settles (complexity, conversational or not) stands in,
+            # so guidance conditioned on it is checked instead of "unknown".
+            requirements = derived_requirements(pc.get("facts"))
+        facts = facts_from((pc or {}).get("facts"), requirements)
         pack = await resolve_guidance(
             ctx, goal=goal, concept_ids=scope_ids(scope, process_concepts), facts=facts,
-            subject="agent" if self.pipeline == "agent" else "both")
+            subject="agent" if self.pipeline == "agent" else "both", process=pc)
         mode = str(guidance_request(ctx).get("mode") or settings.GUIDANCE_DEFAULT_MODE)
         ctx.emit("guidance", json.dumps(_guidance_event(pack, mode=mode), default=str))
 

@@ -51,6 +51,7 @@ class RevisionIntentLayer(RevisionDecisionLayer):
     detail = "Works out exactly which edits your instruction asks for."
     phase = "revision intent"
     status_message = "Working out what to change…"
+    route = "workflow_revision"
 
     def should_run(self, ctx: PipelineContext) -> bool:
         return super().should_run(ctx) and not ctx.revision_spec.operations_given

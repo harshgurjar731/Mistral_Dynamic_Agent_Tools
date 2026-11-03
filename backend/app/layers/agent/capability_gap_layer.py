@@ -106,6 +106,11 @@ class CapabilityGapLayer(Layer):
 
             if resolution.status == "blocked":
                 ctx.emit("status", f"Not building '{tool_name}': {resolution.message}")
+            elif resolution.status == "failed":
+                # Said out loud: an agent quietly created without the tool it
+                # needed looks like a working agent that answers badly.
+                ctx.emit("status", f"Could not build '{resolution.name or tool_name}' — the agent "
+                                   f"is created without it. {resolution.message[:240]}")
             ctx.synthesis_result = resolution.usable
             if resolution.status == "built":
                 ctx.emit("tool_new", {"tool_name": resolution.name, "status": "approved",

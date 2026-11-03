@@ -167,7 +167,7 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     id: "process",
     title: "Process knowledge",
     blurb:
-      "The template process documents must follow, and how documents are checked and matched to a request.",
+      "The template process documents must follow, how documents are matched to a request, and how build guidance is picked and ranked with them.",
     icon: Workflow,
   },
   {

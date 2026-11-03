@@ -96,8 +96,14 @@ export interface InputField {
   default?: unknown;
   min?: number | undefined;
   max?: number | undefined;
-  /** Element type for arrays: string | number | object. */
+  /** Element type for arrays: string | number | integer | boolean | object. */
   items?: string | undefined;
+  /**
+   * JSON Schema of an object/array input's value — the fields of a record,
+   * the shape of a list's entries. Taken from the activity parameter the input
+   * feeds, so the run is refused when a required field is missing.
+   */
+  schema?: Record<string, unknown> | undefined;
   /* Document inputs (`type: "file"`) only. */
   /** Kinds of file accepted: pdf | docx | pptx | xlsx | csv | text | image. */
   accept?: string[] | undefined;

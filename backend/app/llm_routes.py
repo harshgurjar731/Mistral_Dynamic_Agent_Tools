@@ -1,19 +1,26 @@
 """
-Model routing for the code-requirement pipeline — which model does which job.
+Model routing for the backend's model jobs — which model does which job.
 
 The same choice as the tool service (``tool-service/app/llm/routes.py``):
-``mistral-medium-2604`` (Medium 3.5) is Mistral's newest large-tier model and
-the only one of that tier with reasoning, so it takes the jobs where a wrong
-answer is expensive — deciding reuse, and authoring the specification that
-code is generated and *tested* against. ``mistral-small-2603`` takes the cheap
-structuring and screening jobs. ``mistral-large-2512`` is the fallback.
+``mistral-large-4`` is the largest Mistral model (reasoning, 1M context) and
+takes every job where a wrong answer is expensive — deciding reuse, authoring
+the specification code is generated and *tested* against, revising it from a
+user's rebuild instructions, designing a workflow's run inputs, and refining a
+workflow from an instruction. ``mistral-medium-2604`` (Medium 3.5, also
+reasoning) is the fallback.
 
-These models accept ``reasoning_effort`` of ``"high"`` or ``"none"`` only
-(measured; other values are rejected with a 400). IDs are pinned rather than
-``-latest`` so a model change is deliberate.
+Measured reasoning efforts: ``mistral-large-4`` accepts low/medium/high and
+rejects "none"; ``mistral-medium-2604`` accepts high/none; ``mistral-large-2512``
+rejects the parameter ("not enabled"). ``core.decision`` drops a rejected
+effort and retries, so any route can point at any of them. IDs are pinned
+rather than ``-latest`` so a model change is deliberate.
+
+Planning decisions that name no route (every workflow and agent layer) use the
+Orchestrator model from Settings with ``ORCHESTRATOR_REASONING_EFFORT`` and
+``ORCHESTRATOR_FALLBACK_MODEL`` (``app/config.py``).
 
 Override per role on the Settings page, or from the environment:
-``ROUTE_SPEC_AUTHOR_MODEL=...``, ``ROUTE_SPEC_AUTHOR_EFFORT=none|high|omit``,
+``ROUTE_SPEC_AUTHOR_MODEL=...``, ``ROUTE_SPEC_AUTHOR_EFFORT=high|medium|low|none|omit``,
 ``ROUTE_SPEC_AUTHOR_TIMEOUT_MS=...``. A Settings-page value wins.
 """
 
@@ -23,8 +30,8 @@ import os
 from dataclasses import dataclass, replace
 from typing import Optional
 
-PRIMARY = "mistral-medium-2604"
-FALLBACK = "mistral-large-2512"
+PRIMARY = "mistral-large-4"
+FALLBACK = "mistral-medium-2604"
 LIGHT = "mistral-small-2603"
 
 
@@ -40,18 +47,24 @@ class ModelRoute:
 
 _ROUTES: dict[str, ModelRoute] = {
     # R1 — turn a free-text request into a structured need.
-    "need_normalise": ModelRoute("need_normalise", LIGHT, "none", 60_000, 0.1, PRIMARY),
+    "need_normalise": ModelRoute("need_normalise", PRIMARY, "high", 120_000, None, FALLBACK),
     # R2 — safety screen against the blocklist.
-    "policy_gate": ModelRoute("policy_gate", LIGHT, "none", 60_000, 0.0, PRIMARY),
+    "policy_gate": ModelRoute("policy_gate", PRIMARY, "high", 120_000, None, FALLBACK),
     # R3 — does an existing tool/activity already do this?
     "reuse_resolution": ModelRoute("reuse_resolution", PRIMARY, "high", 180_000, None, FALLBACK),
     # R4 — the specification code is generated and tested against.
-    "spec_author": ModelRoute("spec_author", PRIMARY, "high", 240_000, None, FALLBACK),
+    "spec_author": ModelRoute("spec_author", PRIMARY, "high", 300_000, None, FALLBACK),
+    # Rebuild from an error: the stored spec revised to do what the user asked.
+    "spec_revision": ModelRoute("spec_revision", PRIMARY, "high", 300_000, None, FALLBACK),
     # Gap decisions made by the chat pipeline (CapabilityGapLayer).
-    "capability_gap": ModelRoute("capability_gap", PRIMARY, "none", 120_000, 0.1, FALLBACK),
+    "capability_gap": ModelRoute("capability_gap", PRIMARY, "high", 180_000, None, FALLBACK),
     # What a build needs from the user before it starts (build_prereqs).
-    "prerequisite_analysis": ModelRoute("prerequisite_analysis", PRIMARY, "none", 120_000, 0.1,
+    "prerequisite_analysis": ModelRoute("prerequisite_analysis", PRIMARY, "high", 180_000, None,
                                         FALLBACK),
+    # The workflow's run inputs: fields, types and one coherent worked example.
+    "input_schema": ModelRoute("input_schema", PRIMARY, "high", 240_000, None, FALLBACK),
+    # Refine with AI: an instruction → edit operations, and their repair.
+    "workflow_revision": ModelRoute("workflow_revision", PRIMARY, "high", 300_000, None, FALLBACK),
 }
 
 

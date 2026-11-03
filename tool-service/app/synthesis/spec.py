@@ -124,9 +124,12 @@ class SynthesisSpec:
     http_fixtures: list[dict] = field(default_factory=list)
     origin: str = "explicit"
     #: A rebuild after the previous version failed at run time:
-    #: ``{"previous_code", "runtime_error", "comment", "failing_input"}``. The
-    #: generator is shown the code that failed and what went wrong, so the new
-    #: version fixes that failure rather than starting from nothing.
+    #: ``{"previous_code", "runtime_error", "comment", "failing_input",
+    #: "directives"}``. The generator is shown the code that failed, what went
+    #: wrong and what the user asked for, so the new version fixes that failure
+    #: — the way the user said — rather than starting from nothing.
+    #: ``directives`` are the user's instructions as a checklist: every one is
+    #: mandatory and is repeated in each repair round.
     feedback: dict = field(default_factory=dict)
 
     # ── Construction ────────────────────────────────────────────────────
@@ -350,4 +353,8 @@ def _feedback(raw) -> dict:
             out[key] = text[:limit]
     if isinstance(raw.get("failing_input"), dict) and raw["failing_input"]:
         out["failing_input"] = raw["failing_input"]
-    return out if (out.get("runtime_error") or out.get("comment")) else {}
+    directives = [str(d).strip()[:500] for d in (raw.get("directives") or [])
+                  if isinstance(d, (str, int, float)) and str(d).strip()]
+    if directives:
+        out["directives"] = directives[:12]
+    return out if (out.get("runtime_error") or out.get("comment") or out.get("directives")) else {}

@@ -51,6 +51,12 @@ class RevisionContextLayer(Layer):
 
         spec.base = definition_payload(definition)
         spec.base_hash = definition.semantic_hash()
+        # The proposal's inputs are made accurate after every edit
+        # (RevisionNormaliseLayer); the base gets the same pass, so the diff
+        # shows what the edits changed and not that tidying.
+        from app.layers.revision.repair_layer import finalise_inputs
+
+        finalise_inputs(spec.base)
         spec.base_issues = [i.model_dump() for i in validate_workflow(definition).issues]
 
         history = await asyncio.to_thread(
@@ -99,11 +105,15 @@ async def _load_process_knowledge(ctx: PipelineContext, workflow_name: str) -> N
     from app.knowledge.retrieval import facts_from
     from app.layers.knowledge_context_layer import resolve_guidance
 
+    from app.layers.knowledge_context_layer import derived_requirements
+
     spec = ctx.revision_spec
     goal = " ".join(filter(None, [spec.instruction, (spec.base or {}).get("description", "")]))
+    content = docs[0].get("content") if docs else None
     await resolve_guidance(
         ctx, goal=goal, concept_ids=[d.get("concept_id") for d in docs or []],
-        facts=facts_from((docs[0].get("content") if docs else None)), subject="workflow")
+        facts=facts_from(content, derived_requirements(content)),
+        subject="workflow", process=ctx.metadata.get(pk.CONTEXT_KEY))
 
 
 async def _catalog(ctx: PipelineContext) -> dict:

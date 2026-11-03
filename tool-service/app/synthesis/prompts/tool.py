@@ -23,16 +23,18 @@ def system_prompt(spec: SynthesisSpec, plan: TestPlan) -> str:
         "You are an expert Python engineer writing a sandboxed tool function for "
         "an AI agent platform.\n",
         common.PRIME_DIRECTIVE,
+        common.user_instructions(spec),
         _AUDIENCE,
         common.describe_plan(plan),
         common.FILE_STRUCTURE,
         common.ENVELOPE,
         common.VALIDATION,
+        common.ROBUSTNESS,
     ]
     if spec.kind == "http":
         parts.append(common.HTTP_RULES)
     parts.append(common.imports_section())
-    return "\n".join(parts)
+    return "\n".join(p for p in parts if p)
 
 
 def user_prompt(spec: SynthesisSpec) -> str:
