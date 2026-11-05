@@ -647,8 +647,8 @@ def _unwrapped_arguments(arguments: dict, param_types: dict):
     return fixed, {k: field for k, (field, _) in changed.items()}
 
 
-async def _tool_param_types(tool_name: str) -> dict:
-    """The tool's declared parameter types, from the registry.
+async def _tool_parameters(tool_name: str) -> dict:
+    """The tool's full input schema, from the registry.
 
     Refreshes once on a miss: the worker runs in its own process and may not
     have loaded dynamic tool schemas yet.
@@ -663,10 +663,21 @@ async def _tool_param_types(tool_name: str) -> dict:
             logger.debug("Could not refresh tool schemas for '%s': %s", tool_name, e)
         spec = ALL_TOOLS.get(tool_name)
     try:
-        props = spec["function"]["parameters"]["properties"]
-        return {k: v.get("type") for k, v in props.items() if isinstance(v, dict)}
+        parameters = spec["function"]["parameters"]
+        return parameters if isinstance(parameters, dict) else {}
     except Exception:
         return {}
+
+
+def _param_types(parameters: dict) -> dict:
+    """Each top-level parameter's declared type."""
+    props = (parameters or {}).get("properties") or {}
+    return {k: v.get("type") for k, v in props.items() if isinstance(v, dict)}
+
+
+async def _tool_param_types(tool_name: str) -> dict:
+    """The tool's declared top-level parameter types."""
+    return _param_types(await _tool_parameters(tool_name))
 
 
 def _envelope_error(value) -> str:
@@ -1472,10 +1483,21 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
         # object parameter received the previous step's output as a JSON
         # *string* and the tool rejected it. A value that is exactly one
         # {{reference}} now resolves to the referenced data itself.
-        param_types = await _tool_param_types(tool_name)
+        parameters = await _tool_parameters(tool_name)
+        param_types = _param_types(parameters)
         arguments, unresolved = _resolve_arguments(
             config.get("arguments", {}), variables, param_types
         )
+        # Then shape every nested value to the schema too: an upstream model
+        # that grouped a list into an object ({"Aisha": {"high": [...]}}) or
+        # wrote "High" for the enum "high" deep inside an argument failed the
+        # strict activity with a 422 that no retry could fix.
+        if not unresolved:
+            from app.services.workflow_engine.conform import conform_arguments
+
+            arguments, reshaped = conform_arguments(arguments, parameters)
+            for note in reshaped:
+                logger.warning("Tool step '%s': %s", step.id, note)
         if unresolved:
             duration = (time.time() - start) * 1000
             refs = ", ".join(f"{{{{{r}}}}}" for r in sorted(set(unresolved)))
