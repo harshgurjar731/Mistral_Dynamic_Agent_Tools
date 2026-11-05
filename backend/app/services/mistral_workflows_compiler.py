@@ -95,6 +95,12 @@ def compile_workflow_to_python(workflow_def: WorkflowDefinition) -> str:
 
     Raises WorkflowCompileError if the generated module is not valid Python.
     """
+    from app.services.workflow_engine.output_contracts import attach_output_contracts
+
+    # On a copy: each agent step carries the fields later steps read from it.
+    workflow_def = workflow_def.model_copy(deep=True)
+    attach_output_contracts(workflow_def.steps)
+
     lines: list[str] = []
     connector_slots = _collect_connector_slots(workflow_def)
 

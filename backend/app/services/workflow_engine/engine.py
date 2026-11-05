@@ -355,6 +355,10 @@ async def _execute_workflow(
 
     logger.info("Starting workflow '%s' (execution_id=%s)", workflow_name, exec_id)
 
+    # Tell each agent step which of its output fields later steps read.
+    from app.services.workflow_engine.output_contracts import attach_output_contracts
+
+    attach_output_contracts(workflow.steps)
     step_map = {step.id: step for step in workflow.steps}
 
     # Pre-compute parallel groups: {group_id: [step, step, ...]}

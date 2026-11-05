@@ -470,10 +470,15 @@ def _lookup(path: str, variables: dict):
     if not parts or parts[0] not in variables:
         return _MISSING
     value = variables[parts[0]]
+    from app.services.workflow_engine.output_contracts import MISSING, find_field
+
     for part in parts[1:]:
         value = _unwrap(_as_data(value, lenient=True))
         if isinstance(value, dict) and part in value:
             value = value[part]
+        elif isinstance(value, dict) and find_field(value, part) is not MISSING:
+            # The same name spelled differently, or one wrapper deeper.
+            value = find_field(value, part)
         elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
             value = value[int(part)]
         else:
@@ -593,6 +598,22 @@ def _resolve_value(raw, variables: dict, missing: list):
     if isinstance(raw, list):
         return [_resolve_value(v, variables, missing) for v in raw]
     return raw
+
+
+def _produced_fields_hint(refs: list, variables: dict) -> str:
+    """What each referenced step actually returned, for the error message."""
+    parts = []
+    for ref in sorted(set(refs)):
+        head = ref.strip().split(".")[0]
+        if head not in variables:
+            parts.append(f"'{head}' has not run")
+            continue
+        value = _unwrap(_as_data(variables[head], lenient=True))
+        if isinstance(value, dict):
+            parts.append(f"'{head}' has: {', '.join(map(str, value)) or 'no fields'}")
+        else:
+            parts.append(f"'{head}' is {type(value).__name__}, not an object: {str(value)[:200]!r}")
+    return (" " + "; ".join(parts) + ".") if parts else ""
 
 
 def _resolve_arguments(template: dict, variables: dict, param_types: dict) -> tuple[dict, list]:
@@ -994,6 +1015,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 "Step '%s' prompt references data no earlier step produced: %s",
                 step.id, sorted(set(_missing_refs)),
             )
+        # Later steps read named fields from this agent's answer; say which.
+        output_fields = [f for f in (config.get("output_fields") or []) if isinstance(f, str)]
+        if output_fields:
+            from app.services.workflow_engine.output_contracts import contract_instruction
+
+            query += contract_instruction(output_fields)
 
         agent_id = config.get("agent_id")
 
@@ -1199,49 +1226,27 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
             # Try to parse structured JSON from the agent response so
             # downstream steps can reference individual fields as variables.
-            output: Any = result_text
-            import re
-            
-            def extract_json(text: str) -> dict | None:
-                # 1. Try finding explicitly marked JSON block
-                match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-                if match:
-                    try:
-                        parsed = json.loads(match.group(1))
-                        if isinstance(parsed, dict):
-                            return parsed
-                    except Exception:
-                        pass
-                
-                # 2. Try just parsing the whole text after stripping
-                try:
-                    text_to_parse = text.strip()
-                    if text_to_parse.startswith("```json"):
-                        text_to_parse = text_to_parse[7:]
-                    elif text_to_parse.startswith("```"):
-                        text_to_parse = text_to_parse[3:]
-                    if text_to_parse.endswith("```"):
-                        text_to_parse = text_to_parse[:-3]
-                    parsed = json.loads(text_to_parse.strip())
-                    if isinstance(parsed, dict):
-                        return parsed
-                except Exception:
-                    pass
-                
-                # 3. Try finding any {...} block
-                match = re.search(r'(\{.*?\})', text, re.DOTALL)
-                if match:
-                    try:
-                        parsed = json.loads(match.group(1))
-                        if isinstance(parsed, dict):
-                            return parsed
-                    except Exception:
-                        pass
-                return None
+            # The old non-greedy "{...}" match stopped at the first "}", so any
+            # nested answer fell back to plain text and its fields were lost.
+            from app.services.workflow_engine.output_contracts import (
+                MISSING, extract_json_object, find_field,
+            )
 
-            parsed_dict = extract_json(result_text)
+            output: Any = result_text
+            parsed_dict = extract_json_object(result_text, output_fields)
             if parsed_dict is not None:
                 output = parsed_dict
+                absent = [f for f in output_fields if find_field(parsed_dict, f) is MISSING]
+                if absent:
+                    logger.warning(
+                        "Step '%s' — answer has no %s, which later steps read (it has: %s)",
+                        step.id, ", ".join(absent), ", ".join(map(str, parsed_dict)) or "nothing",
+                    )
+            elif output_fields:
+                logger.warning(
+                    "Step '%s' — answer carries no JSON object; later steps read %s from it",
+                    step.id, ", ".join(output_fields),
+                )
 
             if (archetype.get("oversight") or {}).get("model") == "human_on_the_loop":
                 open_monitoring_entry(step, output)
@@ -1294,7 +1299,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 output = f"Orchestrator completed step '{step.id}' but returned no text output."
             
             if isinstance(output, str):
-                parsed_dict = extract_json(output)
+                from app.services.workflow_engine.output_contracts import extract_json_object
+
+                parsed_dict = extract_json_object(output, output_fields)
                 if parsed_dict is not None:
                     output = parsed_dict
 
@@ -1505,6 +1512,7 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
                 f"Arguments reference {refs}, which no earlier step produced. "
                 f"Either the producing step has not run yet, or it returns "
                 f"different field names from the ones referenced."
+                + _produced_fields_hint(unresolved, variables)
             )
             logger.error("Tool step '%s': %s", step.id, message)
             return StepResult(
