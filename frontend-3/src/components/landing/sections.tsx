@@ -17,7 +17,10 @@ import {
   KeyRound,
   Landmark,
   Layers,
+  LayoutDashboard,
+  Library,
   Lock,
+  MessageSquare,
   Network,
   Plug,
   Puzzle,
@@ -27,6 +30,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  SquareTerminal,
   Terminal,
   Unplug,
   UserCheck,
@@ -144,6 +148,31 @@ export function IntegrationStrip() {
   );
 }
 
+/* ── Manifesto (words light up as you read) ────────────────────────────── */
+
+export function ManifestoSection() {
+  return (
+    <section aria-label="Why it exists" className="relative">
+      <div className="mx-auto max-w-5xl px-4 py-24 sm:px-6 lg:py-36">
+        <Reveal>
+          <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+            <span className="h-px w-6 bg-primary/60" /> Why it exists
+          </p>
+        </Reveal>
+        <p
+          data-a="manifesto"
+          className="mt-6 font-display text-[1.85rem] font-bold leading-[1.25] tracking-tight text-foreground sm:text-5xl sm:leading-[1.15]"
+        >
+          Every business already knows how its work should be done. The rules live in policies, the
+          steps in people&apos;s heads, the exceptions in email threads.{" "}
+          <span className="text-primary">We turn that knowledge into agents that do the work</span>{" "}
+          — and show you exactly how they did it.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 /* ── Problem ───────────────────────────────────────────────────────────── */
 
 const PROBLEMS: { icon: LucideIcon; title: string; body: string }[] = [
@@ -182,23 +211,44 @@ export function ProblemSection() {
       }
       intro="Teams can get a model to answer questions in an afternoon. Turning that into a dependable business process — one that does real work, follows the rules and can be explained afterwards — is where projects stall."
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        {PROBLEMS.map((p) => (
+      {/* Each card sticks a little lower than the last, so they pile up as you
+          scroll; the one underneath sinks back (motion.ts: stack). */}
+      <div className="mx-auto max-w-4xl">
+        {PROBLEMS.map((p, i) => (
           <div
             key={p.title}
-            data-a="card"
-            data-tilt
-            className="group spotlight relative h-full overflow-hidden rounded-2xl border border-border bg-background-elevated/60 p-6 transition-colors hover:border-red/30"
+            data-a="stack-card"
+            className="sticky pb-6"
+            style={{ top: `calc(5.5rem + ${i * 1.25}rem)` }}
           >
             <div
-              aria-hidden
-              className="absolute -right-10 -top-10 size-32 rounded-full bg-red/10 opacity-0 blur-2xl transition group-hover:opacity-100"
-            />
-            <span className="grid size-11 place-items-center rounded-xl border border-red/25 bg-red/10">
-              <p.icon className="size-5 text-red" />
-            </span>
-            <h3 className="mt-5 text-lg font-semibold text-foreground">{p.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{p.body}</p>
+              data-a="stack-inner"
+              className="relative origin-top overflow-hidden rounded-3xl border border-border bg-background-elevated p-7 shadow-[0_-18px_50px_-30px_rgb(0_0_0/0.6)] sm:p-10"
+            >
+              <div
+                aria-hidden
+                className="absolute -right-16 -top-16 size-56 rounded-full bg-red/10 blur-3xl"
+              />
+              <div className="relative grid gap-6 sm:grid-cols-[auto_1fr] sm:gap-10">
+                <div className="flex items-center gap-4 sm:flex-col sm:items-start">
+                  <span className="font-mono text-5xl font-bold leading-none text-red/30 sm:text-6xl">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span className="grid size-11 place-items-center rounded-xl border border-red/25 bg-red/10">
+                    <p.icon className="size-5 text-red" />
+                  </span>
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-foreground sm:text-2xl">{p.title}</h3>
+                  <p className="mt-3 text-base leading-relaxed text-muted-foreground">{p.body}</p>
+                </div>
+              </div>
+              <div
+                aria-hidden
+                data-a="stack-shade"
+                className="pointer-events-none absolute inset-0 z-10 bg-background opacity-0"
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -238,51 +288,334 @@ const FLOW: { icon: LucideIcon; title: string; body: string }[] = [
 
 export function SolutionSection() {
   return (
-    <Section
-      id="solution"
-      eyebrow="The solution"
-      title={
-        <>
-          One control plane from <span className="text-gradient-brand">intent to production</span>
-        </>
-      }
-      intro="Agentic AI Design Patterns turns a business goal into a running, governed AI workflow — designed, equipped, checked and observed by the platform itself, on Mistral."
+    <div
+      data-a="iris"
+      className="relative overflow-hidden border-y border-border bg-background-elevated/70"
     >
-      <div data-a="flow" className="relative">
-        {/* The track, and the line that draws along it as you scroll. */}
+      <div aria-hidden className="grid-backdrop absolute inset-0 opacity-40" />
+      <div
+        aria-hidden
+        data-a="iris-glow"
+        className="pointer-events-none absolute inset-x-0 top-[8%] mx-auto h-[560px] w-[min(960px,100%)]"
+      >
         <div
-          aria-hidden
-          className="absolute bottom-6 left-[1.375rem] top-6 w-px bg-border sm:left-[1.625rem]"
+          className="size-full rounded-full opacity-20 blur-3xl"
+          style={{ background: "var(--gradient-brand)" }}
         />
-        <div
-          aria-hidden
-          data-a="flow-line"
-          className="absolute bottom-6 left-[1.375rem] top-6 w-[2px] -translate-x-[0.5px] rounded-full bg-gradient-to-b from-primary via-primary to-primary/30 shadow-[0_0_14px_var(--primary)] sm:left-[1.625rem]"
-        />
-        <ol className="space-y-5">
-          {FLOW.map((s, i) => (
-            <li key={s.title} data-a="flow-step" className="flow-step relative flex gap-5 sm:gap-7">
-              <span
-                data-a="flow-dot"
-                className="flow-dot relative z-10 grid size-11 shrink-0 place-items-center rounded-full border border-primary/40 bg-background text-primary transition-all duration-500 sm:size-[3.25rem]"
-              >
-                <s.icon className="size-5" />
-              </span>
-              <div
-                data-a="flow-body"
-                className="flow-body glass flex-1 rounded-2xl p-5 transition-all duration-500 sm:p-6"
-              >
-                <p className="font-mono text-[11px] font-bold text-primary">
-                  STEP {String(i + 1).padStart(2, "0")}
-                </p>
-                <h3 className="mt-1 text-lg font-semibold text-foreground">{s.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
       </div>
-    </Section>
+      <Section
+        id="solution"
+        eyebrow="The solution"
+        title={
+          <>
+            One control plane from <span className="text-gradient-brand">intent to production</span>
+          </>
+        }
+        intro="Agentic AI Design Patterns turns a business goal into a running, governed AI workflow — designed, equipped, checked and observed by the platform itself, on Mistral."
+      >
+        <div data-a="flow" className="relative">
+          {/* The track, and the line that draws along it as you scroll. */}
+          <div
+            aria-hidden
+            className="absolute bottom-6 left-[1.375rem] top-6 w-px bg-border sm:left-[1.625rem]"
+          />
+          <div
+            aria-hidden
+            data-a="flow-line"
+            className="absolute bottom-6 left-[1.375rem] top-6 w-[2px] -translate-x-[0.5px] rounded-full bg-gradient-to-b from-primary via-primary to-primary/30 shadow-[0_0_14px_var(--primary)] sm:left-[1.625rem]"
+          />
+          <ol className="space-y-5">
+            {FLOW.map((s, i) => (
+              <li
+                key={s.title}
+                data-a="flow-step"
+                className="flow-step relative flex gap-5 sm:gap-7"
+              >
+                <span
+                  data-a="flow-dot"
+                  className="flow-dot relative z-10 grid size-11 shrink-0 place-items-center rounded-full border border-primary/40 bg-background text-primary transition-all duration-500 sm:size-[3.25rem]"
+                >
+                  <s.icon className="size-5" />
+                </span>
+                <div
+                  data-a="flow-body"
+                  className="flow-body glass flex-1 rounded-2xl p-5 transition-all duration-500 sm:p-6"
+                >
+                  <p className="font-mono text-[11px] font-bold text-primary">
+                    STEP {String(i + 1).padStart(2, "0")}
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-foreground">{s.title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+/* ── Product reveal (pinned on desktop) ────────────────────────────────── */
+
+const CAPTIONS: { eyebrow: string; title: ReactNode; body: string }[] = [
+  {
+    eyebrow: "The product",
+    title: (
+      <>
+        One console for <span className="text-gradient-brand">every agent and workflow</span>
+      </>
+    ),
+    body: "Design, run, review and observe — in the same place, scoped to your workspace and role.",
+  },
+  {
+    eyebrow: "Design",
+    title: (
+      <>
+        Goals become <span className="text-gradient-brand">workflows you can see</span>
+      </>
+    ),
+    body: "Every step, agent and hand-off laid out. Revise it in plain language, version it, publish it.",
+  },
+  {
+    eyebrow: "Run & observe",
+    title: (
+      <>
+        Every run, <span className="text-gradient-brand">traced as it happens</span>
+      </>
+    ),
+    body: "Live steps, rule verdicts and reviews waiting for a person — nothing happens off the record.",
+  },
+];
+
+const MOCK_NAV: { icon: LucideIcon; label: string }[] = [
+  { icon: MessageSquare, label: "Orchestrator" },
+  { icon: GitBranch, label: "Workflows" },
+  { icon: Bot, label: "Agents" },
+  { icon: Wrench, label: "Tools" },
+  { icon: Library, label: "Knowledge" },
+  { icon: UserCheck, label: "Reviews" },
+  { icon: SquareTerminal, label: "Logs" },
+];
+
+const MOCK_NODES: { x: number; y: number; label: string; tone?: "review" | "done" }[] = [
+  { x: 70, y: 150, label: "Read application", tone: "done" },
+  { x: 225, y: 75, label: "Credit check", tone: "done" },
+  { x: 225, y: 225, label: "Income check", tone: "done" },
+  { x: 380, y: 150, label: "Affordability rules" },
+  { x: 530, y: 80, label: "Underwriter review", tone: "review" },
+  { x: 530, y: 220, label: "Decision letter" },
+];
+
+const MOCK_EDGES = [
+  "M130 150 C150 150 145 75 165 75",
+  "M130 150 C150 150 145 225 165 225",
+  "M285 75 C305 75 300 150 320 150",
+  "M285 225 C305 225 300 150 320 150",
+  "M440 150 C460 150 450 80 470 80",
+  "M440 150 C460 150 450 220 470 220",
+];
+
+function PlatformMock() {
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-[18px] border border-border-strong bg-background shadow-[0_40px_120px_-40px_rgb(0_0_0/0.65)]">
+      {/* Window chrome */}
+      <div className="flex items-center gap-3 border-b border-border bg-background-elevated px-4 py-2.5">
+        <span className="flex gap-1.5" aria-hidden>
+          <span className="size-2.5 rounded-full bg-red/70" />
+          <span className="size-2.5 rounded-full bg-amber/70" />
+          <span className="size-2.5 rounded-full bg-emerald/70" />
+        </span>
+        <span className="mx-auto truncate rounded-md border border-border bg-background px-3 py-0.5 font-mono text-[11px] text-muted-foreground">
+          workflows / mortgage-pre-screen
+        </span>
+      </div>
+      <div className="grid min-h-0 flex-1 sm:grid-cols-[1fr_240px] lg:grid-cols-[176px_1fr_260px]">
+        {/* Sidebar */}
+        <nav className="hidden flex-col gap-1 border-r border-border p-3 lg:flex" aria-hidden>
+          <span className="mb-2 flex items-center gap-2 px-2 text-xs font-semibold text-foreground">
+            <LayoutDashboard className="size-4 text-primary" /> Lending team
+          </span>
+          {MOCK_NAV.map((n) => (
+            <span
+              key={n.label}
+              data-p="nav"
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs",
+                n.label === "Workflows"
+                  ? "bg-primary/12 font-medium text-foreground"
+                  : "text-muted-foreground",
+              )}
+            >
+              <n.icon className={cn("size-3.5", n.label === "Workflows" && "text-primary")} />
+              {n.label}
+            </span>
+          ))}
+        </nav>
+
+        {/* Canvas */}
+        <div className="flex min-w-0 flex-col p-4 sm:p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">Mortgage pre-screen</p>
+            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+              v3
+            </span>
+            <span className="rounded-full border border-emerald/30 bg-emerald/10 px-2 py-0.5 text-[10px] font-medium text-emerald">
+              Published
+            </span>
+          </div>
+          <div className="mt-4 min-h-0 flex-1 rounded-xl border border-border bg-background-elevated/60 p-2">
+            <svg
+              viewBox="0 0 600 300"
+              className="size-full"
+              role="img"
+              aria-label="A six-step lending workflow"
+            >
+              {MOCK_EDGES.map((d) => (
+                <path key={`t-${d}`} d={d} fill="none" className="stroke-border" strokeWidth={2} />
+              ))}
+              {MOCK_EDGES.map((d) => (
+                <path
+                  key={d}
+                  d={d}
+                  data-p="edge"
+                  fill="none"
+                  className="stroke-primary"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                />
+              ))}
+              {MOCK_NODES.map((n) => (
+                <g key={n.label} data-p="node">
+                  <rect
+                    x={n.x - 60}
+                    y={n.y - 21}
+                    width={120}
+                    height={42}
+                    rx={10}
+                    className={cn(
+                      "fill-background",
+                      n.tone === "review"
+                        ? "stroke-amber"
+                        : n.tone === "done"
+                          ? "stroke-emerald"
+                          : "stroke-primary",
+                    )}
+                    strokeWidth={1.5}
+                  />
+                  <text
+                    x={n.x}
+                    y={n.y + 4}
+                    textAnchor="middle"
+                    className="fill-foreground"
+                    style={{ fontSize: 11, fontWeight: 600 }}
+                  >
+                    {n.label}
+                  </text>
+                </g>
+              ))}
+            </svg>
+          </div>
+        </div>
+
+        {/* Run panel */}
+        <aside className="hidden flex-col gap-3 border-l border-border p-4 sm:flex" aria-hidden>
+          <div
+            data-p="panel"
+            className="rounded-xl border border-border bg-background-elevated/70 p-3"
+          >
+            <p className="flex items-center justify-between text-xs font-semibold text-foreground">
+              Run #1842
+              <span className="flex items-center gap-1 text-[10px] font-medium text-primary">
+                <span className="size-1.5 animate-pulse rounded-full bg-primary" /> running
+              </span>
+            </p>
+            <div className="mt-3 space-y-2.5">
+              {[
+                ["Read application", "100%", "bg-emerald"],
+                ["Credit check", "100%", "bg-emerald"],
+                ["Income check", "100%", "bg-emerald"],
+                ["Affordability rules", "64%", "bg-primary"],
+              ].map(([label, w, tone]) => (
+                <div key={label}>
+                  <p className="text-[10px] text-muted-foreground">{label}</p>
+                  <div className="mt-1 h-1.5 rounded-full bg-secondary">
+                    <div
+                      data-p="bar"
+                      className={cn("h-full rounded-full", tone)}
+                      style={{ width: w }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div
+            data-p="panel"
+            className="rounded-xl border border-border bg-background-elevated/70 p-3"
+          >
+            <p className="text-xs font-semibold text-foreground">Rule verdicts</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="rounded-md bg-emerald/10 px-2 py-0.5 text-[10px] text-emerald">
+                LTV ≤ 85% · pass
+              </span>
+              <span className="rounded-md bg-emerald/10 px-2 py-0.5 text-[10px] text-emerald">
+                DTI ≤ 40% · pass
+              </span>
+              <span className="rounded-md bg-amber/10 px-2 py-0.5 text-[10px] text-amber">
+                Self-employed · review
+              </span>
+            </div>
+          </div>
+          <div data-p="panel" className="rounded-xl border border-amber/30 bg-amber/5 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+              <UserCheck className="size-3.5 text-amber" /> Waiting for an underwriter
+            </p>
+            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+              Paused at step 5 until a reviewer approves, corrects or rejects.
+            </p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+export function ProductRevealSection() {
+  return (
+    <section id="product" data-a="product" className="relative scroll-mt-20">
+      <div
+        data-a="product-stage"
+        className="relative flex flex-col px-4 py-20 sm:px-6 lg:h-screen lg:py-0 lg:pb-[4vh] lg:pt-[calc(4rem+4vh)]"
+      >
+        <div className="relative mx-auto w-full max-w-3xl text-center lg:h-32 lg:shrink-0">
+          {CAPTIONS.map((c, i) => (
+            <div
+              key={c.eyebrow}
+              data-a="product-caption"
+              className={cn(i > 0 && "product-caption-alt absolute inset-x-0 top-0")}
+              style={i > 0 ? { opacity: 0, visibility: "hidden" } : undefined}
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+                {c.eyebrow}
+              </p>
+              <h2 className="mt-3 font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+                {c.title}
+              </h2>
+              <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
+                {c.body}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div
+          data-a="product-frame"
+          className="relative mx-auto mt-10 h-[420px] w-full max-w-6xl sm:h-[460px] lg:mt-6 lg:h-auto lg:min-h-0 lg:flex-1"
+        >
+          <PlatformMock />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -545,7 +878,135 @@ const USE_CASES: {
   },
 ];
 
+/** The two result cards of a use case, shared by the tabs and the track. */
+function UseCaseBoxes({ uc, className }: { uc: (typeof USE_CASES)[number]; className?: string }) {
+  return (
+    <div className={cn("grid gap-5", className)}>
+      <div data-uc="box" className="rounded-2xl border border-border bg-background-elevated/70 p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Boxes className="size-4 text-primary" /> What the platform builds
+        </p>
+        <ul className="mt-3 space-y-2">
+          {uc.builds.map((b) => (
+            <li key={b} className="flex gap-2 text-sm text-muted-foreground">
+              <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
+              {b}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div data-uc="box" className="rounded-2xl border border-emerald/25 bg-emerald/5 p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <CheckCircle2 className="size-4 text-emerald" /> What your team gets
+        </p>
+        <ul className="mt-3 space-y-2">
+          {uc.outcomes.map((o) => (
+            <li key={o} className="flex gap-2 text-sm text-muted-foreground">
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald" />
+              {o}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function UseCaseSteps({ uc }: { uc: (typeof USE_CASES)[number] }) {
+  return (
+    <ol className="mt-3 flex flex-wrap items-center gap-2">
+      {uc.steps.map((s, i) => (
+        <li key={`${uc.id}-${s}`} data-uc="step" className="flex items-center gap-2">
+          <span className="rounded-lg border border-border bg-background-elevated px-3 py-1.5 text-xs text-foreground">
+            <span className="mr-1.5 font-mono text-[10px] text-primary">{i + 1}</span>
+            {s}
+          </span>
+          {i < uc.steps.length - 1 ? (
+            <ArrowRight className="size-3.5 text-muted-foreground" />
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+const SIDE_GUTTER = "max(1.5rem,calc((100vw - 72rem) / 2 + 1.5rem))";
+
+/** Desktop: the section pins and the industries slide past (motion.ts: horizontal). */
+function UseCasesTrack() {
+  return (
+    <section data-a="hscroll" className="uc-track relative h-screen overflow-hidden">
+      <div className="flex h-full flex-col justify-center pt-16">
+        <div
+          data-a="htrack"
+          className="flex w-max items-stretch gap-6"
+          style={{ paddingLeft: SIDE_GUTTER, paddingRight: SIDE_GUTTER }}
+        >
+          <div className="flex w-[25rem] shrink-0 flex-col justify-center pr-6">
+            <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+              <span className="h-px w-6 bg-primary/60" /> Use cases
+            </p>
+            <h2
+              data-a="heading"
+              className="mt-4 font-display text-4xl font-bold leading-[1.12] tracking-tight text-foreground"
+            >
+              Built for the processes{" "}
+              <span className="text-gradient-brand">that run your business</span>
+            </h2>
+            <p className="mt-4 text-base leading-relaxed text-muted-foreground">
+              Industry catalogs for banking, lending, insurance, healthcare and a dozen more sectors
+              give the platform a head start on how each process works.
+            </p>
+            <p className="mt-8 inline-flex items-center gap-2 text-sm text-muted-foreground">
+              Keep scrolling <ArrowRight className="size-4 text-primary" />
+            </p>
+          </div>
+          {USE_CASES.map((u, i) => (
+            <article
+              key={u.id}
+              data-a="hpanel"
+              className="glass-elevated flex w-[min(46rem,68vw)] shrink-0 flex-col rounded-3xl p-8"
+            >
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm font-medium text-foreground">
+                  <u.icon className="size-4 text-primary" /> {u.label}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {String(i + 1).padStart(2, "0")} / {String(USE_CASES.length).padStart(2, "0")}
+                </span>
+              </div>
+              <p className="technical-label mt-6">The goal you type</p>
+              <p className="mt-2 font-display text-2xl font-bold leading-snug text-foreground">
+                “{u.goal}”
+              </p>
+              <p className="technical-label mt-6">The workflow it designs</p>
+              <UseCaseSteps uc={u} />
+              <UseCaseBoxes uc={u} className="mt-6 grid-cols-2" />
+            </article>
+          ))}
+        </div>
+        <div className="mt-8 flex justify-center gap-2" aria-hidden>
+          {USE_CASES.map((u) => (
+            <span key={u.id} data-a="hdot" className="hdot h-1.5 w-6 rounded-full bg-border" />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function UseCasesSection() {
+  return (
+    <div id="use-cases" className="relative scroll-mt-20">
+      <UseCasesTrack />
+      <div className="uc-tabs">
+        <UseCasesTabs />
+      </div>
+    </div>
+  );
+}
+
+function UseCasesTabs() {
   const [active, setActive] = useState(USE_CASES[0]!.id);
   const panel = useRef<HTMLDivElement>(null);
   const tabs = useRef<HTMLDivElement>(null);
@@ -609,7 +1070,7 @@ export function UseCasesSection() {
 
   return (
     <Section
-      id="use-cases"
+      id="use-cases-list"
       eyebrow="Use cases"
       title={
         <>
@@ -667,51 +1128,9 @@ export function UseCasesSection() {
               “{uc.goal}”
             </p>
             <p className="technical-label mt-8">The workflow it designs</p>
-            <ol className="mt-3 flex flex-wrap items-center gap-2">
-              {uc.steps.map((s, i) => (
-                <li key={`${uc.id}-${s}`} data-uc="step" className="flex items-center gap-2">
-                  <span className="rounded-lg border border-border bg-background-elevated px-3 py-1.5 text-xs text-foreground">
-                    <span className="mr-1.5 font-mono text-[10px] text-primary">{i + 1}</span>
-                    {s}
-                  </span>
-                  {i < uc.steps.length - 1 ? (
-                    <ArrowRight className="size-3.5 text-muted-foreground" />
-                  ) : null}
-                </li>
-              ))}
-            </ol>
+            <UseCaseSteps uc={uc} />
           </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-            <div
-              data-uc="box"
-              className="rounded-2xl border border-border bg-background-elevated/70 p-5"
-            >
-              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Boxes className="size-4 text-primary" /> What the platform builds
-              </p>
-              <ul className="mt-3 space-y-2">
-                {uc.builds.map((b) => (
-                  <li key={b} className="flex gap-2 text-sm text-muted-foreground">
-                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div data-uc="box" className="rounded-2xl border border-emerald/25 bg-emerald/5 p-5">
-              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <CheckCircle2 className="size-4 text-emerald" /> What your team gets
-              </p>
-              <ul className="mt-3 space-y-2">
-                {uc.outcomes.map((o) => (
-                  <li key={o} className="flex gap-2 text-sm text-muted-foreground">
-                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald" />
-                    {o}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+          <UseCaseBoxes uc={uc} className="sm:grid-cols-2 lg:grid-cols-1" />
         </div>
       </Reveal>
     </Section>

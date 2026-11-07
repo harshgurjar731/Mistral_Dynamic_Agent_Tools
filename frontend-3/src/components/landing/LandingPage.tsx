@@ -10,8 +10,10 @@ import {
   FeaturesSection,
   IntegrationsSection,
   IntegrationStrip,
+  ManifestoSection,
   PersonasStrip,
   ProblemSection,
+  ProductRevealSection,
   SecuritySection,
   SolutionSection,
   UseCasesSection,
@@ -22,6 +24,7 @@ import { LiveBuild } from "./visuals";
 const NAV = [
   ["Problem", "#problem"],
   ["Solution", "#solution"],
+  ["Product", "#product"],
   ["Platform", "#features"],
   ["Use cases", "#use-cases"],
   ["Integrations", "#integrations"],
@@ -49,7 +52,7 @@ export function LandingPage() {
   return (
     <div
       ref={root}
-      className="landing-pending relative min-h-screen overflow-x-hidden bg-background text-foreground"
+      className="landing-pending relative min-h-screen overflow-x-clip bg-background text-foreground"
     >
       {/* Reading progress */}
       <div
@@ -222,9 +225,11 @@ export function LandingPage() {
       </section>
 
       <IntegrationStrip />
+      <ManifestoSection />
       <ProblemSection />
       <SolutionSection />
       <PersonasStrip />
+      <ProductRevealSection />
       <FeaturesSection />
       <UseCasesSection />
       <IntegrationsSection />

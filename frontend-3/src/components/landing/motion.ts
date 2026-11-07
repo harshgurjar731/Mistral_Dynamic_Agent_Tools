@@ -12,16 +12,8 @@
  *
  * GSAP runs only in the browser; the server render is the plain page.
  */
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
-import { ScrollToPlugin } from "gsap/ScrollToPlugin";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { SplitText } from "gsap/SplitText";
 import type { RefObject } from "react";
-
-if (typeof window !== "undefined") {
-  gsap.registerPlugin(ScrollTrigger, SplitText, ScrollToPlugin, useGSAP);
-}
+import { gsap, ScrollTrigger, SplitText, useGSAP } from "@/lib/gsap";
 
 export { gsap, ScrollTrigger, SplitText, useGSAP };
 
@@ -254,18 +246,30 @@ function solution(root: HTMLElement) {
   }
 }
 
-/** Bento cards: reveal, then play their illustration. */
+/** Where each card's curtain opens from: left, right, then up, in turn. */
+const WIPES = [
+  "inset(0% 100% 0% 0% round 16px)",
+  "inset(0% 0% 0% 100% round 16px)",
+  "inset(100% 0% 0% 0% round 16px)",
+];
+
+/** Bento cards: a curtain wipe tied to the scroll, then their illustration plays. */
 function bento(root: HTMLElement) {
-  for (const card of q(root, '[data-a="bento"]')) {
+  q(root, '[data-a="bento"]').forEach((card, i) => {
+    gsap.fromTo(
+      card,
+      { clipPath: WIPES[i % WIPES.length]! },
+      {
+        clipPath: "inset(0% 0% 0% 0% round 16px)",
+        ease: "none",
+        scrollTrigger: { trigger: card, start: "top 96%", end: "top 62%", scrub: 0.5 },
+      },
+    );
     const tl = gsap.timeline({
-      scrollTrigger: { trigger: card, start: "top 86%", once: true },
+      scrollTrigger: { trigger: card, start: "top 72%", once: true },
       defaults: { ease: EASE },
     });
-    tl.fromTo(
-      card,
-      { autoAlpha: 0, y: 50, scale: 0.96 },
-      { autoAlpha: 1, y: 0, scale: 1, duration: 0.85, ease: "expo.out" },
-    );
+    tl.from(card.querySelector("h3"), { autoAlpha: 0, x: -12, duration: 0.5 });
     const draws = q<SVGGeometryElement>(card, '[data-a="draw"]');
     if (draws.length) {
       for (const p of draws) {
@@ -308,6 +312,228 @@ function bento(root: HTMLElement) {
         "-=0.3",
       );
     }
+  });
+}
+
+/* ── Scroll-scrubbed reveals ─────────────────────────────────────────────── */
+
+/** 1. A statement whose words light up as you read down through it. */
+function manifesto(root: HTMLElement) {
+  for (const el of q(root, '[data-a="manifesto"]')) {
+    SplitText.create(el, {
+      type: "words",
+      wordsClass: "manifesto-word",
+      autoSplit: true,
+      onSplit(self) {
+        return gsap.fromTo(
+          self.words,
+          { opacity: 0.14 },
+          {
+            opacity: 1,
+            ease: "none",
+            stagger: 0.08,
+            scrollTrigger: { trigger: el, start: "top 78%", end: "bottom 42%", scrub: 0.4 },
+          },
+        );
+      },
+    });
+  }
+}
+
+/**
+ * 2. The solution opens through a circle. It grows from a point on screen
+ * (not the section's centre, which on a tall section is still below the fold)
+ * until it covers the furthest corner.
+ */
+function iris(root: HTMLElement) {
+  for (const el of q(root, '[data-a="iris"]')) {
+    const cy = () => Math.min(el.offsetHeight / 2, window.innerHeight * 0.45);
+    const radius = () =>
+      Math.ceil(Math.hypot(el.offsetWidth / 2, Math.max(cy(), el.offsetHeight - cy()))) + 2;
+    const st = () => ({
+      trigger: el,
+      start: "top 92%",
+      end: "top 12%",
+      scrub: 0.5,
+      invalidateOnRefresh: true,
+    });
+    gsap.fromTo(
+      el,
+      { clipPath: () => `circle(56px at 50% ${cy()}px)` },
+      {
+        clipPath: () => `circle(${radius()}px at 50% ${cy()}px)`,
+        ease: "none",
+        scrollTrigger: st(),
+      },
+    );
+    const glow = el.querySelector('[data-a="iris-glow"]');
+    if (glow) {
+      gsap.fromTo(
+        glow,
+        { scale: 0.4, autoAlpha: 0 },
+        { scale: 1, autoAlpha: 1, ease: "none", scrollTrigger: st() },
+      );
+    }
+  }
+}
+
+/** 3. Problem cards stick and stack; each one covered sinks back as the next arrives. */
+function stack(root: HTMLElement) {
+  const cards = q(root, '[data-a="stack-card"]');
+  cards.forEach((card, i) => {
+    const inner = card.querySelector('[data-a="stack-inner"]');
+    if (!inner) return;
+    gsap.fromTo(
+      inner,
+      { autoAlpha: 0, y: 70 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: 0.8,
+        ease: "expo.out",
+        scrollTrigger: { trigger: card, start: "top 90%", once: true },
+      },
+    );
+    const next = cards[i + 1];
+    if (!next) return;
+    const st = { trigger: next, start: "top 90%", end: "top 25%", scrub: true };
+    gsap.to(inner, { scale: 0.92, ease: "none", scrollTrigger: st });
+    const shade = card.querySelector('[data-a="stack-shade"]');
+    if (shade) gsap.to(shade, { opacity: 0.55, ease: "none", scrollTrigger: { ...st } });
+  });
+}
+
+/** 4. Product reveal: the frame zooms and unmasks into the platform, part by part. */
+function productPinned(root: HTMLElement) {
+  const section = root.querySelector<HTMLElement>('[data-a="product"]');
+  if (!section) return;
+  const stage = section.querySelector<HTMLElement>('[data-a="product-stage"]');
+  const frame = section.querySelector<HTMLElement>('[data-a="product-frame"]');
+  if (!stage || !frame) return;
+  const parts = (sel: string) => q(section, `[data-p="${sel}"]`);
+  const captions = q(section, '[data-a="product-caption"]');
+
+  for (const p of q<SVGGeometryElement>(section, '[data-p="edge"]')) {
+    const len = typeof p.getTotalLength === "function" ? p.getTotalLength() : 200;
+    gsap.set(p, { strokeDasharray: len, strokeDashoffset: len });
+  }
+  gsap.set(captions.slice(1), { autoAlpha: 0, y: 20 });
+
+  const tl = gsap.timeline({
+    defaults: { ease: "none" },
+    scrollTrigger: {
+      trigger: stage,
+      start: "top top",
+      end: "+=170%",
+      pin: true,
+      scrub: 0.7,
+      anticipatePin: 1,
+    },
+  });
+  tl.fromTo(
+    frame,
+    {
+      scale: 0.58,
+      rotateX: 22,
+      clipPath: "inset(16% 22% 16% 22% round 32px)",
+      transformPerspective: 1600,
+    },
+    { scale: 1, rotateX: 0, clipPath: "inset(0% 0% 0% 0% round 18px)", duration: 1.2 },
+  )
+    .from(parts("nav"), { autoAlpha: 0, x: -24, stagger: 0.06, duration: 0.4 }, 0.6)
+    .to(captions[0] ?? {}, { autoAlpha: 0, y: -20, duration: 0.3 }, 1.0)
+    .to(captions[1] ?? {}, { autoAlpha: 1, y: 0, duration: 0.3 }, 1.1)
+    .to(parts("edge"), { strokeDashoffset: 0, stagger: 0.08, duration: 0.6 }, 1.2)
+    .from(
+      parts("node"),
+      { scale: 0, transformOrigin: "50% 50%", stagger: 0.06, duration: 0.35 },
+      1.25,
+    )
+    .to(captions[1] ?? {}, { autoAlpha: 0, y: -20, duration: 0.3 }, 1.9)
+    .to(captions[2] ?? {}, { autoAlpha: 1, y: 0, duration: 0.3 }, 2.0)
+    .from(
+      parts("bar"),
+      { scaleX: 0, transformOrigin: "0% 50%", stagger: 0.07, duration: 0.5 },
+      2.05,
+    )
+    .from(parts("panel"), { autoAlpha: 0, x: 40, stagger: 0.08, duration: 0.45 }, 2.2)
+    .to({}, { duration: 0.4 });
+}
+
+/** Phones and tablets: the same product view, revealed without pinning. */
+function productStatic(root: HTMLElement) {
+  const section = root.querySelector<HTMLElement>('[data-a="product"]');
+  const frame = section?.querySelector<HTMLElement>('[data-a="product-frame"]');
+  if (!section || !frame) return;
+  for (const p of q<SVGGeometryElement>(section, '[data-p="edge"]')) {
+    const len = typeof p.getTotalLength === "function" ? p.getTotalLength() : 200;
+    gsap.set(p, { strokeDasharray: len, strokeDashoffset: len });
+  }
+  const tl = gsap.timeline({ scrollTrigger: { trigger: frame, start: "top 80%", once: true } });
+  tl.fromTo(
+    frame,
+    { autoAlpha: 0, y: 50, scale: 0.94 },
+    { autoAlpha: 1, y: 0, scale: 1, duration: 0.9, ease: "expo.out" },
+  )
+    .from(
+      q(section, '[data-p="nav"]'),
+      { autoAlpha: 0, x: -16, stagger: 0.05, duration: 0.35 },
+      0.4,
+    )
+    .to(q(section, '[data-p="edge"]'), { strokeDashoffset: 0, stagger: 0.06, duration: 0.6 }, 0.5)
+    .from(
+      q(section, '[data-p="bar"]'),
+      { scaleX: 0, transformOrigin: "0% 50%", stagger: 0.06, duration: 0.5 },
+      0.7,
+    )
+    .from(
+      q(section, '[data-p="panel"]'),
+      { autoAlpha: 0, y: 16, stagger: 0.06, duration: 0.4 },
+      0.8,
+    );
+}
+
+/** 5. Use cases on a horizontal track: the section pins and the industries pass by. */
+function horizontal(root: HTMLElement) {
+  const section = root.querySelector<HTMLElement>('[data-a="hscroll"]');
+  const track = section?.querySelector<HTMLElement>('[data-a="htrack"]');
+  if (!section || !track) return;
+  const distance = () => Math.max(0, track.scrollWidth - window.innerWidth);
+  const dots = q(section, '[data-a="hdot"]');
+  const tween = gsap.to(track, {
+    x: () => -distance(),
+    ease: "none",
+    scrollTrigger: {
+      trigger: section,
+      start: "top top",
+      end: () => `+=${distance()}`,
+      pin: true,
+      scrub: 0.8,
+      anticipatePin: 1,
+      invalidateOnRefresh: true,
+      onUpdate(self) {
+        const active = Math.min(dots.length - 1, Math.round(self.progress * (dots.length - 1)));
+        dots.forEach((d, i) => d.classList.toggle("is-active", i === active));
+      },
+    },
+  });
+  for (const panel of q(section, '[data-a="hpanel"]')) {
+    gsap.from(panel.querySelectorAll('[data-uc="step"]'), {
+      autoAlpha: 0,
+      y: 18,
+      stagger: 0.06,
+      duration: 0.5,
+      ease: EASE,
+      scrollTrigger: { trigger: panel, containerAnimation: tween, start: "left 70%", once: true },
+    });
+    gsap.from(panel.querySelectorAll('[data-uc="box"]'), {
+      autoAlpha: 0,
+      y: 28,
+      stagger: 0.1,
+      duration: 0.6,
+      ease: EASE,
+      scrollTrigger: { trigger: panel, containerAnimation: tween, start: "left 60%", once: true },
+    });
   }
 }
 
@@ -428,8 +654,18 @@ export function useLandingMotion(scope: RefObject<HTMLElement | null>) {
       const mm = gsap.matchMedia();
       const cleanups: (() => void)[] = [];
 
+      mm.add("(min-width: 1024px) and (prefers-reduced-motion: no-preference)", () => {
+        productPinned(root);
+        horizontal(root);
+      });
+      mm.add("(max-width: 1023px) and (prefers-reduced-motion: no-preference)", () => {
+        productStatic(root);
+      });
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         hero(root);
+        manifesto(root);
+        iris(root);
+        stack(root);
         parallax(root);
         marquee(root);
         headings(root);
@@ -440,7 +676,10 @@ export function useLandingMotion(scope: RefObject<HTMLElement | null>) {
         bento(root);
         progressBar(root);
         closingCta(root);
-        // Fonts settle layout after first paint; measure again once they have.
+        // Measure top to bottom now that every trigger (and pin) exists, and
+        // again once the fonts have settled the layout.
+        ScrollTrigger.sort();
+        ScrollTrigger.refresh();
         document.fonts?.ready.then(() => ScrollTrigger.refresh());
       });
       mm.add("(prefers-reduced-motion: no-preference) and (pointer: fine)", () => {

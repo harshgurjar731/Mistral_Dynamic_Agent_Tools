@@ -10,7 +10,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { Menu, ServerCrash } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
@@ -36,6 +36,7 @@ import { NoAccess, Splash } from "@/components/auth/AuthParts";
 import { LandingPage } from "@/components/landing/LandingPage";
 import { NAV_ITEMS } from "@/components/layout/nav-items";
 import { canOpen, isPublicPath, useAuthSession } from "@/lib/auth";
+import { usePageTransition } from "@/lib/gsap";
 
 // Before any page asks for anything: every request reports live progress.
 installOpTracking();
@@ -272,6 +273,9 @@ function GuardedOutlet({ user, canEditSettings }: { user: SessionUser; canEditSe
 
 function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSettings: boolean }) {
   const ui = useUiConfig();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const mainRef = useRef<HTMLElement>(null);
+  usePageTransition(mainRef, pathname);
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Follow the configured default until the user toggles the sidebar.
@@ -342,7 +346,7 @@ function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSetting
 
           {/* Required: nested routes render here. */}
           {/* Full width, no top bar on desktop: the run and health indicators live in the sidebar. */}
-          <main className="relative z-10 min-h-[60vh] w-full">
+          <main ref={mainRef} className="relative z-10 min-h-[60vh] w-full">
             <GuardedOutlet user={user} canEditSettings={canEditSettings} />
           </main>
         </div>

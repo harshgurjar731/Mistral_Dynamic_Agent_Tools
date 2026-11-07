@@ -620,3 +620,44 @@
 .spotlight:hover::before {
   opacity: 1;
 }
+
+/* Scroll reveals: the manifesto's words start dim (motion.ts sets them). */
+.text-primary .manifesto-word {
+  color: var(--primary);
+}
+
+/* Use cases: a pinned horizontal track on desktop; tabs on smaller screens
+   and for anyone who prefers reduced motion. */
+.uc-track,
+.product-caption-alt {
+  display: none;
+}
+@media (min-width: 1024px) and (prefers-reduced-motion: no-preference) {
+  .uc-track,
+  .product-caption-alt {
+    display: block;
+  }
+  .uc-tabs {
+    display: none;
+  }
+}
+.hdot {
+  transition:
+    width 0.35s ease,
+    background-color 0.35s ease;
+}
+.hdot.is-active {
+  width: 2.5rem;
+  background: var(--primary);
+}
+
+/* ── Sign-in screens (lib/gsap.ts: useAuthIntro) ─────────────────────── */
+
+/* Wait for the intro rather than flash the finished screen; if scripts never
+   run, everything shows after 2 s. */
+.auth-pending [data-auth="title"],
+.auth-pending [data-auth="point"],
+.auth-pending [data-auth="form"] {
+  visibility: hidden;
+  animation: landing-unhide 0s linear 2s forwards;
+}

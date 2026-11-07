@@ -17,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { adminApi, authKeys, type SessionAdmin } from "@/api/auth";
 import { PasswordCard } from "@/components/auth/AccountCards";
 import { BrandMark } from "@/components/auth/AuthParts";
@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { initials } from "@/lib/auth";
+import { usePageTransition } from "@/lib/gsap";
 import { cn } from "@/lib/utils";
 
 const NAV: { to: string; label: string; icon: LucideIcon; exact?: boolean }[] = [
@@ -47,6 +48,8 @@ const NAV: { to: string; label: string; icon: LucideIcon; exact?: boolean }[] = 
 export function AdminShell({ admin, children }: { admin: SessionAdmin; children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  usePageTransition(mainRef, pathname);
   const active = (to: string, exact?: boolean) =>
     exact
       ? pathname === to || pathname === `${to}/`
@@ -132,7 +135,9 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
           </button>
           <span className="font-display text-sm font-bold">Admin console</span>
         </header>
-        <main className="w-full">{children}</main>
+        <main ref={mainRef} className="w-full">
+          {children}
+        </main>
       </div>
     </div>
   );

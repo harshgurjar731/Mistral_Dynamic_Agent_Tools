@@ -11,10 +11,11 @@ import {
   Workflow,
   type LucideIcon,
 } from "lucide-react";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { useAuthIntro } from "@/lib/gsap";
 import { useUiConfig } from "@/lib/uiConfig";
 import { cn } from "@/lib/utils";
 
@@ -73,8 +74,10 @@ export function AuthLayout({
   variant?: "user" | "admin";
   aside?: ReactNode;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  useAuthIntro(root);
   return (
-    <div className="relative min-h-screen bg-background">
+    <div ref={root} className="auth-pending relative min-h-screen bg-background">
       <div className="app-atmosphere" aria-hidden />
       <div className="grid min-h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
         {/* Brand panel */}
@@ -82,6 +85,7 @@ export function AuthLayout({
           <div className="grid-backdrop absolute inset-0 opacity-50" aria-hidden />
           <div
             aria-hidden
+            data-auth="glow"
             className="absolute -left-32 top-1/3 size-[520px] rounded-full opacity-25 blur-3xl"
             style={{ background: "var(--gradient-brand)" }}
           />
@@ -93,7 +97,10 @@ export function AuthLayout({
                   <p className="technical-label">
                     {variant === "admin" ? "Admin console" : "Control plane"}
                   </p>
-                  <h2 className="mt-3 font-display text-3xl font-bold leading-tight text-foreground xl:text-4xl">
+                  <h2
+                    data-auth="title"
+                    className="mt-3 font-display text-3xl font-bold leading-tight text-foreground xl:text-4xl"
+                  >
                     {variant === "admin" ? (
                       <>
                         Run the platform.
@@ -110,7 +117,7 @@ export function AuthLayout({
                   </h2>
                   <ul className="mt-10 space-y-5">
                     {(variant === "admin" ? ADMIN_POINTS : SIDE_POINTS).map((p) => (
-                      <li key={p.title} className="flex gap-3.5">
+                      <li key={p.title} data-auth="point" className="flex gap-3.5">
                         <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-secondary">
                           <p.icon className="size-4 text-primary" />
                         </span>
@@ -145,7 +152,9 @@ export function AuthLayout({
             </div>
           </div>
           <div className="flex flex-1 items-center justify-center py-10">
-            <div className="w-full max-w-[400px]">{children}</div>
+            <div data-auth="form" className="w-full max-w-[400px]">
+              {children}
+            </div>
           </div>
         </main>
       </div>
