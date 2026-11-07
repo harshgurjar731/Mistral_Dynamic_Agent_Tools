@@ -37,6 +37,7 @@ import {
   TemplateLine,
 } from "./shared";
 import { useDocumentIngest } from "./useDocumentIngest";
+import { useCanCall } from "@/lib/policy";
 
 interface PStage {
   id?: string;
@@ -250,6 +251,7 @@ export function ProcessPanel({
   onDelete: () => void;
   onAddSubprocess: () => void;
 }) {
+  const canManage = useCanCall("PATCH", "/api/processes/concepts/x");
   const qc = useQueryClient();
   const docs = node.documents ?? [];
   const active = docs.find((d) => d.is_active) ?? null;
@@ -330,61 +332,67 @@ export function ProcessPanel({
               <Network className="size-3.5" /> View in ontology
             </Link>
           </Button>
-          {node.level_name === "process" ? (
+          {canManage && node.level_name === "process" ? (
             <Button size="sm" variant="outline" onClick={onAddSubprocess}>
               <Plus className="size-3.5" /> Subprocess
             </Button>
           ) : null}
-          <Button size="sm" variant="outline" onClick={onEdit}>
-            <Edit2 className="size-3.5" /> Edit
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red hover:text-red"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+          {canManage ? (
+            <>
+              <Button size="sm" variant="outline" onClick={onEdit}>
+                <Edit2 className="size-3.5" /> Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-red hover:text-red"
+                onClick={onDelete}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
       {/* Upload */}
-      <div
-        className="rounded-2xl border border-border/60 p-4"
-        style={{ background: "var(--surface)" }}
-      >
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-medium text-foreground">
-              {active ? "Upload a new version" : "Upload the process document"}
-            </p>
-            <p className="mt-0.5">
-              <TemplateLine template={node.template} />{" "}
-              <Link
-                to="/settings"
-                search={{ category: "process", scope: node.id }}
-                className="text-[11px] text-primary hover:underline"
-                title="Templates are set per industry, domain, process and subprocess in Settings"
-              >
-                change
-              </Link>
-            </p>
+      {canManage ? (
+        <div
+          className="rounded-2xl border border-border/60 p-4"
+          style={{ background: "var(--surface)" }}
+        >
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {active ? "Upload a new version" : "Upload the process document"}
+              </p>
+              <p className="mt-0.5">
+                <TemplateLine template={node.template} />{" "}
+                <Link
+                  to="/settings"
+                  search={{ category: "process", scope: node.id }}
+                  className="text-[11px] text-primary hover:underline"
+                  title="Templates are set per industry, domain, process and subprocess in Settings"
+                >
+                  change
+                </Link>
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <TemplateDownloadMenu conceptId={node.id} />
+              <Button size="sm" variant="ghost" onClick={ingest.draft}>
+                <Sparkles className="size-3.5" /> Draft from text with AI
+              </Button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <TemplateDownloadMenu conceptId={node.id} />
-            <Button size="sm" variant="ghost" onClick={ingest.draft}>
-              <Sparkles className="size-3.5" /> Draft from text with AI
-            </Button>
-          </div>
+          <FileDrop
+            onFile={(f) => void ingest.upload(f)}
+            busy={ingest.busy}
+            compact={Boolean(active)}
+            hint="Checked against the default template, and that it describes this process"
+          />
         </div>
-        <FileDrop
-          onFile={(f) => void ingest.upload(f)}
-          busy={ingest.busy}
-          compact={Boolean(active)}
-          hint="Checked against the default template, and that it describes this process"
-        />
-      </div>
+      ) : null}
 
       <Tabs defaultValue="document">
         <TabsList>
@@ -460,7 +468,7 @@ export function ProcessPanel({
                     {d.warning_count ? ` ${d.warning_count} warnings` : ""}
                   </span>
                   <div className="ml-auto flex flex-wrap gap-1">
-                    {d.status !== "valid" ? (
+                    {canManage && d.status !== "valid" ? (
                       <Button
                         size="sm"
                         variant="secondary"
@@ -470,7 +478,7 @@ export function ProcessPanel({
                         <Wrench className="size-3" /> Fix
                       </Button>
                     ) : null}
-                    {d.status === "valid" && !d.is_active ? (
+                    {canManage && d.status === "valid" && !d.is_active ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -498,14 +506,16 @@ export function ProcessPanel({
                     >
                       <Download className="size-3" />
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-red hover:text-red"
-                      onClick={() => void remove(d)}
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
+                    {canManage ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-red hover:text-red"
+                        onClick={() => void remove(d)}
+                      >
+                        <Trash2 className="size-3" />
+                      </Button>
+                    ) : null}
                   </div>
                 </li>
               ))}

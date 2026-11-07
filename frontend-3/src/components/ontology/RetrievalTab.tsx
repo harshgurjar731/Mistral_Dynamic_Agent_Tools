@@ -19,8 +19,10 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 export function RetrievalTab() {
+  const canSync = useCanCall("POST", "/api/rag/agents/sync");
   const [query, setQuery] = useState("");
   const [libraryId, setLibraryId] = useState("");
   const [domain, setDomain] = useState("");
@@ -80,24 +82,26 @@ export function RetrievalTab() {
               the graph and document libraries.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => syncAgentsMutation.mutate()}
-            disabled={syncAgentsMutation.isPending}
-            className="flex items-center gap-1.5"
-            title="Attach search_domain_knowledge tool to agents with libraries"
-          >
-            {syncAgentsMutation.isPending ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <LivePercent />
-              </>
-            ) : (
-              <Plug className="size-3.5 text-cyan" />
-            )}
-            Sync Tool to Agents
-          </Button>
+          {canSync ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => syncAgentsMutation.mutate()}
+              disabled={syncAgentsMutation.isPending}
+              className="flex items-center gap-1.5"
+              title="Attach search_domain_knowledge tool to agents with libraries"
+            >
+              {syncAgentsMutation.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : (
+                <Plug className="size-3.5 text-cyan" />
+              )}
+              Sync Tool to Agents
+            </Button>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap gap-2.5">

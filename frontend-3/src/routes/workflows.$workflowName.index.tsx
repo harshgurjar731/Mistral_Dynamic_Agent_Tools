@@ -45,6 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { executionStatusIdentity, formatDuration, formatTimestamp } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/workflows/$workflowName/")({
   head: ({ params }) => ({
@@ -104,6 +105,7 @@ function Section({
 }
 
 function WorkflowDetailPage() {
+  const allowed = useAllowed();
   const { workflowName } = Route.useParams();
   const qc = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -228,40 +230,49 @@ function WorkflowDetailPage() {
           <button type="button" className={secondaryButton} onClick={() => setHistoryOpen(true)}>
             <History className="size-3.5" /> History
           </button>
-          <button
-            type="button"
-            className={secondaryButton}
-            onClick={() => exportMutation.mutate()}
-            disabled={exportMutation.isPending}
-            title="Export to Mistral workflow format"
-          >
-            {exportMutation.isPending ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <LivePercent />
-              </>
-            ) : (
-              <Download className="size-3.5" />
-            )}
-            Export
-          </button>
-          <button
-            type="button"
-            className={secondaryButton}
-            onClick={() => setDeployOpen(true)}
-            title="Package workflow for deployment"
-          >
-            <Package className="size-3.5" /> Package
-          </button>
-          <button
-            type="button"
-            className={secondaryButton}
-            onClick={() => setClassifyOpen(true)}
-            title="Classify workflow domain"
-          >
-            <Tag className="size-3.5" /> Classify
-          </button>
-          {!remoteOnly ? (
+          {allowed("POST", `/api/workflows/${encodeURIComponent(workflowName)}/export`) ? (
+            <button
+              type="button"
+              className={secondaryButton}
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+              title="Export to Mistral workflow format"
+            >
+              {exportMutation.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              Export
+            </button>
+          ) : null}
+          {allowed(
+            "POST",
+            `/api/workflows/${encodeURIComponent(workflowName)}/deployment/package`,
+          ) ? (
+            <button
+              type="button"
+              className={secondaryButton}
+              onClick={() => setDeployOpen(true)}
+              title="Package workflow for deployment"
+            >
+              <Package className="size-3.5" /> Package
+            </button>
+          ) : null}
+          {allowed("POST", "/api/ontology/annotations/one") ? (
+            <button
+              type="button"
+              className={secondaryButton}
+              onClick={() => setClassifyOpen(true)}
+              title="Classify workflow domain"
+            >
+              <Tag className="size-3.5" /> Classify
+            </button>
+          ) : null}
+          {!remoteOnly && allowed("PUT", `/api/workflows/${encodeURIComponent(workflowName)}`) ? (
             <>
               <Link
                 to="/workflows/$workflowName/refine"
@@ -278,33 +289,37 @@ function WorkflowDetailPage() {
               >
                 <Pencil className="size-3.5" /> Edit
               </Link>
-              <button
-                type="button"
-                className={secondaryButton}
-                onClick={() => publish.mutate()}
-                disabled={publish.isPending}
-              >
-                {publish.isPending ? (
-                  <>
-                    <Loader2 className="size-3.5 animate-spin" />
-                    <LivePercent />
-                  </>
-                ) : (
-                  <Rocket className="size-3.5" />
-                )}
-                {definition.has_unpublished_changes || !definition.is_deployed
-                  ? "Publish"
-                  : "Republish"}
-              </button>
+              {allowed("POST", `/api/workflows/${encodeURIComponent(workflowName)}/publish`) ? (
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  onClick={() => publish.mutate()}
+                  disabled={publish.isPending}
+                >
+                  {publish.isPending ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      <LivePercent />
+                    </>
+                  ) : (
+                    <Rocket className="size-3.5" />
+                  )}
+                  {definition.has_unpublished_changes || !definition.is_deployed
+                    ? "Publish"
+                    : "Republish"}
+                </button>
+              ) : null}
             </>
           ) : null}
-          <Link
-            to="/workflows/$workflowName/execute"
-            params={{ workflowName }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-          >
-            <Play className="size-3.5" /> Run
-          </Link>
+          {allowed("POST", `/api/workflows/${encodeURIComponent(workflowName)}/execute`) ? (
+            <Link
+              to="/workflows/$workflowName/execute"
+              params={{ workflowName }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            >
+              <Play className="size-3.5" /> Run
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -484,7 +499,9 @@ function WorkflowDetailPage() {
               actions={
                 <>
                   <ValidationSummary result={validation.data} pending={validation.isFetching} />
-                  {validation.data && validation.data.issues.length > 0 ? (
+                  {validation.data &&
+                  validation.data.issues.length > 0 &&
+                  allowed("PUT", `/api/workflows/${encodeURIComponent(workflowName)}`) ? (
                     <Link
                       to="/workflows/$workflowName/refine"
                       params={{ workflowName }}
@@ -518,13 +535,15 @@ function WorkflowDetailPage() {
         title="Recent runs"
         description={runs.data ? `${runs.data.count} shown` : undefined}
         actions={
-          <Link
-            to="/workflows/$workflowName/execute"
-            params={{ workflowName }}
-            className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary transition hover:bg-primary/10"
-          >
-            New run
-          </Link>
+          allowed("POST", `/api/workflows/${encodeURIComponent(workflowName)}/execute`) ? (
+            <Link
+              to="/workflows/$workflowName/execute"
+              params={{ workflowName }}
+              className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary transition hover:bg-primary/10"
+            >
+              New run
+            </Link>
+          ) : null
         }
       >
         <div className="p-4">

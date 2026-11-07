@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     AGENT_CREATION_CONCURRENCY: int = 5
     RULE_SELECTION_CONCURRENCY: int = 4
     TOOL_SYNTHESIS_CONCURRENCY: int = 3
+    # Background runs (agent design, workflow planning, tool synthesis,
+    # rebuilds) running at once per workspace; more wait in line, in order.
+    RUN_CONCURRENCY: int = 4
     # Below this the planner designs a new agent instead of reusing one.
     REUSE_MIN_CONFIDENCE: float = 0.6
 

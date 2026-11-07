@@ -3,6 +3,7 @@ import { Edit2, FileText, Library as LibraryIcon, Loader2, Trash2 } from "lucide
 import { CreatedAt } from "@/components/shared/CreatedAt";
 import { cn } from "@/lib/utils";
 import type { Library } from "@/types";
+import { useCanCall } from "@/lib/policy";
 
 /** One library on the Libraries page — click anywhere to open its documents. */
 export function LibraryCard({
@@ -16,6 +17,7 @@ export function LibraryCard({
   onDelete: (library: Library) => void;
   deleting?: boolean;
 }) {
+  const canManage = useCanCall("PUT", "/api/libraries/x");
   const docs = library.document_count ?? 0;
 
   return (
@@ -72,30 +74,32 @@ export function LibraryCard({
           data-card-footer
           className="mt-auto flex items-center gap-1.5 border-t border-border/40 pt-3.5"
         >
-          <div className="pointer-events-auto relative z-10 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => onRename(library)}
-              aria-label={`Edit ${library.name}`}
-              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] font-medium text-muted-foreground transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground"
-            >
-              <Edit2 className="size-3" />
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(library)}
-              disabled={deleting}
-              aria-label={`Delete ${library.name}`}
-              className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
-            >
-              {deleting ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="size-3.5" />
-              )}
-            </button>
-          </div>
+          {canManage ? (
+            <div className="pointer-events-auto relative z-10 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onRename(library)}
+                aria-label={`Edit ${library.name}`}
+                className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] font-medium text-muted-foreground transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground"
+              >
+                <Edit2 className="size-3" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(library)}
+                disabled={deleting}
+                aria-label={`Delete ${library.name}`}
+                className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
+              >
+                {deleting ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+              </button>
+            </div>
+          ) : null}
           <CreatedAt value={library.created_at} className="ml-auto" />
         </div>
       </div>

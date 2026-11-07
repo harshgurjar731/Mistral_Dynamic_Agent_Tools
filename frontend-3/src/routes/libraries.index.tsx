@@ -15,6 +15,7 @@ import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/libraries/")({
   head: () => ({
@@ -70,11 +71,13 @@ function LibrariesIndexPage() {
     return applySort(rows, LIBRARY_SORTS, sort);
   }, [all, search, sort]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (l) => l.id,
     () => true,
     (l) => l.name,
+    allowed("DELETE", "/api/libraries/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "library",
@@ -100,14 +103,16 @@ function LibrariesIndexPage() {
             </FeatureDescription>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          New library
-        </button>
+        {allowed("POST", "/api/libraries") ? (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            New library
+          </button>
+        ) : null}
       </div>
 
       {/* ── Filters ── */}
@@ -173,7 +178,7 @@ function LibrariesIndexPage() {
                 ? "Try a different name or description."
                 : "A library is a document set an agent can be pointed at for retrieval."}
             </p>
-            {!search && (
+            {!search && allowed("POST", "/api/libraries") && (
               <button
                 type="button"
                 onClick={() => setCreating(true)}

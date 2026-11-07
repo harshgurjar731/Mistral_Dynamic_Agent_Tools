@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 function getFileIcon(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
@@ -56,6 +57,7 @@ export function DocumentsPanel({
   library: Library | null;
   onRenameLibrary?: () => void;
 }) {
+  const canUpload = useCanCall("POST", "/api/libraries/x/documents");
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [pageUrl, setPageUrl] = useState("");
@@ -153,11 +155,13 @@ export function DocumentsPanel({
     return filtered;
   }, [docs.data, search, sort]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     processedDocs,
     (d) => d.id,
     () => true,
     (d) => d.filename,
+    allowed("DELETE", "/api/libraries/x/documents/y"),
   );
   const bulkDelete = useBulkDelete({
     noun: "document",
@@ -190,13 +194,16 @@ export function DocumentsPanel({
       )}
       onDragOver={(e) => {
         e.preventDefault();
-        setIsDragging(true);
+        if (canUpload) setIsDragging(true);
       }}
       onDragLeave={(e) => {
         e.preventDefault();
         setIsDragging(false);
       }}
-      onDrop={handleDrop}
+      onDrop={(e) => {
+        if (canUpload) handleDrop(e);
+        else e.preventDefault();
+      }}
     >
       <GlassPanelHeader
         title={
@@ -218,58 +225,60 @@ export function DocumentsPanel({
         actions={<span className="technical-label">{docs.data?.length ?? 0} documents</span>}
       />
       <div className="space-y-4 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) handleFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <Button size="sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}>
-            {upload.isPending ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <LivePercent />
-              </>
-            ) : (
-              <Upload className="size-3.5" />
-            )}
-            Upload files
-          </Button>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (pageUrl.trim()) addWebpage.mutate(pageUrl.trim());
-            }}
-            className="flex min-w-[240px] flex-1 items-center gap-2"
-          >
-            <Input
-              placeholder="https://example.com/page"
-              value={pageUrl}
-              onChange={(e) => setPageUrl(e.target.value)}
+        {canUpload ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) handleFiles(e.target.files);
+                e.target.value = "";
+              }}
             />
-            <Button
-              size="sm"
-              variant="outline"
-              type="submit"
-              disabled={!pageUrl.trim() || addWebpage.isPending}
-            >
-              {addWebpage.isPending ? (
+            <Button size="sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}>
+              {upload.isPending ? (
                 <>
                   <Loader2 className="size-3.5 animate-spin" />
                   <LivePercent />
                 </>
               ) : (
-                <Globe className="size-3.5" />
+                <Upload className="size-3.5" />
               )}
-              Ingest
+              Upload files
             </Button>
-          </form>
-        </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pageUrl.trim()) addWebpage.mutate(pageUrl.trim());
+              }}
+              className="flex min-w-[240px] flex-1 items-center gap-2"
+            >
+              <Input
+                placeholder="https://example.com/page"
+                value={pageUrl}
+                onChange={(e) => setPageUrl(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                type="submit"
+                disabled={!pageUrl.trim() || addWebpage.isPending}
+              >
+                {addWebpage.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <Globe className="size-3.5" />
+                )}
+                Ingest
+              </Button>
+            </form>
+          </div>
+        ) : null}
 
         {/* Drag and Drop Zone Hint */}
         <div

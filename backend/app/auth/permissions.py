@@ -201,7 +201,9 @@ RULES: list[Rule] = [
     _r("GET", r"/ops/[^/]+/events", ANY),
 
     # Design and chat
-    _r("POST", r"/orchestrate(/stream)?", "perm", "orchestrator.use"),
+    # With an agent_id this is a chat with that agent; without one it designs a
+    # new agent, which the route itself also requires orchestrator.use for.
+    _r("POST", r"/orchestrate(/stream)?", "perm", "orchestrator.use", "chat.use"),
     _r("POST", r"/chat/(completions|stream)", "perm", "chat.use", "orchestrator.use"),
     _r("GET|DELETE", r"/conversations(/.*)?", "perm", "chat.use", "orchestrator.use"),
     _r("POST", r"/uploads/image", "perm", "chat.use", "orchestrator.use"),
@@ -287,6 +289,16 @@ RULES: list[Rule] = [
        "tools.manage"),
     _r(WRITE, r"/vault(/.*)?", "perm", "vault.manage"),
 ]
+
+
+def export_rules() -> list[dict]:
+    """The route policy for the browser, which hides what the caller can't do.
+
+    Same rules, same order, same first-match semantics; the patterns use only
+    syntax JavaScript's RegExp reads the same way. The server still decides.
+    """
+    return [{"methods": sorted(r.methods), "pattern": r.pattern.pattern, "access": r.access,
+             "perms": list(r.perms), "admin_ok": r.admin_ok} for r in RULES]
 
 
 def match(method: str, path: str) -> Optional[Rule]:

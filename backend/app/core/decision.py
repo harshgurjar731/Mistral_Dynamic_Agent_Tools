@@ -54,20 +54,17 @@ class DecisionRateLimited(Exception):
 # speed-up: four of five facets fail, their fallbacks fire, and the agent is
 # assembled from defaults that were never actually decided.
 #
-# Created lazily because a Semaphore must belong to the running loop.
-_gate: Optional[asyncio.Semaphore] = None
-_gate_limit: int = 0
-
-
 def _concurrency_gate() -> asyncio.Semaphore:
-    global _gate, _gate_limit
-    from app.config import settings
+    """A fair (FIFO) queue of planning calls per Mistral key.
 
-    limit = max(1, int(settings.DECISION_CONCURRENCY))
-    if _gate is None or _gate_limit != limit:
-        _gate = asyncio.Semaphore(limit)
-        _gate_limit = limit
-    return _gate
+    The limit protects a key's rate quota, so it applies per key: every
+    workspace has its own key and its own quota, and one busy workspace's
+    calls queue behind each other — never in front of another workspace's.
+    """
+    from app.config import settings
+    from app.core.runtime import key_gate
+
+    return key_gate("decision", settings.DECISION_CONCURRENCY)
 
 
 def _rate_limit_retry_after(exc: Exception) -> Optional[float]:

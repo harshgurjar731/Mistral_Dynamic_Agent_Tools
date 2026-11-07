@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/mcp/")({
   head: () => ({
@@ -106,11 +107,13 @@ function McpIndexPage() {
     return applySort(rows, MCP_SORTS, sort);
   }, [servers, search, filter, sort]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (s) => s.name,
     () => true,
     (s) => s.name,
+    allowed("DELETE", "/api/mcp/servers/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "server",
@@ -145,14 +148,16 @@ function McpIndexPage() {
             </FeatureDescription>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setRegisterOpen(true)}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          Register Server
-        </button>
+        {allowed("POST", "/api/mcp/servers") ? (
+          <button
+            type="button"
+            onClick={() => setRegisterOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            Register Server
+          </button>
+        ) : null}
       </div>
 
       {query.isLoading ? (
@@ -164,7 +169,11 @@ function McpIndexPage() {
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         </div>
       ) : servers.length === 0 ? (
-        <GetStarted onRegister={() => setRegisterOpen(true)} />
+        <GetStarted
+          {...(allowed("POST", "/api/mcp/servers")
+            ? { onRegister: () => setRegisterOpen(true) }
+            : {})}
+        />
       ) : (
         <>
           {/* ── Stat cards ── */}
@@ -240,22 +249,24 @@ function McpIndexPage() {
             <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
               {filtered.length} of {servers.length} server{servers.length !== 1 ? "s" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => healthCheck.mutate()}
-              disabled={healthCheck.isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
-            >
-              {healthCheck.isPending ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  <LivePercent />
-                </>
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
-              Health check all
-            </button>
+            {allowed("POST", "/api/mcp/health-check") ? (
+              <button
+                type="button"
+                onClick={() => healthCheck.mutate()}
+                disabled={healthCheck.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
+              >
+                {healthCheck.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                Health check all
+              </button>
+            ) : null}
           </div>
 
           {/* ── Cards ── */}
@@ -282,7 +293,7 @@ function McpIndexPage() {
                     <McpServerCard server={s} />
                   </SelectableItem>
                 ))}
-                {!search.trim() && filter === "all" ? (
+                {!search.trim() && filter === "all" && allowed("POST", "/api/mcp/servers") ? (
                   <RegisterMcpCard onClick={() => setRegisterOpen(true)} />
                 ) : null}
               </div>
@@ -297,7 +308,7 @@ function McpIndexPage() {
 }
 
 /** First-run state: what MCP servers are for, and the one action to take. */
-function GetStarted({ onRegister }: { onRegister: () => void }) {
+function GetStarted({ onRegister }: { onRegister?: () => void }) {
   const steps = [
     {
       icon: Plug,
@@ -346,16 +357,18 @@ function GetStarted({ onRegister }: { onRegister: () => void }) {
           </div>
         ))}
       </div>
-      <div className="mt-6 text-center">
-        <button
-          type="button"
-          onClick={onRegister}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          Register Server
-        </button>
-      </div>
+      {onRegister ? (
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={onRegister}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            Register Server
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

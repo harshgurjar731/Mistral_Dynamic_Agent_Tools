@@ -78,8 +78,18 @@ const PAGE_PERMISSIONS: [prefix: string, perms: string[]][] = [
 ];
 
 /** Null: open to every signed-in user. */
+/** Pages that exist only to change something: they need the write permission. */
+const WRITE_PAGES: [RegExp, string[]][] = [
+  [/^\/workflows\/new(\/.*)?$/, ["workflows.manage"]],
+  [/^\/workflows\/[^/]+\/(edit|refine)\/?$/, ["workflows.manage"]],
+  [/^\/remote-servers\/new\/?$/, ["remote_servers.manage"]],
+];
+
 export function pagePermissions(pathname: string): string[] | null {
   if (pathname === "/") return ["orchestrator.use"];
+  for (const [re, perms] of WRITE_PAGES) {
+    if (re.test(pathname)) return perms;
+  }
   for (const [prefix, perms] of PAGE_PERMISSIONS) {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return perms;
   }

@@ -32,6 +32,7 @@ import { isDeletableTool } from "@/lib/status";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/tools/")({
   head: () => ({
@@ -132,17 +133,20 @@ function ToolsPage() {
   const totalTools = (toolsQuery.data ?? []).length;
 
   // One selection per tab: each tab deletes only what it shows.
+  const allowed = useAllowed();
   const activeSelection = useBulkSelection(
     activeTools,
     (t) => t.id,
     isDeletableTool,
     (t) => t.name,
+    allowed("DELETE", "/api/tools/x"),
   );
   const pendingSelection = useBulkSelection(
     pendingTools,
     (t) => t.id,
     isDeletableTool,
     (t) => t.name,
+    allowed("DELETE", "/api/tools/x"),
   );
   const invalidate = [QK.tools(), QK.pendingTools()];
   const deleteActive = useBulkDelete({
@@ -174,21 +178,23 @@ function ToolsPage() {
             </FeatureDescription>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setSynthesizeOpen(true)}
-          title={synthesize.busy ? "Show the synthesis progress" : undefined}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Sparkles className="size-4" />
-          {synthesize.busy ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
-            </>
-          ) : (
-            "Synthesize Tool"
-          )}
-        </button>
+        {allowed("POST", "/api/tools/synthesize") ? (
+          <button
+            type="button"
+            onClick={() => setSynthesizeOpen(true)}
+            title={synthesize.busy ? "Show the synthesis progress" : undefined}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Sparkles className="size-4" />
+            {synthesize.busy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
+              </>
+            ) : (
+              "Synthesize Tool"
+            )}
+          </button>
+        ) : null}
       </div>
 
       {/* ── Stats Bar ── */}
@@ -275,7 +281,7 @@ function ToolsPage() {
                     ? "Try adjusting your filters or search query."
                     : "Synthesize your first tool to get started."}
                 </p>
-                {!search && purposeFilter === "all" && (
+                {!search && purposeFilter === "all" && allowed("POST", "/api/tools/synthesize") && (
                   <button
                     type="button"
                     onClick={() => setSynthesizeOpen(true)}

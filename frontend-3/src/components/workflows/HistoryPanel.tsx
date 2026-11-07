@@ -10,6 +10,7 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { executionsApi, workflowsApi, errorMessage } from "@/api";
 import { executionStatusIdentity, formatDuration, formatTimestamp } from "@/lib/status";
 import { Link } from "@tanstack/react-router";
+import { useCanCall } from "@/lib/policy";
 
 export function WorkflowHistoryPanel({
   workflowName,
@@ -20,6 +21,7 @@ export function WorkflowHistoryPanel({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  const canControl = useCanCall("POST", "/api/workflows/executions/x/cancel");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -100,22 +102,24 @@ export function WorkflowHistoryPanel({
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                disabled={selected.size === 0}
-                onClick={() => batch("cancel")}
-                className="rounded-lg border border-amber/30 bg-amber/10 px-2.5 py-1 text-xs text-amber disabled:opacity-40"
-              >
-                Cancel selected
-              </button>
-              <button
-                disabled={selected.size === 0}
-                onClick={() => batch("terminate")}
-                className="rounded-lg border border-red/30 bg-red/10 px-2.5 py-1 text-xs text-red disabled:opacity-40"
-              >
-                Terminate selected
-              </button>
-            </div>
+            {canControl ? (
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={selected.size === 0}
+                  onClick={() => batch("cancel")}
+                  className="rounded-lg border border-amber/30 bg-amber/10 px-2.5 py-1 text-xs text-amber disabled:opacity-40"
+                >
+                  Cancel selected
+                </button>
+                <button
+                  disabled={selected.size === 0}
+                  onClick={() => batch("terminate")}
+                  className="rounded-lg border border-red/30 bg-red/10 px-2.5 py-1 text-xs text-red disabled:opacity-40"
+                >
+                  Terminate selected
+                </button>
+              </div>
+            ) : null}
 
             {executions.isLoading ? (
               <TableSkeleton rows={5} />

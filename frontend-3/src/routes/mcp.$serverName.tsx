@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { EditGuard, useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/mcp/$serverName")({
   head: () => ({
@@ -65,6 +66,10 @@ export const Route = createFileRoute("/mcp/$serverName")({
 
 function McpServerPage() {
   const { serverName } = Route.useParams();
+  const canManage = useAllowed()(
+    "POST",
+    `/api/mcp/servers/${encodeURIComponent(serverName)}/reconnect`,
+  );
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -190,48 +195,50 @@ function McpServerPage() {
             ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => healthCheck.mutate()} disabled={busy}>
-              {healthCheck.isPending ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  <LivePercent />
-                </>
+          {canManage ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => healthCheck.mutate()} disabled={busy}>
+                {healthCheck.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                Health check
+              </Button>
+              {connected ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => disconnect.mutate()}
+                  disabled={busy}
+                >
+                  <Unplug className="size-3.5" /> Disconnect
+                </Button>
               ) : (
-                <RefreshCw className="size-3.5" />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => reconnect.mutate()}
+                  disabled={busy}
+                >
+                  <Plug className="size-3.5" /> Reconnect
+                </Button>
               )}
-              Health check
-            </Button>
-            {connected ? (
               <Button
                 size="sm"
-                variant="outline"
-                onClick={() => disconnect.mutate()}
-                disabled={busy}
+                variant="ghost"
+                className="text-muted-foreground hover:bg-red/10 hover:text-red"
+                onClick={() => window.confirm(`Remove "${serverName}"?`) && remove.mutate()}
+                disabled={remove.isPending}
+                aria-label="Remove server"
               >
-                <Unplug className="size-3.5" /> Disconnect
+                <Trash2 className="size-3.5" />
               </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => reconnect.mutate()}
-                disabled={busy}
-              >
-                <Plug className="size-3.5" /> Reconnect
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-muted-foreground hover:bg-red/10 hover:text-red"
-              onClick={() => window.confirm(`Remove "${serverName}"?`) && remove.mutate()}
-              disabled={remove.isPending}
-              aria-label="Remove server"
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -284,20 +291,22 @@ function McpServerPage() {
           {server ? <RegistryCard record={server} /> : null}
         </div>
 
-        <div id="mcp-playground" className="lg:sticky lg:top-6">
-          <PlaygroundCard
-            serverName={serverName}
-            tools={tools}
-            selected={selected}
-            args={args}
-            onSelect={(name) => {
-              const tool = tools.find((t) => t.name === name);
-              setSelected(name);
-              setArgs(tool ? argumentSkeleton(tool) : "{}");
-            }}
-            onArgs={setArgs}
-          />
-        </div>
+        {canManage ? (
+          <div id="mcp-playground" className="lg:sticky lg:top-6">
+            <PlaygroundCard
+              serverName={serverName}
+              tools={tools}
+              selected={selected}
+              args={args}
+              onSelect={(name) => {
+                const tool = tools.find((t) => t.name === name);
+                setSelected(name);
+                setArgs(tool ? argumentSkeleton(tool) : "{}");
+              }}
+              onArgs={setArgs}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 export function useWorkflowPrerequisites(workflowName: string | null | undefined) {
   return useQuery({
@@ -202,6 +203,7 @@ function PrerequisiteRow({
 }
 
 function PrerequisiteAction({ item, report }: { item: Prerequisite; report: PrerequisiteReport }) {
+  const allowed = useAllowed();
   const qc = useQueryClient();
   const action = item.action;
   const refresh = () =>
@@ -233,6 +235,18 @@ function PrerequisiteAction({ item, report }: { item: Prerequisite; report: Prer
   });
 
   if (!action) return null;
+  // Fixing a prerequisite is building work; someone who may only run the
+  // workflow is told who can, rather than shown a button that would fail.
+  const may =
+    action.type === "link" ||
+    (action.type === "vault" && (action.id ? true : allowed("POST", "/api/vault/secrets"))) ||
+    (action.type === "rebuild" && allowed("POST", "/api/workflows/x/steps/y/rebuild-activity")) ||
+    (action.type === "approve" && allowed("POST", "/api/tools/x/approve"));
+  if (!may) {
+    return (
+      <span className="shrink-0 text-[11px] text-muted-foreground">Ask a Builder to fix this</span>
+    );
+  }
   if (action.type === "vault") {
     return <VaultAction action={action} blocking={item.blocking} onSaved={() => void refresh()} />;
   }

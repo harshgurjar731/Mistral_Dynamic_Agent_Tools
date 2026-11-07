@@ -52,6 +52,11 @@ async def lifespan(app: FastAPI):
     import subprocess
 
     logger.info("🚀 Starting Mistral Dynamic Agent Backend …")
+    # Blocking I/O (the Mistral SDK, SQLite) runs on threads: size the pools for
+    # many users at once before anything uses them (app.core.runtime).
+    from app.core.runtime import configure_threads
+
+    logger.info("✅ I/O threads: %d", configure_threads())
     # Before the client exists, so the client is created already traced.
     from app import observability
     observability.setup("api")
@@ -78,6 +83,17 @@ async def lifespan(app: FastAPI):
 
         interrupted = runs_store.mark_interrupted()
         pruned_runs = runs_store.prune()
+        from app.services.workflow_engine import run_history
+
+        closed = run_history.interrupt_orphans()
+        if closed.get("executions"):
+            logger.info("✅ Local executions: %d interrupted by restart, %d review(s) closed",
+                        closed["executions"], closed.get("reviews", 0))
+        from app.runs.recovery import close_stuck_work
+
+        stuck = close_stuck_work()
+        if stuck:
+            logger.info("✅ Ingests interrupted by restart, marked for a retry: %s", stuck)
         if interrupted or pruned_runs:
             logger.info(
                 "✅ Background runs: %d interrupted by restart, %d old run(s) pruned",
@@ -307,7 +323,15 @@ async def lifespan(app: FastAPI):
     try:
         from app.auth.provision import provision_all
 
-        asyncio.create_task(provision_all())
+        from app.core.runtime import spawn
+
+        spawn(provision_all(), name="provision:all")
+
+        # Workflow plans a previous process died in the middle of: remove the
+        # agents, activities and libraries they made that nothing uses.
+        from app.runs.recovery import reclaim_interrupted_plans
+
+        spawn(reclaim_interrupted_plans(), name="recovery:plans")
     except Exception as e:
         logger.warning("⚠️ Workspace provisioning skipped: %s", e)
 
@@ -358,6 +382,21 @@ async def lifespan(app: FastAPI):
         await run_manager.shutdown()
     except Exception as e:
         logger.warning("Error closing background runs: %s", e)
+
+    # Local workflow executions still going die with this process: close their
+    # records now (a crash is caught by interrupt_orphans on the next start).
+    try:
+        from app.core.runtime import drain
+        from app.services.workflow_engine import run_history
+        from app.services.workflow_engine.engine import _execution_store
+
+        await drain(timeout=5.0)
+        n = run_history.interrupt_live(list(_execution_store.values()),
+                                       "The server shut down while this run was in progress.")
+        if n:
+            logger.info("Closed %d local execution(s) on shutdown", n)
+    except Exception as e:
+        logger.warning("Error closing local executions: %s", e)
 
     # ── Shutdown: stop the worker subprocess ────────────────────────────
     if worker_proc and worker_proc.poll() is None:

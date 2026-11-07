@@ -11,12 +11,12 @@ logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
-connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+from app.db_tuning import engine_kwargs, tune  # noqa: E402
 
 try:
-    engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+    # WAL, a 30 s lock wait and a pool sized for the I/O threads (app.db_tuning).
+    engine = create_engine(settings.DATABASE_URL, **engine_kwargs(settings.DATABASE_URL))
+    tune(engine)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     logger.info(f"Database engine initialized for {settings.DATABASE_URL.split('://')[0]}")
 except Exception as e:

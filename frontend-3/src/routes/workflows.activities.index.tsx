@@ -32,6 +32,7 @@ import { isDeletableTool } from "@/lib/status";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/workflows/activities/")({
   head: () => ({
@@ -108,11 +109,13 @@ function ActivityGalleryPage() {
 
   // The visible tab's list is what can be selected and deleted.
   const visible = tab === "active" ? filteredActive : filteredPending;
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     visible,
     (t) => t.id,
     isDeletableTool,
     (t) => t.name,
+    allowed("DELETE", "/api/tools/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "activity",
@@ -187,21 +190,23 @@ function ActivityGalleryPage() {
             </FeatureDescription>
           </p>
         </div>
-        <Button
-          onClick={() => setSynthesizeOpen(true)}
-          title={synthesizeMut.busy ? "Show the synthesis progress" : undefined}
-          className="bg-primary hover:bg-primary/90 self-start sm:self-auto gap-1.5"
-        >
-          {synthesizeMut.busy ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
-            </>
-          ) : (
-            <>
-              <Sparkles className="size-4" /> Synthesize Activity
-            </>
-          )}
-        </Button>
+        {allowed("POST", "/api/tools/synthesize") ? (
+          <Button
+            onClick={() => setSynthesizeOpen(true)}
+            title={synthesizeMut.busy ? "Show the synthesis progress" : undefined}
+            className="bg-primary hover:bg-primary/90 self-start sm:self-auto gap-1.5"
+          >
+            {synthesizeMut.busy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" /> Synthesizing… <LivePercent /> · View
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-4" /> Synthesize Activity
+              </>
+            )}
+          </Button>
+        ) : null}
       </div>
 
       <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">

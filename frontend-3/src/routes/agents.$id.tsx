@@ -54,6 +54,7 @@ import type {
   UploadResult,
 } from "@/types";
 import { ToolCredentialsCheck } from "@/components/vault/ToolCredentialsCheck";
+import { EditGuard, ViewOnlyNote, useAllowed } from "@/lib/policy";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -205,6 +206,8 @@ function AgentsIdPage() {
     });
   }, [agentQuery.data]);
 
+  const allowed = useAllowed();
+  const canEdit = allowed("PATCH", `/api/agents/${id}`);
   const patchMutation = useMutation({
     mutationFn: (body: AgentPatch) => agentsApi.update(id, body),
     onSuccess: () => {
@@ -571,7 +574,7 @@ function AgentsIdPage() {
 
         {/* Right actions */}
         <div className="flex items-center gap-2">
-          {!agent.protected && (
+          {!agent.protected && allowed("DELETE", `/api/agents/${id}`) && (
             <button
               type="button"
               onClick={() =>
@@ -653,32 +656,38 @@ function AgentsIdPage() {
           </div>
           <div className="border-t border-border bg-background/80 px-4 py-3 backdrop-blur-md sm:px-6">
             <div className="mx-auto max-w-3xl">
-              <Composer
-                value={input}
-                onChange={setInput}
-                onSubmit={submit}
-                onStop={() => {
-                  stopRef.current?.();
-                  setIsProcessing(false);
-                }}
-                isProcessing={isProcessing}
-                placeholder={`Message ${agent.name}…`}
-                leading={
-                  <AttachmentControl
-                    attachment={attachment}
-                    onAttach={setAttachment}
-                    onClear={() => setAttachment(null)}
-                    uploading={uploading}
-                    setUploading={setUploading}
-                    disabled={isProcessing || !savedModelHasVision}
+              {!allowed("POST", "/api/orchestrate/stream") ? (
+                <ViewOnlyNote what="chats with agents" />
+              ) : (
+                <>
+                  <Composer
+                    value={input}
+                    onChange={setInput}
+                    onSubmit={submit}
+                    onStop={() => {
+                      stopRef.current?.();
+                      setIsProcessing(false);
+                    }}
+                    isProcessing={isProcessing}
+                    placeholder={`Message ${agent.name}…`}
+                    leading={
+                      <AttachmentControl
+                        attachment={attachment}
+                        onAttach={setAttachment}
+                        onClear={() => setAttachment(null)}
+                        uploading={uploading}
+                        setUploading={setUploading}
+                        disabled={isProcessing || !savedModelHasVision}
+                      />
+                    }
                   />
-                }
-              />
-              {!savedModelHasVision ? (
-                <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">
-                  Image attachments are off — {agent.model} has no vision.
-                </p>
-              ) : null}
+                  {!savedModelHasVision ? (
+                    <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">
+                      Image attachments are off — {agent.model} has no vision.
+                    </p>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -690,358 +699,362 @@ function AgentsIdPage() {
           >
             <ResizeHandle panel={sidePanel} label="Resize configuration" />
             <div className="custom-scrollbar h-full space-y-4 overflow-y-auto p-5">
-              <GlassPanel tone="raised">
-                <GlassPanelHeader
-                  title="Agent Configuration"
-                  actions={
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={patchMutation.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-brand px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
-                    >
-                      <Save className="size-3.5" />
-                      {patchMutation.isPending ? "Saving…" : "Save"}
-                    </button>
-                  }
-                />
-                <div className="space-y-3 p-5">
-                  <Field label="Name">
-                    <input
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </Field>
-                  <Field label="Description">
-                    <input
-                      value={form.description}
-                      onChange={(e) => setForm({ ...form, description: e.target.value })}
-                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </Field>
-                  <Field label="Model">
-                    <ModelPicker
-                      value={form.model}
-                      onChange={(model) => setForm({ ...form, model })}
-                      models={allModels}
-                      pinned={modelChoices}
-                      capability="function_calling"
-                      allowListOnly
-                      className="mt-1 rounded-lg"
-                    />
-                    <ModelCapabilities
-                      model={form.model}
-                      models={allModels}
-                      warnings={modelWarnings}
-                      className="mt-2"
-                    />
-                  </Field>
-                  <Field label="Instructions">
-                    <textarea
-                      rows={5}
-                      value={form.instructions}
-                      onChange={(e) => setForm({ ...form, instructions: e.target.value })}
-                      className="custom-scrollbar mt-1 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </Field>
-                  <Field label="Tier">
-                    <div className="mt-1">
-                      <TierSelector
-                        value={form.tier}
-                        onChange={(tier) => setForm({ ...form, tier })}
+              <EditGuard allowed={canEdit} what="this agent" className="space-y-4">
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader
+                    title="Agent Configuration"
+                    actions={
+                      canEdit ? (
+                        <button
+                          type="button"
+                          onClick={handleSave}
+                          disabled={patchMutation.isPending}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-brand px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
+                        >
+                          <Save className="size-3.5" />
+                          {patchMutation.isPending ? "Saving…" : "Save"}
+                        </button>
+                      ) : null
+                    }
+                  />
+                  <div className="space-y-3 p-5">
+                    <Field label="Name">
+                      <input
+                        value={form.name}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       />
-                    </div>
-                  </Field>
-                  <Field label="Domain">
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {currentDomains.map((did) => {
-                        const concept = domainConcepts.find((c) => c.id === did);
-                        return (
-                          <span
-                            key={did}
-                            className="inline-flex items-center gap-1 rounded-full border border-cyan/25 bg-cyan/10 px-2 py-0.5 text-[10px] font-medium text-cyan"
-                          >
-                            {concept?.label ?? did}
-                            <button
-                              type="button"
-                              aria-label={`Remove ${did}`}
-                              onClick={() =>
-                                setDomainsMutation.mutate(currentDomains.filter((d) => d !== did))
-                              }
+                    </Field>
+                    <Field label="Description">
+                      <input
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </Field>
+                    <Field label="Model">
+                      <ModelPicker
+                        value={form.model}
+                        onChange={(model) => setForm({ ...form, model })}
+                        models={allModels}
+                        pinned={modelChoices}
+                        capability="function_calling"
+                        allowListOnly
+                        className="mt-1 rounded-lg"
+                      />
+                      <ModelCapabilities
+                        model={form.model}
+                        models={allModels}
+                        warnings={modelWarnings}
+                        className="mt-2"
+                      />
+                    </Field>
+                    <Field label="Instructions">
+                      <textarea
+                        rows={5}
+                        value={form.instructions}
+                        onChange={(e) => setForm({ ...form, instructions: e.target.value })}
+                        className="custom-scrollbar mt-1 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </Field>
+                    <Field label="Tier">
+                      <div className="mt-1">
+                        <TierSelector
+                          value={form.tier}
+                          onChange={(tier) => setForm({ ...form, tier })}
+                        />
+                      </div>
+                    </Field>
+                    <Field label="Domain">
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {currentDomains.map((did) => {
+                          const concept = domainConcepts.find((c) => c.id === did);
+                          return (
+                            <span
+                              key={did}
+                              className="inline-flex items-center gap-1 rounded-full border border-cyan/25 bg-cyan/10 px-2 py-0.5 text-[10px] font-medium text-cyan"
                             >
-                              <X className="size-2.5" />
-                            </button>
-                          </span>
-                        );
-                      })}
-                    </div>
+                              {concept?.label ?? did}
+                              <button
+                                type="button"
+                                aria-label={`Remove ${did}`}
+                                onClick={() =>
+                                  setDomainsMutation.mutate(currentDomains.filter((d) => d !== did))
+                                }
+                              >
+                                <X className="size-2.5" />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <select
+                        value=""
+                        disabled={setDomainsMutation.isPending}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v && !currentDomains.includes(v)) {
+                            setDomainsMutation.mutate([...currentDomains, v]);
+                          }
+                        }}
+                        className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="">Add a domain…</option>
+                        {domainConcepts
+                          .filter((c) => !currentDomains.includes(c.id))
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.label}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
+                  </div>
+                </GlassPanel>
+
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader title="Completion Parameters" />
+                  <div className="space-y-4 p-5">
+                    <SliderField
+                      label="Temperature"
+                      lowLabel="Precise"
+                      highLabel="Creative"
+                      value={form.temperature}
+                      min={0}
+                      max={1.5}
+                      step={0.05}
+                      onChange={(v) => setForm({ ...form, temperature: v })}
+                    />
+                    <SliderField
+                      label="Top P"
+                      lowLabel="Focused"
+                      highLabel="Diverse"
+                      value={form.top_p}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      onChange={(v) => setForm({ ...form, top_p: v })}
+                    />
+                    <NumberField
+                      label="Max Tokens"
+                      placeholder={
+                        contextWindow
+                          ? `Default (model limit · ${contextWindow.toLocaleString()})`
+                          : "Default (model limit)"
+                      }
+                      value={form.max_tokens}
+                      max={contextWindow ?? undefined}
+                      onChange={(v) => setForm({ ...form, max_tokens: v })}
+                    />
+                    <NumberField
+                      label="Random Seed"
+                      placeholder="None (random)"
+                      value={form.random_seed}
+                      onChange={(v) => setForm({ ...form, random_seed: v })}
+                    />
+                    <SliderField
+                      label="Frequency Penalty"
+                      lowLabel="0"
+                      highLabel="2"
+                      value={form.frequency_penalty}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      onChange={(v) => setForm({ ...form, frequency_penalty: v })}
+                    />
+                    <SliderField
+                      label="Presence Penalty"
+                      lowLabel="0"
+                      highLabel="2"
+                      value={form.presence_penalty}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      onChange={(v) => setForm({ ...form, presence_penalty: v })}
+                    />
+                  </div>
+                </GlassPanel>
+
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader title="Tools Equipped" />
+                  <div className="p-5">
+                    {form.toolNames.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No tools equipped.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {form.toolNames.map((n) => (
+                          <Chip
+                            key={n}
+                            icon={<Wrench className="size-2.5" />}
+                            label={n}
+                            onRemove={() =>
+                              setForm({ ...form, toolNames: form.toolNames.filter((x) => x !== n) })
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <ToolCredentialsCheck tools={form.toolNames} className="mt-3" />
                     <select
                       value=""
-                      disabled={setDomainsMutation.isPending}
+                      disabled={!canUseTools}
+                      title={canUseTools ? undefined : noToolUseHint}
                       onChange={(e) => {
                         const v = e.target.value;
-                        if (v && !currentDomains.includes(v)) {
-                          setDomainsMutation.mutate([...currentDomains, v]);
+                        if (v && !form.toolNames.includes(v)) {
+                          setForm({ ...form, toolNames: [...form.toolNames, v] });
                         }
                       }}
-                      className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <option value="">Add a domain…</option>
-                      {domainConcepts
-                        .filter((c) => !currentDomains.includes(c.id))
-                        .map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.label}
+                      <option value="">
+                        {canUseTools ? "Attach a tool…" : "Needs a model with tool use"}
+                      </option>
+                      {toolOptions
+                        .filter((t) => !form.toolNames.includes(t.name))
+                        .map((t) => (
+                          <option key={t.id} value={t.name}>
+                            {t.name}
                           </option>
                         ))}
                     </select>
-                  </Field>
-                </div>
-              </GlassPanel>
+                  </div>
+                </GlassPanel>
 
-              <GlassPanel tone="raised">
-                <GlassPanelHeader title="Completion Parameters" />
-                <div className="space-y-4 p-5">
-                  <SliderField
-                    label="Temperature"
-                    lowLabel="Precise"
-                    highLabel="Creative"
-                    value={form.temperature}
-                    min={0}
-                    max={1.5}
-                    step={0.05}
-                    onChange={(v) => setForm({ ...form, temperature: v })}
-                  />
-                  <SliderField
-                    label="Top P"
-                    lowLabel="Focused"
-                    highLabel="Diverse"
-                    value={form.top_p}
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    onChange={(v) => setForm({ ...form, top_p: v })}
-                  />
-                  <NumberField
-                    label="Max Tokens"
-                    placeholder={
-                      contextWindow
-                        ? `Default (model limit · ${contextWindow.toLocaleString()})`
-                        : "Default (model limit)"
-                    }
-                    value={form.max_tokens}
-                    max={contextWindow ?? undefined}
-                    onChange={(v) => setForm({ ...form, max_tokens: v })}
-                  />
-                  <NumberField
-                    label="Random Seed"
-                    placeholder="None (random)"
-                    value={form.random_seed}
-                    onChange={(v) => setForm({ ...form, random_seed: v })}
-                  />
-                  <SliderField
-                    label="Frequency Penalty"
-                    lowLabel="0"
-                    highLabel="2"
-                    value={form.frequency_penalty}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(v) => setForm({ ...form, frequency_penalty: v })}
-                  />
-                  <SliderField
-                    label="Presence Penalty"
-                    lowLabel="0"
-                    highLabel="2"
-                    value={form.presence_penalty}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    onChange={(v) => setForm({ ...form, presence_penalty: v })}
-                  />
-                </div>
-              </GlassPanel>
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader title="Connectors" />
+                  <div className="p-5">
+                    {form.connectorIds.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No connectors attached.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {form.connectorIds.map((cid) => {
+                          const c = connectorOptions.find((x) => x.id === cid);
+                          return (
+                            <Chip
+                              key={cid}
+                              icon={<Plug className="size-2.5" />}
+                              label={c?.name ?? cid}
+                              onRemove={() =>
+                                setForm({
+                                  ...form,
+                                  connectorIds: form.connectorIds.filter((x) => x !== cid),
+                                })
+                              }
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                    <select
+                      value=""
+                      disabled={!canUseTools}
+                      title={canUseTools ? undefined : noToolUseHint}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v && !form.connectorIds.includes(v)) {
+                          setForm({ ...form, connectorIds: [...form.connectorIds, v] });
+                        }
+                      }}
+                      className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="">
+                        {canUseTools ? "Attach a connector…" : "Needs a model with tool use"}
+                      </option>
+                      {connectorOptions
+                        .filter((c) => !form.connectorIds.includes(c.id))
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </GlassPanel>
 
-              <GlassPanel tone="raised">
-                <GlassPanelHeader title="Tools Equipped" />
-                <div className="p-5">
-                  {form.toolNames.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No tools equipped.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {form.toolNames.map((n) => (
-                        <Chip
-                          key={n}
-                          icon={<Wrench className="size-2.5" />}
-                          label={n}
-                          onRemove={() =>
-                            setForm({ ...form, toolNames: form.toolNames.filter((x) => x !== n) })
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <ToolCredentialsCheck tools={form.toolNames} className="mt-3" />
-                  <select
-                    value=""
-                    disabled={!canUseTools}
-                    title={canUseTools ? undefined : noToolUseHint}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v && !form.toolNames.includes(v)) {
-                        setForm({ ...form, toolNames: [...form.toolNames, v] });
-                      }
-                    }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {canUseTools ? "Attach a tool…" : "Needs a model with tool use"}
-                    </option>
-                    {toolOptions
-                      .filter((t) => !form.toolNames.includes(t.name))
-                      .map((t) => (
-                        <option key={t.id} value={t.name}>
-                          {t.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </GlassPanel>
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader title="Document Libraries" />
+                  <div className="p-5">
+                    {form.libraryIds.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No libraries attached.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {form.libraryIds.map((lid) => {
+                          const l = libraryOptions.find((x) => x.id === lid);
+                          return (
+                            <Chip
+                              key={lid}
+                              label={l?.name ?? lid}
+                              onRemove={() =>
+                                setForm({
+                                  ...form,
+                                  libraryIds: form.libraryIds.filter((x) => x !== lid),
+                                })
+                              }
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                    <select
+                      value=""
+                      disabled={!canUseTools}
+                      title={canUseTools ? undefined : noToolUseHint}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v && !form.libraryIds.includes(v)) {
+                          setForm({ ...form, libraryIds: [...form.libraryIds, v] });
+                        }
+                      }}
+                      className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="">
+                        {canUseTools ? "Attach a library…" : "Needs a model with tool use"}
+                      </option>
+                      {libraryOptions
+                        .filter((l) => !form.libraryIds.includes(l.id))
+                        .map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </GlassPanel>
 
-              <GlassPanel tone="raised">
-                <GlassPanelHeader title="Connectors" />
-                <div className="p-5">
-                  {form.connectorIds.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No connectors attached.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {form.connectorIds.map((cid) => {
-                        const c = connectorOptions.find((x) => x.id === cid);
-                        return (
-                          <Chip
-                            key={cid}
-                            icon={<Plug className="size-2.5" />}
-                            label={c?.name ?? cid}
-                            onRemove={() =>
-                              setForm({
-                                ...form,
-                                connectorIds: form.connectorIds.filter((x) => x !== cid),
-                              })
-                            }
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  <select
-                    value=""
-                    disabled={!canUseTools}
-                    title={canUseTools ? undefined : noToolUseHint}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v && !form.connectorIds.includes(v)) {
-                        setForm({ ...form, connectorIds: [...form.connectorIds, v] });
-                      }
-                    }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {canUseTools ? "Attach a connector…" : "Needs a model with tool use"}
-                    </option>
-                    {connectorOptions
-                      .filter((c) => !form.connectorIds.includes(c.id))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </GlassPanel>
-
-              <GlassPanel tone="raised">
-                <GlassPanelHeader title="Document Libraries" />
-                <div className="p-5">
-                  {form.libraryIds.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No libraries attached.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {form.libraryIds.map((lid) => {
-                        const l = libraryOptions.find((x) => x.id === lid);
-                        return (
-                          <Chip
-                            key={lid}
-                            label={l?.name ?? lid}
-                            onRemove={() =>
-                              setForm({
-                                ...form,
-                                libraryIds: form.libraryIds.filter((x) => x !== lid),
-                              })
-                            }
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  <select
-                    value=""
-                    disabled={!canUseTools}
-                    title={canUseTools ? undefined : noToolUseHint}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v && !form.libraryIds.includes(v)) {
-                        setForm({ ...form, libraryIds: [...form.libraryIds, v] });
-                      }
-                    }}
-                    className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {canUseTools ? "Attach a library…" : "Needs a model with tool use"}
-                    </option>
-                    {libraryOptions
-                      .filter((l) => !form.libraryIds.includes(l.id))
-                      .map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </GlassPanel>
-
-              <GuardrailEditor
-                value={form.guardrails}
-                onChange={(g) => setForm({ ...form, guardrails: g })}
-              />
-
-              <GlassPanel tone="raised">
-                <GlassPanelHeader
-                  title="Rules"
-                  description="Always-on rules apply automatically. Optional ones added here save with the rest of the configuration."
+                <GuardrailEditor
+                  value={form.guardrails}
+                  onChange={(g) => setForm({ ...form, guardrails: g })}
                 />
-                <div className="p-5">
-                  <RuleSelector
-                    scope="agent"
-                    value={ruleSelection ?? savedRuleSelection}
-                    onChange={setRuleSelection}
-                    onSuggest={async () =>
-                      (
-                        await rulesApi.suggest({
-                          scope: "agent",
-                          name: form.name,
-                          description: form.description,
-                          instructions: form.instructions,
-                          tier: form.tier,
-                          model: form.model,
-                          tools: form.toolNames,
-                          connectors: form.connectorIds,
-                        })
-                      ).selected
-                    }
+
+                <GlassPanel tone="raised">
+                  <GlassPanelHeader
+                    title="Rules"
+                    description="Always-on rules apply automatically. Optional ones added here save with the rest of the configuration."
                   />
-                </div>
-              </GlassPanel>
+                  <div className="p-5">
+                    <RuleSelector
+                      scope="agent"
+                      value={ruleSelection ?? savedRuleSelection}
+                      onChange={setRuleSelection}
+                      onSuggest={async () =>
+                        (
+                          await rulesApi.suggest({
+                            scope: "agent",
+                            name: form.name,
+                            description: form.description,
+                            instructions: form.instructions,
+                            tier: form.tier,
+                            model: form.model,
+                            tools: form.toolNames,
+                            connectors: form.connectorIds,
+                          })
+                        ).selected
+                      }
+                    />
+                  </div>
+                </GlassPanel>
+              </EditGuard>
             </div>
           </aside>
         ) : null}
@@ -1058,16 +1071,18 @@ function AgentsIdPage() {
                   title="Rule activity"
                   description="Every rule on this agent, and what it has decided."
                   actions={
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActivityOpen(false);
-                        setConfigOpen(true);
-                      }}
-                      className="rounded-lg border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
-                    >
-                      Edit rules
-                    </button>
+                    !canEdit ? null : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivityOpen(false);
+                          setConfigOpen(true);
+                        }}
+                        className="rounded-lg border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+                      >
+                        Edit rules
+                      </button>
+                    )
                   }
                 />
                 <RuleActivityList agentId={id} />

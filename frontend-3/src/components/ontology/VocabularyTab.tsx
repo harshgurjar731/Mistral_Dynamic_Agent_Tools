@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 function asArray<T>(res: { [k: string]: T[] } | T[] | undefined, key: string): T[] {
   if (!res) return [];
@@ -155,7 +156,9 @@ export function VocabularyTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [groups, openGroups, searching],
   );
-  const selection = useBulkSelection(shownConcepts, (c) => c.id, () => true, (c) => c.label);
+  const allowed = useAllowed();
+  const selection = useBulkSelection(shownConcepts, (c) => c.id, () => true, (c) => c.label,
+    allowed("DELETE", "/api/ontology/concepts/x"));
   const bulkDelete = useBulkDelete({
     noun: "concept",
     // Concepts are graph entities, so deletion cascades: descendants and all
@@ -174,9 +177,11 @@ export function VocabularyTab() {
             <p className="text-sm font-semibold text-foreground">Schemes</p>
             <p className="text-[11px] text-muted-foreground">Top-level groupings</p>
           </div>
+          {allowed("POST", "/api/ontology/schemes") ? (
           <Button size="sm" variant="outline" onClick={() => setSchemeDialog({ mode: "create" })}>
             <Plus className="size-3.5" /> New
           </Button>
+          ) : null}
         </div>
         <ul className="custom-scrollbar max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
           <SchemeRow
@@ -193,8 +198,10 @@ export function VocabularyTab() {
               count={activeScheme === "" ? conceptCount.get(sc.id) : undefined}
               active={activeScheme === sc.id}
               onSelect={() => setActiveScheme(sc.id)}
-              onEdit={() => setSchemeDialog({ mode: "edit", scheme: sc })}
-              onDelete={() => setDeleteTarget({ kind: "scheme", id: sc.id })}
+              {...(allowed("PATCH", "/api/ontology/schemes/x") ? {
+                onEdit: () => setSchemeDialog({ mode: "edit", scheme: sc }),
+                onDelete: () => setDeleteTarget({ kind: "scheme", id: sc.id }),
+              } : {})}
             />
           ))}
         </ul>
@@ -229,6 +236,7 @@ export function VocabularyTab() {
               {allOpen ? "Collapse all" : "Expand all"}
             </Button>
           ) : null}
+          {allowed("POST", "/api/ontology/concepts") ? (
           <Button
             size="sm"
             onClick={() => setConceptDialog({ mode: "create" })}
@@ -236,6 +244,7 @@ export function VocabularyTab() {
           >
             <Plus className="size-3.5" /> New concept
           </Button>
+          ) : null}
         </div>
 
         <div className="space-y-2 p-3">
@@ -553,6 +562,7 @@ function ConceptRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const canEdit = useCanCall("PATCH", "/api/ontology/concepts/x");
   return (
     <li
       className={cn(
@@ -573,6 +583,7 @@ function ConceptRow({
         <p className="truncate font-mono text-[10px] text-muted-foreground">{c.id}</p>
         {c.definition ? <p className="truncate text-xs text-muted-foreground">{c.definition}</p> : null}
       </div>
+      {canEdit ? (
       <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
         <Button size="sm" variant="ghost" title="Add a child concept" onClick={onAddChild}>
           <Plus className="size-3.5" />
@@ -584,6 +595,7 @@ function ConceptRow({
           <Trash2 className="size-3.5" />
         </Button>
       </div>
+      ) : null}
     </li>
   );
 }

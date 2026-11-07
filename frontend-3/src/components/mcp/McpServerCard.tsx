@@ -13,9 +13,11 @@ import {
 } from "@/components/mcp/servers";
 import { timeAgo } from "@/components/remote-servers/status";
 import { cn } from "@/lib/utils";
+import { useCanCall } from "@/lib/policy";
 
 /** One MCP server on the MCP page — click anywhere to open its tools. */
 export function McpServerCard({ server }: { server: McpServer }) {
+  const canManage = useCanCall("POST", "/api/mcp/servers/x/reconnect");
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: QK.mcpServers() });
 
@@ -127,44 +129,48 @@ export function McpServerCard({ server }: { server: McpServer }) {
         <div className="min-h-4 flex-1" />
 
         {/* Footer */}
-        <div
-          data-card-footer
-          className="pointer-events-auto relative z-10 flex items-center gap-2 border-t border-border/40 pt-3.5"
-        >
-          {connected ? (
-            <FooterButton
-              onClick={() => disconnect.mutate()}
-              disabled={busy}
-              icon={disconnect.isPending ? Loader2 : Unplug}
-              spinning={disconnect.isPending}
-            >
-              Disconnect
-            </FooterButton>
-          ) : (
-            <FooterButton
-              onClick={() => reconnect.mutate()}
-              disabled={busy}
-              icon={reconnect.isPending ? Loader2 : Plug}
-              spinning={reconnect.isPending}
-            >
-              Reconnect
-            </FooterButton>
-          )}
-          <button
-            type="button"
-            onClick={() => window.confirm(`Remove the server "${server.name}"?`) && remove.mutate()}
-            disabled={remove.isPending}
-            aria-label={`Remove ${server.name}`}
-            title="Remove"
-            className="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
+        {canManage ? (
+          <div
+            data-card-footer
+            className="pointer-events-auto relative z-10 flex items-center gap-2 border-t border-border/40 pt-3.5"
           >
-            {remove.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+            {connected ? (
+              <FooterButton
+                onClick={() => disconnect.mutate()}
+                disabled={busy}
+                icon={disconnect.isPending ? Loader2 : Unplug}
+                spinning={disconnect.isPending}
+              >
+                Disconnect
+              </FooterButton>
             ) : (
-              <Trash2 className="size-3.5" />
+              <FooterButton
+                onClick={() => reconnect.mutate()}
+                disabled={busy}
+                icon={reconnect.isPending ? Loader2 : Plug}
+                spinning={reconnect.isPending}
+              >
+                Reconnect
+              </FooterButton>
             )}
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() =>
+                window.confirm(`Remove the server "${server.name}"?`) && remove.mutate()
+              }
+              disabled={remove.isPending}
+              aria-label={`Remove ${server.name}`}
+              title="Remove"
+              className="ml-auto grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
+            >
+              {remove.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="size-3.5" />
+              )}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

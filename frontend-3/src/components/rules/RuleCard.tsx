@@ -6,6 +6,7 @@ import type { Rule, RuleCategory } from "@/types";
 import { EnforcementPill, Pill, RuleIcon } from "./RulePills";
 import { CategoryBadge } from "./RuleScopingControls";
 import { appliesOf } from "./ruleScoping";
+import { useCanCall } from "@/lib/policy";
 
 /** One rule on the Rules page: what it does, how strict it is, and whether it is on. */
 export function RuleCard({
@@ -20,6 +21,7 @@ export function RuleCard({
   /** The rule's category, resolved by the page that lists the rules. */
   category?: RuleCategory | undefined;
 }) {
+  const canManage = useCanCall("PATCH", "/api/rules/x");
   const applies = appliesOf(rule);
   const targetCount = rule.targets?.length ?? 0;
   const usage = rule.usage ?? { agents: 0 };
@@ -74,13 +76,25 @@ export function RuleCard({
               {rule.summary || rule.description || "No summary provided"}
             </p>
           </div>
-          <Switch
-            checked={rule.enabled}
-            disabled={toggling}
-            onCheckedChange={onToggle}
-            aria-label={rule.enabled ? `Switch off ${rule.name}` : `Switch on ${rule.name}`}
-            className="pointer-events-auto relative z-10 mt-0.5 shrink-0"
-          />
+          {canManage ? (
+            <Switch
+              checked={rule.enabled}
+              disabled={toggling}
+              onCheckedChange={onToggle}
+              aria-label={rule.enabled ? `Switch off ${rule.name}` : `Switch on ${rule.name}`}
+              className="pointer-events-auto relative z-10 mt-0.5 shrink-0"
+            />
+          ) : (
+            <span
+              className={
+                rule.enabled
+                  ? "mt-0.5 shrink-0 rounded-full border border-emerald/30 bg-emerald/10 px-2 py-0.5 text-[10px] font-medium text-emerald"
+                  : "mt-0.5 shrink-0 rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+              }
+            >
+              {rule.enabled ? "On" : "Off"}
+            </span>
+          )}
         </div>
 
         {/* Enforcement + source badges */}

@@ -30,6 +30,7 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     import app.workflow_inputs.models
     import app.workflow_revisions.models  # noqa: F401
     import app.services.workflow_engine.reviews  # noqa: F401
+    import app.services.workflow_engine.run_history  # noqa: F401
     import app.auth.models  # noqa: F401
     from app.database import create_tables
 

@@ -18,6 +18,7 @@ import { SortSelect } from "@/components/shared/SortSelect";
 import { useSortKey } from "@/lib/sorting";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/agents/")({
   head: () => ({
@@ -109,11 +110,13 @@ function AgentsIndexPage() {
   });
 
   // Selection covers the agents on this page that pass the filters.
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (a) => a.id,
     () => true,
     (a) => a.name,
+    allowed("DELETE", "/api/agents/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "agent",
@@ -143,14 +146,16 @@ function AgentsIndexPage() {
             </FeatureDescription>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          New Agent
-        </button>
+        {allowed("POST", "/api/agents") ? (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            New Agent
+          </button>
+        ) : null}
       </div>
 
       {/* ── Stats Bar ── */}
@@ -255,16 +260,19 @@ function AgentsIndexPage() {
                 ? "Try adjusting your filters or search query."
                 : "Create your first agent to get started."}
             </p>
-            {!search && tierFilter === "all" && domainFilter.size === 0 && (
-              <button
-                type="button"
-                onClick={() => setCreateOpen(true)}
-                className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-              >
-                <Plus className="size-4" />
-                New Agent
-              </button>
-            )}
+            {!search &&
+              tierFilter === "all" &&
+              domainFilter.size === 0 &&
+              allowed("POST", "/api/agents") && (
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+                >
+                  <Plus className="size-4" />
+                  New Agent
+                </button>
+              )}
           </div>
         ) : (
           <>
@@ -295,7 +303,9 @@ function AgentsIndexPage() {
                     onDelete={(a) =>
                       window.confirm(`Delete agent "${a.name}"?`) && deleteMutation.mutate(a.id)
                     }
-                    onClassify={(a) => setClassifyAgent(a)}
+                    {...(allowed("POST", "/api/ontology/annotations/one")
+                      ? { onClassify: (a: Agent) => setClassifyAgent(a) }
+                      : {})}
                   />
                 </SelectableItem>
               ))}

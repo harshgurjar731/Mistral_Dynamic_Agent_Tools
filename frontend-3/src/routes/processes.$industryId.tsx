@@ -12,6 +12,7 @@ import { deleteNodeFlow, NodeFormDialog } from "@/components/processes/NodeFormD
 import { ProcessPanel } from "@/components/processes/ProcessPanel";
 import { ProcessTreeNav, type AddRequest } from "@/components/processes/ProcessTreeNav";
 import { DocumentStatusBadge, TemplateDownloadMenu } from "@/components/processes/shared";
+import { useCanCall } from "@/lib/policy";
 
 const searchSchema = z.object({
   /** The node on screen, so a refresh or a shared link lands on it. */
@@ -226,6 +227,7 @@ function DomainPanel({
 }) {
   const level = node.level_name ?? "domain";
   const canHoldProcesses = level !== "industry";
+  const canManage = useCanCall("PATCH", "/api/processes/concepts/x");
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -239,29 +241,31 @@ function DomainPanel({
             <p className="mt-2 max-w-2xl text-xs text-muted-foreground">{node.definition}</p>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          {childLevel ? (
-            <Button size="sm" variant="outline" onClick={() => onAdd(childLevel)}>
-              <Plus className="size-3.5" /> {childLevel === "domain" ? "Domain" : "Subdomain"}
+        {canManage ? (
+          <div className="flex flex-wrap gap-2">
+            {childLevel ? (
+              <Button size="sm" variant="outline" onClick={() => onAdd(childLevel)}>
+                <Plus className="size-3.5" /> {childLevel === "domain" ? "Domain" : "Subdomain"}
+              </Button>
+            ) : null}
+            {canHoldProcesses ? (
+              <Button size="sm" onClick={() => onAdd("process")}>
+                <Plus className="size-3.5" /> Process
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" onClick={onEdit}>
+              <Edit2 className="size-3.5" /> Edit
             </Button>
-          ) : null}
-          {canHoldProcesses ? (
-            <Button size="sm" onClick={() => onAdd("process")}>
-              <Plus className="size-3.5" /> Process
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-red hover:text-red"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3.5" />
             </Button>
-          ) : null}
-          <Button size="sm" variant="outline" onClick={onEdit}>
-            <Edit2 className="size-3.5" /> Edit
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red hover:text-red"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {node.children?.length ? (

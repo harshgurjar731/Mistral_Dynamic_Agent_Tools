@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 const searchSchema = z.object({
   purpose: z.enum(["tool", "workflow"]).optional(),
@@ -137,11 +138,13 @@ function RemoteServersPage() {
   }, [all, purpose, search, sort]);
 
   // One selection across every visible section.
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (s) => s.id,
     () => true,
     (s) => s.name,
+    allowed("DELETE", "/api/remote-servers/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "server",
@@ -189,14 +192,16 @@ function RemoteServersPage() {
             </FeatureDescription>
           </p>
         </div>
-        <Link
-          to="/remote-servers/new"
-          search={{ purpose }}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          Add Server
-        </Link>
+        {allowed("POST", "/api/remote-servers") ? (
+          <Link
+            to="/remote-servers/new"
+            search={{ purpose }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            Add Server
+          </Link>
+        ) : null}
       </div>
 
       <ProviderAccountsPanel catalog={catalog.data} className="mt-6" />
@@ -282,22 +287,24 @@ function RemoteServersPage() {
             <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
               {filtered.length} of {all.length} server{all.length !== 1 ? "s" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => checkAll.mutate()}
-              disabled={checkAll.isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
-            >
-              {checkAll.isPending ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  <LivePercent />
-                </>
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
-              Check {purpose ? "these" : "all"}
-            </button>
+            {allowed("POST", "/api/remote-servers/check-all") ? (
+              <button
+                type="button"
+                onClick={() => checkAll.mutate()}
+                disabled={checkAll.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
+              >
+                {checkAll.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                Check {purpose ? "these" : "all"}
+              </button>
+            ) : null}
           </div>
 
           {/* ── Cards ── */}
@@ -423,6 +430,7 @@ function HealthSummary({ health }: { health: Health }) {
 
 /** First-run state: one card per kind of server to add. */
 function GetStarted() {
+  const canAdd = useCanCall("POST", "/api/remote-servers");
   return (
     <div className="mt-10">
       <div className="mx-auto max-w-3xl text-center">
@@ -432,31 +440,38 @@ function GetStarted() {
         <h2 className="mt-4 text-lg font-semibold tracking-tight text-foreground">
           No remote servers yet
         </h2>
-        <p className="mt-1.5 text-sm text-muted-foreground">Choose what the first server is for.</p>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          {canAdd
+            ? "Choose what the first server is for."
+            : "A Maintainer in this workspace can add one."}
+        </p>
       </div>
-      <div className="mx-auto mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
-        {PURPOSES.filter((p) => p.value).map((p) => {
-          const Icon = p.icon;
-          return (
-            <Link
-              key={p.title}
-              to="/remote-servers/new"
-              search={{ purpose: p.value }}
-              className="group flex flex-col rounded-2xl border border-border/60 p-5 transition hover:border-primary/40 hover:shadow-[0_0_28px_-10px_var(--primary)]"
-              style={{ background: "var(--surface)" }}
-            >
-              <div className={cn("grid size-10 place-items-center rounded-xl border", p.accent)}>
-                <Icon className="size-5" />
-              </div>
-              <p className="mt-3 text-sm font-semibold text-foreground">{p.title}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{p.description}</p>
-              <span className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary">
-                Add server <ArrowRight className="size-3 transition group-hover:translate-x-0.5" />
-              </span>
-            </Link>
-          );
-        })}
-      </div>
+      {canAdd ? (
+        <div className="mx-auto mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
+          {PURPOSES.filter((p) => p.value).map((p) => {
+            const Icon = p.icon;
+            return (
+              <Link
+                key={p.title}
+                to="/remote-servers/new"
+                search={{ purpose: p.value }}
+                className="group flex flex-col rounded-2xl border border-border/60 p-5 transition hover:border-primary/40 hover:shadow-[0_0_28px_-10px_var(--primary)]"
+                style={{ background: "var(--surface)" }}
+              >
+                <div className={cn("grid size-10 place-items-center rounded-xl border", p.accent)}>
+                  <Icon className="size-5" />
+                </div>
+                <p className="mt-3 text-sm font-semibold text-foreground">{p.title}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{p.description}</p>
+                <span className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                  Add server{" "}
+                  <ArrowRight className="size-3 transition group-hover:translate-x-0.5" />
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

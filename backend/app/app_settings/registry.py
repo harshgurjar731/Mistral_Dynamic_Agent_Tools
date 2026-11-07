@@ -267,6 +267,14 @@ DEFS: list[SettingDef] = [
                type="int", minimum=1, maximum=16, unit="tools",
                impact=("Workflow planning speed", "Tool Service load"),
                used_in=("layers/workflow/tool_gap_layer.py",)),
+    SettingDef("RUN_CONCURRENCY", "orchestration", "Background runs at once (per workspace)",
+               "Agent designs, workflow plans, tool syntheses and rebuilds a workspace runs at "
+               "the same time. More wait in line and start in the order they were asked for; "
+               "each workspace has its own line.",
+               type="int", minimum=1, maximum=32, unit="runs",
+               impact=("Waiting time when many people build at once", "Rate-limit errors",
+                       "Memory use"),
+               used_in=("runs/manager.py — RunManager._slot",)),
     SettingDef("REUSE_MIN_CONFIDENCE", "orchestration", "Minimum reuse confidence",
                "Below this confidence (0-1) the planner designs a new agent instead of reusing "
                "an existing one. A wrong reuse is worse than one redundant agent.",
@@ -844,6 +852,9 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "TOOL_SYNTHESIS_CONCURRENCY": (
         "Missing tools are built one at a time — long planning when several are needed.",
         "Many tools built at once — heavy load on the Tool Service and the model quota."),
+    "RUN_CONCURRENCY": (
+        "One build at a time per workspace — everyone else waits in line.",
+        "Many builds at once — they compete for the same rate quota and run slower."),
     "REUSE_MIN_CONFIDENCE": (
         "Any existing agent that looks related is reused, even a poor fit.",
         "Existing agents are almost never reused; a new agent is designed every time."),

@@ -19,6 +19,8 @@ import {
   useWorkflowPrerequisites,
   WorkflowPrerequisites,
 } from "@/components/workflows/WorkflowPrerequisites";
+import { useAllowed, ViewOnlyNote } from "@/lib/policy";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/workflows/$workflowName/execute")({
   validateSearch: (search: Record<string, unknown>): { execId?: string } => {
@@ -40,7 +42,9 @@ export const Route = createFileRoute("/workflows/$workflowName/execute")({
 });
 
 function ExecuteWorkflowPage() {
+  const allowed = useAllowed();
   const { workflowName } = Route.useParams();
+  const canRun = allowed("POST", `/api/workflows/${encodeURIComponent(workflowName)}/execute`);
   const { execId } = Route.useSearch();
   const navigate = useNavigate();
 
@@ -110,37 +114,44 @@ function ExecuteWorkflowPage() {
         }
       />
 
-      {!activeExec || (prereq.data && !prereq.data.ready) ? (
+      {canRun && (!activeExec || (prereq.data && !prereq.data.ready)) ? (
         <WorkflowPrerequisites workflowName={workflowName} />
       ) : null}
+      {!canRun ? (
+        <ViewOnlyNote what="start runs of this workflow — you can follow existing runs" />
+      ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(360px,440px)_minmax(0,1fr)]">
-        <GlassPanel className="h-fit">
-          <GlassPanelHeader
-            title="Run inputs"
-            description={
-              wf.data?.description
-                ? wf.data.description
-                : "What this workflow needs to start. Each field says which steps read it."
-            }
-          />
-          {wf.isLoading ? (
-            <div className="p-4">
-              <DetailSkeleton />
-            </div>
-          ) : wf.isError ? (
-            <div className="p-4">
-              <ErrorState error={wf.error} onRetry={() => wf.refetch()} />
-            </div>
-          ) : wf.data ? (
-            <WorkflowRunForm
-              definition={wf.data}
-              running={run.isPending}
-              onRun={(input) => run.mutate(input)}
-              blockedReason={blockedReason}
+      <div
+        className={cn("grid gap-5", canRun && "lg:grid-cols-[minmax(360px,440px)_minmax(0,1fr)]")}
+      >
+        {canRun ? (
+          <GlassPanel className="h-fit">
+            <GlassPanelHeader
+              title="Run inputs"
+              description={
+                wf.data?.description
+                  ? wf.data.description
+                  : "What this workflow needs to start. Each field says which steps read it."
+              }
             />
-          ) : null}
-        </GlassPanel>
+            {wf.isLoading ? (
+              <div className="p-4">
+                <DetailSkeleton />
+              </div>
+            ) : wf.isError ? (
+              <div className="p-4">
+                <ErrorState error={wf.error} onRetry={() => wf.refetch()} />
+              </div>
+            ) : wf.data ? (
+              <WorkflowRunForm
+                definition={wf.data}
+                running={run.isPending}
+                onRun={(input) => run.mutate(input)}
+                blockedReason={blockedReason}
+              />
+            ) : null}
+          </GlassPanel>
+        ) : null}
 
         <ExecutionResult
           executionId={activeExec}

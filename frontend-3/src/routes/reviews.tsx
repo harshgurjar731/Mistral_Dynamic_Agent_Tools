@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { useCanCall } from "@/lib/policy";
+import { useCurrentUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/reviews")({
   head: () => ({
@@ -80,10 +82,12 @@ function ReviewsPage() {
 }
 
 function ReviewCard({ review }: { review: HumanReview }) {
+  const canDecide = useCanCall("POST", "/api/reviews/x/decision");
+  const me = useCurrentUser();
   const qc = useQueryClient();
   const [comment, setComment] = useState("");
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const [decidedBy, setDecidedBy] = useState("");
+  const [decidedBy, setDecidedBy] = useState(me?.name ?? "");
   const decide = useMutation({
     mutationFn: (decision: "approve" | "edit" | "reject") => {
       const parsed: Record<string, unknown> = {};
@@ -134,7 +138,11 @@ function ReviewCard({ review }: { review: HumanReview }) {
       <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-border/60 bg-background-elevated p-2 text-[11px] whitespace-pre-wrap">
         {typeof review.payload === "string" ? review.payload : JSON.stringify(review.payload, null, 2)}
       </pre>
-      {pending ? (
+      {pending && !canDecide ? (
+        <p className="mt-3 rounded-md border border-border bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+          Waiting for a reviewer. Your role can see reviews but not decide them.
+        </p>
+      ) : pending ? (
         <div className="mt-3 space-y-2">
           {review.editable.length ? (
             <div className="grid gap-1.5 sm:grid-cols-2">

@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 _Base = declarative_base()
 
-connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
-_engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+from app.db_tuning import engine_kwargs, tune  # noqa: E402
+
+_engine = create_engine(settings.DATABASE_URL, **engine_kwargs(settings.DATABASE_URL))
+tune(_engine)
 _Session = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
 
 
@@ -263,29 +265,46 @@ def _visible_names() -> Optional[set[str]]:
         return {row[0] for row in db.query(_WorkflowRecord.name).all()}
 
 
+def _with_history(live: list[WorkflowRun], stored: list[WorkflowRun]) -> list[WorkflowRun]:
+    """Live runs, plus recorded ones no longer in memory (earlier processes)."""
+    seen = {r.execution_id for r in live}
+    return live + [r for r in stored if r.execution_id not in seen]
+
+
 def get_execution(execution_id: str) -> Optional[WorkflowRun]:
-    """Get execution status by ID (in-memory)."""
+    """An execution by id: the live run, else its record (workspace-scoped)."""
     run = _execution_store.get(execution_id)
     if run is not None:
         names = _visible_names()
         if names is not None and run.workflow_name not in names:
             return None
-    return run
+        return run
+    from app.services.workflow_engine import run_history
+
+    return run_history.load(execution_id)
 
 
 def list_executions() -> list[WorkflowRun]:
-    """List the in-memory workflow executions the caller may see."""
+    """The workflow executions the caller may see, live and recorded."""
+    from app.services.workflow_engine import run_history
+
     names = _visible_names()
     runs = list(_execution_store.values())
-    return runs if names is None else [r for r in runs if r.workflow_name in names]
+    live = runs if names is None else [r for r in runs if r.workflow_name in names]
+    return _with_history(live, run_history.recent())
 
 
 def list_executions_for_workflow(workflow_name: str) -> list[WorkflowRun]:
     """List executions for a specific workflow, sorted by start_time descending."""
+    from app.services.workflow_engine import run_history
+
     names = _visible_names()
     if names is not None and workflow_name not in names:
         return []
-    executions = [r for r in _execution_store.values() if r.workflow_name == workflow_name]
+    executions = _with_history(
+        [r for r in _execution_store.values() if r.workflow_name == workflow_name],
+        run_history.recent(workflow_name),
+    )
     return sorted(executions, key=lambda x: x.start_time or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
 
@@ -318,11 +337,36 @@ async def execute_workflow(
         "app.execution.source": "local",
         "app.workflow.input": input_vars,
     }
+    from app.services.workflow_engine import run_history
+
+    # Recorded before it starts, so a run is never lost to a restart: the next
+    # start-up finds it open and closes it as interrupted (run_history).
+    started = _execution_store.get(exec_id) or WorkflowRun(
+        execution_id=exec_id, workflow_name=workflow_name, status=WorkflowStatus.RUNNING,
+        start_time=datetime.now(timezone.utc), variables=dict(input_vars or {}),
+    )
+    await run_history.record(started)
     with tracing.span(
         f"workflow {workflow_name}", kind="workflow", attrs=attrs, root=True,
         link_current=True, forced_ids=tracing.workflow_root_ids(exec_id),
     ) as wf_span, tracing.rule_tally() as tally:
-        run = await _execute_workflow(workflow_name, input_vars, exec_id, wait_for_result)
+        try:
+            run = await _execute_workflow(workflow_name, input_vars, exec_id, wait_for_result)
+        except BaseException as e:
+            # Cancelled (the server shutting down) or crashed: close the record
+            # rather than leave it open, then let the exception go on.
+            failed = _execution_store.get(exec_id) or started
+            failed.status = (WorkflowStatus.TERMINATED if isinstance(e, asyncio.CancelledError)
+                             else WorkflowStatus.FAILED)
+            failed.end_time = failed.end_time or datetime.now(timezone.utc)
+            base = failed.result if isinstance(failed.result, dict) else {}
+            failed.result = {**base, "error": str(e) or e.__class__.__name__}
+            try:
+                await asyncio.shield(run_history.record(failed))
+            except BaseException:  # noqa: BLE001 — never mask the original error
+                run_history.save(failed)
+            raise
+        await run_history.record(run)
 
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         result = run.result if isinstance(run.result, dict) else {}

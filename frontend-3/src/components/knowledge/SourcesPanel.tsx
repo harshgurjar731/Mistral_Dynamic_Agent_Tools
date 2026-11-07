@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useCanCall } from "@/lib/policy";
 
 const STATUS_TONE: Record<KnowledgeSource["status"], string> = {
   pending: "text-muted-foreground",
@@ -25,6 +26,7 @@ const STATUS_TONE: Record<KnowledgeSource["status"], string> = {
 };
 
 export function SourcesPanel() {
+  const canManage = useCanCall("POST", "/api/knowledge/sources");
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
@@ -69,6 +71,7 @@ export function SourcesPanel() {
 
   return (
     <div className="space-y-4">
+      {canManage ? (
       <div className="glass rounded-xl border border-border/60 p-3">
         <div className="mb-2 flex flex-wrap gap-2">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional)" className="h-8 max-w-xs text-xs" />
@@ -112,6 +115,7 @@ export function SourcesPanel() {
           <p className="mt-2 text-[11px] text-muted-foreground">Reading and distilling — a long document takes a minute.</p>
         ) : null}
       </div>
+      ) : null}
 
       {sources.isError ? (
         <ErrorState error={sources.error} />
@@ -126,6 +130,8 @@ export function SourcesPanel() {
               <span className={cn("font-medium", STATUS_TONE[s.status])}>{s.status}</span>
               <span className="text-muted-foreground">{s.item_count} item(s) · {Math.round(s.text_chars / 1000)}k chars</span>
               {s.message ? <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={s.message}>{s.message}</span> : <span className="flex-1" />}
+              {canManage ? (
+              <>
               <Button size="sm" variant="ghost" title="Distil again (replaces items still waiting for review)"
                 disabled={redistill.isPending || !s.text_chars} onClick={() => redistill.mutate(s.id)}>
                 <RefreshCw className="size-3.5" />
@@ -133,6 +139,8 @@ export function SourcesPanel() {
               <Button size="sm" variant="ghost" title="Delete the source and its items" onClick={() => remove.mutate(s.id)}>
                 <Trash2 className="size-3.5" />
               </Button>
+              </>
+              ) : null}
             </li>
           ))}
         </ul>

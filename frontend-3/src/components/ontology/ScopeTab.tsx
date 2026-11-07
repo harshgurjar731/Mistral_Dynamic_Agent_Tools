@@ -13,6 +13,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { GraphCanvas, type SimpleEdge, type SimpleNode } from "./GraphCanvas";
 import { kindColor, kindLabel } from "./graphTones";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 /**
  * Two rehearsals of the same machinery the planner uses: what a goal narrows
@@ -20,10 +21,11 @@ import { LivePercent } from "@/components/activity/LiveProgress";
  */
 export function ScopeTab() {
   const [submitted, setSubmitted] = useState("");
+  const canClassify = useCanCall("POST", "/api/ontology/classify");
   return (
     <div className="grid gap-5 xl:grid-cols-2">
       <ScopePanel submitted={submitted} onSubmit={setSubmitted} />
-      <ClassifyPanel />
+      {canClassify ? <ClassifyPanel /> : null}
       {submitted ? <ScopedGraph goal={submitted} /> : null}
     </div>
   );

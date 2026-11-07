@@ -15,6 +15,7 @@ import { timeAgo } from "../status";
 import { containersUp, type ServerTab } from "./tabs";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 type Go = (tab: ServerTab, workflow?: string) => void;
 
@@ -128,6 +129,7 @@ export function OverviewTab({
   onCheck: () => void;
   go: Go;
 }) {
+  const canManage = useCanCall("PUT", "/api/remote-servers/x");
   const isSshWorkflow = server.purpose === "workflow" && server.transport === "ssh";
   const workflows = useQuery({
     queryKey: QK.remoteServerWorkflows(String(server.id)),
@@ -161,7 +163,7 @@ export function OverviewTab({
                 : "Everything is set up."}
             </p>
           </div>
-          {isSshWorkflow ? (
+          {isSshWorkflow && canManage ? (
             <Button
               size="sm"
               onClick={() =>
@@ -224,7 +226,7 @@ export function OverviewTab({
                     </p>
                     <p className="truncate text-[11px] text-muted-foreground">{s.hint}</p>
                   </div>
-                  {isNext ? (
+                  {isNext && canManage ? (
                     <Button size="sm" onClick={s.action.run} disabled={s.action.busy}>
                       {s.action.busy ? (
                         <>
@@ -255,9 +257,11 @@ export function OverviewTab({
             icon={Boxes}
             title="Workflows on this server"
             actions={
-              <Button size="sm" variant="ghost" onClick={() => go("workflows")}>
-                Manage <ArrowRight className="size-3.5" />
-              </Button>
+              canManage ? (
+                <Button size="sm" variant="ghost" onClick={() => go("workflows")}>
+                  Manage <ArrowRight className="size-3.5" />
+                </Button>
+              ) : null
             }
             bodyClassName="p-2"
           >
@@ -306,9 +310,11 @@ export function OverviewTab({
               icon={Stethoscope}
               title="Needs attention"
               actions={
-                <Button size="sm" variant="ghost" onClick={() => go("settings")}>
-                  Diagnostics <ArrowRight className="size-3.5" />
-                </Button>
+                canManage ? (
+                  <Button size="sm" variant="ghost" onClick={() => go("settings")}>
+                    Diagnostics <ArrowRight className="size-3.5" />
+                  </Button>
+                ) : null
               }
               bodyClassName="space-y-1.5 px-5 py-3"
             >

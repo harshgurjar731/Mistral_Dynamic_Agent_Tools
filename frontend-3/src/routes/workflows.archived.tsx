@@ -17,6 +17,7 @@ import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, standardSorts, useSortKey } from "@/lib/sorting";
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/workflows/archived")({
   head: () => ({
@@ -65,11 +66,13 @@ function ArchivedWorkflowsPage() {
     return applySort(rows, ARCHIVED_SORTS, sort);
   }, [data, search, sort]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     visible,
     (w) => w.name,
     () => true,
     (w) => w.name,
+    allowed("DELETE", "/api/workflows/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "workflow",

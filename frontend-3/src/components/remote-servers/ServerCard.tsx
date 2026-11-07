@@ -14,6 +14,7 @@ import {
 } from "./status";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 /** Strip the scheme so the address reads cleanly on one line. */
 function shortAddress(url: string): string {
@@ -22,6 +23,7 @@ function shortAddress(url: string): string {
 
 /** One remote server on the Remote Servers page — click to open it. */
 export function ServerCard({ server }: { server: RemoteServer }) {
+  const canManage = useCanCall("PUT", "/api/remote-servers/x");
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: QK.remoteServers() });
 
@@ -146,40 +148,42 @@ export function ServerCard({ server }: { server: RemoteServer }) {
           <span className="text-[10px] text-muted-foreground/70">
             checked {timeAgo(server.last_checked_at)}
           </span>
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => check.mutate()}
-              disabled={check.isPending}
-              title="Run diagnostics"
-              className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
-            >
-              {check.isPending ? (
-                <>
+          {canManage ? (
+            <div className="ml-auto flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => check.mutate()}
+                disabled={check.isPending}
+                title="Run diagnostics"
+                className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
+              >
+                {check.isPending ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  window.confirm(`Remove the server "${server.name}"?`) && remove.mutate()
+                }
+                disabled={remove.isPending}
+                aria-label={`Remove ${server.name}`}
+                title="Remove"
+                className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
+              >
+                {remove.isPending ? (
                   <Loader2 className="size-3.5 animate-spin" />
-                  <LivePercent />
-                </>
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                window.confirm(`Remove the server "${server.name}"?`) && remove.mutate()
-              }
-              disabled={remove.isPending}
-              aria-label={`Remove ${server.name}`}
-              title="Remove"
-              className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red disabled:opacity-50"
-            >
-              {remove.isPending ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="size-3.5" />
-              )}
-            </button>
-          </div>
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

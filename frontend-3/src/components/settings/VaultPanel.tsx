@@ -53,6 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { VaultSecretDialog } from "@/components/vault/VaultSecretDialog";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 type Filter = "all" | "attention" | "expired" | "disabled" | "build";
 
@@ -107,6 +108,11 @@ export function VaultPanel({
   /** Open the add dialog with this name (from "Add to the vault"). */
   createName?: string | undefined;
 }) {
+  const allowed = useAllowed();
+  const canManage = allowed("POST", "/api/vault/secrets");
+  const canReveal = allowed("POST", "/api/vault/secrets/x/reveal");
+  // The master key is the platform's: admin only.
+  const canKeys = allowed("POST", "/api/vault/rotate-key");
   const qc = useQueryClient();
   const data = useQuery({ queryKey: QK.vault(), queryFn: vaultApi.overview });
   const [query, setQuery] = useState("");
@@ -234,9 +240,11 @@ export function VaultPanel({
               {unlocked ? "Unlocked" : "Unlock"}
             </Button>
           ) : null}
-          <Button size="sm" onClick={() => setAdding("")} disabled={!v.enabled}>
-            <Plus className="size-3.5" /> Add entry
-          </Button>
+          {canManage ? (
+            <Button size="sm" onClick={() => setAdding("")} disabled={!v.enabled}>
+              <Plus className="size-3.5" /> Add entry
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -273,7 +281,7 @@ export function VaultPanel({
           {v.key.key_ids.length > 1 ? ` (+${v.key.key_ids.length - 1} older)` : ""}
         </span>
         <span className="ml-auto flex items-center gap-1.5">
-          {v.key.on_old_key ? (
+          {v.key.on_old_key && canKeys ? (
             <Button
               size="sm"
               variant="outline"
@@ -292,15 +300,17 @@ export function VaultPanel({
               Re-encrypt {v.key.on_old_key} with the newest key
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7"
-            disabled={generate.isPending}
-            onClick={() => generate.mutate()}
-          >
-            Rotate master key…
-          </Button>
+          {canKeys ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              disabled={generate.isPending}
+              onClick={() => generate.mutate()}
+            >
+              Rotate master key…
+            </Button>
+          ) : null}
         </span>
       </div>
 
@@ -434,17 +444,19 @@ export function VaultPanel({
                   <td className="px-2 py-2.5">
                     <Switch
                       checked={!s.disabled}
-                      disabled={toggle.isPending}
+                      disabled={toggle.isPending || !canManage}
                       onCheckedChange={() => toggle.mutate(s)}
                       aria-label={`${s.disabled ? "Switch on" : "Switch off"} ${s.name}`}
                     />
                   </td>
                   <td className="px-2 py-2.5">
                     <div className="flex justify-end gap-0.5">
-                      <IconButton title="Replace the value" onClick={() => setReplacing(s)}>
-                        <RefreshCw className="size-3.5" />
-                      </IconButton>
-                      {s.sensitive && v.allow_reveal && !revealed[s.id] ? (
+                      {canManage ? (
+                        <IconButton title="Replace the value" onClick={() => setReplacing(s)}>
+                          <RefreshCw className="size-3.5" />
+                        </IconButton>
+                      ) : null}
+                      {canReveal && s.sensitive && v.allow_reveal && !revealed[s.id] ? (
                         <IconButton
                           title="Reveal for 30 seconds (audited)"
                           onClick={() => reveal.mutate(s)}
@@ -455,20 +467,24 @@ export function VaultPanel({
                       <IconButton title="Previous values" onClick={() => setHistory(s)}>
                         <History className="size-3.5" />
                       </IconButton>
-                      <IconButton title="Edit details and access" onClick={() => setEditing(s)}>
-                        <Pencil className="size-3.5" />
-                      </IconButton>
-                      <IconButton
-                        title="Delete"
-                        danger
-                        onClick={() =>
-                          window.confirm(
-                            `Delete ${s.name} and its previous values? Code that reads it will report a configuration error until it is added again.`,
-                          ) && remove.mutate(s)
-                        }
-                      >
-                        <Trash2 className="size-3.5" />
-                      </IconButton>
+                      {canManage ? (
+                        <>
+                          <IconButton title="Edit details and access" onClick={() => setEditing(s)}>
+                            <Pencil className="size-3.5" />
+                          </IconButton>
+                          <IconButton
+                            title="Delete"
+                            danger
+                            onClick={() =>
+                              window.confirm(
+                                `Delete ${s.name} and its previous values? Code that reads it will report a configuration error until it is added again.`,
+                              ) && remove.mutate(s)
+                            }
+                          >
+                            <Trash2 className="size-3.5" />
+                          </IconButton>
+                        </>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -705,6 +721,7 @@ function HistoryDialog({
   onClose: () => void;
   onError: (e: unknown) => void;
 }) {
+  const canRollback = useAllowed()("POST", "/api/vault/secrets/x/rollback");
   const qc = useQueryClient();
   const versions = useQuery({
     queryKey: QK.vaultVersions(secret.id),
@@ -743,7 +760,7 @@ function HistoryDialog({
               <span className="text-[10px] text-muted-foreground">{when(ver.created_at)}</span>
               {ver.current ? (
                 <span className="ml-auto text-[10px] text-emerald">current</span>
-              ) : (
+              ) : !canRollback ? null : (
                 <Button
                   size="sm"
                   variant="outline"

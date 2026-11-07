@@ -18,6 +18,7 @@ import {
 import type { WorkflowDefinition } from "@/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useAllowed } from "@/lib/policy";
 
 export function DeployBadge({ workflow }: { workflow: WorkflowDefinition }) {
   if (workflow.has_unpublished_changes) {
@@ -110,6 +111,23 @@ export function WorkflowCard({
 }) {
   /** A remote-only workflow arrives with no steps — it can be run but not edited. */
   const remoteOnly = workflow.steps.length === 0;
+  // Only the actions the caller's role allows (the server enforces them too).
+  const allowed = useAllowed();
+  const wf = encodeURIComponent(workflow.name);
+  const canRun = allowed("POST", `/api/workflows/${wf}/execute`);
+  const canEdit = allowed("PUT", `/api/workflows/${wf}`);
+  const canDeploy = allowed("POST", `/api/workflows/${wf}/publish`);
+  const canClassify = allowed("POST", "/api/ontology/annotations/one");
+  if (!canEdit) {
+    onArchive = undefined;
+    onUnarchive = undefined;
+  }
+  if (!canDeploy) {
+    onPublish = undefined;
+    onPackage = undefined;
+  }
+  if (!canRun) onExecuteModal = undefined;
+  if (!canClassify) onClassify = undefined;
   const isBusy = busy === workflow.name;
   const publishLabel =
     workflow.has_unpublished_changes || !workflow.is_deployed ? "Publish" : "Republish";
@@ -216,28 +234,30 @@ export function WorkflowCard({
               data-card-footer
               className="flex items-center gap-1.5 border-t border-border/40 pt-3.5"
             >
-              <IconAction label="Run">
-                {onExecuteModal ? (
-                  <button
-                    type="button"
-                    aria-label="Run"
-                    className={actionClass("primary")}
-                    onClick={() => onExecuteModal(workflow.name)}
-                  >
-                    <Play />
-                  </button>
-                ) : (
-                  <Link
-                    to="/workflows/$workflowName/execute"
-                    params={{ workflowName: workflow.name }}
-                    aria-label="Run"
-                    className={actionClass("primary")}
-                  >
-                    <Play />
-                  </Link>
-                )}
-              </IconAction>
-              {!remoteOnly ? (
+              {canRun ? (
+                <IconAction label="Run">
+                  {onExecuteModal ? (
+                    <button
+                      type="button"
+                      aria-label="Run"
+                      className={actionClass("primary")}
+                      onClick={() => onExecuteModal(workflow.name)}
+                    >
+                      <Play />
+                    </button>
+                  ) : (
+                    <Link
+                      to="/workflows/$workflowName/execute"
+                      params={{ workflowName: workflow.name }}
+                      aria-label="Run"
+                      className={actionClass("primary")}
+                    >
+                      <Play />
+                    </Link>
+                  )}
+                </IconAction>
+              ) : null}
+              {!remoteOnly && canEdit ? (
                 <IconAction label="Edit">
                   <Link
                     to="/workflows/$workflowName/edit"
@@ -249,7 +269,7 @@ export function WorkflowCard({
                   </Link>
                 </IconAction>
               ) : null}
-              {!remoteOnly ? (
+              {!remoteOnly && canEdit ? (
                 <IconAction label="Refine with AI">
                   <Link
                     to="/workflows/$workflowName/refine"

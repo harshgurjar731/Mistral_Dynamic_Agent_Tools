@@ -22,6 +22,7 @@ import { Markdown } from "@/components/chat/Markdown";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection, type BulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground";
@@ -88,11 +89,13 @@ export function KnowledgeTab() {
     );
   }, [entriesQ.data, search]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     visible,
     (e) => e.id,
     () => true,
     (e) => e.title,
+    allowed("DELETE", "/api/ontology/knowledge/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "entry",
@@ -109,26 +112,30 @@ export function KnowledgeTab() {
           description="What the knowledge tool retrieves for agents, scoped by their domain annotation."
           actions={
             <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => attach.mutate()}
-                disabled={attach.isPending}
-                title="Move agents still on the retired retrieval tools to the current knowledge tool. Agents opt in to the tool individually."
-              >
-                {attach.isPending ? (
-                  <>
-                    <Loader2 className="size-3.5 animate-spin" />
-                    <LivePercent />
-                  </>
-                ) : (
-                  <Link2 className="size-3.5" />
-                )}
-                Update agents
-              </Button>
-              <Button size="sm" onClick={() => setCreating(true)}>
-                <Plus className="size-3.5" /> New entry
-              </Button>
+              {allowed("POST", "/api/rag/agents/sync") ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => attach.mutate()}
+                  disabled={attach.isPending}
+                  title="Move agents still on the retired retrieval tools to the current knowledge tool. Agents opt in to the tool individually."
+                >
+                  {attach.isPending ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      <LivePercent />
+                    </>
+                  ) : (
+                    <Link2 className="size-3.5" />
+                  )}
+                  Update agents
+                </Button>
+              ) : null}
+              {allowed("POST", "/api/ontology/knowledge") ? (
+                <Button size="sm" onClick={() => setCreating(true)}>
+                  <Plus className="size-3.5" /> New entry
+                </Button>
+              ) : null}
             </div>
           }
         />
@@ -194,7 +201,9 @@ export function KnowledgeTab() {
                     key={e.id}
                     entry={e}
                     selection={selection}
-                    onDelete={() => remove.mutate(e.id)}
+                    {...(allowed("DELETE", "/api/ontology/knowledge/x")
+                      ? { onDelete: () => remove.mutate(e.id) }
+                      : {})}
                   />
                 ))}
               </ul>
@@ -222,7 +231,7 @@ function EntryCard({
 }: {
   entry: KnowledgeEntry;
   selection: BulkSelection;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -255,14 +264,16 @@ function EntryCard({
             ))}
           </div>
         </button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-red"
-          onClick={onDelete}
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
+        {onDelete ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-muted-foreground hover:text-red"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
       {open ? (
         <div className="mt-3 border-t border-border pt-3">

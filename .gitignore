@@ -45,6 +45,9 @@ coverage.xml
 # Databases & local state
 # ───────────────────────────────────────────────
 *.db
+# SQLite WAL mode side files (backend/app/db_tuning.py)
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 # Settings-page overrides and the cached Mistral model list

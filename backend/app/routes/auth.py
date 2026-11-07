@@ -109,6 +109,16 @@ def session(request: Request):
             "admin": principal_payload(admin) if admin else None}
 
 
+@router.get("/policy")
+def policy():
+    """Which permission each API route needs, so the interface can hide what
+    the signed-in person's role does not allow. Not a secret: it is the same
+    for everyone, and the server enforces it regardless."""
+    from app.auth.permissions import PERMISSION_KEYS, export_rules
+
+    return {"api_prefix": "/api", "rules": export_rules(), "permissions": sorted(PERMISSION_KEYS)}
+
+
 @router.get("/check")
 def check(request: Request):
     """For the reverse proxy's forward_auth on files it serves itself."""

@@ -1042,7 +1042,10 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
                     run.result = {"error": str(bg_err)}
                     run.end_time = datetime.now(timezone.utc)
 
-        asyncio.create_task(_run_in_background())
+        from app.core.runtime import spawn
+
+        # Held until done (a bare create_task can be garbage-collected mid-run).
+        spawn(_run_in_background(), name=f"workflow:{workflow_name}:{exec_id}")
 
         return WorkflowExecutionResponse(
             execution_id=exec_id,

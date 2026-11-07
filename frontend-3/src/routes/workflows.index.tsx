@@ -28,6 +28,7 @@ import {
   useSortKey,
   type SortOption,
 } from "@/lib/sorting";
+import { useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/workflows/")({
   head: () => ({
@@ -159,11 +160,13 @@ function WorkflowsIndexPage() {
     return applySort(rows, WORKFLOW_SORTS, sort);
   }, [all, filter, search, selectedDomains, matchSet, annotationMap, sort]);
 
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     visible,
     (w) => w.name,
     () => true,
     (w) => w.name,
+    allowed("DELETE", "/api/workflows/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "workflow",
@@ -206,13 +209,15 @@ function WorkflowsIndexPage() {
             <Archive className="size-3.5" />
             Archived{archivedCount ? ` (${archivedCount})` : ""}
           </Link>
-          <Link
-            to="/workflows/new"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-          >
-            <Plus className="size-4" />
-            New workflow
-          </Link>
+          {allowed("POST", "/api/workflows") ? (
+            <Link
+              to="/workflows/new"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            >
+              <Plus className="size-4" />
+              New workflow
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -295,7 +300,7 @@ function WorkflowsIndexPage() {
                   ? "Try a different filter or search term."
                   : "No active workflows."}
             </p>
-            {all.length === 0 && (
+            {all.length === 0 && allowed("POST", "/api/workflows") && (
               <Link
                 to="/workflows/new"
                 className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"

@@ -29,6 +29,7 @@ import { SettingsTab } from "@/components/remote-servers/detail/SettingsTab";
 import { PushToolPanel } from "@/components/remote-servers/detail/ServerPanels";
 import { SERVER_TABS, tabsFor, type ServerTab } from "@/components/remote-servers/detail/tabs";
 import type { ServerState } from "@/components/remote-servers/status";
+import { useCanCall } from "@/lib/policy";
 
 const searchSchema = z.object({
   tab: z.enum(SERVER_TABS).optional(),
@@ -57,6 +58,7 @@ const tabTrigger =
 
 function RemoteServerDetailPage() {
   const { id } = Route.useParams();
+  const canManage = useCanCall("PUT", "/api/remote-servers/x");
   const { tab, wf } = Route.useSearch();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -141,7 +143,10 @@ function RemoteServerDetailPage() {
   const report = check.data ?? server.last_check;
   const state: ServerState = check.isPending ? "checking" : (report?.status ?? "unknown");
   const deps = deployments.data ?? [];
-  const tabs = tabsFor(server);
+  // Workflows, Push, Console and Settings all change the server.
+  const tabs = tabsFor(server).filter(
+    (t) => canManage || t.id === "overview" || t.id === "activity",
+  );
   // A tab this server doesn't have (e.g. from an old link) falls back to the overview.
   const active: ServerTab = tab && tabs.some((t) => t.id === tab) ? tab : "overview";
 
@@ -164,6 +169,7 @@ function RemoteServerDetailPage() {
         onCheck={() => check.mutate()}
         onEdit={() => setEditOpen(true)}
         onRemove={confirmRemove}
+        canManage={canManage}
       />
 
       <Tabs value={active} onValueChange={(v) => go(v as ServerTab)} className="mt-5">

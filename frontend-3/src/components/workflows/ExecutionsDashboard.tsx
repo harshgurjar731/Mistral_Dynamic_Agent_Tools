@@ -12,8 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Link } from "@tanstack/react-router";
 import { EXECUTION_STATUSES } from "@/types";
 import { executionStatusIdentity, formatDuration, formatTimestamp } from "@/lib/status";
+import { useCanCall } from "@/lib/policy";
 
 export function ExecutionsDashboard() {
+  const canControl = useCanCall("POST", "/api/workflows/executions/x/cancel");
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -119,6 +121,7 @@ export function ExecutionsDashboard() {
             </option>
           ))}
         </select>
+        {canControl ? (
         <div className="ml-auto flex items-center gap-2">
           <button
             disabled={selected.size === 0}
@@ -135,6 +138,7 @@ export function ExecutionsDashboard() {
             Terminate selected
           </button>
         </div>
+        ) : null}
       </GlassPanel>
 
       <GlassPanel>

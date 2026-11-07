@@ -24,6 +24,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
@@ -307,6 +308,58 @@ class RunManager:
     def __init__(self) -> None:
         self._runs: dict[str, LiveRun] = {}
         self._shutting_down = False
+        #: Runs waiting for a slot, per workspace, in arrival order.
+        self._waiting: dict[str, list[str]] = {}
+
+    # ── Admission ───────────────────────────────────────────────────────
+
+    @asynccontextmanager
+    async def _slot(self, run: LiveRun):
+        """Hold one of the workspace's RUN_CONCURRENCY slots while the run works.
+
+        Runs beyond the limit wait in a FIFO line — asyncio's semaphore wakes
+        waiters in arrival order, and the acquire is never cancelled and
+        re-queued, so nobody loses their place — and say how many are ahead.
+        Each workspace has its own line: its own key, its own quota.
+        """
+        from app.auth.context import current_workspace_id
+        from app.config import settings
+        from app.core.runtime import key_gate
+
+        key = current_workspace_id() or "platform"
+        gate = key_gate("run", settings.RUN_CONCURRENCY, key_id=key)
+        if gate.locked():
+            line = self._waiting.setdefault(key, [])
+            line.append(run.id)
+            acquire = asyncio.ensure_future(gate.acquire())
+            try:
+                shown = None
+                while True:
+                    done, _ = await asyncio.wait({acquire}, timeout=2.0)
+                    if done:
+                        break
+                    ahead = line.index(run.id)
+                    if ahead != shown:
+                        shown = ahead
+                        run.emit("status", (
+                            f"Waiting for a free slot — {ahead} ahead of you"
+                            if ahead else "Waiting for a free slot — you're next"))
+            except asyncio.CancelledError:
+                if acquire.done() and not acquire.cancelled():
+                    gate.release()
+                else:
+                    acquire.cancel()
+                raise
+            finally:
+                if run.id in line:
+                    line.remove(run.id)
+            run.emit("status", "Starting")
+        else:
+            await gate.acquire()
+        try:
+            yield
+        finally:
+            gate.release()
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 
@@ -354,7 +407,8 @@ class RunManager:
         flusher = asyncio.create_task(run._flush_loop())
         started = time.monotonic()
         try:
-            outcome = await runner(run)
+            async with self._slot(run):
+                outcome = await runner(run)
             run.status = outcome.status
             run.result = outcome.result
             run.error = outcome.error

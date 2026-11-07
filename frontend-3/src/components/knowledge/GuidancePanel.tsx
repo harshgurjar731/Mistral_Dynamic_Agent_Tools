@@ -23,6 +23,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useCanCall } from "@/lib/policy";
 
 export const STRENGTH_TONE: Record<Strength, string> = {
   must: "border-destructive/40 bg-destructive/10 text-destructive",
@@ -51,6 +52,7 @@ const selectClass =
   "h-8 rounded-md border border-input bg-background-elevated px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
 export function GuidancePanel() {
+  const canManage = useCanCall("POST", "/api/knowledge/items");
   const qc = useQueryClient();
   const [status, setStatus] = useState<ItemStatus | "">("proposed");
   const [query, setQuery] = useState("");
@@ -100,15 +102,17 @@ export function GuidancePanel() {
           <option value="retired">Retired</option>
           <option value="">All</option>
         </select>
-        {status === "proposed" && shown.length > 0 ? (
+        {canManage && status === "proposed" && shown.length > 0 ? (
           <Button size="sm" variant="secondary" disabled={setItemStatus.isPending}
             onClick={() => setItemStatus.mutate({ ids: shown.map((i) => i.id), to: "active" })}>
             <Check className="size-3.5" /> Approve all {shown.length}
           </Button>
         ) : null}
-        <Button size="sm" onClick={() => setEditing("new")}>
-          <Plus className="size-3.5" /> New guidance
-        </Button>
+        {canManage ? (
+          <Button size="sm" onClick={() => setEditing("new")}>
+            <Plus className="size-3.5" /> New guidance
+          </Button>
+        ) : null}
       </div>
 
       {items.isError ? (
@@ -154,6 +158,7 @@ export function GuidancePanel() {
                   </div>
                   {item.rationale ? <p className="mt-1 text-[11px] text-amber">{item.rationale}</p> : null}
                 </div>
+                {canManage ? (
                 <div className="flex shrink-0 items-center gap-1">
                   {item.status !== "active" ? (
                     <Button size="sm" variant="secondary" title="Approve — builds will use it"
@@ -173,6 +178,7 @@ export function GuidancePanel() {
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
+                ) : null}
               </div>
             </li>
           ))}

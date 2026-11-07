@@ -38,9 +38,15 @@ MAX_MESSAGE_CHARS = 2000
 
 
 def record_created(ctx: PipelineContext, kind: str, ref: str, name: str, **extra) -> None:
-    """Note something this plan created, for a later rollback."""
-    ctx.metadata.setdefault(CREATED_KEY, []).append(
-        {"kind": kind, "id": ref, "name": name, **extra})
+    """Note something this plan created, for a later rollback.
+
+    Also written to the run's event log at once (``plan_item_created``), so if
+    the process dies mid-plan the next start-up still knows what this plan
+    left on Mistral and the Tool Service (app.runs.recovery).
+    """
+    item = {"kind": kind, "id": ref, "name": name, **extra}
+    ctx.metadata.setdefault(CREATED_KEY, []).append(item)
+    ctx.emit("plan_item_created", json.dumps(item, default=str))
 
 
 def created(ctx: PipelineContext) -> list[dict]:
@@ -158,6 +164,51 @@ async def _remove(ctx: PipelineContext, item: dict) -> str:
             os.remove(compiled)
         return "deleted"
     raise ValueError(f"unknown kind '{kind}'")
+
+
+def saved_workflow(items: list[dict]) -> bool:
+    """Did the plan get as far as saving its workflow? Then what it made is in use."""
+    return any(i.get("kind") == "workflow" for i in items)
+
+
+def _in_use(items: list[dict]) -> set[str]:
+    """Ids of ``items`` that some saved workflow refers to (by id or by name).
+
+    Ers on the side of keeping: anything mentioned anywhere is left alone.
+    """
+    from app.auth.context import unscoped
+    from app.services.workflow_engine import engine as wf
+
+    with unscoped(), wf._Session() as db:
+        texts = [row[0] or "" for row in db.query(wf._WorkflowRecord.definition_json).all()]
+    blob = "\n".join(texts)
+    keep = set()
+    for item in items:
+        for probe in (str(item.get("id") or ""), str(item.get("name") or "")):
+            if probe and len(probe) >= 3 and f'"{probe}"' in blob:
+                keep.add(str(item.get("id")))
+    return keep
+
+
+async def reclaim_unused(ctx: PipelineContext, reason: str) -> list[dict]:
+    """Remove what an unfinished plan created and no saved workflow uses.
+
+    For a plan that ended without saving its workflow — cancelled, failed, or
+    killed by a restart — so its agents, activities and libraries are not left
+    behind with nothing using them.
+    """
+    items = created(ctx)
+    if not items or saved_workflow(items):
+        return []
+    keep = await asyncio.to_thread(_in_use, items)
+    unused = [i for i in items if str(i.get("id")) not in keep]
+    if not unused:
+        return []
+    ctx.metadata[CREATED_KEY] = unused
+    report = await roll_back_plan(ctx, reason)
+    logger.info("Reclaimed %d item(s) of an unfinished plan (%s)",
+                sum(1 for r in report if r.get("removed")), reason)
+    return report
 
 
 def failure_rows(rows: list[dict]) -> list[dict]:

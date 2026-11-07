@@ -96,8 +96,22 @@ def _actor_fields(actor: Any) -> dict:
     return {"actor_kind": "system", "actor_id": None, "actor_email": None}
 
 
+# Resolved sessions, for a few seconds: the UI polls several endpoints and each
+# request would otherwise re-read session, account, membership, role and
+# workspace. Every change that could alter a principal is audited, and
+# auditing clears this, so a sign-out, revocation, disable or role change is
+# seen by the next request.
+_PRINCIPAL_TTL = 10.0
+_principals: dict[tuple[str, str], tuple[float, Principal]] = {}
+
+
+def forget_principals() -> None:
+    _principals.clear()
+
+
 def _audit(db, action: str, *, actor: Any = None, target_type: str = None, target_id: str = None,
            workspace_id: str = None, outcome: str = "ok", detail: dict = None, ip: str = None):
+    forget_principals()
     db.add(AuditEvent(
         action=action, target_type=target_type, target_id=target_id, workspace_id=workspace_id,
         outcome=outcome, detail=json.dumps(detail) if detail else None, ip=ip,
@@ -789,6 +803,7 @@ def issue_link(user_id: str, *, actor: Any = None) -> dict:
 
 
 def _revoke_sessions(db, kind: str, subject_id: str, *, keep: str = None) -> int:
+    forget_principals()
     q = db.query(AuthSession).filter(AuthSession.kind == kind, AuthSession.subject_id == subject_id,
                                      AuthSession.revoked_at.is_(None))
     if keep:
@@ -1035,20 +1050,31 @@ _ip_lock = threading.Lock()
 
 
 def _ip_allowed(ip: Optional[str]) -> bool:
+    """Is this address still under its limit of *failed* sign-ins?
+
+    Only failures count: a whole office signing in at nine from one NAT address
+    is fine, an address guessing passwords is not.
+    """
     if not ip:
         return True
     now = time.monotonic()
     with _ip_lock:
-        q = _ip_attempts.setdefault(ip, deque())
+        q = _ip_attempts.get(ip)
+        if not q:
+            return True
         while q and now - q[0] > cfg.IP_WINDOW_SECONDS:
             q.popleft()
-        if len(q) >= cfg.ip_attempts_per_window():
-            return False
-        q.append(now)
+        return len(q) < cfg.ip_attempts_per_window()
+
+
+def _ip_failed(ip: Optional[str]) -> None:
+    if not ip:
+        return
+    with _ip_lock:
+        _ip_attempts.setdefault(ip, deque()).append(time.monotonic())
         if len(_ip_attempts) > 10_000:  # bound memory under a spray
             for k in list(_ip_attempts)[:5_000]:
                 _ip_attempts.pop(k, None)
-        return True
 
 
 def reset_rate_limits() -> None:
@@ -1098,6 +1124,7 @@ def login(kind: str, email: str, password: str, *, ip: str = None, user_agent: s
             _audit(db, f"{kind}.login", outcome="failed", ip=ip,
                    detail={"email": email[:254], "reason": "unknown"})
             db.commit()
+            _ip_failed(ip)
             raise AuthError(_GENERIC, 401, "credentials")
         actor = {"kind": kind, "id": row.id, "email": row.email}
         if _locked(row):
@@ -1116,6 +1143,7 @@ def login(kind: str, email: str, password: str, *, ip: str = None, user_agent: s
             _audit(db, f"{kind}.login", actor=actor, outcome="failed", ip=ip,
                    detail={"reason": "password", "locked": locked})
             db.commit()
+            _ip_failed(ip)
             raise AuthError(_GENERIC, 401, "credentials")
         if row.status == "disabled":
             _audit(db, f"{kind}.login", actor=actor, outcome="denied", ip=ip,
@@ -1196,6 +1224,9 @@ def resolve_session(kind: str, token: str) -> Optional[Principal]:
     if not token or len(token) > 200:
         return None
     sid = pw.token_hash(token)
+    hit = _principals.get((kind, sid))
+    if hit and time.monotonic() - hit[0] < _PRINCIPAL_TTL:
+        return hit[1]
     with _db() as db:
         s = db.get(AuthSession, sid)
         if s is None or s.kind != kind or s.revoked_at is not None:
@@ -1213,6 +1244,9 @@ def resolve_session(kind: str, token: str) -> Optional[Principal]:
         if not s.last_seen_at or (now - s.last_seen_at).total_seconds() > 60:
             s.last_seen_at = now
             db.commit()
+        if len(_principals) > 20_000:
+            _principals.clear()
+        _principals[(kind, sid)] = (time.monotonic(), principal)
         return principal
 
 

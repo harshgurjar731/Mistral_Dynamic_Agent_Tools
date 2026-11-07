@@ -82,6 +82,7 @@ import {
 } from "@/components/settings/settingsModel";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { EditGuard, useAllowed, ViewOnlyNote } from "@/lib/policy";
 
 const searchSchema = z.object({
   /** Open on this category — e.g. "process" from the Processes page. */
@@ -203,6 +204,9 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
 type ResetBody = { target?: SettingTarget; section?: string; keys?: string[] };
 
 function SettingsPage() {
+  const allowed = useAllowed();
+  // Platform settings are changed by platform admins only (the API agrees).
+  const canEdit = allowed("PUT", "/api/settings");
   const qc = useQueryClient();
   const settingsQ = useQuery({ queryKey: QK.settings(), queryFn: settingsApi.get });
   const catalogQ = useQuery({ queryKey: QK.modelCatalog(), queryFn: settingsApi.catalog });
@@ -408,33 +412,35 @@ function SettingsPage() {
               </FeatureDescription>
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => refresh.mutate()}
-              disabled={refresh.isPending}
-            >
-              <RefreshCw className={cn("size-3.5", refresh.isPending && "animate-spin")} />
-              Refresh from Mistral
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-red hover:text-red"
-              disabled={reset.isPending}
-              onClick={() =>
-                setConfirm({
-                  title: "Reset every setting to default?",
-                  body: "All values changed on this page — backend, Tool Service and interface — go back to their defaults (.env, else built-in).",
-                  reset: {},
-                })
-              }
-            >
-              <RotateCcw className="size-3.5" />
-              Reset all
-            </Button>
-          </div>
+          {canEdit ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refresh.mutate()}
+                disabled={refresh.isPending}
+              >
+                <RefreshCw className={cn("size-3.5", refresh.isPending && "animate-spin")} />
+                Refresh from Mistral
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red hover:text-red"
+                disabled={reset.isPending}
+                onClick={() =>
+                  setConfirm({
+                    title: "Reset every setting to default?",
+                    body: "All values changed on this page — backend, Tool Service and interface — go back to their defaults (.env, else built-in).",
+                    reset: {},
+                  })
+                }
+              >
+                <RotateCcw className="size-3.5" />
+                Reset all
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -623,27 +629,39 @@ function SettingsPage() {
               {category === "process" ? (
                 <ProcessTemplatesPanel initialScope={search.scope} />
               ) : null}
-              {category === "safety" ? <ToolSafetyPanel /> : null}
-              {category === "cleanup" ? <CleanupPanel /> : null}
+              {category === "safety" ? (
+                <EditGuard allowed={allowed("POST", "/api/safety-rules")} what="tool safety rules">
+                  <ToolSafetyPanel />
+                </EditGuard>
+              ) : null}
+              {category === "cleanup" ? (
+                allowed("POST", "/api/settings/cleanup") ? (
+                  <CleanupPanel />
+                ) : (
+                  <ViewOnlyNote what="cleanup — it is for platform admins" />
+                )
+              ) : null}
               {category === "vault" ? (
                 <VaultPanel focusId={search.secret} createName={search.create} />
               ) : null}
-              {sectionsIn(category).map((s) => (
-                <SectionCard
-                  key={`${s.target}-${s.id}`}
-                  section={s}
-                  items={s.settings}
-                  onResetSection={() => askResetSection(s)}
-                  {...sectionProps}
-                />
-              ))}
+              <EditGuard allowed={canEdit} note={false} className="space-y-6">
+                {sectionsIn(category).map((s) => (
+                  <SectionCard
+                    key={`${s.target}-${s.id}`}
+                    section={s}
+                    items={s.settings}
+                    onResetSection={() => askResetSection(s)}
+                    {...sectionProps}
+                  />
+                ))}
+              </EditGuard>
             </>
           )}
         </div>
       </div>
 
       {/* ── Save bar ── */}
-      {dirtyKeys.length ? (
+      {dirtyKeys.length && canEdit ? (
         <div className="fixed right-4 bottom-4 left-4 z-40 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/30 bg-background/95 px-4 py-3 shadow-lg backdrop-blur-xl sm:left-auto sm:min-w-[420px]">
           <div>
             <p className="text-sm font-medium text-foreground">

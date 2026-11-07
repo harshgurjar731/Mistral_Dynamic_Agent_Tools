@@ -27,6 +27,7 @@ import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@
 import { BulkActionBar, SelectableItem } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 export const Route = createFileRoute("/connectors/")({
   head: () => ({
@@ -57,6 +58,7 @@ const CONNECTOR_SORTS: SortOption<Connector>[] = [
 ];
 
 function ConnectorCard({ connector }: { connector: Connector }) {
+  const canDelete = useCanCall("DELETE", "/api/connectors/x");
   const qc = useQueryClient();
   const remove = useMutation({
     mutationFn: () => connectorsApi.remove(connector.id),
@@ -184,7 +186,7 @@ function ConnectorCard({ connector }: { connector: Connector }) {
         {/* Footer */}
         <div className="mt-3.5 flex items-center border-t border-border/40 pt-3.5">
           <CreatedAt value={connector.created_at} />
-          {!connector.is_directory && (
+          {!connector.is_directory && canDelete && (
             <button
               type="button"
               onClick={(e) => {
@@ -321,11 +323,13 @@ function ConnectorsIndexPage() {
   }, [query.data, search, visibility, sort]);
 
   // Directory connectors belong to the Mistral catalogue and cannot be deleted.
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (c) => c.id,
     (c) => !c.is_directory,
     (c) => c.name,
+    allowed("DELETE", "/api/connectors/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "connector",
@@ -358,14 +362,16 @@ function ConnectorsIndexPage() {
             </FeatureDescription>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-        >
-          <Plus className="size-4" />
-          New Connector
-        </button>
+        {allowed("POST", "/api/connectors") ? (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            <Plus className="size-4" />
+            New Connector
+          </button>
+        ) : null}
       </div>
 
       {/* ── Stats Bar ── */}
@@ -469,7 +475,7 @@ function ConnectorsIndexPage() {
                 ? "Try adjusting your filters or search query."
                 : "Register your first connector to get started."}
             </p>
-            {!search && visibility === "all" && (
+            {!search && visibility === "all" && allowed("POST", "/api/connectors") && (
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}

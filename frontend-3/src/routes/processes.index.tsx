@@ -29,6 +29,7 @@ import { TemplateDownloadMenu } from "@/components/processes/shared";
 import { RecommendationImportDialog } from "@/components/processes/RecommendationImportDialog";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 export const Route = createFileRoute("/processes/")({
   head: () => ({
@@ -70,6 +71,7 @@ function ProcessesIndexPage() {
   const [search, setSearch] = useState("");
   const [onlyWithProcesses, setOnlyWithProcesses] = useState(false);
   const [creating, setCreating] = useState(false);
+  const allowed = useAllowed();
   const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState<IndustryCard | null>(null);
   const [sort, setSort] = useSortKey("processes", "name_asc");
@@ -127,14 +129,16 @@ function ProcessesIndexPage() {
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <TemplateDownloadMenu />
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-          >
-            <Plus className="size-4" />
-            New industry
-          </button>
+          {allowed("POST", "/api/processes/concepts") ? (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            >
+              <Plus className="size-4" />
+              New industry
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -178,10 +182,12 @@ function ProcessesIndexPage() {
           <RefreshCw className={cards.isFetching ? "size-3.5 animate-spin" : "size-3.5"} />
           Refresh
         </Button>
-        <Button size="sm" variant="outline" onClick={() => setImporting(true)}>
-          <FileJson className="size-3.5" />
-          Import recommendations
-        </Button>
+        {allowed("POST", "/api/processes/recommendations/import") ? (
+          <Button size="sm" variant="outline" onClick={() => setImporting(true)}>
+            <FileJson className="size-3.5" />
+            Import recommendations
+          </Button>
+        ) : null}
         <RecommendationImportDialog open={importing} onOpenChange={setImporting} />
         {all.length > 0 ? (
           <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">
@@ -212,7 +218,7 @@ function ProcessesIndexPage() {
                 ? "Try a different search, or show every industry."
                 : "Create an industry, then its domains, and the processes they run."}
             </p>
-            {!search && !onlyWithProcesses ? (
+            {!search && !onlyWithProcesses && allowed("POST", "/api/processes/concepts") ? (
               <button
                 type="button"
                 onClick={() => setCreating(true)}
@@ -277,6 +283,7 @@ function IndustryCardView({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const canManage = useCanCall("PATCH", "/api/processes/concepts/x");
   const c = card.counts;
   return (
     <div
@@ -332,24 +339,26 @@ function IndustryCardView({
         </div>
 
         <div className="mt-auto flex items-center gap-1.5 border-t border-border/40 pt-3.5">
-          <div className="pointer-events-auto relative z-10 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={onEdit}
-              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] font-medium text-muted-foreground transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground"
-            >
-              <Edit2 className="size-3" />
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              aria-label={`Delete ${card.label}`}
-              className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </div>
+          {canManage ? (
+            <div className="pointer-events-auto relative z-10 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onEdit}
+                className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] font-medium text-muted-foreground transition hover:border-primary/30 hover:bg-surface-hover hover:text-foreground"
+              >
+                <Edit2 className="size-3" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={onDelete}
+                aria-label={`Delete ${card.label}`}
+                className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-red/10 hover:text-red"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
           <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground/70">
             {card.last_used ? (
               <>

@@ -32,6 +32,7 @@ export function ServerHeader({
   onCheck,
   onEdit,
   onRemove,
+  canManage = true,
 }: {
   server: RemoteServer;
   report: CheckReport | null | undefined;
@@ -40,6 +41,8 @@ export function ServerHeader({
   onCheck: () => void;
   onEdit: () => void;
   onRemove: () => void;
+  /** False for roles that can only look: no diagnostics, edit or remove. */
+  canManage?: boolean;
 }) {
   const Icon = providerIconFor(server.provider);
   const tone = STATE_TONE[state];
@@ -121,43 +124,45 @@ export function ServerHeader({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" onClick={onCheck} disabled={checking}>
-            {checking ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <LivePercent />
-              </>
-            ) : (
-              <PlugZap className="size-3.5" />
-            )}
-            Run diagnostics
-          </Button>
-          <Button size="sm" variant="outline" onClick={onEdit}>
-            <Pencil className="size-3.5" /> Edit
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="icon" variant="ghost" className="size-8" aria-label="More actions">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onSelect={() => {
-                  void navigator.clipboard?.writeText(server.url);
-                  toast.success("Address copied.");
-                }}
-              >
-                <Copy className="size-3.5" /> Copy address
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onRemove} className="text-red focus:text-red">
-                <Trash2 className="size-3.5" /> Remove server
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        {canManage ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" onClick={onCheck} disabled={checking}>
+              {checking ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : (
+                <PlugZap className="size-3.5" />
+              )}
+              Run diagnostics
+            </Button>
+            <Button size="sm" variant="outline" onClick={onEdit}>
+              <Pencil className="size-3.5" /> Edit
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon" variant="ghost" className="size-8" aria-label="More actions">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void navigator.clipboard?.writeText(server.url);
+                    toast.success("Address copied.");
+                  }}
+                >
+                  <Copy className="size-3.5" /> Copy address
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onRemove} className="text-red focus:text-red">
+                  <Trash2 className="size-3.5" /> Remove server
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
       </div>
     </div>
   );

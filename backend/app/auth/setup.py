@@ -17,13 +17,14 @@ def register_scoped_models() -> None:
     from app.runs.models import PipelineRunRecord
     from app.services.workflow_engine.engine import _DeletedWorkflowRecord, _WorkflowRecord
     from app.services.workflow_engine.reviews import HumanReview
+    from app.services.workflow_engine.run_history import LocalExecution
     from app.vault.models import VaultAuditEvent, VaultSecret
     from app.workflow_revisions.models import WorkflowRevisionRecord, WorkflowVersionRecord
 
     scoping.register(
         _WorkflowRecord, _DeletedWorkflowRecord, WorkflowRevisionRecord, WorkflowVersionRecord,
         PipelineRunRecord, HumanReview, VaultSecret, VaultAuditEvent, RemoteServer,
-        RemoteDeployment,
+        RemoteDeployment, LocalExecution,
     )
     scoping.install()
 

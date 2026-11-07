@@ -8,6 +8,7 @@ the original streaming endpoints keep working exactly as before.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Optional
 
@@ -23,12 +24,17 @@ async def workflow_plan(run: LiveRun, *, client, goal: str,
     from app.core.context import PipelineContext
     from app.layers import workflow_pipeline
 
+    from app.layers.workflow import plan_control
+
     ctx = PipelineContext(query=goal, stream=True, client=client,
                           process_request=process_knowledge)
     ctx.event_queue = run
-    await workflow_pipeline.execute(ctx)
-
-    from app.layers.workflow import plan_control
+    try:
+        await workflow_pipeline.execute(ctx)
+    except asyncio.CancelledError:
+        # Stopped before it saved a workflow: nothing will use what it built.
+        await asyncio.shield(plan_control.reclaim_unused(ctx, "the plan was cancelled"))
+        raise
 
     done = _as_dict(run.payload("done")) or {}
     result = {
@@ -45,6 +51,11 @@ async def workflow_plan(run: LiveRun, *, client, goal: str,
     fatal = _as_dict(run.payload("fatal_error"))
     if ctx.error or fatal:
         error = ctx.error or (fatal or {}).get("error") or "Planning failed"
+        if not result.get("workflow_name"):
+            reclaimed = await plan_control.reclaim_unused(ctx, "the plan failed before saving")
+            if reclaimed:
+                result["reclaimed"] = reclaimed
+                result["created"] = plan_control.created(ctx)
         return RunOutcome(status="failed", result=result, error=str(error))
     return RunOutcome(result=result)
 

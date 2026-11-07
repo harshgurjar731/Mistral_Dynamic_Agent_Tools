@@ -44,13 +44,15 @@ export function useBulkSelection<T>(
   getId: (item: T) => string | number,
   isSelectable: (item: T) => boolean = () => true,
   getLabel?: (item: T) => string,
+  /** False when the caller's role can't delete these: no checkboxes, no bar. */
+  enabled = true,
 ): BulkSelection {
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
 
   const selectable = useMemo(
-    () => items.filter(isSelectable).map((i) => String(getId(i))),
+    () => (enabled ? items.filter(isSelectable).map((i) => String(getId(i))) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items],
+    [items, enabled],
   );
   const labels = useMemo(() => {
     const map = new Map<string, string>();

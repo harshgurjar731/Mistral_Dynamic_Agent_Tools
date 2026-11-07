@@ -35,6 +35,7 @@ import { IngestTimeline } from "./IngestTimeline";
 import { EntityGraph, type EntityEdge, type EntityNode } from "./EntityGraph";
 import { ACCEPT, docCount, LIVE, STATUS_TONE, type LibraryPane } from "./libraryMeta";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 /**
  * Everything about one library on its own page: documents and their ingest
@@ -105,6 +106,7 @@ function LibraryDetail({
   onReview: (doc: RagDocument) => void;
   onChanged: () => void;
 }) {
+  const canUpload = useCanCall("POST", "/api/rag/libraries/x/documents");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [openTraces, setOpenTraces] = useState<Set<number>>(new Set());
@@ -188,12 +190,15 @@ function LibraryDetail({
       className="relative flex min-h-0 flex-1 flex-col"
       onDragOver={(e) => {
         e.preventDefault();
-        setDragging(true);
+        if (canUpload) setDragging(true);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget === e.target) setDragging(false);
       }}
-      onDrop={onDrop}
+      onDrop={(e) => {
+        if (canUpload) onDrop(e);
+        else e.preventDefault();
+      }}
     >
       {/* ── Header ── */}
       <header className="flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border/60 p-4">
@@ -240,17 +245,23 @@ function LibraryDetail({
             e.target.value = "";
           }}
         />
-        <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={upload.isPending}>
-          {upload.isPending ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin" />
-              <LivePercent />
-            </>
-          ) : (
-            <Upload className="size-3.5" />
-          )}
-          Upload documents
-        </Button>
+        {canUpload ? (
+          <Button
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={upload.isPending}
+          >
+            {upload.isPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                <LivePercent />
+              </>
+            ) : (
+              <Upload className="size-3.5" />
+            )}
+            Upload documents
+          </Button>
+        ) : null}
       </header>
 
       {/* ── Numbers ── */}
@@ -323,36 +334,38 @@ function LibraryDetail({
         </div>
       ) : (
         <div className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-xl border-2 border-dashed px-4 py-4 text-left transition",
-              dragging
-                ? "border-primary bg-primary/10"
-                : "border-border/60 hover:border-primary/40 hover:bg-surface-hover/40",
-            )}
-          >
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-              {upload.isPending ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  <LivePercent />
-                </>
-              ) : (
-                <FileUp className="size-4" />
+          {canUpload ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl border-2 border-dashed px-4 py-4 text-left transition",
+                dragging
+                  ? "border-primary bg-primary/10"
+                  : "border-border/60 hover:border-primary/40 hover:bg-surface-hover/40",
               )}
-            </span>
-            <span>
-              <span className="block text-sm font-medium text-foreground">
-                {upload.isPending ? "Uploading…" : "Drop files here, or click to choose"}
+            >
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                {upload.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    <LivePercent />
+                  </>
+                ) : (
+                  <FileUp className="size-4" />
+                )}
               </span>
-              <span className="block text-[11px] text-muted-foreground">
-                PDF, DOCX, TXT or Markdown. Each is indexed for search, then its entities and
-                relations are extracted for review.
+              <span>
+                <span className="block text-sm font-medium text-foreground">
+                  {upload.isPending ? "Uploading…" : "Drop files here, or click to choose"}
+                </span>
+                <span className="block text-[11px] text-muted-foreground">
+                  PDF, DOCX, TXT or Markdown. Each is indexed for search, then its entities and
+                  relations are extracted for review.
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+          ) : null}
 
           {liveDocs.map((doc) => (
             <IngestTimeline
@@ -507,6 +520,7 @@ function DraftReviewModal({
   onOpenChange: (open: boolean) => void;
   onCommitted: () => void;
 }) {
+  const canCommit = useCanCall("POST", "/api/rag/documents/x/commit");
   const qc = useQueryClient();
 
   const { data: draftData, isLoading } = useQuery({
@@ -653,22 +667,24 @@ function DraftReviewModal({
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Close
           </Button>
-          <Button
-            size="sm"
-            onClick={() => commitMutation.mutate()}
-            disabled={commitMutation.isPending || !draft}
-            className="flex items-center gap-1.5"
-          >
-            {commitMutation.isPending ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <LivePercent />
-              </>
-            ) : (
-              <GitBranch className="size-3.5" />
-            )}
-            Commit to Knowledge Graph
-          </Button>
+          {canCommit ? (
+            <Button
+              size="sm"
+              onClick={() => commitMutation.mutate()}
+              disabled={commitMutation.isPending || !draft}
+              className="flex items-center gap-1.5"
+            >
+              {commitMutation.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <LivePercent />
+                </>
+              ) : (
+                <GitBranch className="size-3.5" />
+              )}
+              Commit to Knowledge Graph
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

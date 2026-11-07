@@ -40,6 +40,7 @@ import { useExecutionStream, type ExecutionMonitorState } from "./useExecutionSt
 import { ExecutionStepTimeline } from "./ExecutionStepTimeline";
 import { fixStepActions } from "./FixStepButton";
 import { cn } from "@/lib/utils";
+import { useAllowed } from "@/lib/policy";
 
 const TABS = ["steps", "result", "logs", "events", "trace", "history", "control"] as const;
 type TabId = (typeof TABS)[number];
@@ -57,6 +58,8 @@ export function ExecutionMonitor({
   hideResult?: boolean;
   title?: string | undefined;
 }) {
+  // Signal, cancel, terminate and reset are part of running workflows.
+  const canControl = useAllowed()("POST", "/api/workflows/executions/x/cancel");
   const own = useExecutionStream(stream ? null : executionId);
   const { detail, steps, events, phase, error, finalStatus, reconnect } = stream ?? own;
   const [tab, setTab] = useState<TabId>("steps");
@@ -124,7 +127,7 @@ export function ExecutionMonitor({
             <TabsTrigger value="events">Events</TabsTrigger>
             <TabsTrigger value="trace">Trace</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="control">Control</TabsTrigger>
+            {canControl ? <TabsTrigger value="control">Control</TabsTrigger> : null}
           </TabsList>
           <div className="mt-3 flex-1 overflow-auto custom-scrollbar">
             <TabsContent value="steps" className="h-full">
@@ -156,7 +159,7 @@ export function ExecutionMonitor({
               <HistoryTab executionId={executionId} />
             </TabsContent>
             <TabsContent value="control" className="h-full">
-              <ControlTab executionId={executionId} />
+              {canControl ? <ControlTab executionId={executionId} /> : null}
             </TabsContent>
           </div>
         </Tabs>

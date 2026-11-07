@@ -13,6 +13,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { TableSkeleton } from "@/components/ui/Skeletons";
 import { BulkActionBar, RowCheckbox } from "@/components/shared/BulkSelection";
 import { useBulkDelete, useBulkSelection } from "@/lib/bulkSelection";
+import { useAllowed } from "@/lib/policy";
 
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-background-elevated/70 px-2 text-xs text-foreground";
@@ -71,11 +72,13 @@ export function AnnotationsTab({ overview }: { overview: OntologyOverview | unde
   }, [data, search]);
 
   const rowsById = useMemo(() => new Map(rows.map((r) => [String(r.id), r])), [rows]);
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     rows,
     (r) => r.id,
     () => true,
     (r) => `${r.subject_id} → ${r.concept_id}`,
+    allowed("DELETE", "/api/ontology/annotations/one"),
   );
   const bulkDelete = useBulkDelete({
     noun: "annotation",
@@ -212,16 +215,18 @@ export function AnnotationsTab({ overview }: { overview: OntologyOverview | unde
                         </span>
                       </td>
                       <td className="px-2 py-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-muted-foreground hover:text-red"
-                          disabled={remove.isPending}
-                          onClick={() => remove.mutate(r)}
-                          title="Remove this triple"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
+                        {allowed("DELETE", "/api/ontology/annotations/one") ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-red"
+                            disabled={remove.isPending}
+                            onClick={() => remove.mutate(r)}
+                            title="Remove this triple"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        ) : null}
                       </td>
                     </tr>
                   ))}

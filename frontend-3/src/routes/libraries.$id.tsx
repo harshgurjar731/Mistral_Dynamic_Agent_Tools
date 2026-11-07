@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
 import { formatRelative } from "@/lib/status";
+import { useCanCall } from "@/lib/policy";
 
 export const Route = createFileRoute("/libraries/$id")({
   head: () => ({
@@ -24,6 +25,7 @@ export const Route = createFileRoute("/libraries/$id")({
 });
 
 function LibraryDetailPage() {
+  const canManage = useCanCall("PUT", "/api/libraries/x");
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -105,26 +107,31 @@ function LibraryDetailPage() {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-            <Edit2 className="size-3.5" /> Edit
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red hover:text-red"
-            onClick={() =>
-              window.confirm(`Delete the library "${library.name}"?`) && remove.mutate()
-            }
-            disabled={remove.isPending}
-          >
-            <Trash2 className="size-3.5" /> Delete
-          </Button>
-        </div>
+        {canManage ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+              <Edit2 className="size-3.5" /> Edit
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-red hover:text-red"
+              onClick={() =>
+                window.confirm(`Delete the library "${library.name}"?`) && remove.mutate()
+              }
+              disabled={remove.isPending}
+            >
+              <Trash2 className="size-3.5" /> Delete
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-6">
-        <DocumentsPanel library={library} onRenameLibrary={() => setEditing(true)} />
+        <DocumentsPanel
+          library={library}
+          {...(canManage ? { onRenameLibrary: () => setEditing(true) } : {})}
+        />
       </div>
 
       <LibraryFormDialog open={editing} onOpenChange={setEditing} library={library} />

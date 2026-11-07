@@ -549,3 +549,43 @@ def test_dev_proxy_origin_is_same_site_even_with_cors_wildcard(http, monkeypatch
     foreign = {"Origin": "http://localhost:5173"}
     r = http.post("/api/workflows/validate", json={}, headers=foreign)
     assert r.status_code == 403 and r.json()["code"] == "csrf"
+
+
+def test_policy_endpoint_is_the_server_rule_table():
+    import re
+
+    import app.main
+    from fastapi.testclient import TestClient
+
+    body = TestClient(app.main.app).get("/api/auth/policy").json()
+    assert len(body["rules"]) == len(permissions.RULES)
+    for exported, rule in zip(body["rules"], permissions.RULES):
+        assert re.compile(exported["pattern"]).pattern == rule.pattern.pattern
+        assert set(exported["methods"]) == set(rule.methods)
+        assert tuple(exported["perms"]) == rule.perms
+    # Only syntax JavaScript reads identically: no lookbehind, named groups, \A or \Z.
+    for exported in body["rules"]:
+        for unsupported in ("(?<", "(?P", "\\A", "\\Z"):
+            assert unsupported not in exported["pattern"], exported["pattern"]
+
+
+@pytest.mark.real_auth
+def test_chat_role_can_talk_to_agents_but_not_design_them(http, monkeypatch):
+    from app import dependencies
+
+    monkeypatch.setattr(dependencies, "_mistral_client", object())
+    _new_active_user(role="operator")
+    http.post("/api/auth/login", json={"email": "dev@example.com",
+                                       "password": "correct horse battery"})
+    o = {"Origin": "http://testserver"}
+    r = http.post("/api/orchestrate/stream", json={"query": "design me an agent"}, headers=o)
+    assert r.status_code == 403
+    assert "not design" in r.json()["detail"]["message"]
+
+
+def test_successful_sign_ins_do_not_use_up_the_address_limit(auth_db, monkeypatch):
+    """A whole office behind one address signing in must not be throttled."""
+    monkeypatch.setenv("AUTH_IP_ATTEMPTS", "5")
+    _new_active_user()
+    for _ in range(12):
+        assert store.login("user", "dev@example.com", "correct horse battery", ip="10.9.9.9")

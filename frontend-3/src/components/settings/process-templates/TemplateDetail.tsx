@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { inheritors, LEVEL_LABEL, type MapNode } from "./model";
 import { UploadTemplateDialog } from "./UploadTemplateDialog";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useCanCall } from "@/lib/policy";
 
 function staleNote(r: Record<string, number> | null | undefined): string {
   const stale = r?.["stale"] ?? 0;
@@ -51,6 +52,7 @@ export function TemplateDetail({
   parent: MapNode | null;
   onSelect: (id: string | null) => void;
 }) {
+  const canManage = useCanCall("POST", "/api/processes/templates");
   const qc = useQueryClient();
   const [uploading, setUploading] = useState(false);
   const [viewing, setViewing] = useState<ProcessTemplate | null>(null);
@@ -152,9 +154,11 @@ export function TemplateDetail({
               </p>
             ) : null}
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setUploading(true)}>
-                <Upload className="size-3.5" /> Upload a new version
-              </Button>
+              {canManage ? (
+                <Button size="sm" onClick={() => setUploading(true)}>
+                  <Upload className="size-3.5" /> Upload a new version
+                </Button>
+              ) : null}
               <TemplateDownloadMenu conceptId={node.id} label="Download" />
               {active?.id ? (
                 <Button size="sm" variant="outline" onClick={() => view.mutate(active.id!)}>
@@ -162,7 +166,7 @@ export function TemplateDetail({
                 </Button>
               ) : null}
             </div>
-            {own && !isGlobal ? (
+            {own && !isGlobal && canManage ? (
               <button
                 type="button"
                 disabled={inherit.isPending}
@@ -207,9 +211,11 @@ export function TemplateDetail({
               . Documents here must follow it until {node.label} has a template of its own.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setUploading(true)}>
-                <Upload className="size-3.5" /> Give {node.label} its own template
-              </Button>
+              {canManage ? (
+                <Button size="sm" onClick={() => setUploading(true)}>
+                  <Upload className="size-3.5" /> Give {node.label} its own template
+                </Button>
+              ) : null}
               <TemplateDownloadMenu conceptId={node.id} label="Download current" />
             </div>
           </>
@@ -277,20 +283,22 @@ export function TemplateDetail({
                   >
                     <Eye className="size-3" />
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7"
-                    disabled={useVersion.isPending}
-                    onClick={() =>
-                      window.confirm(
-                        `Use “${v.name}” v${v.version} for ${node.label} again? Documents are re-checked against it.`,
-                      ) && useVersion.mutate(v.id!)
-                    }
-                  >
-                    Use this version
-                  </Button>
-                  {!v.builtin ? (
+                  {canManage ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      disabled={useVersion.isPending}
+                      onClick={() =>
+                        window.confirm(
+                          `Use “${v.name}” v${v.version} for ${node.label} again? Documents are re-checked against it.`,
+                        ) && useVersion.mutate(v.id!)
+                      }
+                    >
+                      Use this version
+                    </Button>
+                  ) : null}
+                  {!v.builtin && canManage ? (
                     <Button
                       size="sm"
                       variant="ghost"

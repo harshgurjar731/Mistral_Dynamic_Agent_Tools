@@ -183,8 +183,11 @@ class AuthMiddleware:
 
         if rule.access == "perm" and not (principal.is_admin and rule.admin_ok):
             if not any(principal.can(p) for p in rule.perms):
+                role = principal.role_name or "your role"
+                where = f" in {principal.workspace_name}" if principal.workspace_name else ""
                 return await _send_json(send, 403, {
-                    "detail": "Your role in this workspace does not allow this.",
+                    "detail": f"Your role ({role}){where} doesn't allow this. Ask your "
+                              "administrator if you need it.",
                     "code": "forbidden", "needs": list(rule.perms),
                     "workspace": principal.workspace_name, "role": principal.role_name,
                 })

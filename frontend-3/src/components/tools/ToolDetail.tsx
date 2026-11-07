@@ -55,6 +55,7 @@ import { RebuildFromErrorDialog } from "@/components/tools/RebuildFromErrorDialo
 import { takeRebuildHandoff } from "@/lib/rebuildHandoff";
 import { isRebuildOf, useRunningRebuild, useRunOpenRequest } from "@/lib/runs/synthesis";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed } from "@/lib/policy";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
 export type ToolDetailVariant = "tool" | "activity";
@@ -89,6 +90,9 @@ function paramCount(tool: Tool): number {
 }
 
 export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVariant }) {
+  const allowed = useAllowed();
+  const canManage = allowed("PUT", `/api/tools/${id}`);
+  const canSend = allowed("POST", "/api/remote-servers/x/send-tool");
   const qc = useQueryClient();
   const navigate = useNavigate();
   const backTo = variant === "activity" ? "/workflows/activities" : "/tools";
@@ -301,7 +305,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
         </div>
 
         <div className="flex items-center gap-2">
-          {isPending && (
+          {isPending && canManage && (
             <>
               <Button size="sm" onClick={() => approve.mutate()} disabled={approve.isPending}>
                 <Check className="size-3.5" /> Approve
@@ -317,7 +321,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
               </Button>
             </>
           )}
-          {!isPending && (
+          {!isPending && canManage && (
             <>
               <Button
                 size="sm"
@@ -357,9 +361,11 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
               <Button size="sm" variant="outline" onClick={() => setPublishOpen(true)}>
                 <Radio className="size-3.5" /> Publish to MCP
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setSendOpen(true)}>
-                <Send className="size-3.5" /> Send to Remote
-              </Button>
+              {canSend ? (
+                <Button size="sm" variant="outline" onClick={() => setSendOpen(true)}>
+                  <Send className="size-3.5" /> Send to Remote
+                </Button>
+              ) : null}
               {editable && (
                 <Button
                   size="sm"

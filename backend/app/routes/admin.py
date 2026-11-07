@@ -128,8 +128,10 @@ def _provision_later(workspace_id: str) -> None:
     """Create the workspace's platform agents in its own Mistral workspace."""
     from app.auth.provision import provision_workspace
 
+    from app.core.runtime import spawn
+
     try:
-        asyncio.get_running_loop().create_task(provision_workspace(workspace_id))
+        spawn(provision_workspace(workspace_id), name=f"provision:{workspace_id}")
     except RuntimeError:
         pass
 

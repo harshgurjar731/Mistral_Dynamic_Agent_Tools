@@ -32,6 +32,7 @@ import type { Rule, RuleEnforcement, RuleScope } from "@/types";
 import { SortSelect } from "@/components/shared/SortSelect";
 import { applySort, byDate, standardSorts, useSortKey, type SortOption } from "@/lib/sorting";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { useAllowed, useCanCall } from "@/lib/policy";
 
 export const Route = createFileRoute("/rules/")({
   head: () => ({
@@ -59,6 +60,7 @@ const RULE_SORTS: SortOption<Rule>[] = [
 ];
 
 function RulesPage() {
+  const canManageRules = useCanCall("PATCH", "/api/rules/x");
   const qc = useQueryClient();
   const [tab, setTab] = useState<RuleScope | "activity">("agent");
   const [categoriesOpen, setCategoriesOpen] = useState(false);
@@ -105,24 +107,26 @@ function RulesPage() {
             </FeatureDescription>
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCategoriesOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2.5 text-sm text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
-          >
-            <Tags className="size-4" />
-            Categories
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditor({ open: true, scope: newScope })}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-          >
-            <Plus className="size-4" />
-            New rule
-          </button>
-        </div>
+        {canManageRules ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCategoriesOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2.5 text-sm text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+            >
+              <Tags className="size-4" />
+              Categories
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditor({ open: true, scope: newScope })}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-brand px-4 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            >
+              <Plus className="size-4" />
+              New rule
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
@@ -202,6 +206,7 @@ function ScopeRules({
   onToggle: (rule: Rule, enabled: boolean) => void;
   togglingId?: string | undefined;
 }) {
+  const canManageRules = useCanCall("PATCH", "/api/rules/x");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useSortKey(`rules-${scope}`);
   const [category, setCategory] = useState("all");
@@ -220,11 +225,13 @@ function ScopeRules({
   }, [rules, search, category, enforcement, sort]);
 
   // Recommended rules can be switched off or edited, but not deleted.
+  const allowed = useAllowed();
   const selection = useBulkSelection(
     filtered,
     (r) => r.id,
     (r) => r.source !== "recommended",
     (r) => r.name,
+    allowed("DELETE", "/api/rules/x"),
   );
   const bulkDelete = useBulkDelete({
     noun: "rule",
@@ -345,7 +352,7 @@ function ScopeRules({
                 ? "Try adjusting your filters or search query."
                 : `Create your first ${scope} rule to get started.`}
             </p>
-            {!hasFilters && (
+            {!hasFilters && canManageRules && (
               <button
                 type="button"
                 onClick={onNew}

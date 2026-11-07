@@ -33,6 +33,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { EditGuard, useAllowed } from "@/lib/policy";
 
 export const Route = createFileRoute("/connectors/$id")({
   head: () => ({
@@ -518,6 +519,7 @@ function ActivationSection({ id }: { id: string }) {
 
 function ConnectorsIdPage() {
   const { id } = Route.useParams();
+  const canManage = useAllowed()("PATCH", `/api/connectors/${encodeURIComponent(id)}`);
   const query = useQuery({ queryKey: QK.connector(id), queryFn: () => connectorsApi.get(id) });
 
   return (
@@ -547,42 +549,44 @@ function ConnectorsIdPage() {
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{query.data.description}</p>
           </div>
 
-          <GlassPanel>
-            <GlassPanelHeader
-              title="Tools"
-              description="Invoke connector tools and inspect results."
-            />
-            <div className="p-4">
-              <ToolsSection id={id} />
-            </div>
-          </GlassPanel>
+          <EditGuard allowed={canManage} what="this connector" className="space-y-6">
+            <GlassPanel>
+              <GlassPanelHeader
+                title="Tools"
+                description="Invoke connector tools and inspect results."
+              />
+              <div className="p-4">
+                <ToolsSection id={id} />
+              </div>
+            </GlassPanel>
 
-          <GlassPanel>
-            <GlassPanelHeader
-              title="Authentication"
-              description="Supported auth methods and OAuth flow."
-            />
-            <div className="p-4">
-              <AuthenticationSection id={id} />
-            </div>
-          </GlassPanel>
+            <GlassPanel>
+              <GlassPanelHeader
+                title="Authentication"
+                description="Supported auth methods and OAuth flow."
+              />
+              <div className="p-4">
+                <AuthenticationSection id={id} />
+              </div>
+            </GlassPanel>
 
-          <GlassPanel>
-            <GlassPanelHeader title="Credentials" description="Scoped named credentials." />
-            <div className="p-4">
-              <CredentialsSection id={id} />
-            </div>
-          </GlassPanel>
+            <GlassPanel>
+              <GlassPanelHeader title="Credentials" description="Scoped named credentials." />
+              <div className="p-4">
+                <CredentialsSection id={id} />
+              </div>
+            </GlassPanel>
 
-          <GlassPanel>
-            <GlassPanelHeader
-              title="Activation"
-              description="Enable or disable this connector and its tools."
-            />
-            <div className="p-4">
-              <ActivationSection id={id} />
-            </div>
-          </GlassPanel>
+            <GlassPanel>
+              <GlassPanelHeader
+                title="Activation"
+                description="Enable or disable this connector and its tools."
+              />
+              <div className="p-4">
+                <ActivationSection id={id} />
+              </div>
+            </GlassPanel>
+          </EditGuard>
         </div>
       )}
     </div>
