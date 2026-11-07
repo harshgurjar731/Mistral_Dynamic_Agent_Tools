@@ -26,6 +26,7 @@ from typing import Any, Literal
 import httpx
 
 from app.config import settings
+from app.dependencies import MistralKeyAuth
 from app.exceptions import MistralAPIError
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,8 @@ SCOPES: tuple[Scope, ...] = ("organization", "workspace", "user")
 
 _http_client = httpx.AsyncClient(
     base_url="https://api.mistral.ai",
-    headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+    # The calling workspace's key, per request (app.dependencies).
+    auth=MistralKeyAuth(),
     timeout=60.0,
 )
 

@@ -16,6 +16,7 @@ import logging
 import httpx
 
 from app.core.context import PipelineContext
+from app.dependencies import current_mistral_api_key
 from app.core.layer import Layer, NextFn
 from app.core.specs import WorkflowSpec
 
@@ -78,7 +79,7 @@ class ResourceInventoryLayer(Layer):
             try:
                 resp = httpx.get(
                     "https://api.mistral.ai/v1/workflows",
-                    headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+                    headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
                     timeout=5.0,
                 )
                 if resp.status_code == 200:

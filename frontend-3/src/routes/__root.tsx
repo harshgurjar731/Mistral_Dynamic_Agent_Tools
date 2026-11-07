@@ -2,12 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
+  Navigate,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { Menu } from "lucide-react";
+import { Menu, ServerCrash } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
@@ -27,6 +29,13 @@ import { RunQuestions } from "@/components/runs/RunQuestions";
 import { ActivityTray } from "@/components/activity/ActivityTray";
 import { TopProgressBar } from "@/components/activity/TopProgressBar";
 import { installOpTracking } from "@/lib/ops/tracker";
+import type { SessionUser } from "@/api/auth";
+import { errorMessage } from "@/api/client";
+import { AdminShell } from "@/components/admin/AdminShell";
+import { NoAccess, Splash } from "@/components/auth/AuthParts";
+import { LandingPage } from "@/components/landing/LandingPage";
+import { NAV_ITEMS } from "@/components/layout/nav-items";
+import { canOpen, isPublicPath, useAuthSession } from "@/lib/auth";
 
 // Before any page asks for anything: every request reports live progress.
 installOpTracking();
@@ -149,14 +158,117 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppConfigApplier />
-      <AppShell />
+      <AuthGate />
+      <AppToaster />
     </QueryClientProvider>
   );
 }
 
-function AppShell() {
+function AppToaster() {
   const ui = useUiConfig();
   const { resolved: theme } = useTheme();
+  return <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} closeButton />;
+}
+
+/**
+ * Which chrome a page gets, decided by who is signed in:
+ *
+ * - public pages (landing, sign-in, invite and reset links) render bare;
+ * - /admin/* needs a platform admin and gets the admin console;
+ * - everything else needs a user and gets the app, page by page limited to
+ *   what their role in the active workspace allows. Signed-out visitors see
+ *   the landing page at / and are sent to sign in anywhere else.
+ *
+ * This only decides what to show; the API enforces every rule itself.
+ */
+function AuthGate() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const href = useRouterState({ select: (s) => s.location.href });
+  const session = useAuthSession();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (isPublicPath(pathname)) return <Outlet />;
+  if (!mounted || session.isLoading) return <Splash />;
+  if (session.isError || !session.data) {
+    return <Unreachable error={session.error} onRetry={() => void session.refetch()} />;
+  }
+  const { user, admin } = session.data;
+  const isAdminPath = pathname === "/admin" || pathname.startsWith("/admin/");
+
+  if (isAdminPath) {
+    if (!admin) return <Navigate to="/admin/login" search={{ next: href }} replace />;
+    return (
+      <AdminShell admin={admin}>
+        <Outlet />
+      </AdminShell>
+    );
+  }
+  if (!user) {
+    // Platform settings are an admin task; an admin without a user account
+    // opens them inside the admin console.
+    if (admin && (pathname === "/settings" || pathname.startsWith("/settings/"))) {
+      return (
+        <AdminShell admin={admin}>
+          <Outlet />
+        </AdminShell>
+      );
+    }
+    if (pathname === "/") return <LandingPage />;
+    return <Navigate to="/login" search={{ next: href }} replace />;
+  }
+  return <AppShell user={user} canEditSettings={!!admin} />;
+}
+
+function Unreachable({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-background px-4">
+      <div className="glass max-w-md rounded-lg p-8 text-center">
+        <ServerCrash className="mx-auto size-8 text-muted-foreground" />
+        <h1 className="mt-4 font-display text-lg font-bold text-foreground">
+          Can't reach the platform
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">{errorMessage(error)}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/88"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The page, if the user's role allows it. */
+function GuardedOutlet({ user, canEditSettings }: { user: SessionUser; canEditSettings: boolean }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  if (!canOpen(user, pathname)) {
+    if (pathname === "/") {
+      // The orchestrator is the home page; send people without it to the
+      // first page they can use.
+      const first = NAV_ITEMS.find((i) => i.to !== "/" && canOpen(user, i.to));
+      if (first) return <Navigate to={first.to} replace />;
+    }
+    return <NoAccess workspace={user.workspace.name} role={user.workspace.role_name} />;
+  }
+  const settings = pathname === "/settings" || pathname.startsWith("/settings/");
+  return (
+    <>
+      {settings && !canEditSettings ? (
+        <div className="border-b border-amber/30 bg-amber/10 px-4 py-2 text-center text-xs text-amber">
+          Read-only: changing platform settings needs a platform admin signed in to the admin
+          console.
+        </div>
+      ) : null}
+      <Outlet />
+    </>
+  );
+}
+
+function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSettings: boolean }) {
+  const ui = useUiConfig();
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Follow the configured default until the user toggles the sidebar.
@@ -228,7 +340,7 @@ function AppShell() {
           {/* Required: nested routes render here. */}
           {/* Full width, no top bar on desktop: the run and health indicators live in the sidebar. */}
           <main className="relative z-10 min-h-[60vh] w-full">
-            <Outlet />
+            <GuardedOutlet user={user} canEditSettings={canEditSettings} />
           </main>
         </div>
 
@@ -239,7 +351,6 @@ function AppShell() {
       <BackgroundRuns />
       {/* A run waiting on an answer, wherever you are — unless its page shows it. */}
       <RunQuestions />
-      <Toaster position={ui.UI_TOAST_POSITION as "top-right"} theme={theme} closeButton />
     </>
   );
 }

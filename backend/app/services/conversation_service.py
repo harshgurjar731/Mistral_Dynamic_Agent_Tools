@@ -10,6 +10,7 @@ import logging
 import httpx
 from mistralai.client import Mistral
 from app.config import settings
+from app.dependencies import MistralKeyAuth
 from app.exceptions import MistralAPIError
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 # Direct HTTP client for endpoints where SDK has sentinel issues
 _http_client = httpx.Client(
     base_url="https://api.mistral.ai",
-    headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+    # The calling workspace's key, per request (app.dependencies).
+    auth=MistralKeyAuth(),
     timeout=30.0,
 )
 

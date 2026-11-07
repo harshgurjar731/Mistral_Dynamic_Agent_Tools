@@ -516,7 +516,10 @@ def _check_worker_env(log: _DeployLog, env_text: str) -> None:
     if not deployment:
         raise DeployError("DEPLOYMENT_NAME is missing from the workflow's .env — set the worker queue")
     log.write(f"Worker queue (DEPLOYMENT_NAME): {deployment}\n")
-    if settings.MISTRAL_API_KEY and key != settings.MISTRAL_API_KEY:
+    from app.dependencies import current_mistral_api_key
+
+    workspace_key = current_mistral_api_key()
+    if workspace_key and key != workspace_key:
         log.write("⚠ MISTRAL_API_KEY on the server is not this app's key: the worker will poll another "
                   "workspace, and runs started from here won't reach it.\n")
     if settings.MISTRAL_WORKER_ENABLED and deployment == (settings.DEPLOYMENT_NAME or "default"):

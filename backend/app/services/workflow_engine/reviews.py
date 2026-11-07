@@ -37,6 +37,8 @@ DECISIONS = ("approve", "edit", "reject")
 
 class HumanReview(Base):
     __tablename__ = "human_reviews"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True)
     execution_id = Column(String, nullable=False, index=True)

@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 
-_reader = None
+#: Mistral key → reader. Each workspace reads its own Mistral workspace's traces.
+_readers: dict = {}
 
 #: Root span name prefix → the kind of action a trace records.
 _ROOT_KINDS = {
@@ -40,13 +41,19 @@ _MAX_SPANS = 2000  # Mistral serves at most 100 spans a page
 
 
 def _client():
-    global _reader
-    if _reader is None:
+    from app.dependencies import current_mistral_api_key
+
+    key = current_mistral_api_key()
+    reader = _readers.get(key)
+    if reader is None:
         from mistralai.client import Mistral
 
         # Deliberately never passed to instrument_client().
-        _reader = Mistral(api_key=settings.MISTRAL_API_KEY, timeout_ms=60000)
-    return _reader
+        reader = Mistral(api_key=key, timeout_ms=60000)
+        if len(_readers) > 64:
+            _readers.clear()
+        _readers[key] = reader
+    return reader
 
 
 def _api():

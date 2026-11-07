@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.dependencies import current_mistral_api_key
 from app.dependencies import get_mistral_client
 from app.services.workflow_engine.models import (
     CreateWorkflowRequest, ExecuteWorkflowRequest,
@@ -49,7 +50,7 @@ router = APIRouter(tags=["Workflows"])
 # ── Mistral API proxy helpers ─────────────────────────────────────────────────
 
 def _mistral_headers() -> dict:
-    return {"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"}
+    return {"Authorization": f"Bearer {current_mistral_api_key()}"}
 
 
 def _mistral_get(path: str, timeout: float = 8.0):

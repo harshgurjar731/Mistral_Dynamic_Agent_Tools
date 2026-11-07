@@ -20,12 +20,20 @@
 		}
 	}
 
+	# Uploaded files and generated documents are for signed-in people only.
+	# The backend checks the session cookie; 401 stops the request here.
 	handle /uploads/* {
+		forward_auth backend:8000 {
+			uri /api/auth/check
+		}
 		reverse_proxy backend:8000
 	}
 
 	# Files written by the create_document tool live in the tool service.
 	handle /documents/* {
+		forward_auth backend:8000 {
+			uri /api/auth/check
+		}
 		reverse_proxy tool-service:9000
 	}
 

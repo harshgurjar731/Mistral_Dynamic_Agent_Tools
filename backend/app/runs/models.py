@@ -21,6 +21,8 @@ TERMINAL_STATUSES = frozenset(RUN_STATUSES) - {"running"}
 
 class PipelineRunRecord(Base):
     __tablename__ = "pipeline_runs"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(String, primary_key=True)                 # uuid hex
     kind = Column(String, nullable=False, index=True)     # workflow_plan | agent | tool_synthesis | activity_synthesis

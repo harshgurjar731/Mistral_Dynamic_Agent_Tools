@@ -29,6 +29,8 @@ OPEN_STATUSES = frozenset({"proposed"})
 
 class WorkflowRevisionRecord(Base):
     __tablename__ = "workflow_revisions"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(String, primary_key=True)                     # uuid hex
     workflow_name = Column(String, nullable=False, index=True)
@@ -61,6 +63,8 @@ class WorkflowRevisionRecord(Base):
 
 class WorkflowVersionRecord(Base):
     __tablename__ = "workflow_versions"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     workflow_name = Column(String, nullable=False)

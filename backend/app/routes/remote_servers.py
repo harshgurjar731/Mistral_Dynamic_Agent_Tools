@@ -528,7 +528,9 @@ async def run_workflow_on_server(server_id: int, request: Request, db: Session =
         raise HTTPException(status_code=422, detail="The workflow's .env on the server has no DEPLOYMENT_NAME "
                                                     "— set one (Build panel → .env overrides) and restart the worker")
     empty_hash = hashlib.sha256(b"").hexdigest()
-    local_hash = hashlib.sha256((settings.MISTRAL_API_KEY or "").encode()).hexdigest()
+    from app.dependencies import current_mistral_api_key
+
+    local_hash = hashlib.sha256((current_mistral_api_key() or "").encode()).hexdigest()
     if info["key_hash"] in ("", empty_hash):
         raise HTTPException(status_code=422, detail="The workflow's .env on the server has no MISTRAL_API_KEY")
     if info["key_hash"] != local_hash:

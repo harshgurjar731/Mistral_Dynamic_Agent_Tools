@@ -35,6 +35,8 @@ _Session = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
 
 class _WorkflowRecord(_Base):
     __tablename__ = "workflow_definitions"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
     name = Column(String, primary_key=True, index=True)
     definition_json = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -49,6 +51,8 @@ class _DeletedWorkflowRecord(_Base):
     without this, a deleted workflow would reappear as a remote-only entry.
     """
     __tablename__ = "deleted_workflows"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
     name = Column(String, primary_key=True)
     deleted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -245,18 +249,42 @@ def forget_deleted_workflow(name: str) -> None:
             db.commit()
 
 
+def _visible_names() -> Optional[set[str]]:
+    """Workflow names the caller's workspace owns; None outside a workspace.
+
+    The execution store is in memory, so the database's workspace filter does
+    not reach it: a run is visible when its workflow is.
+    """
+    from app.auth.context import current_workspace_id
+
+    if not current_workspace_id():
+        return None
+    with _Session() as db:
+        return {row[0] for row in db.query(_WorkflowRecord.name).all()}
+
+
 def get_execution(execution_id: str) -> Optional[WorkflowRun]:
     """Get execution status by ID (in-memory)."""
-    return _execution_store.get(execution_id)
+    run = _execution_store.get(execution_id)
+    if run is not None:
+        names = _visible_names()
+        if names is not None and run.workflow_name not in names:
+            return None
+    return run
 
 
 def list_executions() -> list[WorkflowRun]:
-    """List all in-memory workflow executions."""
-    return list(_execution_store.values())
+    """List the in-memory workflow executions the caller may see."""
+    names = _visible_names()
+    runs = list(_execution_store.values())
+    return runs if names is None else [r for r in runs if r.workflow_name in names]
 
 
 def list_executions_for_workflow(workflow_name: str) -> list[WorkflowRun]:
     """List executions for a specific workflow, sorted by start_time descending."""
+    names = _visible_names()
+    if names is not None and workflow_name not in names:
+        return []
     executions = [r for r in _execution_store.values() if r.workflow_name == workflow_name]
     return sorted(executions, key=lambda x: x.start_time or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 

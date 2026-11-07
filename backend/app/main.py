@@ -302,6 +302,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Domain search reconcile skipped: %s", e)
 
+    # Every other workspace gets its platform agents in its own Mistral
+    # workspace. Background: one Mistral round-trip per workspace.
+    try:
+        from app.auth.provision import provision_all
+
+        asyncio.create_task(provision_all())
+    except Exception as e:
+        logger.warning("⚠️ Workspace provisioning skipped: %s", e)
+
     # Refresh dynamic tools from Docker Tool Service
     from app.services.tool_registry import refresh_dynamic_tools
     try:
@@ -386,16 +395,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ────────────────────────────────────────────────────────────────────
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # One trace on Mistral per user action (every non-GET request). CORS
 # preflights are OPTIONS requests, which the middleware passes straight through.
 from app.observability.http import ActionTracingMiddleware  # noqa: E402
@@ -410,6 +409,24 @@ from app.progress.tracker import install_log_forwarding  # noqa: E402
 app.add_middleware(OpProgressMiddleware)
 install_log_forwarding()
 
+# Who is calling and what they may do (app.auth). Outside tracing and progress,
+# so every span a request opens is tagged with its workspace and exported to
+# that workspace's Mistral observability.
+from app.auth.middleware import AuthMiddleware  # noqa: E402
+
+app.add_middleware(AuthMiddleware)
+
+# ── CORS ────────────────────────────────────────────────────────────────────
+# Outermost, so even a refusal carries the CORS headers.
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Exception Handlers ─────────────────────────────────────────────────────
 
 app.add_exception_handler(MistralAPIError, mistral_api_error_handler)
@@ -419,8 +436,29 @@ app.add_exception_handler(ToolServiceError, tool_service_error_handler)
 app.add_exception_handler(WorkflowError, workflow_error_handler)
 app.add_exception_handler(Exception, generic_error_handler)
 
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from app.auth.store import AuthError  # noqa: E402
+from app.dependencies import WorkspaceKeyMissing  # noqa: E402
+
+
+async def _auth_error_handler(request, exc: AuthError):
+    return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
+
+
+async def _workspace_key_handler(request, exc: WorkspaceKeyMissing):
+    return JSONResponse(status_code=409, content={"detail": str(exc), "code": "workspace_key"})
+
+
+app.add_exception_handler(AuthError, _auth_error_handler)
+app.add_exception_handler(WorkspaceKeyMissing, _workspace_key_handler)
+
 # ── Routes ──────────────────────────────────────────────────────────────────
 
+from app.routes import admin as admin_routes, auth as auth_routes  # noqa: E402
+
+app.include_router(auth_routes.router, prefix=settings.API_PREFIX)
+app.include_router(admin_routes.router, prefix=settings.API_PREFIX)
 app.include_router(agents.router, prefix=settings.API_PREFIX)
 app.include_router(conversations.router, prefix=settings.API_PREFIX)
 app.include_router(chat.router, prefix=settings.API_PREFIX)

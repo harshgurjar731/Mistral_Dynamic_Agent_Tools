@@ -1,0 +1,469 @@
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Copy,
+  Link2,
+  Loader2,
+  Plus,
+  Trash2,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import {
+  adminApi,
+  authKeys,
+  type IssuedLink,
+  type KeyStatus,
+  type MembershipInput,
+  type UserStatus,
+} from "@/api/auth";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+
+export function AdminPage({ children }: { children: ReactNode }) {
+  return <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">{children}</div>;
+}
+
+export function PageHeader({
+  title,
+  description,
+  actions,
+  back,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  back?: ReactNode;
+}) {
+  return (
+    <div className="mb-8">
+      {back ? <div className="mb-3">{back}</div> : null}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-bold text-foreground">{title}</h1>
+          {description ? (
+            <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+        {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+export function StatCard({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: "default" | "warn";
+}) {
+  return (
+    <div className="glass rounded-lg p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <Icon className={cn("size-4", tone === "warn" ? "text-amber" : "text-primary")} />
+      </div>
+      <p className="mt-3 font-display text-2xl font-bold text-foreground">{value}</p>
+      {sub ? <p className="mt-1 text-xs text-muted-foreground">{sub}</p> : null}
+    </div>
+  );
+}
+
+export function Panel({
+  title,
+  description,
+  actions,
+  children,
+  className,
+  bodyClassName,
+}: {
+  title?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  bodyClassName?: string;
+}) {
+  return (
+    <section className={cn("glass rounded-lg", className)}>
+      {title ? (
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+            {description ? (
+              <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+            ) : null}
+          </div>
+          {actions}
+        </header>
+      ) : null}
+      <div className={cn("p-5", bodyClassName)}>{children}</div>
+    </section>
+  );
+}
+
+/* ── Badges ────────────────────────────────────────────────────────────── */
+
+const PILL =
+  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium";
+
+export function UserStatusBadge({
+  status,
+  locked,
+}: {
+  status: UserStatus | string;
+  locked?: boolean;
+}) {
+  if (locked)
+    return <span className={cn(PILL, "border-amber/30 bg-amber/10 text-amber")}>Locked</span>;
+  const map: Record<string, string> = {
+    active: "border-emerald/30 bg-emerald/10 text-emerald",
+    invited: "border-blue/30 bg-blue/10 text-blue",
+    disabled: "border-border bg-secondary text-muted-foreground",
+    deleted: "border-red/30 bg-red/10 text-red",
+  };
+  return (
+    <span className={cn(PILL, map[status] ?? map["disabled"])}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
+  );
+}
+
+export function KeyStatusBadge({ status }: { status: KeyStatus }) {
+  if (status === "valid")
+    return (
+      <span className={cn(PILL, "border-emerald/30 bg-emerald/10 text-emerald")}>
+        <CheckCircle2 className="size-3" /> Verified
+      </span>
+    );
+  if (status === "invalid")
+    return (
+      <span className={cn(PILL, "border-red/30 bg-red/10 text-red")}>
+        <XCircle className="size-3" /> Rejected
+      </span>
+    );
+  return (
+    <span className={cn(PILL, "border-border bg-secondary text-muted-foreground")}>
+      Not checked
+    </span>
+  );
+}
+
+export function Chip({ children, muted }: { children: ReactNode; muted?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 truncate rounded-md border border-border px-1.5 py-0.5 text-[11px]",
+        muted ? "text-muted-foreground" : "bg-secondary text-foreground",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ── Confirm ───────────────────────────────────────────────────────────── */
+
+export function Confirm({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = "Confirm",
+  destructive,
+  busy,
+  onConfirm,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  title: string;
+  description?: ReactNode;
+  confirmLabel?: string;
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          {description ? (
+            <AlertDialogDescription asChild>
+              <div>{description}</div>
+            </AlertDialogDescription>
+          ) : null}
+        </AlertDialogHeader>
+        {children}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+            className={cn(
+              destructive && "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+            )}
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/* ── One-time links ────────────────────────────────────────────────────── */
+
+export function linkUrl(link: IssuedLink): string {
+  return `${window.location.origin}${link.path}`;
+}
+
+export function LinkDialog({
+  link,
+  who,
+  onClose,
+}: {
+  link: IssuedLink | null;
+  who: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!link) return null;
+  const url = linkUrl(link);
+  return (
+    <Dialog open onOpenChange={(v) => (!v ? onClose() : null)}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Link2 className="size-4 text-primary" />
+            {link.kind === "invite" ? "Invitation link" : "Password reset link"}
+          </DialogTitle>
+          <DialogDescription>
+            Send this to {who} through a channel you trust. It works once and expires{" "}
+            {new Date(link.expires_at).toLocaleString()}. It won't be shown again — issuing a new
+            one cancels this one.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-2 rounded-md border border-border bg-background-elevated p-2">
+          <code className="min-w-0 flex-1 truncate px-1 font-mono text-xs text-foreground">
+            {url}
+          </code>
+          <Button
+            size="sm"
+            onClick={async () => {
+              await navigator.clipboard.writeText(url);
+              setCopied(true);
+              toast.success("Link copied");
+            }}
+          >
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Workspace + role picker ───────────────────────────────────────────── */
+
+export function useWorkspacesAndRoles() {
+  const ws = useQuery({ queryKey: authKeys.admin.workspaces(), queryFn: adminApi.workspaces });
+  const roles = useQuery({ queryKey: authKeys.admin.roles(), queryFn: adminApi.roles });
+  return {
+    workspaces: ws.data?.workspaces ?? [],
+    roles: roles.data?.roles ?? [],
+    loading: ws.isLoading || roles.isLoading,
+  };
+}
+
+export function MembershipEditor({
+  value,
+  onChange,
+}: {
+  value: MembershipInput[];
+  onChange: (v: MembershipInput[]) => void;
+}) {
+  const { workspaces, roles, loading } = useWorkspacesAndRoles();
+  const used = new Set(value.map((m) => m.workspace_id));
+  const free = workspaces.filter((w) => !used.has(w.id) && !w.disabled);
+  const defaultRole = roles.find((r) => r.system_key === "operator") ?? roles[0];
+
+  if (loading) return <p className="text-sm text-muted-foreground">Loading workspaces…</p>;
+  if (!workspaces.length)
+    return (
+      <p className="flex items-center gap-2 text-sm text-amber">
+        <AlertTriangle className="size-4" /> Create a workspace first.
+      </p>
+    );
+
+  return (
+    <div className="space-y-2">
+      {value.map((m, i) => {
+        const ws = workspaces.find((w) => w.id === m.workspace_id);
+        return (
+          <div key={m.workspace_id || i} className="flex items-center gap-2">
+            <Select
+              value={m.workspace_id}
+              onValueChange={(v) =>
+                onChange(value.map((x, j) => (j === i ? { ...x, workspace_id: v } : x)))
+              }
+            >
+              <SelectTrigger className="h-9 flex-1">
+                <SelectValue placeholder="Workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {ws ? (
+                  <SelectItem value={ws.id}>
+                    {ws.name}
+                    {ws.disabled ? " (disabled)" : ""}
+                  </SelectItem>
+                ) : null}
+                {free.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={m.role_id}
+              onValueChange={(v) =>
+                onChange(value.map((x, j) => (j === i ? { ...x, role_id: v } : x)))
+              }
+            >
+              <SelectTrigger className="h-9 w-44">
+                <SelectValue placeholder="Role" />
+              </SelectTrigger>
+              <SelectContent>
+                {roles.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}
+                    {r.system ? "" : " · custom"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              aria-label="Remove from workspace"
+              disabled={value.length <= 1}
+              onClick={() => onChange(value.filter((_, j) => j !== i))}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        );
+      })}
+      {free.length && defaultRole ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            onChange([...value, { workspace_id: free[0]!.id, role_id: defaultRole.id }])
+          }
+        >
+          <Plus /> Add to another workspace
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/* ── Audit rows ────────────────────────────────────────────────────────── */
+
+const ACTION_TEXT: Record<string, string> = {
+  "user.login": "signed in",
+  "admin.login": "signed in to the admin console",
+  "user.logout": "signed out",
+  "admin.logout": "signed out of the admin console",
+  "user.logout_all": "signed out everywhere",
+  "user.create": "created a user",
+  "user.update": "updated a user",
+  "user.memberships": "changed workspace access",
+  "user.invite_link": "issued an invite link",
+  "user.reset_link": "issued a password reset link",
+  "user.invite_accept": "accepted an invitation",
+  "user.password_reset": "reset their password",
+  "user.password_change": "changed their password",
+  "user.disable": "disabled a user",
+  "user.enable": "enabled a user",
+  "user.unlock": "unlocked a user",
+  "user.delete": "deleted a user",
+  "user.sessions_revoke": "signed a user out everywhere",
+  "user.switch_workspace": "switched workspace",
+  "workspace.create": "created a workspace",
+  "workspace.update": "updated a workspace",
+  "workspace.disable": "disabled a workspace",
+  "workspace.enable": "enabled a workspace",
+  "workspace.delete": "deleted a workspace",
+  "workspace.key_rotate": "replaced a workspace key",
+  "workspace.key_check": "checked a workspace key",
+  "workspace.key_rejected": "— Mistral rejected a workspace key",
+  "role.create": "created a role",
+  "role.update": "changed a role",
+  "role.delete": "deleted a role",
+  "admin.create": "added an admin",
+  "admin.update": "updated an admin",
+  "admin.delete": "removed an admin",
+  "admin.password_change": "changed their admin password",
+  "admin.invite_accept": "accepted an admin invitation",
+};
+
+export function describeAction(action: string, outcome: string): string {
+  const base = ACTION_TEXT[action] ?? action;
+  if (outcome === "failed" && action.endsWith(".login")) return "failed to sign in";
+  if (outcome === "denied" && action.endsWith(".login")) return "was refused sign-in";
+  return base;
+}

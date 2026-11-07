@@ -55,7 +55,9 @@ def _default_client():
     from app.config import settings
     from app.observability import instrument_client
 
-    return instrument_client(Mistral(api_key=settings.MISTRAL_API_KEY))
+    from app.dependencies import current_mistral_api_key
+
+    return instrument_client(Mistral(api_key=current_mistral_api_key()))
 
 
 async def resolve_code_need(

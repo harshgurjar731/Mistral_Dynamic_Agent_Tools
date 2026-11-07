@@ -286,16 +286,30 @@ def get_rules(library_id: str) -> str:
         return (row.rules if row else "") or ""
 
 
+def _system_key(key: str) -> str:
+    """Platform agents live in one Mistral workspace each, so the registration
+    is per platform workspace. The Default workspace (and code outside any
+    request) keeps the bare key, so registrations made before workspaces
+    existed still count."""
+    from app.auth.context import current_workspace_id
+    from app.auth.scoping import default_workspace_id
+
+    ws = current_workspace_id()
+    if not ws or ws == default_workspace_id():
+        return key
+    return f"{key}@{ws}"
+
+
 def get_system_agent(key: str) -> Optional[dict]:
     """The platform-owned agent registered under ``key``, if there is one."""
     with _session() as db:
         if db is None:
             return None
-        row = db.query(SystemAgent).filter(SystemAgent.key == key).first()
+        row = db.query(SystemAgent).filter(SystemAgent.key == _system_key(key)).first()
         if not row:
             return None
         return {
-            "key": row.key,
+            "key": key,
             "agent_id": row.agent_id,
             "name": row.name,
             "model": row.model,
@@ -312,9 +326,9 @@ def set_system_agent(key: str, agent_id: str, name: str = "", model: str = "") -
     with _session() as db:
         if db is None:
             raise RuntimeError("The database is unavailable.")
-        row = db.query(SystemAgent).filter(SystemAgent.key == key).first()
+        row = db.query(SystemAgent).filter(SystemAgent.key == _system_key(key)).first()
         if not row:
-            row = SystemAgent(key=key)
+            row = SystemAgent(key=_system_key(key))
             db.add(row)
         row.agent_id = agent_id
         row.name = name or row.name
@@ -336,7 +350,7 @@ def clear_system_agent(key: str) -> None:
     with _session() as db:
         if db is None:
             return
-        db.query(SystemAgent).filter(SystemAgent.key == key).delete(
+        db.query(SystemAgent).filter(SystemAgent.key == _system_key(key)).delete(
             synchronize_session=False
         )
         db.commit()

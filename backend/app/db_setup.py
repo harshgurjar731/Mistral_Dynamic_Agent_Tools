@@ -30,9 +30,16 @@ def prepare_database(*, seed_rules: bool = True) -> None:
     import app.workflow_inputs.models
     import app.workflow_revisions.models  # noqa: F401
     import app.services.workflow_engine.reviews  # noqa: F401
+    import app.auth.models  # noqa: F401
     from app.database import create_tables
 
     create_tables()
+
+    # Accounts, roles and workspaces — and the workspace column on every
+    # workspace-owned table, which must exist before anything below reads one.
+    from app.auth.setup import prepare_auth
+
+    prepare_auth()
 
     # Before anything reads or seeds rules: the Rule model has columns an
     # older rules table lacks. Likewise for the other additive migrations.

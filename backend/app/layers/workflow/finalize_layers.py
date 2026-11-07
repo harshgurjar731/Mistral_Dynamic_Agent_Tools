@@ -27,6 +27,7 @@ import os
 import httpx
 
 from app.core.context import PipelineContext
+from app.dependencies import current_mistral_api_key
 from app.layers.workflow.base import WorkflowStepLayer
 
 logger = logging.getLogger(__name__)
@@ -373,7 +374,7 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
 
         def _register() -> str | None:
             headers = {
-                "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                "Authorization": f"Bearer {current_mistral_api_key()}",
                 "Content-Type": "application/json",
             }
 
@@ -381,7 +382,7 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
             try:
                 r = httpx.get(
                     "https://api.mistral.ai/v1/workflows",
-                    headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+                    headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
                     timeout=8.0,
                 )
                 if r.status_code == 200:
@@ -420,7 +421,7 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
                 try:
                     httpx.delete(
                         f"https://api.mistral.ai/v1/workflows/{existing_id}",
-                        headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+                        headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
                         timeout=15.0,
                     )
                 except Exception:

@@ -8,6 +8,8 @@ from app.database import Base
 
 class VaultSecret(Base):
     __tablename__ = "vault_secrets"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(String, primary_key=True)                     # uuid4 hex
     #: The name code asks for: ``kwargs["_secrets"]["OPENWEATHER_API_KEY"]``.
@@ -62,6 +64,8 @@ class VaultAuditEvent(Base):
     """Who did what with an entry. Never holds a value."""
 
     __tablename__ = "vault_audit"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     at = Column(DateTime, server_default=func.now(), index=True)

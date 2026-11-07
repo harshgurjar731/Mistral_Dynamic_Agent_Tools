@@ -39,14 +39,12 @@ export function createSSEStream(url: string, opts: StreamOptions): () => void {
   (async () => {
     const headers: Record<string, string> = { Accept: "text/event-stream" };
     if (method === "POST") headers["Content-Type"] = "application/json";
-    if (typeof window !== "undefined") {
-      const token = window.localStorage.getItem("auth_token");
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-    }
 
     const res = await fetch(url, {
       method,
       headers,
+      // The session cookie (same-origin, httpOnly) authenticates the stream.
+      credentials: "same-origin",
       body: method === "POST" ? JSON.stringify(opts.body ?? {}) : null,
       signal: sig,
     });

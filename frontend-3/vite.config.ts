@@ -17,8 +17,11 @@ export default defineConfig({
   vite: {
     server: {
       // The frontend calls relative paths; the dev proxy forwards them to the FastAPI backend.
+      // xfwd: X-Forwarded-Host/-For/-Proto reach the backend, whose sign-in
+      // checks compare the browser's Origin with the host it really used and
+      // record the real client address (changeOrigin rewrites Host).
       proxy: {
-        "/api": { target: BACKEND, changeOrigin: true, ws: false },
+        "/api": { target: BACKEND, changeOrigin: true, ws: false, xfwd: true },
         // /health is also the Health page: a browser loading the page (asking for
         // HTML) gets the app, while the app's own health check reaches the backend.
         "/health": {
@@ -26,7 +29,7 @@ export default defineConfig({
           changeOrigin: true,
           bypass: (req) => (req.headers.accept?.includes("text/html") ? req.url : undefined),
         },
-        "/uploads": { target: BACKEND, changeOrigin: true },
+        "/uploads": { target: BACKEND, changeOrigin: true, xfwd: true },
       },
     },
   },

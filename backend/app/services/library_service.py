@@ -8,20 +8,18 @@ import logging
 from typing import Optional
 import httpx
 from app.config import settings
+from app.dependencies import MistralKeyAuth
 
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.mistral.ai"
-_HEADERS = {
-    "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
-}
 
 
 def _http_client() -> httpx.Client:
     """Create a fresh HTTP client with auth headers."""
     return httpx.Client(
         base_url=_BASE_URL,
-        headers=_HEADERS,
+        auth=MistralKeyAuth(),
         timeout=60.0,
     )
 

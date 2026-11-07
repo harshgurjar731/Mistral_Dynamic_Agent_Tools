@@ -10,17 +10,27 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as LibrariesRouteImport } from './routes/libraries'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as OntologyRouteImport } from './routes/ontology'
 import { Route as PlaygroundRouteImport } from './routes/playground'
 import { Route as ReviewsRouteImport } from './routes/reviews'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminAccountRouteImport } from './routes/admin.account'
+import { Route as AdminAdminsRouteImport } from './routes/admin.admins'
+import { Route as AdminAuditRouteImport } from './routes/admin.audit'
+import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
 import { Route as ConnectorsIdRouteImport } from './routes/connectors.$id'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries.index'
 import { Route as LibrariesIdRouteImport } from './routes/libraries.$id'
 import { Route as LogsIndexRouteImport } from './routes/logs.index'
@@ -32,12 +42,19 @@ import { Route as ProcessesIndustryIdRouteImport } from './routes/processes.$ind
 import { Route as RemoteServersIndexRouteImport } from './routes/remote-servers.index'
 import { Route as RemoteServersIdRouteImport } from './routes/remote-servers.$id'
 import { Route as RemoteServersNewRouteImport } from './routes/remote-servers.new'
+import { Route as ResetPasswordTokenRouteImport } from './routes/reset-password.$token'
 import { Route as RulesIndexRouteImport } from './routes/rules.index'
 import { Route as RulesIdRouteImport } from './routes/rules.$id'
 import { Route as ToolsIndexRouteImport } from './routes/tools.index'
 import { Route as ToolsIdRouteImport } from './routes/tools.$id'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
 import { Route as WorkflowsArchivedRouteImport } from './routes/workflows.archived'
+import { Route as AdminRolesIndexRouteImport } from './routes/admin.roles.index'
+import { Route as AdminRolesIdRouteImport } from './routes/admin.roles.$id'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin.users.index'
+import { Route as AdminUsersIdRouteImport } from './routes/admin.users.$id'
+import { Route as AdminWorkspacesIndexRouteImport } from './routes/admin.workspaces.index'
+import { Route as AdminWorkspacesIdRouteImport } from './routes/admin.workspaces.$id'
 import { Route as LogsExecutionExecutionIdRouteImport } from './routes/logs.execution.$executionId'
 import { Route as OntologyLibrariesLibraryIdRouteImport } from './routes/ontology_.libraries.$libraryId'
 import { Route as WorkflowsWorkflowNameIndexRouteImport } from './routes/workflows.$workflowName.index'
@@ -55,6 +72,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
@@ -68,6 +95,11 @@ const KnowledgeRoute = KnowledgeRouteImport.update({
 const LibrariesRoute = LibrariesRouteImport.update({
   id: '/libraries',
   path: '/libraries',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OntologyRoute = OntologyRouteImport.update({
@@ -90,6 +122,36 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAccountRoute = AdminAccountRouteImport.update({
+  id: '/admin/account',
+  path: '/admin/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAdminsRoute = AdminAdminsRouteImport.update({
+  id: '/admin/admins',
+  path: '/admin/admins',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAuditRoute = AdminAuditRouteImport.update({
+  id: '/admin/audit',
+  path: '/admin/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminLoginRoute = AdminLoginRouteImport.update({
+  id: '/admin/login',
+  path: '/admin/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -108,6 +170,11 @@ const ConnectorsIndexRoute = ConnectorsIndexRouteImport.update({
 const ConnectorsIdRoute = ConnectorsIdRouteImport.update({
   id: '/connectors/$id',
   path: '/connectors/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LibrariesIndexRoute = LibrariesIndexRouteImport.update({
@@ -165,6 +232,11 @@ const RemoteServersNewRoute = RemoteServersNewRouteImport.update({
   path: '/remote-servers/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ResetPasswordTokenRoute = ResetPasswordTokenRouteImport.update({
+  id: '/reset-password/$token',
+  path: '/reset-password/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RulesIndexRoute = RulesIndexRouteImport.update({
   id: '/rules/',
   path: '/rules/',
@@ -193,6 +265,36 @@ const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
 const WorkflowsArchivedRoute = WorkflowsArchivedRouteImport.update({
   id: '/workflows/archived',
   path: '/workflows/archived',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRolesIndexRoute = AdminRolesIndexRouteImport.update({
+  id: '/admin/roles/',
+  path: '/admin/roles/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRolesIdRoute = AdminRolesIdRouteImport.update({
+  id: '/admin/roles/$id',
+  path: '/admin/roles/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/admin/users/',
+  path: '/admin/users/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsersIdRoute = AdminUsersIdRouteImport.update({
+  id: '/admin/users/$id',
+  path: '/admin/users/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminWorkspacesIndexRoute = AdminWorkspacesIndexRouteImport.update({
+  id: '/admin/workspaces/',
+  path: '/admin/workspaces/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminWorkspacesIdRoute = AdminWorkspacesIdRouteImport.update({
+  id: '/admin/workspaces/$id',
+  path: '/admin/workspaces/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsExecutionExecutionIdRoute =
@@ -260,24 +362,35 @@ const WorkflowsNewVisualRoute = WorkflowsNewVisualRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
   '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
+  '/login': typeof LoginRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
+  '/admin/account': typeof AdminAccountRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
+  '/admin/': typeof AdminIndexRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -288,6 +401,9 @@ export interface FileRoutesByFullPath {
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/admin/roles/$id': typeof AdminRolesIdRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
   '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -296,29 +412,43 @@ export interface FileRoutesByFullPath {
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
+  '/admin/roles/': typeof AdminRolesIndexRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
+  '/admin/workspaces/': typeof AdminWorkspacesIndexRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
   '/knowledge': typeof KnowledgeRoute
+  '/login': typeof LoginRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
+  '/admin/account': typeof AdminAccountRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
+  '/admin': typeof AdminIndexRoute
   '/agents': typeof AgentsIndexRoute
   '/connectors': typeof ConnectorsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
@@ -329,6 +459,9 @@ export interface FileRoutesByTo {
   '/rules': typeof RulesIndexRoute
   '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
+  '/admin/roles/$id': typeof AdminRolesIdRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
   '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -337,6 +470,9 @@ export interface FileRoutesByTo {
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
+  '/admin/roles': typeof AdminRolesIndexRoute
+  '/admin/users': typeof AdminUsersIndexRoute
+  '/admin/workspaces': typeof AdminWorkspacesIndexRoute
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new': typeof WorkflowsNewIndexRoute
@@ -344,24 +480,35 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
   '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
+  '/login': typeof LoginRoute
   '/ontology': typeof OntologyRoute
   '/playground': typeof PlaygroundRoute
   '/reviews': typeof ReviewsRoute
   '/settings': typeof SettingsRoute
+  '/welcome': typeof WelcomeRoute
+  '/admin/account': typeof AdminAccountRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/libraries/$id': typeof LibrariesIdRoute
   '/logs/$traceId': typeof LogsTraceIdRoute
   '/mcp/$serverName': typeof McpServerNameRoute
   '/processes/$industryId': typeof ProcessesIndustryIdRoute
   '/remote-servers/$id': typeof RemoteServersIdRoute
   '/remote-servers/new': typeof RemoteServersNewRoute
+  '/reset-password/$token': typeof ResetPasswordTokenRoute
   '/rules/$id': typeof RulesIdRoute
   '/tools/$id': typeof ToolsIdRoute
   '/workflows/archived': typeof WorkflowsArchivedRoute
+  '/admin/': typeof AdminIndexRoute
   '/agents/': typeof AgentsIndexRoute
   '/connectors/': typeof ConnectorsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -372,6 +519,9 @@ export interface FileRoutesById {
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/admin/roles/$id': typeof AdminRolesIdRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
   '/logs/execution/$executionId': typeof LogsExecutionExecutionIdRoute
   '/ontology_/libraries/$libraryId': typeof OntologyLibrariesLibraryIdRoute
   '/workflows/$workflowName/edit': typeof WorkflowsWorkflowNameEditRoute
@@ -380,6 +530,9 @@ export interface FileRoutesById {
   '/workflows/activities/$id': typeof WorkflowsActivitiesIdRoute
   '/workflows/new/ai': typeof WorkflowsNewAiRoute
   '/workflows/new/visual': typeof WorkflowsNewVisualRoute
+  '/admin/roles/': typeof AdminRolesIndexRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
+  '/admin/workspaces/': typeof AdminWorkspacesIndexRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
@@ -388,24 +541,35 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
+    | '/forgot-password'
     | '/health'
     | '/knowledge'
     | '/libraries'
+    | '/login'
     | '/ontology'
     | '/playground'
     | '/reviews'
     | '/settings'
+    | '/welcome'
+    | '/admin/account'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/invite/$token'
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
+    | '/reset-password/$token'
     | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
+    | '/admin/'
     | '/agents/'
     | '/connectors/'
     | '/libraries/'
@@ -416,6 +580,9 @@ export interface FileRouteTypes {
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/admin/roles/$id'
+    | '/admin/users/$id'
+    | '/admin/workspaces/$id'
     | '/logs/execution/$executionId'
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
@@ -424,29 +591,43 @@ export interface FileRouteTypes {
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
+    | '/admin/roles/'
+    | '/admin/users/'
+    | '/admin/workspaces/'
     | '/workflows/$workflowName/'
     | '/workflows/activities/'
     | '/workflows/new/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/account'
+    | '/forgot-password'
     | '/health'
     | '/knowledge'
+    | '/login'
     | '/ontology'
     | '/playground'
     | '/reviews'
     | '/settings'
+    | '/welcome'
+    | '/admin/account'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/invite/$token'
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
+    | '/reset-password/$token'
     | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
+    | '/admin'
     | '/agents'
     | '/connectors'
     | '/libraries'
@@ -457,6 +638,9 @@ export interface FileRouteTypes {
     | '/rules'
     | '/tools'
     | '/workflows'
+    | '/admin/roles/$id'
+    | '/admin/users/$id'
+    | '/admin/workspaces/$id'
     | '/logs/execution/$executionId'
     | '/ontology/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
@@ -465,30 +649,44 @@ export interface FileRouteTypes {
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
+    | '/admin/roles'
+    | '/admin/users'
+    | '/admin/workspaces'
     | '/workflows/$workflowName'
     | '/workflows/activities'
     | '/workflows/new'
   id:
     | '__root__'
     | '/'
+    | '/account'
+    | '/forgot-password'
     | '/health'
     | '/knowledge'
     | '/libraries'
+    | '/login'
     | '/ontology'
     | '/playground'
     | '/reviews'
     | '/settings'
+    | '/welcome'
+    | '/admin/account'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
+    | '/invite/$token'
     | '/libraries/$id'
     | '/logs/$traceId'
     | '/mcp/$serverName'
     | '/processes/$industryId'
     | '/remote-servers/$id'
     | '/remote-servers/new'
+    | '/reset-password/$token'
     | '/rules/$id'
     | '/tools/$id'
     | '/workflows/archived'
+    | '/admin/'
     | '/agents/'
     | '/connectors/'
     | '/libraries/'
@@ -499,6 +697,9 @@ export interface FileRouteTypes {
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/admin/roles/$id'
+    | '/admin/users/$id'
+    | '/admin/workspaces/$id'
     | '/logs/execution/$executionId'
     | '/ontology_/libraries/$libraryId'
     | '/workflows/$workflowName/edit'
@@ -507,6 +708,9 @@ export interface FileRouteTypes {
     | '/workflows/activities/$id'
     | '/workflows/new/ai'
     | '/workflows/new/visual'
+    | '/admin/roles/'
+    | '/admin/users/'
+    | '/admin/workspaces/'
     | '/workflows/$workflowName/'
     | '/workflows/activities/'
     | '/workflows/new/'
@@ -514,23 +718,34 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   HealthRoute: typeof HealthRoute
   KnowledgeRoute: typeof KnowledgeRoute
   LibrariesRoute: typeof LibrariesRouteWithChildren
+  LoginRoute: typeof LoginRoute
   OntologyRoute: typeof OntologyRoute
   PlaygroundRoute: typeof PlaygroundRoute
   ReviewsRoute: typeof ReviewsRoute
   SettingsRoute: typeof SettingsRoute
+  WelcomeRoute: typeof WelcomeRoute
+  AdminAccountRoute: typeof AdminAccountRoute
+  AdminAdminsRoute: typeof AdminAdminsRoute
+  AdminAuditRoute: typeof AdminAuditRoute
+  AdminLoginRoute: typeof AdminLoginRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
+  InviteTokenRoute: typeof InviteTokenRoute
   LogsTraceIdRoute: typeof LogsTraceIdRoute
   McpServerNameRoute: typeof McpServerNameRoute
   ProcessesIndustryIdRoute: typeof ProcessesIndustryIdRoute
   RemoteServersIdRoute: typeof RemoteServersIdRoute
   RemoteServersNewRoute: typeof RemoteServersNewRoute
+  ResetPasswordTokenRoute: typeof ResetPasswordTokenRoute
   RulesIdRoute: typeof RulesIdRoute
   ToolsIdRoute: typeof ToolsIdRoute
   WorkflowsArchivedRoute: typeof WorkflowsArchivedRoute
+  AdminIndexRoute: typeof AdminIndexRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ConnectorsIndexRoute: typeof ConnectorsIndexRoute
   LogsIndexRoute: typeof LogsIndexRoute
@@ -540,6 +755,9 @@ export interface RootRouteChildren {
   RulesIndexRoute: typeof RulesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
+  AdminRolesIdRoute: typeof AdminRolesIdRoute
+  AdminUsersIdRoute: typeof AdminUsersIdRoute
+  AdminWorkspacesIdRoute: typeof AdminWorkspacesIdRoute
   LogsExecutionExecutionIdRoute: typeof LogsExecutionExecutionIdRoute
   OntologyLibrariesLibraryIdRoute: typeof OntologyLibrariesLibraryIdRoute
   WorkflowsWorkflowNameEditRoute: typeof WorkflowsWorkflowNameEditRoute
@@ -548,6 +766,9 @@ export interface RootRouteChildren {
   WorkflowsActivitiesIdRoute: typeof WorkflowsActivitiesIdRoute
   WorkflowsNewAiRoute: typeof WorkflowsNewAiRoute
   WorkflowsNewVisualRoute: typeof WorkflowsNewVisualRoute
+  AdminRolesIndexRoute: typeof AdminRolesIndexRoute
+  AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+  AdminWorkspacesIndexRoute: typeof AdminWorkspacesIndexRoute
   WorkflowsWorkflowNameIndexRoute: typeof WorkflowsWorkflowNameIndexRoute
   WorkflowsActivitiesIndexRoute: typeof WorkflowsActivitiesIndexRoute
   WorkflowsNewIndexRoute: typeof WorkflowsNewIndexRoute
@@ -560,6 +781,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/health': {
@@ -581,6 +816,13 @@ declare module '@tanstack/react-router' {
       path: '/libraries'
       fullPath: '/libraries'
       preLoaderRoute: typeof LibrariesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ontology': {
@@ -611,6 +853,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/account': {
+      id: '/admin/account'
+      path: '/admin/account'
+      fullPath: '/admin/account'
+      preLoaderRoute: typeof AdminAccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/admins': {
+      id: '/admin/admins'
+      path: '/admin/admins'
+      fullPath: '/admin/admins'
+      preLoaderRoute: typeof AdminAdminsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/audit': {
+      id: '/admin/audit'
+      path: '/admin/audit'
+      fullPath: '/admin/audit'
+      preLoaderRoute: typeof AdminAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/login': {
+      id: '/admin/login'
+      path: '/admin/login'
+      fullPath: '/admin/login'
+      preLoaderRoute: typeof AdminLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agents/': {
       id: '/agents/'
       path: '/agents'
@@ -637,6 +921,13 @@ declare module '@tanstack/react-router' {
       path: '/connectors/$id'
       fullPath: '/connectors/$id'
       preLoaderRoute: typeof ConnectorsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/libraries/': {
@@ -716,6 +1007,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RemoteServersNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reset-password/$token': {
+      id: '/reset-password/$token'
+      path: '/reset-password/$token'
+      fullPath: '/reset-password/$token'
+      preLoaderRoute: typeof ResetPasswordTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/rules/': {
       id: '/rules/'
       path: '/rules'
@@ -756,6 +1054,48 @@ declare module '@tanstack/react-router' {
       path: '/workflows/archived'
       fullPath: '/workflows/archived'
       preLoaderRoute: typeof WorkflowsArchivedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/roles/': {
+      id: '/admin/roles/'
+      path: '/admin/roles'
+      fullPath: '/admin/roles/'
+      preLoaderRoute: typeof AdminRolesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/roles/$id': {
+      id: '/admin/roles/$id'
+      path: '/admin/roles/$id'
+      fullPath: '/admin/roles/$id'
+      preLoaderRoute: typeof AdminRolesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/admin/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/users/$id': {
+      id: '/admin/users/$id'
+      path: '/admin/users/$id'
+      fullPath: '/admin/users/$id'
+      preLoaderRoute: typeof AdminUsersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/workspaces/': {
+      id: '/admin/workspaces/'
+      path: '/admin/workspaces'
+      fullPath: '/admin/workspaces/'
+      preLoaderRoute: typeof AdminWorkspacesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/workspaces/$id': {
+      id: '/admin/workspaces/$id'
+      path: '/admin/workspaces/$id'
+      fullPath: '/admin/workspaces/$id'
+      preLoaderRoute: typeof AdminWorkspacesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs/execution/$executionId': {
@@ -854,23 +1194,34 @@ const LibrariesRouteWithChildren = LibrariesRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   HealthRoute: HealthRoute,
   KnowledgeRoute: KnowledgeRoute,
   LibrariesRoute: LibrariesRouteWithChildren,
+  LoginRoute: LoginRoute,
   OntologyRoute: OntologyRoute,
   PlaygroundRoute: PlaygroundRoute,
   ReviewsRoute: ReviewsRoute,
   SettingsRoute: SettingsRoute,
+  WelcomeRoute: WelcomeRoute,
+  AdminAccountRoute: AdminAccountRoute,
+  AdminAdminsRoute: AdminAdminsRoute,
+  AdminAuditRoute: AdminAuditRoute,
+  AdminLoginRoute: AdminLoginRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
+  InviteTokenRoute: InviteTokenRoute,
   LogsTraceIdRoute: LogsTraceIdRoute,
   McpServerNameRoute: McpServerNameRoute,
   ProcessesIndustryIdRoute: ProcessesIndustryIdRoute,
   RemoteServersIdRoute: RemoteServersIdRoute,
   RemoteServersNewRoute: RemoteServersNewRoute,
+  ResetPasswordTokenRoute: ResetPasswordTokenRoute,
   RulesIdRoute: RulesIdRoute,
   ToolsIdRoute: ToolsIdRoute,
   WorkflowsArchivedRoute: WorkflowsArchivedRoute,
+  AdminIndexRoute: AdminIndexRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ConnectorsIndexRoute: ConnectorsIndexRoute,
   LogsIndexRoute: LogsIndexRoute,
@@ -880,6 +1231,9 @@ const rootRouteChildren: RootRouteChildren = {
   RulesIndexRoute: RulesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
+  AdminRolesIdRoute: AdminRolesIdRoute,
+  AdminUsersIdRoute: AdminUsersIdRoute,
+  AdminWorkspacesIdRoute: AdminWorkspacesIdRoute,
   LogsExecutionExecutionIdRoute: LogsExecutionExecutionIdRoute,
   OntologyLibrariesLibraryIdRoute: OntologyLibrariesLibraryIdRoute,
   WorkflowsWorkflowNameEditRoute: WorkflowsWorkflowNameEditRoute,
@@ -888,6 +1242,9 @@ const rootRouteChildren: RootRouteChildren = {
   WorkflowsActivitiesIdRoute: WorkflowsActivitiesIdRoute,
   WorkflowsNewAiRoute: WorkflowsNewAiRoute,
   WorkflowsNewVisualRoute: WorkflowsNewVisualRoute,
+  AdminRolesIndexRoute: AdminRolesIndexRoute,
+  AdminUsersIndexRoute: AdminUsersIndexRoute,
+  AdminWorkspacesIndexRoute: AdminWorkspacesIndexRoute,
   WorkflowsWorkflowNameIndexRoute: WorkflowsWorkflowNameIndexRoute,
   WorkflowsActivitiesIndexRoute: WorkflowsActivitiesIndexRoute,
   WorkflowsNewIndexRoute: WorkflowsNewIndexRoute,

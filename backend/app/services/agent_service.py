@@ -17,6 +17,7 @@ from mistralai.client.models.moderationllmv1config import ModerationLlmv1Config
 from mistralai.client.models.moderationllmv2categorythresholds import ModerationLlmv2CategoryThresholds
 from mistralai.client.models.moderationllmv2config import ModerationLlmv2Config
 from app.config import settings, map_model_name
+from app.dependencies import MistralKeyAuth
 from app.exceptions import MistralAPIError, AgentNotFoundError
 from app.catalog import store as annotation_store
 from app.catalog.vocab import DEFAULT_TIER, AgentTier, Predicate, SubjectType, coerce_tier
@@ -264,7 +265,8 @@ def _extract_completion_args(agent: dict) -> dict:
 # Direct HTTP client for endpoints where SDK has sentinel issues
 _http_client = httpx.Client(
     base_url="https://api.mistral.ai",
-    headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+    # The calling workspace's key, per request (app.dependencies).
+    auth=MistralKeyAuth(),
     timeout=30.0,
 )
 

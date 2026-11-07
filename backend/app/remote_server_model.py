@@ -19,6 +19,8 @@ from app.database import Base
 class RemoteServer(Base):
     """A remote server that can receive tool code or a workflow package."""
     __tablename__ = "remote_servers"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
@@ -40,6 +42,8 @@ class RemoteServer(Base):
 class RemoteDeployment(Base):
     """One push of a tool or a workflow package to a remote server."""
     __tablename__ = "remote_deployments"
+    #: The workspace that owns the row (app.auth.scoping).
+    workspace_id = Column(String, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True, index=True)
     server_id = Column(Integer, ForeignKey("remote_servers.id", ondelete="CASCADE"), index=True)

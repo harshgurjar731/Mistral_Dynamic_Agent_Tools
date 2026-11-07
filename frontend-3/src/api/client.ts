@@ -7,10 +7,10 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Sign-in is an httpOnly session cookie the browser sends by itself; nothing
+// here touches credentials except the vault's optional extra token.
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = window.localStorage.getItem("auth_token");
-    if (token) config.headers.Authorization = `Bearer ${token}`;
     // The vault's admin token (Settings → Vault → Unlock): this tab only, and
     // sent to the vault's own routes only.
     if (config.url?.startsWith("/api/vault")) {
@@ -28,9 +28,20 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (res) => res,
-  (err: AxiosError<{ detail?: string; message?: string; error?: string }>) => {
+  (err: AxiosError<{ detail?: string; message?: string; error?: string; code?: string }>) => {
     const msg = err.response?.data?.detail ?? err.response?.data?.message ?? err.message;
     console.error("[API Error]", msg);
+    // The session ended (expired, signed out elsewhere, password changed):
+    // let the auth gate re-check and send the person to sign in.
+    const code = err.response?.data?.code;
+    if (
+      typeof window !== "undefined" &&
+      (err.response?.status === 401 || code === "password_change_required") &&
+      !err.config?.url?.startsWith("/api/auth/") &&
+      !err.config?.url?.startsWith("/api/admin/auth/login")
+    ) {
+      window.dispatchEvent(new Event("auth:expired"));
+    }
     return Promise.reject(err);
   },
 );

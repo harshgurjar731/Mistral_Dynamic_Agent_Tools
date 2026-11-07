@@ -6,6 +6,8 @@ python-dotenv
 # span to Mistral Observability (app/observability/tracing.py).
 mistralai[telemetry]>=2.6.0
 httpx
+# Password hashing for platform accounts (app/auth/passwords.py).
+argon2-cffi>=23.1
 # Validates authored specifications (app/layers/codegen/preflight.py).
 jsonschema>=4.20
 # Remote servers: SSH/SFTP deployment of workflow packages to VMs.

@@ -44,7 +44,7 @@ from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
 from opentelemetry.trace import Link, NonRecordingSpan, Span, SpanContext, Status, StatusCode, TraceFlags
 
@@ -106,6 +106,106 @@ class _IdGenerator(RandomIdGenerator):
         return super().generate_span_id()
 
 
+# ── Workspaces ────────────────────────────────────────────────────────────────
+#
+# Each span goes to the Mistral workspace of the person whose request made it:
+# it is tagged with their platform workspace when it starts, and exported with
+# that workspace's key. Spans with no workspace (boot, the worker) and spans of
+# the Default workspace go out on the platform key.
+
+WORKSPACE_ATTRIBUTE = "app.workspace_id"
+
+
+def _make_exporter(key: str) -> Any:
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    exporter: Any = OTLPSpanExporter(endpoint=_endpoint(),
+                                     headers={"Authorization": f"Bearer {key}"})
+    if settings.OBSERVABILITY_REDACT:
+        # The SDK's own policy: secrets and PII substrings are masked in
+        # place, keys and surrounding text kept.
+        from mistralai.extra.observability import RedactingSpanExporter, default_redaction_policy
+
+        exporter = RedactingSpanExporter(exporter, default_redaction_policy())
+    return exporter
+
+
+class _WorkspaceTagger(SpanProcessor):
+    def on_start(self, span: Any, parent_context: Any = None) -> None:
+        try:
+            from app.auth.context import current_principal, current_workspace_id
+
+            ws = current_workspace_id()
+            if ws:
+                span.set_attribute(WORKSPACE_ATTRIBUTE, ws)
+            principal = current_principal()
+            if principal is not None:
+                # An id, not an email: traces are not the place for personal data.
+                span.set_attribute("enduser.id", f"{principal.kind}:{principal.id}")
+        except Exception:
+            pass
+
+
+class _WorkspaceRoutingExporter(SpanExporter):
+    """A SpanExporter that sends each workspace's spans with its own key."""
+
+    def __init__(self) -> None:
+        self._exporters: dict[str, Any] = {}
+
+    def _for_key(self, key: str) -> Any:
+        exporter = self._exporters.get(key)
+        if exporter is None:
+            exporter = self._exporters[key] = _make_exporter(key)
+        return exporter
+
+    def _key_of(self, workspace_id: Optional[str]) -> str:
+        if workspace_id:
+            try:
+                from app.auth import store
+
+                key = store.workspace_key(workspace_id)
+                if key:
+                    return key
+            except Exception:
+                pass
+        return settings.MISTRAL_API_KEY
+
+    def export(self, spans: Any) -> Any:
+        from opentelemetry.sdk.trace.export import SpanExportResult
+
+        groups: dict[str, list] = {}
+        for span in spans:
+            ws = (span.attributes or {}).get(WORKSPACE_ATTRIBUTE)
+            groups.setdefault(self._key_of(ws), []).append(span)
+        result = SpanExportResult.SUCCESS
+        for key, batch in groups.items():
+            if not key:
+                continue
+            try:
+                if self._for_key(key).export(batch) != SpanExportResult.SUCCESS:
+                    result = SpanExportResult.FAILURE
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Span export failed: %s", e)
+                result = SpanExportResult.FAILURE
+        return result
+
+    def shutdown(self) -> None:
+        for exporter in self._exporters.values():
+            try:
+                exporter.shutdown()
+            except Exception:
+                pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        ok = True
+        for exporter in self._exporters.values():
+            try:
+                ok = exporter.force_flush(timeout_millis) and ok
+            except Exception:
+                ok = False
+        return ok
+
+
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
 def enabled() -> bool:
@@ -138,18 +238,7 @@ def setup(component: str = "api") -> bool:
         return False
 
     try:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-        exporter: Any = OTLPSpanExporter(
-            endpoint=_endpoint(),
-            headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
-        )
-        if settings.OBSERVABILITY_REDACT:
-            # The SDK's own policy: secrets and PII substrings are masked in
-            # place, keys and surrounding text kept.
-            from mistralai.extra.observability import RedactingSpanExporter, default_redaction_policy
-
-            exporter = RedactingSpanExporter(exporter, default_redaction_policy())
+        exporter: Any = _WorkspaceRoutingExporter()
 
         _component = component
         provider = TracerProvider(
@@ -161,6 +250,8 @@ def setup(component: str = "api") -> bool:
             }),
             id_generator=_IdGenerator(),
         )
+        # Before the batch processor, so the tag is on the span when it is exported.
+        provider.add_span_processor(_WorkspaceTagger())
         provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=2000))
         provider.add_span_processor(_ModelCallSteps())
         _provider = provider

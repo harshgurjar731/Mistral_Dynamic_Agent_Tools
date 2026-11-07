@@ -76,12 +76,12 @@ def _resolve_agent_id(client: Any, agent_id: str) -> str:
 
     # Query Mistral API by listing agents and matching by name
     import httpx
-    from app.config import settings
+    from app.dependencies import current_mistral_api_key
 
     try:
         http_client = httpx.Client(
             base_url="https://api.mistral.ai",
-            headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"},
+            headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
             timeout=15.0,
         )
         resp = http_client.get("/v1/agents", params={"page": 0, "page_size": 100})

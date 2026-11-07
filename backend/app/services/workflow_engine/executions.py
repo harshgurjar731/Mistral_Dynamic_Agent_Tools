@@ -33,6 +33,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.dependencies import current_mistral_api_key
 from app.dependencies import get_mistral_client
 from app.services.workflow_engine import engine, execution_logs
 from app.services.workflow_engine.models import WorkflowRun
@@ -337,7 +338,7 @@ _API_ROOT = "https://api.mistral.ai"
 
 
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"}
+    return {"Authorization": f"Bearer {current_mistral_api_key()}"}
 
 
 async def _raw_get(path: str, params: dict | None = None, timeout: float = 20.0) -> Any:

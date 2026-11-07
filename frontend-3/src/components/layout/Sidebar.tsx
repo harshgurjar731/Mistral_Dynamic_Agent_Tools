@@ -17,6 +17,8 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import { useUiConfig } from "@/lib/uiConfig";
+import { canOpen, useCurrentUser } from "@/lib/auth";
+import { UserMenu, WorkspaceSwitcher } from "@/components/auth/AccountMenus";
 import { ResizeHandle, type ResizablePanel } from "@/components/shared/ResizeHandle";
 
 /** Width comes from `--nav-w`, set by the app shell from `collapsed` and `resize`. */
@@ -36,6 +38,7 @@ export function Sidebar({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const ui = useUiConfig();
+  const user = useCurrentUser();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const sessions = useSessionStore((s) => s.sessions);
@@ -52,8 +55,10 @@ export function Sidebar({
     () =>
       arrangeNav(parseNavLayout(ui.UI_NAV_LAYOUT))
         .filter((r) => !r.hidden)
+        // Only pages the user's role in this workspace can open.
+        .filter((r) => canOpen(user, r.item.to))
         .map((r) => ({ ...r.item, label: navLabel(r) })),
-    [ui.UI_NAV_LAYOUT],
+    [ui.UI_NAV_LAYOUT, user],
   );
   // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
   const activeTo = navItems
@@ -108,6 +113,10 @@ export function Sidebar({
           >
             <X className="size-4" />
           </button>
+        </div>
+
+        <div className="border-b border-border px-2 py-2.5">
+          <WorkspaceSwitcher collapsed={collapsed} />
         </div>
 
         <nav className="custom-scrollbar flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
@@ -207,6 +216,7 @@ export function Sidebar({
             <ExternalLink className="size-4 shrink-0" />
             {showLabels ? <span>API Docs</span> : null}
           </a>
+          <UserMenu collapsed={collapsed} />
           <button
             type="button"
             onClick={onToggleCollapsed}
