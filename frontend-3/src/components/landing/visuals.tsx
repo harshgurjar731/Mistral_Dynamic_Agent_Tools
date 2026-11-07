@@ -1,4 +1,3 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   BookOpen,
   Bot,
@@ -13,10 +12,11 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { gsap, useGSAP } from "./motion";
 
-/* ── Scroll reveal ─────────────────────────────────────────────────────── */
+/* ── Scroll reveal (animated by motion.ts) ─────────────────────────────── */
 
 export function Reveal({
   children,
@@ -27,18 +27,10 @@ export function Reveal({
   delay?: number;
   className?: string | undefined;
 }) {
-  const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
   return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.55, delay, ease: [0.22, 1, 0.36, 1] }}
-    >
+    <div data-a="reveal" data-delay={delay} className={className}>
       {children}
-    </motion.div>
+    </div>
   );
 }
 
@@ -71,23 +63,38 @@ const STEPS: { icon: LucideIcon; label: string; detail: string }[] = [
   { icon: Play, label: "Run & trace", detail: "every step, on Mistral" },
 ];
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 export function LiveBuild() {
-  const reduce = useReducedMotion();
+  const [reduce, setReduce] = useState(false);
   const [build, setBuild] = useState(0);
-  const [typed, setTyped] = useState(reduce ? BUILDS[0]!.goal.length : 0);
-  const [step, setStep] = useState(reduce ? STEPS.length : -1);
+  const [typed, setTyped] = useState(0);
+  const [step, setStep] = useState(-1);
+  const chips = useRef<HTMLDivElement>(null);
   const current = BUILDS[build]!;
 
+  useEffect(() => setReduce(prefersReducedMotion()), []);
+
   useEffect(() => {
-    if (reduce) return;
+    if (reduce) {
+      setTyped(current.goal.length);
+      setStep(STEPS.length);
+      return;
+    }
     setTyped(0);
     setStep(-1);
     const timers: number[] = [];
     const goal = current.goal;
+    // The first build starts once the hero intro has played.
+    const lead = build === 0 ? 1300 : 0;
     for (let i = 1; i <= goal.length; i++) {
-      timers.push(window.setTimeout(() => setTyped(i), i * 22));
+      timers.push(window.setTimeout(() => setTyped(i), lead + i * 22));
     }
-    const typedAt = goal.length * 22 + 300;
+    const typedAt = lead + goal.length * 22 + 300;
     STEPS.forEach((_, i) => {
       timers.push(window.setTimeout(() => setStep(i), typedAt + i * 750));
     });
@@ -95,13 +102,29 @@ export function LiveBuild() {
     timers.push(
       window.setTimeout(
         () => setBuild((b) => (b + 1) % BUILDS.length),
-        typedAt + STEPS.length * 750 + 2600,
+        typedAt + STEPS.length * 750 + 2800,
       ),
     );
     return () => timers.forEach(window.clearTimeout);
   }, [build, reduce, current.goal]);
 
   const finished = step >= STEPS.length;
+
+  // The results pop in once the build has finished.
+  useGSAP(
+    () => {
+      if (!finished || reduce || !chips.current) return;
+      gsap.from(chips.current.children, {
+        autoAlpha: 0,
+        y: 8,
+        scale: 0.85,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: "back.out(2)",
+      });
+    },
+    { dependencies: [finished, build, reduce], scope: chips },
+  );
 
   return (
     <div className="relative">
@@ -141,7 +164,8 @@ export function LiveBuild() {
                   key={s.label}
                   className={cn(
                     "flex items-center gap-3 rounded-lg border px-3 py-2 transition-all duration-500",
-                    state === "active" && "border-primary/40 bg-primary/10",
+                    state === "active" &&
+                      "border-primary/40 bg-primary/10 shadow-[var(--shadow-glow)]",
                     state === "done" && "border-border bg-background-elevated/60",
                     state === "todo" && "border-transparent opacity-45",
                   )}
@@ -175,23 +199,17 @@ export function LiveBuild() {
             })}
           </ol>
 
-          <div className="mt-4 flex min-h-[2rem] flex-wrap items-center gap-1.5">
-            <AnimatePresence>
-              {finished
-                ? current.made.map((m, i) => (
-                    <motion.span
-                      key={`${build}-${m}`}
-                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ delay: i * 0.08 }}
-                      className="inline-flex items-center gap-1 rounded-full border border-emerald/30 bg-emerald/10 px-2.5 py-1 text-[11px] font-medium text-emerald"
-                    >
-                      <CheckCircle2 className="size-3" /> {m}
-                    </motion.span>
-                  ))
-                : null}
-            </AnimatePresence>
+          <div ref={chips} className="mt-4 flex min-h-[2rem] flex-wrap items-center gap-1.5">
+            {finished
+              ? current.made.map((m) => (
+                  <span
+                    key={`${build}-${m}`}
+                    className="inline-flex items-center gap-1 rounded-full border border-emerald/30 bg-emerald/10 px-2.5 py-1 text-[11px] font-medium text-emerald"
+                  >
+                    <CheckCircle2 className="size-3" /> {m}
+                  </span>
+                ))
+              : null}
           </div>
         </div>
       </div>
@@ -199,7 +217,7 @@ export function LiveBuild() {
   );
 }
 
-/* ── Feature mini-visuals ──────────────────────────────────────────────── */
+/* ── Feature mini-visuals (played by motion.ts when their card enters) ── */
 
 export function CodeVisual() {
   return (
@@ -221,6 +239,7 @@ export function CodeVisual() {
         {["lint", "AST check", "sandbox test", "registered"].map((t) => (
           <span
             key={t}
+            data-a="pop"
             className="inline-flex items-center gap-1 rounded border border-emerald/25 bg-emerald/10 px-1.5 py-0.5 text-[10px] text-emerald"
           >
             <Check className="size-2.5" /> {t}
@@ -254,15 +273,17 @@ export function DagVisual() {
         return (
           <path
             key={`${a}-${b}`}
+            data-a="draw"
             d={`M${s.x + 62} ${s.y + 9} C ${s.x + 90} ${s.y + 9}, ${t.x - 28} ${t.y + 9}, ${t.x} ${t.y + 9}`}
             fill="none"
-            stroke="var(--border-strong)"
+            stroke="var(--primary)"
+            strokeOpacity="0.55"
             strokeWidth="1.5"
           />
         );
       })}
       {nodes.map((n, i) => (
-        <g key={n.label}>
+        <g key={n.label} data-a="node">
           <rect
             x={n.x}
             y={n.y}
@@ -316,6 +337,7 @@ export function GraphVisual() {
       {links.map(([a, b]) => (
         <line
           key={`${a}-${b}`}
+          data-a="draw"
           x1={pts[a]![0]}
           y1={pts[a]![1]}
           x2={pts[b]![0]}
@@ -327,6 +349,7 @@ export function GraphVisual() {
       {pts.map(([x, y], i) => (
         <circle
           key={`${x}-${y}`}
+          data-a="node"
           cx={x}
           cy={y}
           r={i === 0 ? 9 : i < 4 ? 6.5 : 4.5}
@@ -356,6 +379,7 @@ export function TraceVisual() {
           </span>
           <span className="relative h-2.5 flex-1 rounded-full bg-secondary">
             <span
+              data-a="bar"
               className="absolute inset-y-0 rounded-full"
               style={{ left: `${start}%`, width: `${width}%`, background: color, opacity: 0.85 }}
             />
@@ -374,13 +398,22 @@ export function ReviewVisual() {
         Step “Decide” · waiting for a Reviewer
       </p>
       <div className="mt-2.5 flex gap-1.5">
-        <span className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground">
+        <span
+          data-a="pop"
+          className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-medium text-primary-foreground"
+        >
           <Check className="size-3" /> Approve
         </span>
-        <span className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground">
+        <span
+          data-a="pop"
+          className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground"
+        >
           Correct
         </span>
-        <span className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground">
+        <span
+          data-a="pop"
+          className="rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground"
+        >
           Reject
         </span>
       </div>
@@ -397,7 +430,11 @@ export function WorkspacesVisual() {
   return (
     <div className="grid gap-2 sm:grid-cols-3">
       {spaces.map(([name, role, key]) => (
-        <div key={name} className="rounded-lg border border-border bg-background-elevated p-3">
+        <div
+          key={name}
+          data-a="pop"
+          className="rounded-lg border border-border bg-background-elevated p-3"
+        >
           <div className="flex items-center gap-2">
             <span className="grid size-6 place-items-center rounded bg-secondary text-[10px] font-bold">
               {name!.slice(0, 2).toUpperCase()}
@@ -421,10 +458,13 @@ export function WorkspacesVisual() {
 export function ChatVisual() {
   return (
     <div className="space-y-2 text-[11px]">
-      <div className="ml-auto w-fit max-w-[85%] rounded-xl rounded-br-sm bg-primary/15 px-3 py-2 text-foreground">
+      <div
+        data-a="pop"
+        className="ml-auto w-fit max-w-[85%] rounded-xl rounded-br-sm bg-primary/15 px-3 py-2 text-foreground"
+      >
         Build an agent that drafts the decision letter for approved personal loans.
       </div>
-      <div className="flex max-w-[90%] gap-2">
+      <div data-a="pop" className="flex max-w-[90%] gap-2">
         <span className="grid size-6 shrink-0 place-items-center rounded-md bg-secondary">
           <Cpu className="size-3.5 text-primary" />
         </span>

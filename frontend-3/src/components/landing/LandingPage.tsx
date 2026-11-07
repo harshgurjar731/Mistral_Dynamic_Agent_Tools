@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Menu, ShieldCheck, Sparkles, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/auth/AuthParts";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useAuthSession } from "@/lib/auth";
@@ -16,7 +16,8 @@ import {
   SolutionSection,
   UseCasesSection,
 } from "./sections";
-import { LiveBuild, Reveal } from "./visuals";
+import { useLandingMotion } from "./motion";
+import { LiveBuild } from "./visuals";
 
 const NAV = [
   ["Problem", "#problem"],
@@ -33,6 +34,8 @@ export function LandingPage() {
   const signedIn = !!data?.user;
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useLandingMotion(root);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -44,7 +47,17 @@ export function LandingPage() {
   const primaryCta = signedIn ? "Open the app" : "Sign in";
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <div
+      ref={root}
+      className="landing-pending relative min-h-screen overflow-x-hidden bg-background text-foreground"
+    >
+      {/* Reading progress */}
+      <div
+        aria-hidden
+        data-a="progress"
+        className="fixed inset-x-0 top-0 z-[60] h-[2px] origin-left bg-gradient-brand"
+        style={{ transform: "scaleX(0)" }}
+      />
       {/* ── Nav ── */}
       <header
         className={cn(
@@ -125,35 +138,54 @@ export function LandingPage() {
 
       {/* ── Hero ── */}
       <section className="relative overflow-hidden pt-16">
-        <div className="grid-backdrop absolute inset-0 opacity-50" aria-hidden />
+        <div
+          data-a="parallax"
+          data-speed="0.15"
+          className="grid-backdrop absolute inset-0 opacity-50"
+          aria-hidden
+        />
         <div
           aria-hidden
+          data-a="parallax"
+          data-speed="0.45"
           className="pointer-events-none absolute -top-40 left-1/2 h-[640px] w-[1100px] -translate-x-1/2 rounded-full opacity-[0.22] blur-3xl"
           style={{ background: "var(--gradient-brand)" }}
         />
         <div
           aria-hidden
+          data-a="parallax"
+          data-speed="-0.3"
           className="pointer-events-none absolute -bottom-40 -left-40 size-[480px] rounded-full bg-cyan/20 opacity-30 blur-3xl"
         />
         <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-4 pb-20 pt-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:pb-28 lg:pt-24">
-          <Reveal>
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+          <div>
+            <span
+              data-a="hero-item"
+              className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+            >
               <Sparkles className="size-3.5" /> Agentic AI control plane · built on Mistral AI
             </span>
-            <h1 className="mt-6 font-display text-[2.6rem] font-bold leading-[1.04] tracking-tight sm:text-6xl lg:text-[4.1rem]">
+            <h1
+              data-a="hero-title"
+              className="mt-6 font-display text-[2.6rem] font-bold leading-[1.04] tracking-tight sm:text-6xl lg:text-[4.1rem]"
+            >
               Turn a business goal
               <br />
               into a <span className="text-gradient-brand">governed AI workflow.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
+            <p
+              data-a="hero-item"
+              className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground"
+            >
               Describe what you need in plain language. {ui.UI_BRAND_TITLE} designs the agents,
               writes the tools they're missing, grounds them in your knowledge, applies your rules
               and runs the result — with every step traced and every action checked against who's
               allowed to take it.
             </p>
-            <div className="mt-9 flex flex-wrap items-center gap-3">
+            <div data-a="hero-item" className="mt-9 flex flex-wrap items-center gap-3">
               <Link
                 to={signedIn ? "/" : "/login"}
+                data-magnetic
                 className="group inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-glow)] transition hover:bg-primary/90"
               >
                 {signedIn ? "Open the app" : "Sign in to your workspace"}
@@ -161,12 +193,16 @@ export function LandingPage() {
               </Link>
               <a
                 href="#solution"
+                data-magnetic
                 className="inline-flex h-12 items-center gap-2 rounded-xl border border-border bg-background-elevated/80 px-6 text-sm font-semibold text-foreground backdrop-blur transition hover:border-border-strong hover:bg-surface-hover"
               >
                 See how it works
               </a>
             </div>
-            <dl className="mt-12 grid max-w-lg grid-cols-3 gap-6 border-t border-border pt-6">
+            <dl
+              data-a="hero-item"
+              className="mt-12 grid max-w-lg grid-cols-3 gap-6 border-t border-border pt-6"
+            >
               {[
                 ["Goal → workflow", "no flowcharts"],
                 ["Tools on demand", "sandbox-tested"],
@@ -178,10 +214,10 @@ export function LandingPage() {
                 </div>
               ))}
             </dl>
-          </Reveal>
-          <Reveal delay={0.15}>
+          </div>
+          <div data-a="hero-card">
             <LiveBuild />
-          </Reveal>
+          </div>
         </div>
       </section>
 
@@ -197,43 +233,57 @@ export function LandingPage() {
       {/* ── Closing CTA ── */}
       <section className="relative">
         <div className="mx-auto max-w-6xl px-4 py-24 sm:px-6">
-          <Reveal>
-            <div className="relative overflow-hidden rounded-[2rem] border border-primary/30 px-6 py-14 text-center sm:px-12 sm:py-20">
-              <div
-                aria-hidden
-                className="absolute inset-0 opacity-[0.16]"
-                style={{ background: "var(--gradient-brand)" }}
-              />
-              <div className="grid-backdrop absolute inset-0 opacity-40" aria-hidden />
-              <div className="relative">
-                <h2 className="mx-auto max-w-2xl font-display text-3xl font-bold leading-tight tracking-tight sm:text-5xl">
-                  Your next process,{" "}
-                  <span className="text-gradient-brand">
-                    designed by the time you finish typing it.
-                  </span>
-                </h2>
-                <p className="mx-auto mt-5 max-w-xl text-muted-foreground">
-                  Sign in with the account your administrator created for you, or open the admin
-                  console to set up workspaces and invite your team.
-                </p>
-                <div className="mt-9 flex flex-wrap justify-center gap-3">
-                  <Link
-                    to={signedIn ? "/" : "/login"}
-                    className="group inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-glow)] transition hover:bg-primary/90"
-                  >
-                    {primaryCta}
-                    <ArrowRight className="size-4 transition group-hover:translate-x-0.5" />
-                  </Link>
-                  <Link
-                    to="/admin/login"
-                    className="inline-flex h-12 items-center gap-2 rounded-xl border border-border bg-background/80 px-7 text-sm font-semibold backdrop-blur transition hover:bg-surface-hover"
-                  >
-                    <ShieldCheck className="size-4 text-primary" /> Admin console
-                  </Link>
-                </div>
+          <div
+            data-a="cta"
+            className="relative overflow-hidden rounded-[2rem] border border-primary/30 px-6 py-14 text-center sm:px-12 sm:py-20"
+          >
+            <div
+              aria-hidden
+              className="absolute inset-0 opacity-[0.16]"
+              style={{ background: "var(--gradient-brand)" }}
+            />
+            <div
+              aria-hidden
+              data-a="cta-glow"
+              className="absolute -inset-1/2 opacity-[0.18]"
+              style={{
+                background:
+                  "conic-gradient(from 0deg, transparent 0 60%, var(--primary) 75%, transparent 90%)",
+              }}
+            />
+            <div className="grid-backdrop absolute inset-0 opacity-40" aria-hidden />
+            <div className="relative">
+              <h2
+                data-a="heading"
+                className="mx-auto max-w-2xl font-display text-3xl font-bold leading-tight tracking-tight sm:text-5xl"
+              >
+                Your next process,{" "}
+                <span className="text-gradient-brand">
+                  designed by the time you finish typing it.
+                </span>
+              </h2>
+              <p className="mx-auto mt-5 max-w-xl text-muted-foreground">
+                Sign in with the account your administrator created for you, or open the admin
+                console to set up workspaces and invite your team.
+              </p>
+              <div className="mt-9 flex flex-wrap justify-center gap-3">
+                <Link
+                  to={signedIn ? "/" : "/login"}
+                  data-magnetic
+                  className="group inline-flex h-12 items-center gap-2 rounded-xl bg-primary px-7 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-glow)] transition hover:bg-primary/90"
+                >
+                  {primaryCta}
+                  <ArrowRight className="size-4 transition group-hover:translate-x-0.5" />
+                </Link>
+                <Link
+                  to="/admin/login"
+                  className="inline-flex h-12 items-center gap-2 rounded-xl border border-border bg-background/80 px-7 text-sm font-semibold backdrop-blur transition hover:bg-surface-hover"
+                >
+                  <ShieldCheck className="size-4 text-primary" /> Admin console
+                </Link>
               </div>
             </div>
-          </Reveal>
+          </div>
         </div>
       </section>
 

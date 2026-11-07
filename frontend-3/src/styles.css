@@ -561,3 +561,62 @@
 [data-selectable]:has([data-card-footer] button) > .select-box {
   bottom: 1.625rem;
 }
+
+/* ── Landing page motion (components/landing/motion.ts) ─────────────── */
+
+/* The hero waits for GSAP to take over, so its intro never flashes the
+   finished state first. If scripts never run, it appears after 2.5 s. */
+.landing-pending [data-a^="hero"] {
+  visibility: hidden;
+  animation: landing-unhide 0s linear 2.5s forwards;
+}
+@keyframes landing-unhide {
+  to {
+    visibility: visible;
+  }
+}
+
+/* Headings are split into words; gradient text keeps its gradient per word. */
+.text-gradient-brand .split-word {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* "How it works": the step at mid-screen lights up. */
+.flow-step.is-active .flow-dot {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  scale: 1.08;
+  box-shadow:
+    0 0 0 6px color-mix(in oklch, var(--primary) 18%, transparent),
+    var(--shadow-glow);
+}
+.flow-step.is-active .flow-body {
+  border-color: color-mix(in oklch, var(--primary) 45%, transparent);
+  box-shadow: var(--shadow-glow);
+}
+
+/* A soft light that follows the pointer across a card (--mx/--my from motion.ts). */
+.spotlight {
+  position: relative;
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(
+    420px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in oklch, var(--primary) 14%, transparent),
+    transparent 60%
+  );
+}
+.spotlight:hover::before {
+  opacity: 1;
+}

@@ -1,4 +1,3 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Activity,
   ArrowRight,
@@ -36,8 +35,9 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { gsap, useGSAP } from "./motion";
 import {
   ChatVisual,
   CodeVisual,
@@ -71,19 +71,26 @@ export function Section({
   return (
     <section id={id} className={cn("relative scroll-mt-20", className)}>
       <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-28">
-        <Reveal className={cn("max-w-3xl", center && "mx-auto text-center")}>
-          <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-            <span className="h-px w-6 bg-primary/60" /> {eyebrow}
-          </p>
-          <h2 className="mt-4 font-display text-3xl font-bold leading-[1.15] tracking-tight text-foreground sm:text-4xl">
+        <div className={cn("max-w-3xl", center && "mx-auto text-center")}>
+          <Reveal>
+            <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+              <span className="h-px w-6 bg-primary/60" /> {eyebrow}
+            </p>
+          </Reveal>
+          <h2
+            data-a="heading"
+            className="mt-4 font-display text-3xl font-bold leading-[1.15] tracking-tight text-foreground sm:text-4xl"
+          >
             {title}
           </h2>
           {intro ? (
-            <p className="mt-4 text-base leading-relaxed text-muted-foreground sm:text-lg">
-              {intro}
-            </p>
+            <Reveal delay={0.15}>
+              <p className="mt-4 text-base leading-relaxed text-muted-foreground sm:text-lg">
+                {intro}
+              </p>
+            </Reveal>
           ) : null}
-        </Reveal>
+        </div>
         <div className="mt-12 lg:mt-16">{children}</div>
       </div>
     </section>
@@ -108,7 +115,6 @@ const STRIP = [
 ];
 
 export function IntegrationStrip() {
-  const reduce = useReducedMotion();
   const items = [...STRIP, ...STRIP];
   return (
     <div className="relative overflow-hidden border-y border-border bg-background-elevated/50 py-5">
@@ -123,20 +129,17 @@ export function IntegrationStrip() {
         className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-background to-transparent"
         aria-hidden
       />
-      <motion.div
-        className="flex w-max gap-3"
-        {...(reduce ? {} : { animate: { x: ["0%", "-50%"] } })}
-        transition={{ duration: 40, ease: "linear", repeat: Infinity }}
-      >
+      <div data-a="marquee" className="flex w-max gap-3 will-change-transform">
         {items.map((name, i) => (
           <span
             key={`${name}-${i}`}
+            aria-hidden={i >= STRIP.length || undefined}
             className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-background px-4 py-1.5 text-sm text-foreground"
           >
             <span className="size-1.5 rounded-full bg-primary" /> {name}
           </span>
         ))}
-      </motion.div>
+      </div>
     </div>
   );
 }
@@ -173,28 +176,30 @@ export function ProblemSection() {
       eyebrow="The problem"
       title={
         <>
-          AI agents are easy to demo.
-          <br className="hidden sm:block" />{" "}
+          AI agents are easy to demo.{" "}
           <span className="text-gradient-brand">Hard to put to work.</span>
         </>
       }
       intro="Teams can get a model to answer questions in an afternoon. Turning that into a dependable business process — one that does real work, follows the rules and can be explained afterwards — is where projects stall."
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        {PROBLEMS.map((p, i) => (
-          <Reveal key={p.title} delay={i * 0.06}>
-            <div className="group relative h-full overflow-hidden rounded-2xl border border-border bg-background-elevated/60 p-6 transition hover:border-red/30">
-              <div
-                aria-hidden
-                className="absolute -right-10 -top-10 size-32 rounded-full bg-red/10 opacity-0 blur-2xl transition group-hover:opacity-100"
-              />
-              <span className="grid size-11 place-items-center rounded-xl border border-red/25 bg-red/10">
-                <p.icon className="size-5 text-red" />
-              </span>
-              <h3 className="mt-5 text-lg font-semibold text-foreground">{p.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{p.body}</p>
-            </div>
-          </Reveal>
+        {PROBLEMS.map((p) => (
+          <div
+            key={p.title}
+            data-a="card"
+            data-tilt
+            className="group spotlight relative h-full overflow-hidden rounded-2xl border border-border bg-background-elevated/60 p-6 transition-colors hover:border-red/30"
+          >
+            <div
+              aria-hidden
+              className="absolute -right-10 -top-10 size-32 rounded-full bg-red/10 opacity-0 blur-2xl transition group-hover:opacity-100"
+            />
+            <span className="grid size-11 place-items-center rounded-xl border border-red/25 bg-red/10">
+              <p.icon className="size-5 text-red" />
+            </span>
+            <h3 className="mt-5 text-lg font-semibold text-foreground">{p.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{p.body}</p>
+          </div>
         ))}
       </div>
     </Section>
@@ -243,27 +248,37 @@ export function SolutionSection() {
       }
       intro="Agentic AI Design Patterns turns a business goal into a running, governed AI workflow — designed, equipped, checked and observed by the platform itself, on Mistral."
     >
-      <div className="relative">
+      <div data-a="flow" className="relative">
+        {/* The track, and the line that draws along it as you scroll. */}
         <div
           aria-hidden
-          className="absolute bottom-6 left-[1.375rem] top-6 w-px bg-gradient-to-b from-primary via-primary/40 to-transparent sm:left-[1.625rem]"
+          className="absolute bottom-6 left-[1.375rem] top-6 w-px bg-border sm:left-[1.625rem]"
+        />
+        <div
+          aria-hidden
+          data-a="flow-line"
+          className="absolute bottom-6 left-[1.375rem] top-6 w-[2px] -translate-x-[0.5px] rounded-full bg-gradient-to-b from-primary via-primary to-primary/30 shadow-[0_0_14px_var(--primary)] sm:left-[1.625rem]"
         />
         <ol className="space-y-5">
           {FLOW.map((s, i) => (
-            <Reveal key={s.title} delay={i * 0.07}>
-              <li className="relative flex gap-5 sm:gap-7">
-                <span className="relative z-10 grid size-11 shrink-0 place-items-center rounded-full border border-primary/40 bg-background text-primary shadow-[var(--shadow-glow)] sm:size-[3.25rem]">
-                  <s.icon className="size-5" />
-                </span>
-                <div className="glass flex-1 rounded-2xl p-5 sm:p-6">
-                  <p className="font-mono text-[11px] font-bold text-primary">
-                    STEP {String(i + 1).padStart(2, "0")}
-                  </p>
-                  <h3 className="mt-1 text-lg font-semibold text-foreground">{s.title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
-                </div>
-              </li>
-            </Reveal>
+            <li key={s.title} data-a="flow-step" className="flow-step relative flex gap-5 sm:gap-7">
+              <span
+                data-a="flow-dot"
+                className="flow-dot relative z-10 grid size-11 shrink-0 place-items-center rounded-full border border-primary/40 bg-background text-primary transition-all duration-500 sm:size-[3.25rem]"
+              >
+                <s.icon className="size-5" />
+              </span>
+              <div
+                data-a="flow-body"
+                className="flow-body glass flex-1 rounded-2xl p-5 transition-all duration-500 sm:p-6"
+              >
+                <p className="font-mono text-[11px] font-bold text-primary">
+                  STEP {String(i + 1).padStart(2, "0")}
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-foreground">{s.title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+              </div>
+            </li>
           ))}
         </ol>
       </div>
@@ -279,33 +294,36 @@ function Bento({
   body,
   visual,
   className,
-  delay = 0,
 }: {
   icon: LucideIcon;
   title: string;
   body: string;
   visual?: ReactNode;
   className?: string;
-  delay?: number;
 }) {
   return (
-    <Reveal delay={delay} className={className}>
-      <div className="group glass relative flex h-full flex-col overflow-hidden rounded-2xl p-6 transition hover:border-primary/35">
-        <div
-          aria-hidden
-          className="absolute -right-16 -top-16 size-40 rounded-full opacity-0 blur-3xl transition duration-500 group-hover:opacity-30"
-          style={{ background: "var(--gradient-brand)" }}
-        />
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-xl border border-border bg-secondary transition group-hover:border-primary/40">
-            <Icon className="size-5 text-primary" />
-          </span>
-          <h3 className="text-base font-semibold text-foreground">{title}</h3>
-        </div>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{body}</p>
-        {visual ? <div className="mt-5 flex-1">{visual}</div> : null}
+    <div
+      data-a="bento"
+      data-tilt
+      className={cn(
+        "group spotlight glass relative flex h-full flex-col overflow-hidden rounded-2xl p-6 transition-colors hover:border-primary/35",
+        className,
+      )}
+    >
+      <div
+        aria-hidden
+        className="absolute -right-16 -top-16 size-40 rounded-full opacity-0 blur-3xl transition duration-500 group-hover:opacity-30"
+        style={{ background: "var(--gradient-brand)" }}
+      />
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 place-items-center rounded-xl border border-border bg-secondary transition group-hover:border-primary/40">
+          <Icon className="size-5 text-primary" />
+        </span>
+        <h3 className="text-base font-semibold text-foreground">{title}</h3>
       </div>
-    </Reveal>
+      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{body}</p>
+      {visual ? <div className="mt-5 flex-1">{visual}</div> : null}
+    </div>
   );
 }
 
@@ -331,7 +349,6 @@ export function FeaturesSection() {
         />
         <Bento
           icon={Wrench}
-          delay={0.05}
           title="Tools written on demand"
           body="Missing capabilities are generated as Python tools and must pass lint, structure checks and a sandboxed test before they're used. Failures are fixed automatically."
           visual={<CodeVisual />}
@@ -344,14 +361,12 @@ export function FeaturesSection() {
         />
         <Bento
           icon={Network}
-          delay={0.05}
           title="Knowledge & graph RAG"
           body="Libraries, distilled best-practice guidance, industry processes and a knowledge graph ground every agent in how your business actually works."
           visual={<GraphVisual />}
         />
         <Bento
           icon={UserCheck}
-          delay={0.1}
           title="Rules, gates & human review"
           body="Always-on and targeted rules, tool safety checks, and review steps that pause a workflow until a person approves, corrects or rejects."
           visual={<ReviewVisual />}
@@ -365,7 +380,6 @@ export function FeaturesSection() {
         />
         <Bento
           icon={Activity}
-          delay={0.05}
           title="Full observability"
           body="Every run, step, rule verdict, tool call and model call is traced to Mistral Observability and readable on the Logs page."
           visual={<TraceVisual />}
@@ -377,13 +391,11 @@ export function FeaturesSection() {
         />
         <Bento
           icon={Server}
-          delay={0.05}
           title="Deploy to your servers"
           body="Package a workflow or push a tool to a VM, cloud instance or HTTP endpoint, start its worker and run it there — from the same console."
         />
         <Bento
           icon={Zap}
-          delay={0.1}
           title="Runs that never get lost"
           body="Long builds run in the background with a fair queue per workspace, resume their progress view after a refresh, and are cleaned up if interrupted."
         />
@@ -535,8 +547,66 @@ const USE_CASES: {
 
 export function UseCasesSection() {
   const [active, setActive] = useState(USE_CASES[0]!.id);
-  const reduce = useReducedMotion();
+  const panel = useRef<HTMLDivElement>(null);
+  const tabs = useRef<HTMLDivElement>(null);
+  const first = useRef(true);
   const uc = USE_CASES.find((u) => u.id === active) ?? USE_CASES[0]!;
+
+  // Each tab change choreographs the new content in: the goal, then the
+  // workflow chips one by one, then the two result cards.
+  useGSAP(
+    () => {
+      if (first.current) {
+        first.current = false;
+        return;
+      }
+      if (!panel.current || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+      tl.from(panel.current.querySelector("[data-uc='goal']"), {
+        autoAlpha: 0,
+        y: 18,
+        duration: 0.5,
+      })
+        .from(
+          panel.current.querySelectorAll("[data-uc='step']"),
+          { autoAlpha: 0, x: -18, duration: 0.4, stagger: 0.07 },
+          "-=0.25",
+        )
+        .from(
+          panel.current.querySelectorAll("[data-uc='box']"),
+          { autoAlpha: 0, y: 24, scale: 0.97, duration: 0.55, stagger: 0.1 },
+          "-=0.35",
+        );
+    },
+    { dependencies: [active], scope: panel },
+  );
+
+  // The highlight pill slides to the selected tab.
+  useGSAP(
+    () => {
+      const wrap = tabs.current;
+      const pill = wrap?.querySelector<HTMLElement>("[data-uc='pill']");
+      const btn = wrap?.querySelector<HTMLElement>(`[data-tab='${active}']`);
+      if (!wrap || !pill || !btn) return;
+      const place = (duration: number) =>
+        gsap.to(pill, {
+          x: btn.offsetLeft,
+          y: btn.offsetTop,
+          width: btn.offsetWidth,
+          height: btn.offsetHeight,
+          duration,
+          ease: "expo.out",
+        });
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      place(reduce ? 0 : 0.5);
+      // Tabs wrap differently at other widths: follow the button.
+      const onResize = () => place(0);
+      window.addEventListener("resize", onResize);
+      return () => window.removeEventListener("resize", onResize);
+    },
+    { dependencies: [active], scope: tabs },
+  );
+
   return (
     <Section
       id="use-cases"
@@ -549,88 +619,101 @@ export function UseCasesSection() {
       }
       intro="Industry catalogs for banking, lending, insurance, healthcare and a dozen more sectors give the platform a head start on how each process works."
     >
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Use cases">
-        {USE_CASES.map((u) => (
-          <button
-            key={u.id}
-            type="button"
-            role="tab"
-            aria-selected={u.id === active}
-            onClick={() => setActive(u.id)}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition",
-              u.id === active
-                ? "border-primary/50 bg-primary/15 text-foreground shadow-[var(--shadow-glow)]"
-                : "border-border text-muted-foreground hover:border-border-strong hover:text-foreground",
-            )}
-          >
-            <u.icon className={cn("size-4", u.id === active && "text-primary")} />
-            {u.label}
-          </button>
-        ))}
-      </div>
+      <Reveal>
+        <div
+          ref={tabs}
+          className="relative flex flex-wrap gap-2"
+          role="tablist"
+          aria-label="Use cases"
+        >
+          <span
+            data-uc="pill"
+            aria-hidden
+            className="absolute left-0 top-0 rounded-full border border-primary/50 bg-primary/15 shadow-[var(--shadow-glow)]"
+          />
+          {USE_CASES.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              role="tab"
+              data-tab={u.id}
+              aria-selected={u.id === active}
+              onClick={() => setActive(u.id)}
+              className={cn(
+                "relative z-10 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors",
+                u.id === active
+                  ? "border-transparent text-foreground"
+                  : "border-border text-muted-foreground hover:border-border-strong hover:text-foreground",
+              )}
+            >
+              <u.icon className={cn("size-4", u.id === active && "text-primary")} />
+              {u.label}
+            </button>
+          ))}
+        </div>
+      </Reveal>
 
-      <div className="mt-6">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={uc.id}
-            initial={reduce ? false : { opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduce ? {} : { opacity: 0, y: -6 }}
-            transition={{ duration: 0.3 }}
-            className="glass-elevated grid gap-8 overflow-hidden rounded-3xl p-6 sm:p-8 lg:grid-cols-[1.1fr_1fr]"
-          >
-            <div>
-              <p className="technical-label">The goal you type</p>
-              <p className="mt-2 font-display text-xl font-bold leading-snug text-foreground sm:text-2xl">
-                “{uc.goal}”
+      <Reveal delay={0.1} className="mt-6">
+        <div
+          ref={panel}
+          className="glass-elevated grid gap-8 overflow-hidden rounded-3xl p-6 sm:p-8 lg:grid-cols-[1.1fr_1fr]"
+        >
+          <div>
+            <p className="technical-label">The goal you type</p>
+            <p
+              data-uc="goal"
+              className="mt-2 font-display text-xl font-bold leading-snug text-foreground sm:text-2xl"
+            >
+              “{uc.goal}”
+            </p>
+            <p className="technical-label mt-8">The workflow it designs</p>
+            <ol className="mt-3 flex flex-wrap items-center gap-2">
+              {uc.steps.map((s, i) => (
+                <li key={`${uc.id}-${s}`} data-uc="step" className="flex items-center gap-2">
+                  <span className="rounded-lg border border-border bg-background-elevated px-3 py-1.5 text-xs text-foreground">
+                    <span className="mr-1.5 font-mono text-[10px] text-primary">{i + 1}</span>
+                    {s}
+                  </span>
+                  {i < uc.steps.length - 1 ? (
+                    <ArrowRight className="size-3.5 text-muted-foreground" />
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
+            <div
+              data-uc="box"
+              className="rounded-2xl border border-border bg-background-elevated/70 p-5"
+            >
+              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Boxes className="size-4 text-primary" /> What the platform builds
               </p>
-              <p className="technical-label mt-8">The workflow it designs</p>
-              <ol className="mt-3 flex flex-wrap items-center gap-2">
-                {uc.steps.map((s, i) => (
-                  <li key={s} className="flex items-center gap-2">
-                    <span className="rounded-lg border border-border bg-background-elevated px-3 py-1.5 text-xs text-foreground">
-                      <span className="mr-1.5 font-mono text-[10px] text-primary">{i + 1}</span>
-                      {s}
-                    </span>
-                    {i < uc.steps.length - 1 ? (
-                      <ArrowRight className="size-3.5 text-muted-foreground" />
-                    ) : null}
+              <ul className="mt-3 space-y-2">
+                {uc.builds.map((b) => (
+                  <li key={b} className="flex gap-2 text-sm text-muted-foreground">
+                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
+                    {b}
                   </li>
                 ))}
-              </ol>
+              </ul>
             </div>
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-              <div className="rounded-2xl border border-border bg-background-elevated/70 p-5">
-                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <Boxes className="size-4 text-primary" /> What the platform builds
-                </p>
-                <ul className="mt-3 space-y-2">
-                  {uc.builds.map((b) => (
-                    <li key={b} className="flex gap-2 text-sm text-muted-foreground">
-                      <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
-                      {b}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="rounded-2xl border border-emerald/25 bg-emerald/5 p-5">
-                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <CheckCircle2 className="size-4 text-emerald" /> What your team gets
-                </p>
-                <ul className="mt-3 space-y-2">
-                  {uc.outcomes.map((o) => (
-                    <li key={o} className="flex gap-2 text-sm text-muted-foreground">
-                      <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald" />
-                      {o}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            <div data-uc="box" className="rounded-2xl border border-emerald/25 bg-emerald/5 p-5">
+              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <CheckCircle2 className="size-4 text-emerald" /> What your team gets
+              </p>
+              <ul className="mt-3 space-y-2">
+                {uc.outcomes.map((o) => (
+                  <li key={o} className="flex gap-2 text-sm text-muted-foreground">
+                    <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald" />
+                    {o}
+                  </li>
+                ))}
+              </ul>
             </div>
-          </motion.div>
-        </AnimatePresence>
-      </div>
+          </div>
+        </div>
+      </Reveal>
     </Section>
   );
 }
@@ -705,28 +788,32 @@ export function IntegrationsSection() {
       intro="Built natively on Mistral AI, open to the tools you already have through the Model Context Protocol and connectors, and deployable wherever your workloads live."
     >
       <div className="grid gap-4 md:grid-cols-2">
-        {INTEGRATIONS.map((g, gi) => (
-          <Reveal key={g.title} delay={gi * 0.06}>
-            <div className="glass h-full rounded-2xl p-6">
-              <div className="flex items-center gap-3">
-                <span className="grid size-10 place-items-center rounded-xl border border-border bg-secondary">
-                  <g.icon className={cn("size-5", g.tone)} />
-                </span>
-                <h3 className="text-lg font-semibold text-foreground">{g.title}</h3>
-              </div>
-              <ul className="mt-5 divide-y divide-border">
-                {g.items.map((it) => (
-                  <li
-                    key={it.name}
-                    className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2.5"
-                  >
-                    <span className="text-sm font-medium text-foreground">{it.name}</span>
-                    <span className="text-xs text-muted-foreground">{it.what}</span>
-                  </li>
-                ))}
-              </ul>
+        {INTEGRATIONS.map((g) => (
+          <div
+            key={g.title}
+            data-a="side-card"
+            data-tilt
+            className="spotlight glass h-full rounded-2xl p-6"
+          >
+            <div className="flex items-center gap-3">
+              <span className="grid size-10 place-items-center rounded-xl border border-border bg-secondary">
+                <g.icon className={cn("size-5", g.tone)} />
+              </span>
+              <h3 className="text-lg font-semibold text-foreground">{g.title}</h3>
             </div>
-          </Reveal>
+            <ul className="mt-5 divide-y divide-border">
+              {g.items.map((it) => (
+                <li
+                  key={it.name}
+                  data-a="row"
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2.5"
+                >
+                  <span className="text-sm font-medium text-foreground">{it.name}</span>
+                  <span className="text-xs text-muted-foreground">{it.what}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         ))}
       </div>
     </Section>
@@ -766,32 +853,46 @@ const TRUST: { icon: LucideIcon; title: string; body: string }[] = [
 
 export function SecuritySection() {
   return (
-    <section id="security" className="relative scroll-mt-20 border-y border-border">
-      <div className="grid-backdrop absolute inset-0 opacity-30" aria-hidden />
+    <section id="security" className="relative scroll-mt-20 overflow-hidden border-y border-border">
+      <div
+        data-a="parallax"
+        data-speed="0.25"
+        className="grid-backdrop absolute inset-0 opacity-30"
+        aria-hidden
+      />
       <div className="relative mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.4fr] lg:py-24">
-        <Reveal>
-          <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-            <span className="h-px w-6 bg-primary/60" /> Security & governance
-          </p>
-          <h2 className="mt-4 font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+        <div>
+          <Reveal>
+            <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+              <span className="h-px w-6 bg-primary/60" /> Security & governance
+            </p>
+          </Reveal>
+          <h2
+            data-a="heading"
+            className="mt-4 font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl"
+          >
             Access you can explain <span className="text-gradient-brand">to an auditor</span>
           </h2>
-          <p className="mt-4 text-muted-foreground">
-            Governance isn't a plug-in here. Roles, rules, reviews, secrets and traces are part of
-            how every agent and workflow is built and run.
-          </p>
-        </Reveal>
+          <Reveal delay={0.15}>
+            <p className="mt-4 text-muted-foreground">
+              Governance isn't a plug-in here. Roles, rules, reviews, secrets and traces are part of
+              how every agent and workflow is built and run.
+            </p>
+          </Reveal>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          {TRUST.map((t, i) => (
-            <Reveal key={t.title} delay={i * 0.04}>
-              <div className="flex h-full gap-3 rounded-xl border border-border bg-background/80 p-4">
-                <t.icon className="mt-0.5 size-5 shrink-0 text-primary" />
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{t.title}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{t.body}</p>
-                </div>
+          {TRUST.map((t) => (
+            <div
+              key={t.title}
+              data-a="card"
+              className="flex h-full gap-3 rounded-xl border border-border bg-background/80 p-4"
+            >
+              <t.icon className="mt-0.5 size-5 shrink-0 text-primary" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">{t.title}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t.body}</p>
               </div>
-            </Reveal>
+            </div>
           ))}
         </div>
       </div>
@@ -828,14 +929,12 @@ export function PersonasStrip() {
   return (
     <div className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {PERSONAS.map((p, i) => (
-          <Reveal key={p.role} delay={i * 0.05}>
-            <div className="h-full rounded-2xl border border-border p-5">
-              <p.icon className="size-5 text-primary" />
-              <p className="mt-3 text-sm font-semibold text-foreground">{p.role}</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.body}</p>
-            </div>
-          </Reveal>
+        {PERSONAS.map((p) => (
+          <div key={p.role} data-a="card" className="h-full rounded-2xl border border-border p-5">
+            <p.icon className="size-5 text-primary" />
+            <p className="mt-3 text-sm font-semibold text-foreground">{p.role}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{p.body}</p>
+          </div>
         ))}
       </div>
     </div>
