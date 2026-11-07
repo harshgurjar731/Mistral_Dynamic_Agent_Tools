@@ -327,11 +327,19 @@ def ensure_default_workspace() -> Optional[str]:
     It uses the backend's own MISTRAL_API_KEY, so its key is changed on the
     Settings page rather than here, and it cannot be disabled or deleted.
     """
+    import os
+
     from app.config import settings
     from app.auth import scoping
 
     with _db() as db:
         ws = db.query(Workspace).filter(Workspace.is_default.is_(True)).first()
+        if os.environ.get("APP_WORKSPACE_ID"):
+            # A per-workspace workflow worker: its MISTRAL_API_KEY is its own
+            # workspace's, not the platform's, so it must not create or
+            # "correct" the Default workspace — only learn which one it is.
+            scoping.set_default_workspace(ws.id if ws else None)
+            return ws.id if ws else None
         if ws is None:
             name = "Default"
             if db.query(Workspace).filter(Workspace.name == name).first():

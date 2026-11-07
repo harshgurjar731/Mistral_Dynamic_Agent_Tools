@@ -3,7 +3,10 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  Clock,
   Copy,
+  Cpu,
+  KeyRound,
   Link2,
   Loader2,
   Plus,
@@ -11,7 +14,7 @@ import {
   XCircle,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   adminApi,
@@ -20,6 +23,7 @@ import {
   type KeyStatus,
   type MembershipInput,
   type UserStatus,
+  type WorkspaceWorker,
 } from "@/api/auth";
 import {
   AlertDialog,
@@ -36,6 +40,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -186,6 +191,24 @@ export function KeyStatusBadge({ status }: { status: KeyStatus }) {
   );
 }
 
+export function WorkerBadge({ worker }: { worker?: WorkspaceWorker | undefined }) {
+  if (!worker || !worker.enabled) return null;
+  const state = worker.stale && worker.state === "running" ? "stopped" : worker.state;
+  const map: Record<string, [string, string]> = {
+    running: ["border-emerald/30 bg-emerald/10 text-emerald", "Worker running"],
+    starting: ["border-blue/30 bg-blue/10 text-blue", "Worker starting"],
+    crashed: ["border-red/30 bg-red/10 text-red", "Worker crashed"],
+    stopped: ["border-amber/30 bg-amber/10 text-amber", "Worker stopped"],
+    idle: ["border-border bg-secondary text-muted-foreground", "No published workflows"],
+  };
+  const [tone, label] = map[state] ?? map["idle"]!;
+  return (
+    <span className={cn(PILL, tone)}>
+      <Cpu className="size-3" /> {label}
+    </span>
+  );
+}
+
 export function Chip({ children, muted }: { children: ReactNode; muted?: boolean }) {
   return (
     <span
@@ -261,6 +284,36 @@ export function linkUrl(link: IssuedLink): string {
   return `${window.location.origin}${link.path}`;
 }
 
+/**
+ * Copy text even where the async clipboard API is missing — it only exists
+ * on HTTPS and localhost, and the platform may be served over plain HTTP.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to the legacy path */
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(area);
+  return ok;
+}
+
 export function LinkDialog({
   link,
   who,
@@ -271,43 +324,79 @@ export function LinkDialog({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [link?.token]);
   if (!link) return null;
   const url = linkUrl(link);
+  const invite = link.kind === "invite";
+
+  async function copy() {
+    if (await copyText(url)) {
+      setCopied(true);
+      toast.success("Link copied");
+    } else {
+      toast.error("Couldn't copy automatically — select the link and copy it.");
+    }
+  }
+
   return (
     <Dialog open onOpenChange={(v) => (!v ? onClose() : null)}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Link2 className="size-4 text-primary" />
-            {link.kind === "invite" ? "Invitation link" : "Password reset link"}
-          </DialogTitle>
-          <DialogDescription>
-            Send this to {who} through a channel you trust. It works once and expires{" "}
-            {new Date(link.expires_at).toLocaleString()}. It won't be shown again — issuing a new
-            one cancels this one.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center gap-2 rounded-md border border-border bg-background-elevated p-2">
-          <code className="min-w-0 flex-1 truncate px-1 font-mono text-xs text-foreground">
-            {url}
-          </code>
-          <Button
-            size="sm"
-            onClick={async () => {
-              await navigator.clipboard.writeText(url);
-              setCopied(true);
-              toast.success("Link copied");
-            }}
-          >
-            {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
+      <DialogContent className="gap-5 sm:max-w-lg">
+        <div className="flex items-start gap-3.5">
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-primary/30 bg-primary/10">
+            {invite ? (
+              <Link2 className="size-5 text-primary" />
+            ) : (
+              <KeyRound className="size-5 text-primary" />
+            )}
+          </span>
+          <DialogHeader className="min-w-0 flex-1">
+            <DialogTitle>
+              {invite ? "Invitation link ready" : "Password reset link ready"}
+            </DialogTitle>
+            <DialogDescription>
+              Send it to <span className="font-medium text-foreground">{who}</span> through a
+              channel you trust — chat, email or in person.
+            </DialogDescription>
+          </DialogHeader>
         </div>
-        <div className="flex justify-end">
+
+        <div className="overflow-hidden rounded-lg border border-border bg-background-elevated">
+          <p className="technical-label px-3.5 pt-3">One-time link</p>
+          <p className="select-all break-all px-3.5 pb-3.5 pt-1.5 font-mono text-xs leading-relaxed text-foreground">
+            {url}
+          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-secondary/40 px-3.5 py-2.5">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock className="size-3.5" />
+              Expires {new Date(link.expires_at).toLocaleString()}
+            </span>
+            <Button size="sm" onClick={() => void copy()} className="min-w-[104px]">
+              {copied ? <Check /> : <Copy />}
+              {copied ? "Copied" : "Copy link"}
+            </Button>
+          </div>
+        </div>
+
+        <ul className="space-y-2 text-xs text-muted-foreground">
+          {[
+            invite
+              ? "Opening it lets them choose a password and signs them in."
+              : "Opening it lets them choose a new password; their other sessions end.",
+            "It works once. This is the only time it is shown.",
+            "Issuing another link cancels this one.",
+          ].map((t) => (
+            <li key={t} className="flex gap-2">
+              <span className="mt-1.5 size-1 shrink-0 rounded-full bg-muted-foreground" />
+              {t}
+            </li>
+          ))}
+        </ul>
+
+        <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Done
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -357,7 +446,7 @@ export function MembershipEditor({
                 onChange(value.map((x, j) => (j === i ? { ...x, workspace_id: v } : x)))
               }
             >
-              <SelectTrigger className="h-9 flex-1">
+              <SelectTrigger className="h-9 min-w-0 flex-1">
                 <SelectValue placeholder="Workspace" />
               </SelectTrigger>
               <SelectContent>
@@ -380,7 +469,7 @@ export function MembershipEditor({
                 onChange(value.map((x, j) => (j === i ? { ...x, role_id: v } : x)))
               }
             >
-              <SelectTrigger className="h-9 w-44">
+              <SelectTrigger className="h-9 w-36 shrink-0 sm:w-44">
                 <SelectValue placeholder="Role" />
               </SelectTrigger>
               <SelectContent>

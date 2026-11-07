@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { adminApi, authKeys } from "@/api/auth";
 import { errorMessage } from "@/api/client";
-import { AdminPage, KeyStatusBadge, PageHeader } from "@/components/admin/parts";
+import { AdminPage, KeyStatusBadge, PageHeader, WorkerBadge } from "@/components/admin/parts";
 import { FormError } from "@/components/auth/AuthParts";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,6 +112,7 @@ function WorkspacesPage() {
                   </span>
                 </span>
                 <KeyStatusBadge status={w.key_status} />
+                <WorkerBadge worker={w.worker} />
                 <span>
                   {w.members} member{w.members === 1 ? "" : "s"}
                 </span>

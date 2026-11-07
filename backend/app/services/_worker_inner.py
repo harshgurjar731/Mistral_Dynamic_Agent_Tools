@@ -70,6 +70,7 @@ os.environ.setdefault("MISTRAL_WORKER__WORKER__ENABLE_CONFIG_DISCOVERY", "false"
 os.environ["MISTRAL_WORKER_TASK_QUEUE"] = _deployment
 
 import glob
+import json
 import asyncio
 import logging
 import importlib
@@ -130,6 +131,18 @@ def _is_activity_fn(obj) -> bool:
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
 
+def _assigned_files():
+    """The workflow files this worker serves, or None for all of them."""
+    raw = os.environ.get("WORKER_WORKFLOW_FILES", "").strip()
+    if not raw:
+        return None
+    try:
+        return set(json.loads(raw))
+    except ValueError:
+        log.error("WORKER_WORKFLOW_FILES is not a JSON list; loading every workflow.")
+        return None
+
+
 def discover_workflows_and_activities(workflows_dir: str):
     """
     Import every workflow_*.py and return (workflow_classes, activity_fns).
@@ -142,8 +155,14 @@ def discover_workflows_and_activities(workflows_dir: str):
     if abs_dir not in sys.path:
         sys.path.insert(0, abs_dir)
 
+    # A per-workspace worker loads only its workspace's workflows; the
+    # supervisor lists them (app.auth.workers.files_by_workspace).
+    only = _assigned_files()
+
     loaded_modules = []
     for py_file in sorted(glob.glob(os.path.join(abs_dir, "workflow_*.py"))):
+        if only is not None and os.path.basename(py_file) not in only:
+            continue
         module_name = Path(py_file).stem
         try:
             spec = importlib.util.spec_from_file_location(module_name, py_file)
@@ -211,6 +230,7 @@ async def run() -> None:
     log.info("  deployment      : %s", deployment)
     log.info("  temporal queue  : %s", os.environ.get("MISTRAL_WORKER__TEMPORAL__TASK_QUEUE"))
     log.info("  workflows dir   : %s", workflows_dir)
+    log.info("  workspace       : %s", os.environ.get("APP_WORKSPACE_ID") or "(platform)")
     log.info("=" * 60)
 
     # Step spans, rule verdicts, tool calls and model calls made by this
@@ -233,6 +253,11 @@ async def run() -> None:
         from app.db_setup import prepare_database
         prepare_database()
         log.info("Database ready.")
+        # Everything this process reads and writes — reviews, runs, rules,
+        # vault entries, Mistral calls — belongs to its workspace.
+        from app.auth.context import set_process_workspace
+
+        set_process_workspace(os.environ.get("APP_WORKSPACE_ID") or None)
     except Exception as e:
         log.error("Failed to prepare the database: %s", e)
         sys.exit(1)

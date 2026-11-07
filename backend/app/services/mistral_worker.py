@@ -25,17 +25,28 @@ CORRECT FIX:
 
 ARCHITECTURE:
     mistral_worker.py  (THIS FILE — the SUPERVISOR)
-        - Watches the workflows dir for .py changes via watchfiles
-        - On change: terminates the child subprocess, spawns a new one
+        - Runs one child per platform workspace that has published workflows,
+          each on that workspace's Mistral key and its own task queue
+          (app.auth.workers). A process can only hold one key: the SDK reads
+          the key and queue from process-wide env vars.
+        - Re-checks the workspaces every RECONCILE_SECONDS: starts, stops or
+          restarts children as workspaces are added, disabled, re-keyed or
+          publish their first workflow.
+        - Watches the workflows dir for .py changes via watchfiles and
+          restarts only the children whose workflows changed.
+        - Restarts a crashed child with backoff, and writes every child's
+          state to <workflows dir>/.worker_status.json for the admin console.
 
     _worker_inner.py   (the CHILD — one fresh process per reload)
-        - Discovers and loads all workflow_*.py files
+        - Loads only its workspace's workflow_*.py files
         - Calls workflows.run_worker() once and runs until terminated
         - Exits cleanly on SIGTERM (or Windows terminate())
 """
 
 import os
 import sys
+import json
+import time
 import signal
 import asyncio
 import logging
@@ -94,18 +105,22 @@ async def _kill_process(proc: asyncio.subprocess.Process) -> None:
         pass  # process already gone
 
 
-async def _spawn_worker(
-    workflows_dir: str,
-    deployment: str,
-) -> asyncio.subprocess.Process:
+RECONCILE_SECONDS = 30.0
+_BACKOFF = (5.0, 15.0, 30.0, 60.0, 120.0, 300.0)
+
+
+async def _spawn_worker(workflows_dir: str, spec, key: str) -> asyncio.subprocess.Process:
     """
-    Spawn _worker_inner.py as a fresh subprocess.
+    Spawn _worker_inner.py for one workspace.
     Fresh process = clean SDK global activity registry = no duplicates.
     """
     env = {
         **os.environ,
         "WORKFLOWS_DIR": workflows_dir,
-        "DEPLOYMENT_NAME": deployment,
+        "DEPLOYMENT_NAME": spec.deployment,
+        "MISTRAL_API_KEY": key,
+        "APP_WORKSPACE_ID": spec.workspace_id,
+        "WORKER_WORKFLOW_FILES": json.dumps(list(spec.files)),
     }
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -114,19 +129,32 @@ async def _spawn_worker(
         stdout=None,   # inherit — logs appear in the same terminal
         stderr=None,
     )
-    log.info("Worker subprocess started (pid=%d).", proc.pid)
+    log.info("Worker for workspace %r started (pid=%d, queue=%s, %d workflow file(s)).",
+             spec.workspace_name, proc.pid, spec.deployment, len(spec.files))
     return proc
+
+
+def _desired(workflows_dir: str):
+    """What should run now, and each workspace's key."""
+    from app.auth import store, workers
+
+    workspaces = store.list_workspaces()
+    keys = {ws["id"]: store.workspace_key(ws["id"]) for ws in workspaces
+            if not ws["disabled"]}
+    files = workers.files_by_workspace(workflows_dir)
+    return workers.desired_workers(workspaces, keys, files), keys
+
+
+class _Child:
+    def __init__(self, spec, proc):
+        self.spec = spec
+        self.proc = proc
+        self.started = time.time()
 
 
 # ── Supervisor main loop ──────────────────────────────────────────────────────
 async def main() -> None:
-    api_key = os.environ.get("MISTRAL_API_KEY")
-    if not api_key:
-        raise EnvironmentError("MISTRAL_API_KEY environment variable is not set.")
-
-    deployment = os.environ.get("DEPLOYMENT_NAME", "default")
-    os.environ["DEPLOYMENT_NAME"] = deployment
-    log.info("Starting Mistral worker supervisor — deployment: '%s'", deployment)
+    from app.auth import workers
 
     workflows_dir = os.path.abspath(
         os.environ.get(
@@ -135,55 +163,133 @@ async def main() -> None:
         )
     )
     os.makedirs(workflows_dir, exist_ok=True)
-    # FIX: write resolved path back to os.environ so the subprocess
-    # inherits the correct absolute value via {**os.environ} in _spawn_worker.
+    # Write the resolved path back so every child inherits the absolute value.
     os.environ["WORKFLOWS_DIR"] = workflows_dir
+    log.info("Starting Mistral worker supervisor — base queue: '%s'", workers.base_deployment())
     log.info("Watching workflows directory: %s", workflows_dir)
 
+    # The workspaces live in the backend's database.
+    from app.db_setup import prepare_database
+
+    prepare_database(seed_rules=False)
+
     stop_event = asyncio.Event()
+    wake = asyncio.Event()
     _register_shutdown(stop_event)
 
-    current_proc: asyncio.subprocess.Process | None = None
+    children: dict[str, _Child] = {}
+    statuses: dict[str, workers.WorkerStatus] = {}
+    failures: dict[str, int] = {}
+    retry_at: dict[str, float] = {}
+    to_restart: set[str] = set()
 
-    async def restart_worker() -> None:
-        nonlocal current_proc
-        if current_proc is not None:
-            log.info("Stopping old worker (pid=%d)...", current_proc.pid)
-            await _kill_process(current_proc)
-        current_proc = await _spawn_worker(workflows_dir, deployment)
+    async def stop(ws_id: str, reason: str) -> None:
+        child = children.pop(ws_id, None)
+        if child is not None:
+            log.info("Stopping worker for %r (%s).", child.spec.workspace_name, reason)
+            await _kill_process(child.proc)
 
-    try:
-        from watchfiles import awatch
+    async def reconcile() -> None:
+        try:
+            desired, keys = await asyncio.to_thread(_desired, workflows_dir)
+        except Exception as e:  # noqa: BLE001 — keep what runs; try again later
+            log.error("Could not read workspaces: %s", e)
+            return
+        # Gone, disabled, re-keyed or with different workflows: stop.
+        for ws_id in list(children):
+            spec = desired.get(ws_id)
+            if spec is None:
+                await stop(ws_id, "no longer needed")
+            elif not spec.same_process(children[ws_id].spec) or ws_id in to_restart:
+                await stop(ws_id, "workflows or key changed")
+        to_restart.clear()
+        # Crashed children.
+        now = time.time()
+        for ws_id, child in list(children.items()):
+            if child.proc.returncode is not None:
+                code = child.proc.returncode
+                children.pop(ws_id)
+                n = failures[ws_id] = failures.get(ws_id, 0) + 1
+                # A worker that ran a good while before dying starts the count over.
+                if now - child.started > 600:
+                    failures[ws_id] = n = 1
+                delay = _BACKOFF[min(n - 1, len(_BACKOFF) - 1)]
+                retry_at[ws_id] = now + delay
+                st = statuses.setdefault(ws_id, workers.WorkerStatus(ws_id))
+                st.state, st.pid, st.last_exit_code = "crashed", None, code
+                st.last_error = f"Exited with code {code}; retrying in {int(delay)}s."
+                log.warning("Worker for %r exited (%s); retrying in %ds.",
+                            child.spec.workspace_name, code, delay)
+        # Start what should run and isn't.
+        for ws_id, spec in desired.items():
+            if ws_id in children or retry_at.get(ws_id, 0) > now:
+                continue
+            st = statuses.setdefault(ws_id, workers.WorkerStatus(ws_id))
+            try:
+                proc = await _spawn_worker(workflows_dir, spec, keys.get(ws_id) or "")
+            except Exception as e:  # noqa: BLE001
+                st.state, st.last_error = "crashed", f"Could not start: {e}"
+                retry_at[ws_id] = now + _BACKOFF[-1]
+                continue
+            children[ws_id] = _Child(spec, proc)
+            if st.started_at:
+                st.restarts += 1
+            st.state, st.pid, st.started_at = "running", proc.pid, time.time()
+            st.last_error = None
+        # Report.
+        for ws_id in list(statuses):
+            st = statuses[ws_id]
+            spec = desired.get(ws_id) or (children[ws_id].spec if ws_id in children else None)
+            if spec is not None:
+                st.workspace_name, st.deployment, st.workflows = (
+                    spec.workspace_name, spec.deployment, len(spec.files))
+            if ws_id not in desired and ws_id not in children:
+                st.state, st.pid = "stopped", None
+                failures.pop(ws_id, None)
+                retry_at.pop(ws_id, None)
+        workers.write_status(statuses, directory=workflows_dir)
 
+    async def periodic() -> None:
+        while not stop_event.is_set():
+            await reconcile()
+            wake.clear()
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=RECONCILE_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+
+    async def watch() -> None:
+        try:
+            from watchfiles import awatch
+        except ImportError:
+            log.warning("watchfiles not installed — running without hot-reload. "
+                        "Install it with: pip install watchfiles")
+            return
         log.info("Hot-reload enabled — watching '%s' for .py changes.", workflows_dir)
-        await restart_worker()
-
         async for changes in awatch(workflows_dir, stop_event=stop_event):
-            py_changes = [path for _, path in changes if path.endswith(".py")]
-            if py_changes:
-                log.info(
-                    "Detected changes: %s — restarting worker subprocess.", py_changes
-                )
-                await restart_worker()
+            names = {os.path.basename(path) for _, path in changes if path.endswith(".py")}
+            if not names:
+                continue
+            log.info("Detected changes: %s", sorted(names))
+            for ws_id, child in children.items():
+                if names & set(child.spec.files):
+                    to_restart.add(ws_id)
+            wake.set()
 
-        # stop_event was set — clean up
-        if current_proc is not None:
-            await _kill_process(current_proc)
-        log.info("Supervisor shutdown complete.")
-
-    except ImportError:
-        log.warning(
-            "watchfiles not installed — running without hot-reload. "
-            "Install it with: pip install watchfiles"
-        )
-        await restart_worker()
-        if current_proc:
-            await current_proc.wait()
-
+    tasks = [asyncio.create_task(periodic()), asyncio.create_task(watch())]
+    try:
+        await stop_event.wait()
     except asyncio.CancelledError:
-        if current_proc is not None:
-            await _kill_process(current_proc)
-        log.info("Supervisor cancelled.")
+        pass
+    finally:
+        for t in tasks:
+            t.cancel()
+        for ws_id in list(children):
+            await stop(ws_id, "supervisor shutting down")
+        for st in statuses.values():
+            st.state, st.pid = "stopped", None
+        workers.write_status(statuses, directory=workflows_dir)
+        log.info("Supervisor shutdown complete.")
 
 
 if __name__ == "__main__":

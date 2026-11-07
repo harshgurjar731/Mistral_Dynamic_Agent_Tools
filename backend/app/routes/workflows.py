@@ -42,7 +42,15 @@ logger = logging.getLogger(__name__)
 
 # ── Worker deployment name — must match what mistral_worker.py uses ───────────
 # This is the task_queue your worker polls. Execution must target the same name.
+#: The platform's base task queue (the Default workspace's). Runs go to the
+#: caller's own workspace queue: worker_deployment().
 WORKER_DEPLOYMENT = os.environ.get("DEPLOYMENT_NAME", "default")
+
+
+def worker_deployment() -> str:
+    from app.auth.workers import current_deployment_name
+
+    return current_deployment_name()
 
 router = APIRouter(tags=["Workflows"])
 
@@ -964,7 +972,7 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
     # SDK wrapper does not expose. We send all known field-name variants
     # for the worker routing hint — the server ignores unknown fields.
     try:
-        data = await mistral_execute(workflow_name, request.input or {}, WORKER_DEPLOYMENT,
+        data = await mistral_execute(workflow_name, request.input or {}, worker_deployment(),
                                      request.execution_id)
         exec_id = data.get("execution_id", data.get("id", ""))
         status_raw = str(data.get("status", "RUNNING")).upper()
@@ -977,7 +985,7 @@ async def execute_workflow_endpoint(workflow_name: str, request: ExecuteWorkflow
 
         logger.info(
             "Workflow '%s' executing on Mistral server (exec_id=%s, worker=%s)",
-            workflow_name, exec_id[:20], WORKER_DEPLOYMENT,
+            workflow_name, exec_id[:20], worker_deployment(),
         )
         return WorkflowExecutionResponse(
             execution_id=exec_id,
@@ -1234,7 +1242,7 @@ async def register_workflow_on_mistral(workflow_name: str, wait_seconds: float |
             workflow.id = remote["id"]
             logger.info(
                 "Workflow '%s' %s on Mistral (id=%s, deployment='%s')",
-                workflow_name, server_result["server_action"], remote["id"], WORKER_DEPLOYMENT,
+                workflow_name, server_result["server_action"], remote["id"], worker_deployment(),
             )
 
         # The compiled module on disk is what the worker runs, so the definition
@@ -1251,7 +1259,7 @@ async def register_workflow_on_mistral(workflow_name: str, wait_seconds: float |
         "message": "Workflow compiled and registered.",
         "workflow_name": workflow_name,
         "file_path": file_path,
-        "worker_deployment": WORKER_DEPLOYMENT,
+        "worker_deployment": worker_deployment(),
         **server_result,
     }
 

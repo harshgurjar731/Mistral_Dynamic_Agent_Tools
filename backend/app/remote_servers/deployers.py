@@ -522,7 +522,9 @@ def _check_worker_env(log: _DeployLog, env_text: str) -> None:
     if workspace_key and key != workspace_key:
         log.write("⚠ MISTRAL_API_KEY on the server is not this app's key: the worker will poll another "
                   "workspace, and runs started from here won't reach it.\n")
-    if settings.MISTRAL_WORKER_ENABLED and deployment == (settings.DEPLOYMENT_NAME or "default"):
+    from app.auth.workers import current_deployment_name
+
+    if settings.MISTRAL_WORKER_ENABLED and deployment == current_deployment_name():
         log.write(f"⚠ This app's own worker also polls '{deployment}', so it may take runs meant for "
                   "the server. Give the server its own worker queue.\n")
 

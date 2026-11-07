@@ -13,6 +13,7 @@ import {
   PageHeader,
   Panel,
   UserStatusBadge,
+  WorkerBadge,
 } from "@/components/admin/parts";
 import { FormError } from "@/components/auth/AuthParts";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,7 @@ function WorkspaceDetailPage() {
           <div className="space-y-6">
             <DetailsPanel w={w} onSaved={refresh} />
             <KeyPanel w={w} onSaved={refresh} />
+            <WorkerPanel w={w} />
           </div>
           <div className="space-y-6">
             <Panel
@@ -341,6 +343,57 @@ function KeyPanel({ w, onSaved }: { w: Workspace; onSaved: (w: Workspace) => voi
         busy={rotate.isPending}
         onConfirm={() => rotate.mutate(true)}
       />
+    </Panel>
+  );
+}
+
+function WorkerPanel({ w }: { w: Workspace }) {
+  const worker = w.worker;
+  if (!worker) return null;
+  const rows: [string, React.ReactNode][] = [
+    ["Task queue", <code className="font-mono text-xs">{worker.deployment}</code>],
+    ["Published workflows", worker.published_workflows],
+  ];
+  if (worker.pid) rows.push(["Process", worker.pid]);
+  if (worker.started_at)
+    rows.push(["Started", formatRelative(new Date(worker.started_at * 1000).toISOString())]);
+  if (worker.restarts) rows.push(["Restarts", worker.restarts]);
+  return (
+    <Panel
+      title="Workflow worker"
+      description="Runs this workspace's published workflows for Mistral, on its own key and task queue."
+      actions={<WorkerBadge worker={worker} />}
+    >
+      {!worker.enabled ? (
+        <p className="text-sm text-muted-foreground">
+          The platform's Mistral worker is turned off (MISTRAL_WORKER_ENABLED=false). Workflows run
+          on the local engine only.
+        </p>
+      ) : (
+        <>
+          <dl className="space-y-2 text-sm">
+            {rows.map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="text-right text-foreground">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          {worker.state === "idle" ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              A worker starts automatically, within half a minute, once a workflow in this workspace
+              is published.
+            </p>
+          ) : null}
+          {worker.last_error ? <p className="mt-3 text-xs text-red">{worker.last_error}</p> : null}
+          {worker.stale ? (
+            <p className="mt-3 text-xs text-amber">
+              The worker supervisor hasn't reported for a few minutes — it may have stopped. Restart
+              the backend if runs stay queued.
+            </p>
+          ) : null}
+        </>
+      )}
     </Panel>
   );
 }

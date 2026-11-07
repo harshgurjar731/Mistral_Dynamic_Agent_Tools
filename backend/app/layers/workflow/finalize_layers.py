@@ -368,7 +368,10 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
             return await next(ctx)
 
         ctx.emit("status", "Registering on the Mistral server…")
-        worker_deployment = os.environ.get("DEPLOYMENT_NAME", "default")
+        # The task queue of this workspace's worker (app.auth.workers).
+        from app.auth.workers import current_deployment_name
+
+        worker_deployment = current_deployment_name()
         workflow_name = spec.workflow_name
         definition = spec.definition
 

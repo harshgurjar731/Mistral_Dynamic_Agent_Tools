@@ -498,7 +498,7 @@ async def run_workflow_on_server(server_id: int, request: Request, db: Session =
     import hashlib
 
     from app.config import settings
-    from app.routes.workflows import WORKER_DEPLOYMENT, _check_required_inputs, mistral_execute
+    from app.routes.workflows import _check_required_inputs, mistral_execute, worker_deployment
     from app.services.workflow_engine.engine import get_workflow
 
     db = _require_db(db)
@@ -538,7 +538,7 @@ async def run_workflow_on_server(server_id: int, request: Request, db: Session =
             "The server's MISTRAL_API_KEY belongs to a different key than this app's, so its worker "
             "polls another workspace and would never pick up this run. Set the same key in the "
             "server's .env (Build panel → .env overrides) and restart the worker."))
-    if deployment == WORKER_DEPLOYMENT and settings.MISTRAL_WORKER_ENABLED:
+    if deployment == worker_deployment() and settings.MISTRAL_WORKER_ENABLED:
         warnings.append(f"This app's own worker also polls '{deployment}', so it may take this run "
                         "instead of the server. Give the server its own DEPLOYMENT_NAME, or set "
                         "MISTRAL_WORKER_ENABLED=false for this app.")

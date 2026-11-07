@@ -68,6 +68,22 @@ export interface IssuedLink {
 
 export type KeyStatus = "valid" | "invalid" | "unchecked";
 
+export type WorkerState = "running" | "starting" | "crashed" | "stopped" | "idle";
+
+/** The workspace's Mistral Workflows worker (one process per workspace). */
+export interface WorkspaceWorker {
+  enabled: boolean;
+  stale: boolean;
+  state: WorkerState;
+  deployment: string;
+  published_workflows: number;
+  pid?: number | null;
+  started_at?: number | null;
+  restarts?: number;
+  last_error?: string | null;
+  updated_at?: number | null;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -87,6 +103,7 @@ export interface Workspace {
   /** Rows the workspace owns, per table (detail only). */
   data?: Record<string, number>;
   same_mistral_workspace?: boolean | null;
+  worker?: WorkspaceWorker;
 }
 
 export interface WorkspaceMember {

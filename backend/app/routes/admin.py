@@ -134,9 +134,32 @@ def _provision_later(workspace_id: str) -> None:
         pass
 
 
+def _worker_summary(workspaces: list[dict]) -> list[dict]:
+    """Each workspace's workflow worker, from the supervisor's status file."""
+    from app.auth import workers
+
+    try:
+        status = workers.read_status()
+        files = workers.files_by_workspace()
+    except Exception as e:  # noqa: BLE001 — the list must not fail over this
+        logger.debug("Worker status unavailable: %s", e)
+        return workspaces
+    for ws in workspaces:
+        entry = status["workers"].get(ws["id"]) or {}
+        published = len(files.get(ws["id"], []))
+        ws["worker"] = {
+            "enabled": status["enabled"],
+            "stale": bool(status.get("stale")),
+            "state": entry.get("state") or ("idle" if not published else "stopped"),
+            "published_workflows": published,
+            "deployment": workers.deployment_name(ws["id"]),
+        }
+    return workspaces
+
+
 @router.get("/workspaces")
 def list_workspaces():
-    return {"workspaces": store.list_workspaces()}
+    return {"workspaces": _worker_summary(store.list_workspaces())}
 
 
 @router.post("/workspaces/check-key")
@@ -154,7 +177,14 @@ async def create_workspace(body: WorkspaceCreate):
 
 @router.get("/workspaces/{workspace_id}")
 def get_workspace(workspace_id: str):
-    return store.get_workspace(workspace_id)
+    from app.auth import workers
+
+    out = store.get_workspace(workspace_id)
+    try:
+        out["worker"] = workers.worker_for(workspace_id)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Worker status unavailable: %s", e)
+    return out
 
 
 @router.patch("/workspaces/{workspace_id}")

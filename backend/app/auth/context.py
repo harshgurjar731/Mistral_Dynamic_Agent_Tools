@@ -55,11 +55,22 @@ def current_principal() -> Optional[Principal]:
     return _principal.get()
 
 
+#: The workspace a whole process works for: a per-workspace workflow worker.
+#: Temporal runs activities on threads that do not inherit context variables,
+#: so the worker sets this once instead (``set_process_workspace``).
+_process_workspace: Optional[str] = None
+
+
+def set_process_workspace(workspace_id: Optional[str]) -> None:
+    global _process_workspace
+    _process_workspace = workspace_id or None
+
+
 def current_workspace_id() -> Optional[str]:
     """The workspace data and Mistral calls are scoped to, or None (system)."""
     if _unscoped.get():
         return None
-    return _workspace.get()
+    return _workspace.get() or _process_workspace
 
 
 def current_actor(default: str = "system") -> str:
