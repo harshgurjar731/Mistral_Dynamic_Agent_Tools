@@ -45,6 +45,10 @@ services:
         WITH_MISTRAL_WORKFLOWS: ${WITH_MISTRAL_WORKFLOWS:-true}
         WITH_BREV_CLI: ${WITH_BREV_CLI:-true}
     restart: unless-stopped
+    # Shutdown closes runs cleanly: cancelled plans remove the agents they made
+    # and open workflow runs are recorded as interrupted. Docker's default 10 s
+    # can cut that short (the next start-up would finish it); allow 30 s.
+    stop_grace_period: 30s
     env_file: ./.env
     environment:
       # Container-internal addresses; these override anything in .env.

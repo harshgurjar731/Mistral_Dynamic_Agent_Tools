@@ -83,6 +83,9 @@ tool-service/dynamic_tools/*.py
 backend/.mistral_workflows/
 backend/mistral_workflows/__pycache__/
 mistral_workflows/__pycache__/
+# Written by the workflow worker supervisor (backend/app/auth/workers.py)
+mistral_workflows/.worker_status.json
+mistral_workflows/.worker_status.json.tmp
 
 # ───────────────────────────────────────────────
 # IDE / Editor
