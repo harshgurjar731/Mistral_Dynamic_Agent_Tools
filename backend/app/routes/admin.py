@@ -371,6 +371,16 @@ def delete_admin(admin_id: str):
     return store.delete_admin(admin_id, actor=_me())
 
 
+# ── System health ───────────────────────────────────────────────────────────
+
+@router.get("/health")
+async def system_health(refresh: bool = False):
+    """Every component, with latency and details; ``refresh`` skips the cache."""
+    from app import health
+
+    return await health.admin_health(refresh=refresh)
+
+
 # ── Audit ───────────────────────────────────────────────────────────────────
 
 @router.get("/audit")

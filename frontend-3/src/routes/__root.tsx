@@ -214,6 +214,9 @@ function AuthGate() {
         </AdminShell>
       );
     }
+    if (admin && (pathname === "/health" || pathname === "/health/")) {
+      return <Navigate to="/admin/health" replace />;
+    }
     if (pathname === "/") return <LandingPage />;
     return <Navigate to="/login" search={{ next: href }} replace />;
   }

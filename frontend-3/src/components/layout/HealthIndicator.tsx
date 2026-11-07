@@ -1,9 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { healthApi, QK } from "@/api";
+import { authKeys, statusApi } from "@/api/auth";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { cn } from "@/lib/utils";
 import { useUiConfig } from "@/lib/uiConfig";
+
+/** Is the platform live? Polls the user-level status (the caller's workspace). */
+export function useSystemStatus() {
+  const ui = useUiConfig();
+  return useQuery({
+    queryKey: authKeys.status(),
+    queryFn: statusApi.get,
+    refetchInterval: Math.max(5, Number(ui.UI_HEALTH_POLL_SECONDS) || 30) * 1000,
+    retry: 1,
+  });
+}
 
 export function HealthIndicator({
   variant = "pill",
@@ -13,38 +24,42 @@ export function HealthIndicator({
   variant?: "pill" | "rail";
   collapsed?: boolean;
 } = {}) {
-  const ui = useUiConfig();
-  const { data, isError, isLoading } = useQuery({
-    queryKey: QK.health(),
-    queryFn: healthApi.get,
-    refetchInterval: Math.max(5, Number(ui.UI_HEALTH_POLL_SECONDS) || 30) * 1000,
-    retry: 1,
-  });
+  const { data, isError, isLoading } = useSystemStatus();
+  const problems = data?.issues.filter((i) => i.state === "down" || i.state === "degraded") ?? [];
 
   const identity = isLoading
-    ? { label: "Checking", text: "text-muted-foreground", bg: "bg-muted/40", border: "border-border", pulse: true }
+    ? {
+        label: "Checking",
+        text: "text-muted-foreground",
+        bg: "bg-muted/40",
+        border: "border-border",
+        pulse: true,
+      }
     : isError
-      ? { label: "Backend offline", text: "text-red", bg: "bg-red/10", border: "border-red/30" }
-      : data?.status === "healthy" || data?.status === "ok"
-        ? {
-            label: "All systems nominal",
-            text: "text-emerald",
-            bg: "bg-emerald/10",
-            border: "border-emerald/30",
-          }
-        : {
-            label: data?.status ? `Degraded — ${data.status}` : "Degraded",
-            text: "text-amber",
-            bg: "bg-amber/10",
-            border: "border-amber/30",
-          };
+      ? {
+          label: "Can't reach the platform",
+          text: "text-red",
+          bg: "bg-red/10",
+          border: "border-red/30",
+        }
+      : data?.status === "operational"
+        ? { label: "Live", text: "text-emerald", bg: "bg-emerald/10", border: "border-emerald/30" }
+        : data?.status === "outage"
+          ? { label: "Outage", text: "text-red", bg: "bg-red/10", border: "border-red/30" }
+          : {
+              label:
+                problems.length === 1 ? `${problems[0]!.name} affected` : "Some features affected",
+              text: "text-amber",
+              bg: "bg-amber/10",
+              border: "border-amber/30",
+            };
 
   if (variant === "rail") {
     return (
       <Link
         to="/health"
-        aria-label={`Health: ${identity.label}`}
-        title={collapsed ? identity.label : "Open health dashboard"}
+        aria-label={`System status: ${identity.label}`}
+        title={collapsed ? identity.label : "System status"}
         className={cn(
           "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium transition hover:bg-surface-hover",
           collapsed && "justify-center",
@@ -53,7 +68,10 @@ export function HealthIndicator({
       >
         <span className="grid size-4 shrink-0 place-items-center">
           <span
-            className={cn("size-2 rounded-full bg-current", identity.pulse && "animate-pulse")}
+            className={cn(
+              "size-2 rounded-full bg-current",
+              (identity.pulse || data?.status === "operational") && "animate-pulse",
+            )}
           />
         </span>
         {collapsed ? null : <span className="truncate">{identity.label}</span>}
@@ -62,7 +80,7 @@ export function HealthIndicator({
   }
 
   return (
-    <Link to="/health" aria-label="Open health dashboard">
+    <Link to="/health" aria-label="System status">
       <StatusPill identity={identity} size="xs" />
     </Link>
   );

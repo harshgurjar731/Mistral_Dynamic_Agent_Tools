@@ -26,6 +26,13 @@ export const Route = createFileRoute("/admin/")({
 function AdminOverviewPage() {
   const { data: session } = useAuthSession();
   const q = useQuery({ queryKey: authKeys.admin.overview(), queryFn: adminApi.overview });
+  const health = useQuery({
+    queryKey: authKeys.admin.health(),
+    queryFn: () => adminApi.health(),
+    refetchInterval: 60_000,
+  });
+  const unhealthy =
+    health.data?.components.filter((c) => c.state === "down" || c.state === "degraded") ?? [];
   const d = q.data;
 
   return (
@@ -54,6 +61,27 @@ function AdminOverviewPage() {
       />
 
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
+
+      {health.data && health.data.status !== "operational" ? (
+        <Link
+          to="/admin/health"
+          className={cn(
+            "mb-6 flex items-center gap-3 rounded-lg border p-4 transition hover:opacity-90",
+            health.data.status === "outage"
+              ? "border-red/30 bg-red/10 text-red"
+              : "border-amber/30 bg-amber/10 text-amber",
+          )}
+        >
+          <Activity className="size-5 shrink-0" />
+          <span className="min-w-0 flex-1 text-sm">
+            <span className="font-semibold">{health.data.headline}.</span>{" "}
+            <span className="text-foreground/80">
+              Needs attention: {unhealthy.map((c) => c.name).join(", ")}.
+            </span>
+          </span>
+          <ArrowRight className="size-4 shrink-0" />
+        </Link>
+      ) : null}
 
       {d && d.workspaces.key_problems.length ? (
         <div className="mb-6 rounded-lg border border-red/30 bg-red/10 p-4">

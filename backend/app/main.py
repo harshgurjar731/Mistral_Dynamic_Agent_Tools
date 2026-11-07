@@ -456,8 +456,10 @@ app.add_exception_handler(WorkspaceKeyMissing, _workspace_key_handler)
 # ── Routes ──────────────────────────────────────────────────────────────────
 
 from app.routes import admin as admin_routes, auth as auth_routes  # noqa: E402
+from app.routes import status as status_routes  # noqa: E402
 
 app.include_router(auth_routes.router, prefix=settings.API_PREFIX)
+app.include_router(status_routes.router, prefix=settings.API_PREFIX)
 app.include_router(admin_routes.router, prefix=settings.API_PREFIX)
 app.include_router(agents.router, prefix=settings.API_PREFIX)
 app.include_router(conversations.router, prefix=settings.API_PREFIX)

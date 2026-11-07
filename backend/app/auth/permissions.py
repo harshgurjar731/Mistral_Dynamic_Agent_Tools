@@ -194,6 +194,9 @@ RULES: list[Rule] = [
     _r("GET", r"/settings", "perm", "settings.view", admin_ok=True),
     _r(W, r"/settings(/.*)?", ADMIN),
 
+    # Is the platform live (plain language, the caller's workspace)
+    _r("GET", r"/status", ANY),
+
     # Live progress of the caller's own requests
     _r("GET", r"/ops/[^/]+/events", ANY),
 

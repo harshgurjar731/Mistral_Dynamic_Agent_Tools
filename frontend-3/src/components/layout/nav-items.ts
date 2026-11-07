@@ -208,13 +208,13 @@ export const NAV_ITEMS: NavItem[] = [
     },
   },
   {
-    label: "Health",
+    label: "Status",
     to: "/health",
     icon: Activity,
     page: {
-      title: "System Health",
-      description: "Live status of all core microservices.",
-      tab: "Health",
+      title: "System status",
+      description: "Whether the platform is live, and what is affected if it isn't.",
+      tab: "Status",
     },
   },
   {

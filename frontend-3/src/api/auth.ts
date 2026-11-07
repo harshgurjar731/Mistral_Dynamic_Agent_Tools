@@ -212,6 +212,65 @@ export interface MembershipInput {
   role_id: string;
 }
 
+/* ── System status / health ────────────────────────────────────────────── */
+
+export type SystemVerdict = "operational" | "degraded" | "outage";
+export type ComponentState = "ok" | "degraded" | "down" | "off";
+
+export interface StatusComponent {
+  key: string;
+  name: string;
+  state: ComponentState;
+  message: string;
+  impact: string | null;
+}
+
+/** What a signed-in user sees: no internals. */
+export interface SystemStatus {
+  status: SystemVerdict;
+  headline: string;
+  checked_at: number;
+  components: StatusComponent[];
+  issues: StatusComponent[];
+}
+
+export interface HealthComponent extends StatusComponent {
+  severity: "critical" | "major" | "minor";
+  latency_ms: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface HealthWorkspaceRow {
+  id: string;
+  name: string;
+  disabled: boolean;
+  is_default: boolean;
+  members: number;
+  key_status: KeyStatus;
+  key_checked_at: string | null;
+  key_error: string | null;
+  worker: {
+    state: WorkerState;
+    published_workflows: number;
+    deployment: string;
+    restarts: number;
+    last_error: string | null;
+  };
+}
+
+export interface SystemHealth {
+  status: SystemVerdict;
+  headline: string;
+  checked_at: number;
+  environment: string;
+  components: HealthComponent[];
+  workspaces: HealthWorkspaceRow[];
+}
+
+export const statusApi = {
+  get: () => get<SystemStatus>("/api/status"),
+};
+
 /* ── Signed-in user ────────────────────────────────────────────────────── */
 
 export const authApi = {
@@ -316,6 +375,9 @@ export const adminApi = {
   adminLink: (id: string) => post<IssuedLink>(`${A}/admins/${enc(id)}/link`),
   deleteAdmin: (id: string) => del<{ deleted: string }>(`${A}/admins/${enc(id)}`),
 
+  health: (refresh = false) =>
+    get<SystemHealth>(`${A}/health`, refresh ? { refresh: true } : undefined),
+
   audit: (params?: {
     limit?: number | undefined;
     offset?: number | undefined;
@@ -327,6 +389,7 @@ export const adminApi = {
 
 export const authKeys = {
   session: () => ["auth", "session"] as const,
+  status: () => ["system", "status"] as const,
   sessions: () => ["auth", "sessions"] as const,
   link: (token: string) => ["auth", "link", token] as const,
   admin: {
@@ -342,5 +405,6 @@ export const authKeys = {
     admins: () => ["admin", "admins"] as const,
     audit: (params?: object) => ["admin", "audit", params ?? {}] as const,
     sessions: () => ["admin", "sessions"] as const,
+    health: () => ["admin", "health"] as const,
   },
 };

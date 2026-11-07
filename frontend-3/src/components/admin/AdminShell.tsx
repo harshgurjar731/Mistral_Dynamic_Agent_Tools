@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  Activity,
   Building2,
   ExternalLink,
   LayoutDashboard,
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 const NAV: { to: string; label: string; icon: LucideIcon; exact?: boolean }[] = [
   { to: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
+  { to: "/admin/health", label: "System health", icon: Activity },
   { to: "/admin/workspaces", label: "Workspaces", icon: Building2 },
   { to: "/admin/users", label: "Users", icon: Users },
   { to: "/admin/roles", label: "Roles & permissions", icon: ShieldCheck },

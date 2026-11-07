@@ -25,6 +25,7 @@ import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminAccountRouteImport } from './routes/admin.account'
 import { Route as AdminAdminsRouteImport } from './routes/admin.admins'
 import { Route as AdminAuditRouteImport } from './routes/admin.audit'
+import { Route as AdminHealthRouteImport } from './routes/admin.health'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
@@ -145,6 +146,11 @@ const AdminAdminsRoute = AdminAdminsRouteImport.update({
 const AdminAuditRoute = AdminAuditRouteImport.update({
   id: '/admin/audit',
   path: '/admin/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminHealthRoute = AdminHealthRouteImport.update({
+  id: '/admin/health',
+  path: '/admin/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminLoginRoute = AdminLoginRouteImport.update({
@@ -376,6 +382,7 @@ export interface FileRoutesByFullPath {
   '/admin/account': typeof AdminAccountRoute
   '/admin/admins': typeof AdminAdminsRoute
   '/admin/audit': typeof AdminAuditRoute
+  '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -434,6 +441,7 @@ export interface FileRoutesByTo {
   '/admin/account': typeof AdminAccountRoute
   '/admin/admins': typeof AdminAdminsRoute
   '/admin/audit': typeof AdminAuditRoute
+  '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -494,6 +502,7 @@ export interface FileRoutesById {
   '/admin/account': typeof AdminAccountRoute
   '/admin/admins': typeof AdminAdminsRoute
   '/admin/audit': typeof AdminAuditRoute
+  '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
@@ -555,6 +564,7 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/admins'
     | '/admin/audit'
+    | '/admin/health'
     | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
@@ -613,6 +623,7 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/admins'
     | '/admin/audit'
+    | '/admin/health'
     | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
@@ -672,6 +683,7 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/admins'
     | '/admin/audit'
+    | '/admin/health'
     | '/admin/login'
     | '/agents/$id'
     | '/connectors/$id'
@@ -732,6 +744,7 @@ export interface RootRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
   AdminAdminsRoute: typeof AdminAdminsRoute
   AdminAuditRoute: typeof AdminAuditRoute
+  AdminHealthRoute: typeof AdminHealthRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
@@ -886,6 +899,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/audit'
       fullPath: '/admin/audit'
       preLoaderRoute: typeof AdminAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/health': {
+      id: '/admin/health'
+      path: '/admin/health'
+      fullPath: '/admin/health'
+      preLoaderRoute: typeof AdminHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/login': {
@@ -1208,6 +1228,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
   AdminAdminsRoute: AdminAdminsRoute,
   AdminAuditRoute: AdminAuditRoute,
+  AdminHealthRoute: AdminHealthRoute,
   AdminLoginRoute: AdminLoginRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
