@@ -78,6 +78,58 @@ def test_valid_values_are_untouched():
     assert out == args and notes == []
 
 
+RECORDS = {
+    "type": "object",
+    "properties": {
+        "validated_student_records": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"student_id": {"type": "string"},
+                               "subject_marks": {"type": "object"}},
+                "required": ["student_id", "subject_marks"],
+            },
+        }
+    },
+    "required": ["validated_student_records"],
+}
+_OK = {"student_id": "S1", "subject_marks": {"math": 80}}
+
+
+def _records(*rows):
+    return conform_arguments({"validated_student_records": list(rows)}, RECORDS)
+
+
+def test_required_field_under_another_spelling_is_recovered():
+    out, notes = _records(_OK, {"student_id": "S5", "subjectMarks": {"math": 55}})
+    jsonschema.validate(out, RECORDS)
+    assert out["validated_student_records"][1] == {"student_id": "S5", "subject_marks": {"math": 55}}
+    assert "taken from 'subjectMarks'" in notes[0]
+
+
+def test_required_field_nested_one_level_down_is_recovered():
+    out, _ = _records(_OK, {"student_id": "S5", "details": {"subject_marks": {"math": 55}}})
+    jsonschema.validate(out, RECORDS)
+
+
+@pytest.mark.parametrize("reject", [
+    {"is_valid": False}, {"status": "invalid"}, {"errors": ["subject_marks missing"]},
+])
+def test_record_marked_invalid_upstream_is_left_out(reject):
+    out, notes = _records(_OK, {"student_id": "S5", **reject})
+    assert out["validated_student_records"] == [_OK]
+    assert "marked invalid" in notes[-1]
+
+
+def test_incomplete_record_not_marked_invalid_is_kept_and_explained():
+    from app.services.workflow_engine.conform import argument_problem
+
+    out, _ = _records(_OK, {"student_id": "S5"})
+    assert len(out["validated_student_records"]) == 2  # never silently dropped
+    problem = argument_problem(out, RECORDS)
+    assert "validated_student_records/1" in problem and '"S5"' in problem
+
+
 @pytest.mark.parametrize("value,schema,expected", [
     ({"items": [1, 2]}, {"type": "array", "items": {"type": "integer"}}, [1, 2]),
     ("High", {"type": "string", "enum": ["high", "low"]}, "high"),

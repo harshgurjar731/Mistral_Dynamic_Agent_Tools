@@ -122,13 +122,15 @@ def _descend(value: Any, schema: dict, notes: list, path: str) -> Any:
     if isinstance(value, dict):
         props = schema.get("properties")
         if isinstance(props, dict):
+            value = _lift_required(value, schema, notes, path)
             return {k: conform(v, props[k], notes, f"{path}.{k}") if isinstance(props.get(k), dict) else v
                     for k, v in value.items()}
         return value
     if isinstance(value, list):
         items = schema.get("items")
         if isinstance(items, dict):
-            return [conform(v, items, notes, f"{path}[{i}]") for i, v in enumerate(value)]
+            conformed = [conform(v, items, notes, f"{path}[{i}]") for i, v in enumerate(value)]
+            return _drop_rejected(conformed, items, notes, path)
         return value
     if isinstance(value, str):
         enum = schema.get("enum")
@@ -139,6 +141,111 @@ def _descend(value: Any, schema: dict, notes: list, path: str) -> Any:
                 notes.append(f"{path}: '{value}' read as the allowed value '{match}'")
                 return match
     return value
+
+
+# ── Missing required fields ───────────────────────────────────────────────
+
+_VALID_FLAGS = ("valid", "isvalid", "passed", "ok", "validated", "eligible", "accepted")
+_STATUS_KEYS = ("status", "validationstatus", "validation", "result", "outcome", "state")
+_REJECTED = {"invalid", "rejected", "failed", "fail", "error", "excluded", "skipped", "incomplete"}
+_ERROR_KEYS = ("errors", "validationerrors", "issues", "problems", "missingfields",
+               "rejectionreason", "error")
+
+
+def _missing_required(value: dict, schema: dict) -> list[str]:
+    required = schema.get("required") or []
+    return [r for r in required if isinstance(r, str) and r not in value]
+
+
+def _lift_required(value: dict, schema: dict, notes: list, path: str) -> dict:
+    """Recover a required field present under another spelling or one level down.
+
+    ``subjectMarks`` / ``"Subject Marks"`` for ``subject_marks``, or a record
+    wrapped as ``{"student": {..., "subject_marks": ...}}``. Only an
+    unambiguous match counts; nothing is filled in that the value lacks.
+    """
+    from app.services.workflow_engine.output_contracts import MISSING, find_field
+
+    missing = _missing_required(value, schema)
+    if not missing:
+        return value
+    props = schema.get("properties") or {}
+    out = dict(value)
+    for name in missing:
+        found = find_field(out, name)
+        if found is MISSING:
+            continue
+        # Drop a top-level alias so the record does not carry the value twice,
+        # unless the alias is itself a declared property.
+        alias = next((k for k in out if k != name and _norm_key(k) == _norm_key(name)), None)
+        if alias is not None and alias not in props:
+            out.pop(alias)
+        out[name] = found
+        notes.append(f"{path}: '{name}' taken from "
+                     + (f"'{alias}'" if alias is not None else "a nested field of the same name"))
+    return out
+
+
+def _norm_key(key: Any) -> str:
+    return "".join(ch for ch in str(key).lower() if ch.isalnum())
+
+
+def _marked_rejected(record: dict) -> bool:
+    """Whether an earlier step explicitly marked this record as not usable."""
+    for k, v in record.items():
+        key = _norm_key(k)
+        if key in _VALID_FLAGS or key.startswith("is") and key[2:] in _VALID_FLAGS:
+            if v is False or (isinstance(v, str) and v.strip().lower() in ("false", "no")):
+                return True
+        if key in _STATUS_KEYS and isinstance(v, str) and v.strip().lower() in _REJECTED:
+            return True
+        if key in _ERROR_KEYS and v not in (None, "", [], {}, False):
+            return True
+    return False
+
+
+def _drop_rejected(items_value: list, items: dict, notes: list, path: str) -> list:
+    """Leave out records an earlier step rejected, when they lack required fields.
+
+    A validation step that keeps its rejects in the list — ``{"student_id":
+    "S5", "is_valid": false, "errors": ["no marks"]}`` — hands the next tool a
+    record it cannot use. Only records that are both explicitly rejected *and*
+    missing a required field are dropped; any other incomplete record is left
+    for the tool to refuse, so data is never silently lost.
+    """
+    if not (items.get("required") and any(isinstance(v, dict) for v in items_value)):
+        return items_value
+    kept, dropped = [], []
+    for i, v in enumerate(items_value):
+        if isinstance(v, dict) and _missing_required(v, items) and _marked_rejected(v):
+            dropped.append(i)
+        else:
+            kept.append(v)
+    if dropped and kept:
+        notes.append(f"{path}: left out {len(dropped)} record(s) an earlier step marked invalid "
+                     f"(index {', '.join(map(str, dropped))})")
+        return kept
+    return items_value  # all rejected: nothing to compute on, let the tool say so
+
+
+def argument_problem(arguments: dict, parameters: Optional[dict]) -> str:
+    """Where ``arguments`` break the schema, with the offending value; '' if valid."""
+    if not isinstance(parameters, dict) or not parameters.get("properties"):
+        return ""
+    try:
+        import jsonschema
+
+        error = jsonschema.exceptions.best_match(
+            jsonschema.Draft202012Validator({**parameters, "type": "object"}).iter_errors(arguments))
+    except Exception:  # noqa: BLE001 — no jsonschema or an unreadable schema
+        return ""
+    if error is None:
+        return ""
+    where = "/".join(str(p) for p in error.absolute_path) or "arguments"
+    shown = json.dumps(error.instance, default=str)
+    if len(shown) > 400:
+        shown = shown[:400] + "…"
+    return f"{where}: {error.message}. The value it got: {shown}"
 
 
 # ── Reshaping ─────────────────────────────────────────────────────────────

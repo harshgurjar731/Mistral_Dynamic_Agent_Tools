@@ -1589,6 +1589,13 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
             message = (
                 f"{tool_name}: {envelope_error}" if envelope_error else out_str[:1000]
             )
+            # The tool service names the path ("validated_student_records/4")
+            # but not the value; show the record so the cause is visible.
+            from app.services.workflow_engine.conform import argument_problem
+
+            detail = argument_problem(arguments, parameters)
+            if detail:
+                message += f" — {detail}"
             logger.error("Tool step '%s' failed: %s", step.id, message[:300])
             return StepResult(
                 step_id=step.id,
