@@ -32,9 +32,12 @@ environment, e.g. ``ROUTE_CODEGEN_MODEL=mistral-large-2512`` or
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, replace
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 PRIMARY = "mistral-large-4"
 FALLBACK = "mistral-medium-2604"
@@ -79,6 +82,33 @@ _ROUTES: dict[str, ModelRoute] = {
                                    temperature=0.2, timeout_ms=60_000),
 }
 
+#: Routes that write, repair, test or arbitrate code.
+CODE_ROLES = frozenset({"codegen", "repair", "codegen_fresh", "testplan", "arbiter"})
+
+#: Model families never used for writing or checking tool and activity code.
+EXCLUDED_CODE_MODELS: tuple[str, ...] = ("codestral",)
+
+
+def _excluded(model: Optional[str]) -> bool:
+    low = (model or "").strip().lower()
+    return bool(low) and any(low.startswith(p) for p in EXCLUDED_CODE_MODELS)
+
+
+def _guard_code_route(role: str, route: "ModelRoute", base: "ModelRoute") -> "ModelRoute":
+    """Keep Codestral off the code routes, whatever the environment or an old override says."""
+    if role not in CODE_ROLES:
+        return route
+    changes: dict = {}
+    if _excluded(route.model):
+        logger.warning("Route '%s' is set to %s; code is not written by Codestral — using %s",
+                       role, route.model, base.model)
+        changes["model"] = base.model
+    if _excluded(route.fallback_model):
+        logger.warning("Route '%s' fallback %s ignored (Codestral); using %s",
+                       role, route.fallback_model, base.fallback_model)
+        changes["fallback_model"] = base.fallback_model
+    return replace(route, **changes) if changes else route
+
 
 def _env(role: str, field: str) -> Optional[str]:
     key = f"ROUTE_{role.upper()}_{field}"
@@ -107,7 +137,8 @@ def route_for(role: str) -> ModelRoute:
         overrides["timeout_ms"] = int(timeout)
     if (fallback := _env(role, "FALLBACK")):
         overrides["fallback_model"] = None if fallback.lower() == "none" else fallback
-    return replace(base, **overrides) if overrides else base
+    route = replace(base, **overrides) if overrides else base
+    return _guard_code_route(role, route, base)
 
 
 def all_routes() -> dict[str, ModelRoute]:

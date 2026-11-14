@@ -30,6 +30,11 @@ so the user is told what happened.
 
 from app.layers.revision.apply_layers import RevisionApplyLayer, RevisionNormaliseLayer
 from app.layers.revision.context_layer import RevisionContextLayer
+from app.layers.revision.fix_layers import (
+    RevisionCodeFixLayer,
+    RevisionDiagnosisLayer,
+    RevisionPlanLayer,
+)
 from app.layers.revision.intent_layer import RevisionIntentLayer
 from app.layers.revision.repair_layer import RevisionRepairLayer
 from app.layers.revision.review_layers import (
@@ -39,6 +44,9 @@ from app.layers.revision.review_layers import (
 )
 
 __all__ = [
+    "RevisionCodeFixLayer",
+    "RevisionDiagnosisLayer",
+    "RevisionPlanLayer",
     "RevisionContextLayer",
     "RevisionIntentLayer",
     "RevisionApplyLayer",

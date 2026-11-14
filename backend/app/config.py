@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     ORCHESTRATOR_FALLBACK_MODEL: str = "mistral-medium-2604"
     # Retired: code-related decisions now use model routes (app/llm_routes.py,
     # override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
-    MISTRAL_CODING_MODEL: str = "codestral-latest"
+    MISTRAL_CODING_MODEL: str = ""
 
     # ── Models ──────────────────────────────────────────────────────────
     # Every one of these is editable on the Settings page, which also lists

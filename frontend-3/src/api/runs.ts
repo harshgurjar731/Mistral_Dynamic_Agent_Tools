@@ -6,7 +6,8 @@ import { get, post } from "./client";
  * Background runs — creation pipelines that keep going when the page that
  * started them is closed. Start one, then follow `/api/runs/{id}/events`.
  */
-export type RunKind = "workflow_plan" | "agent" | "tool_synthesis" | "activity_synthesis";
+export type RunKind =
+  "workflow_plan" | "agent" | "tool_synthesis" | "activity_synthesis" | "workflow_refine";
 export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface RunProgress {
@@ -31,6 +32,15 @@ export interface BackgroundRun {
   created_at: string | null;
   updated_at: string | null;
   finished_at: string | null;
+}
+
+export interface WorkflowRefineRequest {
+  workflow_name: string;
+  instruction: string;
+  focus_step_ids?: string[];
+  origin?: "editor" | "planner";
+  /** The failed run to fix; omitted: the latest run, when it failed. */
+  execution_id?: string;
 }
 
 export interface AgentRunRequest {
@@ -60,6 +70,9 @@ export const runsApi = {
   /** Answer a question a running run is waiting on (its `decision_required` event). */
   /** Rebuild a tool/activity version from a failure; tracked like a synthesis run. */
   startRebuild: (body: RebuildRequest) => post<BackgroundRun>("/api/runs/rebuild", body),
+  /** Refine with AI: analyse, plan and carry out a fix (workflow edits and activity code). */
+  startWorkflowRefine: (body: WorkflowRefineRequest) =>
+    post<BackgroundRun>("/api/runs/workflow-refine", body),
   /** `message` only counts for a choice the question lists in `message_options`. */
   decide: (
     id: string,

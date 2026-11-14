@@ -1021,6 +1021,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             from app.services.workflow_engine.output_contracts import contract_instruction
 
             query += contract_instruction(output_fields)
+        # Rules a checking activity downstream holds this answer to.
+        requirements = [r for r in (config.get("output_requirements") or []) if isinstance(r, str)]
+        if requirements:
+            from app.services.workflow_engine.output_contracts import requirements_instruction
+
+            query += requirements_instruction(requirements)
 
         agent_id = config.get("agent_id")
 
@@ -1523,6 +1529,33 @@ async def run_tool_step(step: WorkflowStep, variables: dict) -> StepResult:
                 input_preview=json.dumps(config.get("arguments", {}), default=str)[:1000],
             )
 
+        # Check the arguments against the activity's input schema before the
+        # call. The tool service would reject them with a 422 naming only the
+        # first problem; here every mismatch is listed, which is what a fix
+        # (by hand or by Refine with AI) needs. A list wrapped in one record is
+        # still unwrapped first, as after a rejection.
+        from app.services.workflow_engine.conform import argument_problems
+
+        problems = argument_problems(arguments, parameters)
+        if problems:
+            fixed, via = _unwrapped_arguments(arguments, param_types)
+            if fixed is not None and not argument_problems(fixed, parameters):
+                logger.warning("Tool step '%s': used the inner list of %s to match the schema.",
+                               step.id, ", ".join(via))
+                arguments, problems = fixed, []
+        if problems:
+            duration = (time.time() - start) * 1000
+            message = (f"{tool_name}: the arguments do not match the activity's input schema — "
+                       + "; ".join(problems))
+            logger.error("Tool step '%s': %s", step.id, message[:500])
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=message,
+                duration_ms=duration,
+                input_preview=json.dumps(arguments, default=str)[:1000],
+            )
+
         # The version the workflow was planned and validated against. Without
         # a pin (older workflows) the tool's active version runs.
         version = config.get("tool_version")
@@ -1672,9 +1705,11 @@ async def run_condition_step(step: WorkflowStep, variables: dict) -> StepResult:
 
         logger.info("Condition step '%s' — evaluating: %s", step.id, expression)
 
-        # Provide JSON-style boolean aliases so 'true'/'false' work in eval
-        safe_globals = {"__builtins__": None, "true": True, "false": False, "null": None, "True": True, "False": False, "None": None}
-        result = eval(expression, safe_globals, {})
+        # The same restricted scope plan validation checks against
+        # (expression_sandbox): JSON-style constants and the safe builtins.
+        from app.services.workflow_engine.expression_sandbox import eval_condition
+
+        result = eval_condition(expression)
 
         branch = config.get("true_step") if result else config.get("false_step")
 
@@ -1727,10 +1762,14 @@ async def run_transform_step(step: WorkflowStep, variables: dict) -> StepResult:
         # Support Python transform code (advanced)
         transform_code = config.get("transform_code")
         if transform_code:
-            safe_globals = {"__builtins__": {"str": str, "int": int, "float": float, "list": list, "dict": dict, "len": len, "json": json}}
-            safe_locals = {"variables": variables, "output": output}
-            exec(transform_code, safe_globals, safe_locals)
-            output = safe_locals.get("output", output)
+            # One expression (its value is the output) or statements that
+            # assign `output` — the contract the planner is given and plan
+            # validation checks (expression_sandbox).
+            from app.services.workflow_engine.expression_sandbox import run_transform
+
+            result = run_transform(transform_code, variables, output)
+            if result is not None:
+                output = result
 
         duration = (time.time() - start) * 1000
         return StepResult(step_id=step.id, status="completed", output=output, duration_ms=duration)

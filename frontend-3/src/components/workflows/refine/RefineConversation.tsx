@@ -19,6 +19,7 @@ import {
 import type { RevisionSuggestion, WorkflowRevision } from "@/types";
 import { cn } from "@/lib/utils";
 import { AssistantTurn, PendingTurn, UserTurn } from "./RevisionMessages";
+import { RefineRunTurn } from "./FixPlanProgress";
 import type { WorkflowRefine } from "./useWorkflowRefine";
 
 const STARTERS = [
@@ -35,19 +36,23 @@ export function RefineConversation({
   refine: WorkflowRefine;
   className?: string;
 }) {
-  const [draft, setDraft] = useState("");
+  // Opened from a failed run: the first request is to fix it.
+  const [draft, setDraft] = useState(() =>
+    refine.executionId ? "Fix the failed run: find the cause and correct it." : "",
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { revisions, pending, propose, apply, discard, focus, toggleFocus, suggestions } = refine;
+  const { refineRunId, refineInstruction, refineFocus } = refine;
 
   const last = revisions[revisions.length - 1];
   const awaitingAnswer = !pending && last?.status === "needs_clarification";
-  const busy = propose.isPending;
+  const busy = propose.isPending || Boolean(refineRunId);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [revisions.length, pending, last?.status]);
+  }, [revisions.length, pending, last?.status, refineRunId]);
 
   // Grow with the text, up to a cap.
   useEffect(() => {
@@ -138,10 +143,16 @@ export function RefineConversation({
             </div>
           ))
         )}
-        {pending ? (
+        {pending && !refineRunId ? (
           <div className="space-y-4">
             <UserTurn instruction={pending.instruction} focus={pending.focus} />
             <PendingTurn />
+          </div>
+        ) : null}
+        {refineRunId ? (
+          <div className="space-y-4">
+            <UserTurn instruction={refineInstruction} focus={refineFocus} />
+            <RefineRunTurn runId={refineRunId} />
           </div>
         ) : null}
       </div>

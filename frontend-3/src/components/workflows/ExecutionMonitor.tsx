@@ -71,7 +71,10 @@ export function ExecutionMonitor({
     enabled: Boolean(workflowName),
     retry: false,
   });
-  const stepActions = useMemo(() => fixStepActions(definition.data), [definition.data]);
+  const stepActions = useMemo(
+    () => fixStepActions(definition.data, { executionId }),
+    [definition.data, executionId],
+  );
 
   if (!executionId) {
     return (

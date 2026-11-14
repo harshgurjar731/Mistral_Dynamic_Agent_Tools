@@ -117,6 +117,20 @@ class RevisionDiffLayer(RevisionStepLayer):
         return await next(ctx)
 
 
+def _plan_record(spec) -> list[dict]:
+    """The plan as stored on the revision, with each code fix's outcome."""
+    fixes = {f"code{i}": f for i, f in enumerate(spec.code_fixes)}
+    out = []
+    for item in spec.plan:
+        row = {k: v for k, v in item.items() if k not in ("op_index", "fix_index")}
+        fix = fixes.get(item["id"])
+        if fix:
+            row["tool_name"] = fix.get("tool_name")
+            row["version"] = fix.get("version")
+        out.append(row)
+    return out
+
+
 class RevisionProposalLayer(Layer):
     """Record the outcome — proposal, question or failure — for the user."""
 
@@ -132,11 +146,25 @@ class RevisionProposalLayer(Layer):
     async def process(self, ctx: PipelineContext, next):
         from app.workflow_revisions import store
 
+        from app.workflow_revisions import fix_plan
+
         spec = ctx.revision_spec
         status = spec.status
         if ctx.error and status == "proposed":
             status = "failed"
         spec.status = status
+        if spec.plan:
+            valid = bool((spec.validation or {}).get("valid"))
+            errors = (spec.validation or {}).get("error_count", 0)
+            if status == "proposed":
+                fix_plan.mark(ctx, spec, "validate", "completed" if valid else "failed",
+                              "Valid." if valid else f"{errors} error(s) remain — see the issues.")
+                fix_plan.mark(ctx, spec, "propose", "completed", "Ready for your review.")
+            else:
+                for item in spec.plan:
+                    if item["status"] in ("pending", "in_progress"):
+                        item["status"] = "skipped"
+                fix_plan.mark(ctx, spec, "propose", "failed", str(ctx.error or "No change could be made."))
 
         record = await asyncio.to_thread(
             store.create_revision,
@@ -155,6 +183,7 @@ class RevisionProposalLayer(Layer):
             validation=spec.validation,
             proposed_definition=spec.proposed if status == "proposed" else None,
             error=ctx.error if status == "failed" else None,
+            plan=_plan_record(spec),
         )
         spec.revision_id = record["id"]
         ctx.emit("revision_proposed", json.dumps({"id": record["id"], "status": status}))

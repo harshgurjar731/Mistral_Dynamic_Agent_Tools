@@ -248,6 +248,34 @@ def argument_problem(arguments: dict, parameters: Optional[dict]) -> str:
     return f"{where}: {error.message}. The value it got: {shown}"
 
 
+def argument_problems(arguments: dict, parameters: Optional[dict], limit: int = 8) -> list[str]:
+    """Every place ``arguments`` break the schema (up to ``limit``); [] if valid or unknown.
+
+    Checked before the activity is called, with the same validator the tool
+    service uses, so one failed step names every mismatch at once — the
+    missing nested field and the wrong type — instead of the first 422.
+    """
+    if not isinstance(parameters, dict) or not parameters.get("properties"):
+        return []
+    try:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator({**parameters, "type": "object"})
+        errors = sorted(validator.iter_errors(arguments), key=lambda e: list(e.absolute_path))
+    except Exception:  # noqa: BLE001 — no jsonschema or an unreadable schema
+        return []
+    out = []
+    for error in errors[:limit]:
+        where = "/".join(str(p) for p in error.absolute_path) or "arguments"
+        shown = json.dumps(error.instance, default=str)
+        if len(shown) > 160:
+            shown = shown[:160] + "…"
+        out.append(f"{where}: {error.message} (got {shown})")
+    if len(errors) > limit:
+        out.append(f"…and {len(errors) - limit} more")
+    return out
+
+
 # ── Reshaping ─────────────────────────────────────────────────────────────
 
 

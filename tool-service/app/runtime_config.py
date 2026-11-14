@@ -85,6 +85,11 @@ class SettingDef:
     group: Optional[str] = None
     #: A model setting that also accepts "none" (no fallback model).
     allow_none: bool = False
+    #: Model-name prefixes this setting refuses (case-insensitive), e.g. the
+    #: Codestral family on routes that write tool and activity code.
+    exclude_models: tuple[str, ...] = ()
+    #: Why ``exclude_models`` are refused — shown with the error and on the page.
+    exclude_reason: str = ""
     #: Numeric settings: what happens at the minimum and at the maximum, in a
     #: short sentence each — shown under the control next to default/min/max.
     low_effect: str = ""
@@ -142,7 +147,16 @@ def coerce(defn: SettingDef, raw: Any) -> Any:
             if not defn.allow_none:
                 raise ValueError(f"{defn.label}: a model is required")
             return "none"
+        if excluded_model(text, defn.exclude_models):
+            raise ValueError(f"{defn.label}: {text} cannot be used here. "
+                             + (defn.exclude_reason or "Choose another model."))
     return text
+
+
+def excluded_model(name: str, prefixes) -> bool:
+    """True when ``name`` belongs to one of the refused model families."""
+    low = (name or "").strip().lower()
+    return bool(low) and any(low.startswith(p.lower()) for p in prefixes or ())
 
 
 class SettingsStore:
@@ -303,6 +317,8 @@ class SettingsStore:
             "capability": defn.capability,
             "group": defn.group,
             "allow_none": defn.allow_none,
+            "exclude_models": list(defn.exclude_models),
+            "exclude_reason": defn.exclude_reason,
         }
 
     def export(self) -> dict:

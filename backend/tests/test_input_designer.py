@@ -201,3 +201,31 @@ def test_layer_fallback_still_produces_an_accurate_schema():
     ctx = _run_layer(ctx)
     fields = _by_name(ctx.workflow_spec.dag["input_schema"])
     assert fields["claim"]["type"] == "object" and "example" in fields["claim"]
+
+
+def test_nested_argument_binding_and_prompt_reads_are_declared_on_the_input_record():
+    """The recording's raw_application: an activity reads loan_term_months inside a record,
+    and an agent prompt reads credit_file. Both become fields of the declared input."""
+    from app.workflow_inputs.designer import finalise_input_schema
+
+    catalogue = [{"name": "affordability", "parameters": {"validated_application": {
+        "type": "object",
+        "properties": {"term_months": {"type": "integer", "minimum": 1, "description": "Term"}},
+        "required": ["term_months"]}}, "required": ["validated_application"]}]
+    steps = [
+        {"id": "afford", "type": "tool", "next_steps": ["risk"], "config": {
+            "tool_name": "affordability",
+            "arguments": {"validated_application": {"term_months": "{{raw_application.loan_term_months}}"}}}},
+        {"id": "risk", "type": "agent", "next_steps": [], "config": {
+            "query_template": "Credit file:\n{{raw_application.credit_file}}"}},
+    ]
+    fields = finalise_input_schema([{"name": "raw_application", "type": "object", "required": True}],
+                                   steps, "afford", catalogue=catalogue)
+    schema = fields[0]["schema"]
+    assert schema["properties"]["loan_term_months"]["type"] == "integer"
+    assert "loan_term_months" in schema.get("required", [])
+    assert "credit_file" in schema["properties"]
+    assert "credit_file" not in schema.get("required", [])
+    # Idempotent.
+    again = finalise_input_schema(fields, steps, "afford", catalogue=catalogue)
+    assert again[0]["schema"] == schema

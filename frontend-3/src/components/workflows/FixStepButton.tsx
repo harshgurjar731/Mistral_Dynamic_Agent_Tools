@@ -8,7 +8,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Hammer, Loader2 } from "lucide-react";
+import { Hammer, Loader2, Sparkles } from "lucide-react";
 import { errorMessage, toolsApi } from "@/api";
 import type { ExecutionStep, WorkflowDefinition, WorkflowStep } from "@/types";
 import { handOffRebuild } from "@/lib/rebuildHandoff";
@@ -103,14 +103,62 @@ export function FixStepButton({ step, toolStep }: { step: ExecutionStep; toolSte
   );
 }
 
-/** Step actions offering a fix on each failed activity step of ``definition``. */
+/**
+ * "Fix with AI" on any failed step: opens Refine with AI on this run. It reads
+ * the failure, plans the fix — workflow edits and, where the activity's own
+ * code is at fault, a rebuild of that code — and shows each item as it runs.
+ */
+export function FixWithAiButton({
+  workflowName,
+  executionId,
+}: {
+  workflowName: string;
+  executionId: string;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2">
+      <p className="min-w-0 flex-1 text-[11px] text-muted-foreground">
+        Let the assistant find the cause and fix the workflow or the activity code.
+      </p>
+      <Button
+        size="sm"
+        className="h-7 gap-1 bg-gradient-brand text-[11px] text-primary-foreground hover:opacity-90"
+        onClick={() =>
+          void navigate({
+            to: "/workflows/$workflowName/refine",
+            params: { workflowName },
+            search: { execution: executionId },
+          })
+        }
+      >
+        <Sparkles className="size-3" /> Fix with AI
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Step actions on each failed step of ``definition``: "Fix with AI" (when the
+ * run is known) and, on an activity step, "Fix this activity".
+ */
 export function fixStepActions(
   definition: WorkflowDefinition | null | undefined,
+  run?: { executionId?: string | null | undefined } | undefined,
 ): StepActions | undefined {
   if (!definition) return undefined;
   return (step) => {
     if (String(step.status).toUpperCase() !== "FAILED" || !step.error) return null;
     const toolStep = toolStepFor(definition, step);
-    return toolStep ? <FixStepButton step={step} toolStep={toolStep} /> : null;
+    const executionId = run?.executionId;
+    if (!toolStep && !executionId) return null;
+    return (
+      <div className="space-y-2">
+        {executionId ? (
+          <FixWithAiButton workflowName={definition.name} executionId={executionId} />
+        ) : null}
+        {toolStep ? <FixStepButton step={step} toolStep={toolStep} /> : null}
+      </div>
+    );
   };
 }

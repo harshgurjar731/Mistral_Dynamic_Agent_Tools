@@ -50,13 +50,53 @@ def referenced_fields(steps: list) -> dict[str, list[str]]:
 
 
 def attach_output_contracts(steps: list) -> None:
-    """Record on every agent step the output fields later steps read from it."""
+    """Record on every agent step the output fields later steps read from it,
+    and the rules any checking activity downstream will hold its output to."""
     fields = referenced_fields(steps)
+    rules = checked_requirements(steps)
     for step in steps or []:
         kind = getattr(getattr(step, "type", None), "value", getattr(step, "type", None))
+        if kind != "agent":
+            continue
         wanted = fields.get(step.id)
-        if kind == "agent" and wanted:
+        if wanted:
             step.config = {**(step.config or {}), "output_fields": wanted}
+        if rules.get(step.id):
+            step.config = {**(step.config or {}), "output_requirements": rules[step.id]}
+
+
+_ANY_STEP_REF = re.compile(r"\{\{\s*step_([A-Za-z0-9_]+?)_output(?:\.[^}]*)?\s*\}\}")
+
+
+def checked_requirements(steps: list) -> dict[str, list[str]]:
+    """``{agent_step_id: [requirement, ...]}`` from the checking activities that read its output.
+
+    An output-moderation activity rejected the decision letter for missing APR,
+    complaints and data-protection text, and for an approval with no reasons —
+    rules the letter's author was never told. The activity's specification
+    lists them (``code_requirement.checks``); here they reach that author.
+    """
+    out: dict[str, list[str]] = {}
+    for step in steps or []:
+        config = getattr(step, "config", None) or {}
+        req = config.get("code_requirement")
+        checks = req.get("checks") if isinstance(req, dict) else None
+        if not checks:
+            continue
+        sources = {sid for text in _strings(config.get("arguments") or {})
+                   for sid in _ANY_STEP_REF.findall(text)}
+        for sid in sorted(sources):
+            for check in checks:
+                requirement = str((check or {}).get("requirement") or "").strip()
+                if requirement and requirement not in out.setdefault(sid, []):
+                    out[sid].append(requirement)
+    return out
+
+
+def requirements_instruction(requirements: list[str]) -> str:
+    lines = "\n".join(f"- {r}" for r in requirements[:12])
+    return ("\n\nREQUIREMENTS (a later step checks your answer against these and rejects it "
+            f"otherwise):\n{lines}")
 
 
 def contract_instruction(fields: list[str]) -> str:

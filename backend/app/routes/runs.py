@@ -4,6 +4,7 @@ Background run routes — start creation pipelines that outlive the request.
     POST /runs/workflow-plan     plan a workflow
     POST /runs/agent             design (or reuse) an agent and answer with it
     POST /runs/synthesis         synthesise an agent tool or an activity
+    POST /runs/workflow-refine   Refine with AI: analyse, plan and carry out a fix (edits and code)
     GET  /runs                   list runs (?status=running&kind=…)
     GET  /runs/{id}              one run: status, progress, result
     GET  /runs/{id}/events       SSE: replay after ?after=<seq>, then follow live
@@ -58,6 +59,15 @@ class AgentRun(BaseModel):
     process_knowledge: Optional[ProcessKnowledgeRequest] = None
 
 
+class WorkflowRefineRun(BaseModel):
+    workflow_name: str = Field(min_length=1, max_length=200)
+    instruction: str = Field(min_length=1, max_length=4000)
+    focus_step_ids: list[str] = Field(default_factory=list, max_length=50)
+    origin: Literal["editor", "planner"] = "editor"
+    #: The failed run to fix; omitted: the latest run, when it failed.
+    execution_id: Optional[str] = Field(default=None, max_length=200)
+
+
 class SynthesisRun(BaseModel):
     task: str = Field(min_length=1)
     purpose: Literal["tool", "activity"] = "tool"
@@ -70,6 +80,25 @@ async def start_workflow_plan(body: WorkflowPlanRun, client=Depends(get_mistral_
     run = await manager.start(
         "workflow_plan", goal, {"goal": goal, "process_knowledge": process},
         partial(runners.workflow_plan, client=client, goal=goal, process_knowledge=process),
+    )
+    return run.snapshot()
+
+
+@router.post("/runs/workflow-refine", status_code=202)
+async def start_workflow_refine(body: WorkflowRefineRun, client=Depends(get_mistral_client)):
+    """Refine with AI as a run: the analysis, the fix plan and each item's progress stream live."""
+    from app.services import workflow_revision_service as revisions
+
+    try:
+        await revisions.ensure_workflow(body.workflow_name)
+    except revisions.RevisionError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    instruction = body.instruction.strip()
+    run = await manager.start(
+        "workflow_refine", f"Refine {body.workflow_name}: {instruction}", body.model_dump(),
+        partial(runners.workflow_refine, client=client, workflow_name=body.workflow_name,
+                instruction=instruction, focus_step_ids=body.focus_step_ids, origin=body.origin,
+                execution_id=body.execution_id),
     )
     return run.snapshot()
 

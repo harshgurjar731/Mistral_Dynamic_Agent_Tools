@@ -124,9 +124,23 @@ class ActivityGapLayer(WorkflowStepLayer):
                 ctx.emit("status", str(event.get("message", ""))[:200])
 
         code_check = CodeCheck(ctx)
-        resolutions = await resolve_code_needs(needs, client=ctx.client, on_event=relay,
-                                               concurrency=max(1, settings.TOOL_SYNTHESIS_CONCURRENCY),
-                                               code_check=code_check)
+        # In dependency order: an activity that consumes another's output is
+        # authored after it, shown its real output schema, so the two agree on
+        # field names and nesting instead of each assuming its own.
+        waves = activity_waves(activity_caps, spec.capabilities)
+        resolutions: list = [None] * len(needs)
+        wave_ids = sorted(set(waves))
+        for n, wave in enumerate(wave_ids):
+            at = [i for i, w in enumerate(waves) if w == wave]
+            share_upstream_schemas(needs, at, activity_caps, resolutions)
+            if len(wave_ids) > 1:
+                ctx.emit("status", f"Building activities — stage {n + 1} of {len(wave_ids)} "
+                                   f"({len(at)} activit{'y' if len(at) == 1 else 'ies'})…")
+            built = await resolve_code_needs([needs[i] for i in at], client=ctx.client, on_event=relay,
+                                             concurrency=max(1, settings.TOOL_SYNTHESIS_CONCURRENCY),
+                                             code_check=code_check)
+            for i, resolution in zip(at, built):
+                resolutions[i] = resolution
 
         # A second attempt, one at a time, for what failed. Most failures here
         # are the tool service being restarted or saturated by the concurrent
@@ -247,7 +261,50 @@ class ActivityGapLayer(WorkflowStepLayer):
 
 
 def _resolved(resolution) -> bool:
-    return resolution.status in ("reused", "built", "pending_approval")
+    return resolution is not None and resolution.status in ("reused", "built", "pending_approval")
+
+
+def activity_waves(activity_caps: list, capabilities: list) -> list[int]:
+    """For each activity capability, how many activities must be built before it.
+
+    Dependencies are followed through every capability (an activity fed by an
+    agent fed by an activity still waits for the first), and a cycle is cut
+    rather than followed.
+    """
+    by_id = {c.id: c for c in capabilities}
+    activity_ids = {c.id for c in activity_caps}
+    memo: dict[str, int] = {}
+
+    def depth(cid: str, seen: frozenset) -> int:
+        if cid in memo:
+            return memo[cid]
+        best = 0
+        for dep in getattr(by_id.get(cid), "depends_on", None) or []:
+            if dep in seen or dep not in by_id:
+                continue
+            below = depth(dep, seen | {dep})
+            best = max(best, below + (1 if dep in activity_ids else 0))
+        memo[cid] = best
+        return best
+
+    return [depth(c.id, frozenset({c.id})) for c in activity_caps]
+
+
+def share_upstream_schemas(needs: list, at: list[int], activity_caps: list, resolutions: list) -> None:
+    """Give each need in this wave the authored output schema of every activity it reads from."""
+    schemas = {}
+    for cap, resolution in zip(activity_caps, resolutions):
+        if resolution is None:
+            continue
+        schema = resolution.output_schema or (resolution.requirement.output_schema
+                                              if resolution.requirement else None)
+        if isinstance(schema, dict) and schema.get("properties"):
+            schemas[cap.id] = {"activity": resolution.name, "output_schema": schema}
+    for i in at:
+        for up in needs[i].upstream or []:
+            found = schemas.get(up.get("id"))
+            if found:
+                up.update(found)
 
 
 def _catalogue(catalogue: list, name: str, req, output_schema, version) -> None:

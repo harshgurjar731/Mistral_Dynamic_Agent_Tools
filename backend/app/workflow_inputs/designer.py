@@ -312,6 +312,23 @@ def _merge(a: Optional[dict], b: dict) -> dict:
     return a
 
 
+def _whole_refs(value: Any, schema: Optional[dict]):
+    """``(reference, the parameter schema it fills)`` for every whole reference in an argument,
+    at any depth — ``{"application": {"term": "{{raw.loan_term_months}}"}}`` included."""
+    if isinstance(value, str):
+        m = _WHOLE_REF.match(value)
+        if m and isinstance(schema, dict):
+            yield m.group(1), schema
+    elif isinstance(value, dict):
+        props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+        for key, sub in value.items():
+            yield from _whole_refs(sub, (props or {}).get(key) if isinstance(props, dict) else None)
+    elif isinstance(value, list):
+        items = (schema or {}).get("items") if isinstance(schema, dict) else None
+        for sub in value:
+            yield from _whole_refs(sub, items if isinstance(items, dict) else None)
+
+
 def bindings(steps: list, param_lookup: ParamLookup) -> dict[str, dict]:
     """The JSON Schema each input must satisfy, from the activity parameters it feeds."""
     out: dict[str, dict] = {}
@@ -323,18 +340,38 @@ def bindings(steps: list, param_lookup: ParamLookup) -> dict[str, dict]:
         if not isinstance(arguments, dict):
             continue
         for param, value in arguments.items():
-            if not isinstance(value, str):
+            for ref, leaf in _whole_refs(value, param_lookup.param(step, param)):
+                root, _, path = ref.partition(".")
+                if _STEP_OUTPUT.match(root) or not leaf:
+                    continue
+                out[root] = _merge(out.get(root), _nest(path, leaf) if path else leaf)
+    return out
+
+
+def _nest_optional(path: str, leaf: dict) -> dict:
+    """Like ``_nest``, without marking the path required."""
+    schema = copy.deepcopy(leaf)
+    for part in reversed([p for p in path.split(".") if p]):
+        schema = {"type": "object", "properties": {part: schema}}
+    return schema
+
+
+def read_paths(steps: list) -> dict[str, dict]:
+    """Every field a step reads from an input record, as a nested schema per input.
+
+    An agent prompt that reads ``{{raw_application.credit_file}}`` needs that
+    field on every run, but nothing declared it: the run form did not offer it
+    and the example omitted it. Paths read anywhere are declared here (optional,
+    untyped unless an activity binding types them).
+    """
+    out: dict[str, dict] = {}
+    for root, uses in usages(steps).items():
+        for use in uses:
+            path = use.get("path") or ""
+            if not path or any(p.isdigit() for p in path.split(".")):
                 continue
-            m = _WHOLE_REF.match(value)
-            if not m:
-                continue
-            root, _, path = m.group(1).partition(".")
-            if _STEP_OUTPUT.match(root):
-                continue
-            leaf = param_lookup.param(step, param)
-            if not leaf:
-                continue
-            out[root] = _merge(out.get(root), _nest(path, leaf) if path else leaf)
+            leaf = {"description": f"Read by step '{use.get('step_id')}'."}
+            out[root] = _merge(out.get(root), _nest_optional(path, leaf))
     return out
 
 
@@ -836,6 +873,17 @@ def finalise_input_schema(
         field = finalise_field(draft, bound=schema_for, example_candidates=(payload.get(name),))
         if field is not None:
             fields.append(field)
+
+    # Declare every path the steps read from an input record, so the run form,
+    # the example and the activities agree on one field list.
+    paths = read_paths(steps)
+    for field in fields:
+        extra = paths.get(field["name"])
+        if not extra or field.get("type") != "object":
+            continue
+        merged = clean_schema(_merge(field.get("schema") or {"type": "object", "properties": {}}, extra))
+        if merged:
+            field["schema"] = merged
     return fields
 
 

@@ -192,7 +192,9 @@ export function WorkflowExecutionModal({
                   duration_ms: st.duration_ms ?? null,
                   error: st.error ?? null,
                 }))}
-                renderActions={fixStepActions(workflow)}
+                renderActions={fixStepActions(workflow, {
+                  executionId: executionData?.execution_id,
+                })}
               />
             </div>
           )}

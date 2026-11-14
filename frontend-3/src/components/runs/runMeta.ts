@@ -6,6 +6,7 @@ import {
   CircleSlash,
   GitBranch,
   Loader2,
+  Sparkles,
   Wrench,
   Zap,
   type LucideIcon,
@@ -54,6 +55,15 @@ export const RUN_KIND_META: Record<
     chip: "border-emerald/25 bg-emerald/10 text-emerald",
     box: "border-emerald/20 bg-emerald/5",
     bar: "bg-emerald",
+  },
+  workflow_refine: {
+    label: "Refine with AI",
+    noun: "Change",
+    icon: Sparkles,
+    text: "text-primary",
+    chip: "border-primary/25 bg-primary/10 text-primary",
+    box: "border-primary/20 bg-primary/5",
+    bar: "bg-primary",
   },
   activity_synthesis: {
     label: "Activity synthesis",
@@ -141,6 +151,16 @@ export function useOpenRun() {
         case "agent":
           void navigate({ to: "/", search: { run: run.id } });
           break;
+        case "workflow_refine": {
+          const name = run.request?.["workflow_name"];
+          if (typeof name === "string" && name) {
+            void navigate({
+              to: "/workflows/$workflowName/refine",
+              params: { workflowName: name },
+            });
+          }
+          break;
+        }
         case "tool_synthesis":
         case "activity_synthesis": {
           useRunUiStore.getState().requestOpen(run.id);

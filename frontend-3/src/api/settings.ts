@@ -42,6 +42,9 @@ export interface SettingItem {
   capability: string | null;
   group: string | null;
   allow_none: boolean;
+  /** Model-name prefixes this setting refuses (e.g. Codestral on code routes). */
+  exclude_models?: string[];
+  exclude_reason?: string;
   model_status?: Record<string, ModelStatus>;
 }
 

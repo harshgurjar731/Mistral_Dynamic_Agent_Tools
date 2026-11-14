@@ -439,6 +439,9 @@ class WorkflowRevisionSpec:
     focus_step_ids: list[str] = field(default_factory=list)
     origin: str = "editor"                       # editor | planner
 
+    #: A failed run the change should fix (None: the latest run, if it failed).
+    execution_id: Optional[str] = None
+
     # RevisionContextLayer
     base: dict = field(default_factory=dict)     # the stored definition, as JSON
     base_hash: Optional[str] = None
@@ -446,8 +449,18 @@ class WorkflowRevisionSpec:
     base_issues: list[dict] = field(default_factory=list)
     history: list[dict] = field(default_factory=list)   # earlier turns
 
+    # RevisionDiagnosisLayer — the failed run read for the analysis:
+    # {"execution_id", "status", "error", "failed_steps": [...]}.
+    diagnosis: dict = field(default_factory=dict)
+
     # RevisionIntentLayer — or given directly, for a deterministic edit.
     operations: list[dict] = field(default_factory=list)
+    #: Activity code to repair: [{"step_id", "tool_name", "problem", "change"}],
+    #: then the outcome of each rebuild ("status", "version", "message").
+    code_fixes: list[dict] = field(default_factory=list)
+    #: The fix plan shown to the user and updated live: [{"id", "kind",
+    #: "title", "detail", "status", "note"}].
+    plan: list[dict] = field(default_factory=list)
     operations_given: bool = False
     summary: str = ""
     clarification: str = ""
@@ -522,6 +535,12 @@ class CodeRequirement:
     #: A rebuild after a run-time failure: the failed code, the error, the
     #: user's comment and the failing input (see the tool service's spec).
     feedback: dict = field(default_factory=dict)
+    #: For an activity that checks what an earlier step produced (moderation,
+    #: compliance, completeness): each rule it enforces, as
+    #: ``{"code": "missing_decision_reasons", "requirement": "<what must be present>"}``.
+    #: Copied onto the agents whose output it checks, so they meet the rules
+    #: instead of failing them (``output_contracts.attach_output_contracts``).
+    checks: list[dict] = field(default_factory=list)
 
     def as_request(self) -> dict:
         request = {
@@ -534,6 +553,8 @@ class CodeRequirement:
         }
         if self.feedback:
             request["feedback"] = self.feedback
+        if self.checks:
+            request["checks"] = self.checks
         return request
 
     @classmethod

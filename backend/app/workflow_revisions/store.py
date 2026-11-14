@@ -35,6 +35,7 @@ _REVISION_JSON = {
     "validation": None,
     "proposed_definition": None,
     "trace": [],
+    "plan": [],
 }
 
 # Versions kept per workflow: WORKFLOW_MAX_VERSIONS (Settings page). Older ones

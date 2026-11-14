@@ -45,7 +45,10 @@ from app.layers.workflow.pattern_expansion_layer import PatternExpansionLayer
 from app.layers.execution_layer import ExecutionLayer
 from app.layers.revision import (
     RevisionApplyLayer,
+    RevisionCodeFixLayer,
     RevisionContextLayer,
+    RevisionDiagnosisLayer,
+    RevisionPlanLayer,
     RevisionDiffLayer,
     RevisionIntentLayer,
     RevisionNormaliseLayer,
@@ -182,11 +185,14 @@ workflow_pipeline.add(WorkflowRegistrationLayer())
 
 revision_pipeline = Pipeline("workflow_revision")
 revision_pipeline.add(RevisionContextLayer())
+revision_pipeline.add(RevisionDiagnosisLayer())
 revision_pipeline.add(RevisionIntentLayer())
+revision_pipeline.add(RevisionPlanLayer())
 revision_pipeline.add(RevisionApplyLayer())
 revision_pipeline.add(RevisionNormaliseLayer())
 revision_pipeline.add(RevisionValidationLayer())
 # Model-made edits that failed or introduced errors go back to the editor once or twice.
 revision_pipeline.add(RevisionRepairLayer())
+revision_pipeline.add(RevisionCodeFixLayer())
 revision_pipeline.add(RevisionDiffLayer())
 revision_pipeline.add(RevisionProposalLayer())

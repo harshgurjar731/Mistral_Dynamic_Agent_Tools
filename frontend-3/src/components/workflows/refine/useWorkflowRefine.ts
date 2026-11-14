@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { errorMessage, QK, revisionsApi, workflowsApi } from "@/api";
+import { errorMessage, QK, revisionsApi, runsApi, workflowsApi } from "@/api";
 import type { RevisionOperation, WorkflowRevision } from "@/types";
+import { trackStartedRun } from "@/lib/runs/connections";
+import { useRunsStore, type TrackedRun } from "@/stores/runs";
 
 /**
  * Everything the refine workspace needs: the workflow, the conversation of
@@ -12,7 +14,12 @@ import type { RevisionOperation, WorkflowRevision } from "@/types";
  * restore and undo — and each refreshes the workflow, its validation, its
  * versions and the suggestions, since all four depend on the definition.
  */
-export function useWorkflowRefine(workflowName: string, origin: "editor" | "planner" = "editor") {
+export function useWorkflowRefine(
+  workflowName: string,
+  origin: "editor" | "planner" = "editor",
+  /** A failed run to fix, when the page was opened from it ("Fix with AI"). */
+  executionId?: string,
+) {
   const qc = useQueryClient();
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [focus, setFocus] = useState<string[]>([]);
@@ -75,19 +82,70 @@ export function useWorkflowRefine(workflowName: string, origin: "editor" | "plan
     [qc, workflowName],
   );
 
+  /**
+   * The Refine-with-AI run in progress for this workflow, if any. Found among
+   * the tracked runs (persisted), so a reload or a return to the page picks
+   * the live view back up.
+   */
+  const activeRun = useRunsStore((s) => newestRefineRun(s.runs, workflowName, true));
+  const refineRunId = activeRun?.id ?? null;
+  const refineInstruction = String(activeRun?.request?.["instruction"] ?? "");
+  const refineFocus = Array.isArray(activeRun?.request?.["focus_step_ids"])
+    ? (activeRun.request["focus_step_ids"] as string[])
+    : [];
+
+  // When a run this page watched ends: load the revision it recorded and preview it.
+  const [watchedId, setWatchedId] = useState<string | null>(null);
+  const watched = useRunsStore((s) => (watchedId ? s.runs[watchedId] : undefined));
+  useEffect(() => {
+    if (refineRunId && refineRunId !== watchedId) setWatchedId(refineRunId);
+  }, [refineRunId, watchedId]);
+  useEffect(() => {
+    if (!watched || watched.status === "running") return;
+    setWatchedId(null);
+    const id = watched.result?.["revision_id"];
+    const status = watched.result?.["revision_status"];
+    void qc.invalidateQueries({ queryKey: QK.workflowRevisions(workflowName) }).then(() => {
+      if (typeof id === "string" && status === "proposed") setPreviewId(id);
+    });
+    void qc.invalidateQueries({ queryKey: QK.workflowPrerequisites(workflowName) });
+    if (watched.status === "failed" && typeof id !== "string") {
+      toast.error(`Could not prepare the change: ${watched.error ?? "the run failed"}`);
+    }
+  }, [watched, qc, workflowName]);
+
   const propose = useMutation({
-    mutationFn: (body: { instruction?: string; operations?: RevisionOperation[] }) =>
-      revisionsApi.propose(workflowName, {
-        ...body,
+    mutationFn: async (body: { instruction?: string; operations?: RevisionOperation[] }) => {
+      // An edit picked on the canvas is applied deterministically, at once.
+      if (body.operations?.length) {
+        const revision = await revisionsApi.propose(workflowName, {
+          ...body,
+          focus_step_ids: focus,
+          origin,
+        });
+        return { kind: "revision" as const, revision };
+      }
+      // An instruction is analysed, planned and carried out as a run with live progress.
+      const run = await runsApi.startWorkflowRefine({
+        workflow_name: workflowName,
+        instruction: body.instruction?.trim() ?? "",
         focus_step_ids: focus,
         origin,
-      }),
+        ...(executionId ? { execution_id: executionId } : {}),
+      });
+      return { kind: "run" as const, run };
+    },
     onMutate: (body) =>
       setPending({ instruction: body.instruction?.trim() || "Applying your edit…", focus }),
-    onSuccess: (rev) => {
-      upsertRevision(rev);
-      // Show a fresh proposal on the canvas straight away.
-      if (rev.status === "proposed") setPreviewId(rev.id);
+    onSuccess: (res) => {
+      if (res.kind === "run") {
+        trackStartedRun(res.run);
+        setWatchedId(res.run.id);
+      } else {
+        upsertRevision(res.revision);
+        // Show a fresh proposal on the canvas straight away.
+        if (res.revision.status === "proposed") setPreviewId(res.revision.id);
+      }
       setFocus([]);
     },
     onError: (e) => toast.error(`Could not prepare the change: ${errorMessage(e)}`),
@@ -191,6 +249,10 @@ export function useWorkflowRefine(workflowName: string, origin: "editor" | "plan
     setFocus,
     toggleFocus,
     pending,
+    executionId,
+    refineRunId,
+    refineInstruction,
+    refineFocus,
     propose,
     apply,
     discard,
@@ -201,3 +263,18 @@ export function useWorkflowRefine(workflowName: string, origin: "editor" | "plan
 }
 
 export type WorkflowRefine = ReturnType<typeof useWorkflowRefine>;
+
+/** The newest Refine-with-AI run for a workflow (only running ones, when `running`). */
+function newestRefineRun(
+  runs: Record<string, TrackedRun>,
+  workflowName: string,
+  running: boolean,
+): TrackedRun | null {
+  let best: TrackedRun | null = null;
+  for (const r of Object.values(runs)) {
+    if (r.kind !== "workflow_refine" || r.request?.["workflow_name"] !== workflowName) continue;
+    if (running && r.status !== "running") continue;
+    if (!best || (r.created_at ?? "") > (best.created_at ?? "")) best = r;
+  }
+  return best;
+}

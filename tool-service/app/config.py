@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # Retired for synthesis — models are chosen per job in app/llm/routes.py
     # (override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
-    MISTRAL_CODING_MODEL: str = "codestral-latest"
+    MISTRAL_CODING_MODEL: str = ""
 
     # ── Code synthesis ──────────────────────────────────────────────────
     # Transport retries per model call, before the route's fallback model.

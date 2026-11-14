@@ -283,7 +283,7 @@ function ValueInput({
         <ModelPicker
           value={String(value ?? "")}
           onChange={onChange}
-          models={models}
+          models={models.filter((m) => !isExcludedModel(m.id, item.exclude_models))}
           capability={item.capability}
           allowNone={item.allow_none}
           disabled={!item.editable}
@@ -337,6 +337,12 @@ function ValueInput({
   }
 }
 
+/** True when `name` belongs to a model family this setting refuses. */
+function isExcludedModel(name: string, prefixes: string[] | undefined): boolean {
+  const low = name.trim().toLowerCase();
+  return Boolean(low) && (prefixes ?? []).some((p) => low.startsWith(p.toLowerCase()));
+}
+
 /** Warning under a model field: catalog review result, else a local check. */
 function ModelWarning({
   item,
@@ -351,7 +357,10 @@ function ModelWarning({
   const status = item.model_status?.[value];
   const card = catalog.get(value);
   let message: string | null = null;
-  if (status && status.status !== "ok" && status.status !== "unchecked") message = status.message;
+  if (isExcludedModel(value, item.exclude_models))
+    message = `'${value}' cannot be used here. ${item.exclude_reason ?? ""}`.trim();
+  else if (status && status.status !== "ok" && status.status !== "unchecked")
+    message = status.message;
   else if (!status && catalog.size > 0) {
     if (!card) message = `'${value}' is not in the Mistral model list for this account`;
     else if (!supports(card, item.capability))

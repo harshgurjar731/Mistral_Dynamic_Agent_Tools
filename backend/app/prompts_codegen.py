@@ -125,6 +125,14 @@ Rules:
 - Prefer kind "pure". Use "http" only if the capability cannot be computed
   locally, and then give api_details and an http_fixture with "for_input".
 - side_effects must be "none" or "read-only": writes belong to connector steps.
+- When the activity CHECKS something an earlier step produced (output
+  moderation, compliance, completeness, a letter or report review), add
+  "checks": one entry per rule it enforces, {"code": "<the reason code it
+  reports, e.g. missing_decision_reasons>", "requirement": "<one sentence:
+  what the checked input must contain or satisfy to pass>"}. These rules are
+  given to the step that writes the checked input, so state them concretely
+  (e.g. "letter_text states the APR as a percentage"). Omit "checks" for any
+  activity that does not check another step's output.
 
 <<TOOL_SAFETY_RULES>>
 """ + _SPEC_SHAPE

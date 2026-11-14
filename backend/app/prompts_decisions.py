@@ -1158,12 +1158,16 @@ connector steps — `arguments` and `tool_name`:
   The connector tool to invoke and its arguments.
 
 condition steps — `expression`:
-  A Python-evaluable boolean over the variables. Keep it simple: comparisons,
-  `in`, `and`/`or`. It is evaluated in a restricted scope, so no imports, no
-  function calls beyond `len`, `str`, `int`, `float`.
+  <<CONDITION_CONTRACT>>
+  Reference every value as a double-brace variable; a bare name fails.
 
 transform steps — `transform_code`:
-  A short expression producing the transformed value from the variables.
+  <<TRANSFORM_CONTRACT>>
+  Example (statements):
+    app = variables.get('step_validate_output') or {}
+    app = json.loads(app) if isinstance(app, str) else app
+    cost = float(app.get('equipment_cost') or 0)
+    output = {'min_deposit': round(cost * 0.1, 2)}
 
 ## Also produce
 - `input_schema`: the workflow's inputs, each with `name`, `type`,
@@ -1620,9 +1624,9 @@ validates the result. Never output a whole definition.
   and `instructions` inline, alongside its `query_template`.
 - Tool step config: `tool_name` (an activity from the catalogue) and
   `arguments` mapping EVERY required parameter to a value or template.
-- Condition config: `expression` (Python boolean over variables; only
-  comparisons, `in`, `and`/`or`, `len`, `str`, `int`, `float`), `true_step`,
+- Condition config: `expression` (<<CONDITION_CONTRACT>>), `true_step`,
   `false_step`.
+- Transform config: `transform_code` (<<TRANSFORM_CONTRACT>>).
 - Steps sharing a `parallel_group` run concurrently and must converge on the
   same successor.
 
@@ -1681,6 +1685,23 @@ Every operation is an object with "op" and a short "reason".
    output of a step that runs before it; every tool step maps all of its
    activity's required parameters; every agent_id and tool_name exists in the
    catalogue; every condition's true_step and false_step exists.
+12. LAST RUN shows the run being fixed: each failed step with its error, the
+   input it received and — for an activity — its code. Find the CAUSE first:
+   - wiring (a wrong or missing argument, a template reading a field that does
+     not exist, an undeclared input, a bad condition or transform) → fix it
+     with operations;
+   - the activity's own code (a wrong calculation, a crash on a valid input,
+     an output field missing or misnamed, a check that rejects valid data) →
+     add a "code_fixes" entry for that activity. Its code is rebuilt from your
+     "change", tested against its worked examples and the input it failed on,
+     and the workflow is pinned to the new version.
+   Use both when both are needed (e.g. rename an output field in the code and
+   update the template that reads it). Never describe a code change as an
+   operation, and never rebuild code to work around a wiring mistake.
+13. A code fix's "change" is a precise instruction to the code author: what
+   the code must do differently, with exact field names, formulas and edge
+   cases. Keep the activity's name; keep its input and output field names
+   unless renaming one is the fix.
 
 ## Output schema
 {
@@ -1688,6 +1709,11 @@ Every operation is an object with "op" and a short "reason".
   "summary": "string",
   "clarification": "",
   "operations": [ { "op": "...", "reason": "..." } ],
+  "code_fixes": [
+    {"step_id": "<the tool step>", "tool_name": "<its activity>",
+     "problem": "<what in the code causes the failure>",
+     "change": "<exactly what the code must do instead>"}
+  ],
   "reasoning": "string"
 }
 """ + _SINGLE_DECISION_CONTRACT
@@ -1714,10 +1740,14 @@ CONVERSATION SO FAR (oldest first):
 FOCUS STEPS:
 {focus}
 
+LAST RUN (the failure to fix, if any):
+{diagnosis}
+
 THE USER'S INSTRUCTION:
 {instruction}
 
-Translate the instruction into edit operations.
+Translate the instruction into edit operations, and code fixes where the
+activity's code is the cause.
 """
 
 # The repair round of Refine with AI: the same editor, shown what its edits
@@ -1738,3 +1768,20 @@ error. Still do exactly what the user asked and nothing else. If an error
 cannot be cleared without going beyond the instruction, leave it and say why
 in "reasoning".
 """
+
+
+# ── Sandbox contracts ───────────────────────────────────────────────────────
+# Condition and transform code run in the restricted scope defined once in
+# app.services.workflow_engine.expression_sandbox; the prompts state exactly
+# that scope, so what the planner writes is what the runner accepts.
+def _with_sandbox_contracts() -> None:
+    from app.services.workflow_engine.expression_sandbox import CONDITION_CONTRACT, TRANSFORM_CONTRACT
+
+    module = globals()
+    for name, value in list(module.items()):
+        if name.endswith("_PROMPT") and isinstance(value, str) and "<<" in value:
+            module[name] = (value.replace("<<CONDITION_CONTRACT>>", CONDITION_CONTRACT)
+                                 .replace("<<TRANSFORM_CONTRACT>>", TRANSFORM_CONTRACT))
+
+
+_with_sandbox_contracts()

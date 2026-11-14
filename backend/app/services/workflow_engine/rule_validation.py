@@ -31,6 +31,7 @@ async def validate_with_rules(definition: WorkflowDefinition, *, client=None,
     recording those would bury the history people actually want to read.
     """
     result = validate_workflow(definition)
+    result = await _with_argument_shapes(definition, result)
 
     try:
         from app.dependencies import get_mistral_client
@@ -74,3 +75,55 @@ async def validate_with_rules(definition: WorkflowDefinition, *, client=None,
         logger.warning("Workflow rules skipped: %s", e)
 
     return result
+
+
+#: The tool service's activity listing, reused briefly: live validation runs on
+#: every builder change and must not fetch it each time.
+_LISTING_TTL = 30.0
+_listing: dict = {"at": 0.0, "catalog": {}}
+
+
+async def _activity_catalog() -> dict:
+    import time
+
+    from app.services.workflow_engine.argument_shapes import catalog_from_listing
+    from app.services.tool_resolver import tool_resolver
+
+    now = time.monotonic()
+    if now - _listing["at"] > _LISTING_TTL:
+        # Bounded: validation must stay quick when the tool service is down,
+        # and a failed lookup is remembered for the same TTL (then the check
+        # falls back to the requirements the steps were planned with).
+        _listing["at"] = now
+        try:
+            tools = await asyncio.wait_for(tool_resolver.list_tools(), timeout=3.0)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Activity listing unavailable for validation: %s", e)
+            tools = []
+        if tools:  # an empty listing means the service is unreachable, not "no activities"
+            _listing["catalog"] = catalog_from_listing(tools)
+    return _listing["catalog"]
+
+
+async def _with_argument_shapes(definition: WorkflowDefinition, result: ValidationResponse) -> ValidationResponse:
+    """Add argument-shape errors (activity steps fed values their input schema rejects)."""
+    from app.services.workflow_engine.argument_shapes import check_argument_shapes
+    from app.services.workflow_engine.models import ValidationIssue
+
+    try:
+        catalog = await _activity_catalog()
+        found = check_argument_shapes(definition.model_dump(mode="json"), catalog)
+    except Exception as e:  # noqa: BLE001 — never block validation on the listing
+        logger.warning("Argument-shape check skipped: %s", e)
+        return result
+    known = {(i.code, i.step_id, i.field) for i in result.issues}
+    extra = [ValidationIssue(**i) for i in found if (i["code"], i["step_id"], i["field"]) not in known]
+    if not extra:
+        return result
+    issues = [*result.issues, *extra]
+    return ValidationResponse(
+        valid=not any(i.severity == "error" for i in issues),
+        issues=issues,
+        error_count=sum(1 for i in issues if i.severity == "error"),
+        warning_count=sum(1 for i in issues if i.severity == "warning"),
+    )

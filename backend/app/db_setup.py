@@ -51,6 +51,8 @@ def prepare_database(*, seed_rules: bool = True) -> None:
 
     rules_schema.ensure_schema()
     remote_servers_schema.ensure_schema()
+    from app.workflow_revisions.models import ensure_schema as revisions_schema
+    revisions_schema()
     ontology_knowledge.ensure_schema()
     rag_schema.ensure_schema()
 

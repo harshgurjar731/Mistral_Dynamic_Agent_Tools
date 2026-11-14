@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, PencilRuler, Play, Sparkles } from "lucide-react";
+import { z } from "zod";
 import { QK, workflowsApi } from "@/api";
 import { RefineWorkspace } from "@/components/workflows/refine/RefineWorkspace";
 import { DeployBadge, SourceBadge } from "@/components/workflows/WorkflowCard";
@@ -10,6 +11,8 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
 
 export const Route = createFileRoute("/workflows/$workflowName/refine")({
+  // ?execution=<id>: opened from a failed run, which the first change should fix.
+  validateSearch: z.object({ execution: z.string().optional() }),
   head: ({ params }) => ({
     meta: [
       { title: `Refine ${params.workflowName} — Agentic AI Design Patterns` },
@@ -35,6 +38,7 @@ const secondaryButton =
 
 function RefineWorkflowPage() {
   const { workflowName } = Route.useParams();
+  const { execution } = Route.useSearch();
   const wf = useQuery({
     queryKey: QK.workflow(workflowName),
     queryFn: () => workflowsApi.get(workflowName),
@@ -105,6 +109,7 @@ function RefineWorkflowPage() {
       ) : (
         <RefineWorkspace
           workflowName={workflowName}
+          executionId={execution}
           className="h-[calc(100dvh-12rem)] min-h-[560px]"
         />
       )}

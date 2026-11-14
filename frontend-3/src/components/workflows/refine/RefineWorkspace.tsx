@@ -24,15 +24,18 @@ export function RefineWorkspace({
   origin = "editor",
   allowPublish = true,
   className,
+  executionId,
 }: {
   workflowName: string;
+  /** A failed run to fix ("Fix with AI" on a run). */
+  executionId?: string | undefined;
   origin?: "editor" | "planner";
   /** False inside the planner, where Accept & register publishes. */
   allowPublish?: boolean;
   /** Sets the workspace height; the panes scroll inside it. */
   className?: string;
 }) {
-  const refine = useWorkflowRefine(workflowName, origin);
+  const refine = useWorkflowRefine(workflowName, origin, executionId);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const conversationPanel = useResizablePanel({
     storageKey: "refine-conversation",

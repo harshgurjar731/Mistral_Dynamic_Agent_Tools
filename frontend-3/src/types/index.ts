@@ -230,6 +230,19 @@ export interface RevisionTraceRow {
   ms?: number | null;
 }
 
+/** One item of a Refine-with-AI fix plan, updated live while the turn runs. */
+export interface FixPlanItem {
+  id: string;
+  kind: "workflow" | "code" | "check";
+  title: string;
+  detail?: string;
+  status: "pending" | "in_progress" | "completed" | "failed" | "skipped";
+  note?: string;
+  /** Code fixes: the activity and the version the rebuild produced. */
+  tool_name?: string | null;
+  version?: number | null;
+}
+
 export interface WorkflowRevision {
   id: string;
   workflow_name: string;
@@ -248,6 +261,8 @@ export interface WorkflowRevision {
   validation: RevisionValidation | null;
   proposed_definition?: WorkflowDefinition | null;
   trace: RevisionTraceRow[];
+  /** The fix plan this turn carried out, with how each item ended. */
+  plan?: FixPlanItem[];
   error: string | null;
   applied_version: number | null;
   created_at: string | null;

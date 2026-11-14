@@ -143,6 +143,8 @@ def _validate_connector_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
 def _validate_condition_step(
     step: WorkflowStep, step_ids: set[str]
 ) -> Iterable[ValidationIssue]:
+    from app.services.workflow_engine.expression_sandbox import check_condition
+
     cfg = step.config or {}
     if not cfg.get("expression"):
         yield _issue(
@@ -150,6 +152,14 @@ def _validate_condition_step(
             "Condition step must define an expression to evaluate.",
             step.id, "expression",
         )
+    else:
+        problem = check_condition(str(cfg["expression"]))
+        if problem:
+            yield _issue(
+                "error", "condition.cannot_evaluate",
+                f"Condition expression cannot be evaluated: {problem}.",
+                step.id, "expression",
+            )
 
     # A condition routes via true_step/false_step rather than next_steps.
     branches = [("true_step", cfg.get("true_step")), ("false_step", cfg.get("false_step"))]
@@ -170,6 +180,8 @@ def _validate_condition_step(
 
 
 def _validate_transform_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
+    from app.services.workflow_engine.expression_sandbox import check_transform
+
     cfg = step.config or {}
     if not cfg.get("transform_code") and not cfg.get("mappings"):
         yield _issue(
@@ -177,6 +189,16 @@ def _validate_transform_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
             "Transform step must define either transform code or field mappings.",
             step.id, "transform_code",
         )
+        return
+    code = cfg.get("transform_code")
+    if code:
+        problem = check_transform(str(code))
+        if problem:
+            yield _issue(
+                "error", "transform.cannot_run",
+                f"Transform code cannot run: {problem}.",
+                step.id, "transform_code",
+            )
 
 
 def _validate_human_review_step(step: WorkflowStep, step_ids) -> Iterable[ValidationIssue]:

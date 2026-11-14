@@ -60,6 +60,25 @@ async def workflow_plan(run: LiveRun, *, client, goal: str,
     return RunOutcome(result=result)
 
 
+async def workflow_refine(run: LiveRun, *, client, workflow_name: str, instruction: str,
+                          focus_step_ids: list[str], origin: str = "editor",
+                          execution_id: Optional[str] = None) -> RunOutcome:
+    """Refine with AI: read the failed run, analyse, plan, edit, fix activity code, check, propose."""
+    from app.services import workflow_revision_service as revisions
+
+    try:
+        revision = await revisions.propose(
+            client, workflow_name, instruction=instruction, focus_step_ids=focus_step_ids,
+            origin=origin, execution_id=execution_id, event_queue=run)
+    except revisions.RevisionError as e:
+        return RunOutcome(status="failed", result={"workflow_name": workflow_name}, error=str(e))
+    result = {"workflow_name": workflow_name, "revision_id": revision.get("id"),
+              "revision_status": revision.get("status")}
+    if revision.get("status") == "failed":
+        return RunOutcome(status="failed", result=result, error=revision.get("error") or "No change could be made.")
+    return RunOutcome(result=result)
+
+
 async def agent(
     run: LiveRun,
     *,

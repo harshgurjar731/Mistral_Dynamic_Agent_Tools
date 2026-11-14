@@ -783,6 +783,16 @@ _ROUTE_JOBS = {
 }
 
 
+def _code_guard(role: str) -> dict:
+    """Refuse Codestral on every route of the tool/activity code pipeline."""
+    from app.llm_routes import CODE_ROLES, EXCLUDED_CODE_MODELS
+
+    if role not in CODE_ROLES:
+        return {}
+    return {"exclude_models": EXCLUDED_CODE_MODELS,
+            "exclude_reason": 'Tool and activity code is written by the general reasoning models chosen here, never by Codestral.'}
+
+
 def _route_defs() -> list[SettingDef]:
     """Four rows per route in app/llm_routes.py; defaults are the code's routes."""
     from app.llm_routes import _ROUTES
@@ -801,7 +811,7 @@ def _route_defs() -> list[SettingDef]:
         defs += [
             SettingDef(f"{prefix}_MODEL", "model_routes", "Model", job, type="model",
                        default=route.model, capability="chat", group=title,
-                       impact=impact, used_in=used),
+                       impact=impact, used_in=used, **_code_guard(role)),
             SettingDef(f"{prefix}_EFFORT", "model_routes", "Reasoning effort",
                        "High thinks before answering (slower, better); None answers directly; "
                        "Omit leaves it to the model.", type="enum",
@@ -816,7 +826,7 @@ def _route_defs() -> list[SettingDef]:
             SettingDef(f"{prefix}_FALLBACK", "model_routes", "Fallback model",
                        "Tried once when the primary model fails; 'none' disables.",
                        type="model", default=route.fallback_model or "none", allow_none=True,
-                       capability="chat", group=title, impact=impact, used_in=used),
+                       capability="chat", group=title, impact=impact, used_in=used, **_code_guard(role)),
         ]
     return defs
 

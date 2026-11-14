@@ -97,6 +97,12 @@ class ActivityRequirementProfile(RequirementProfile):
         if need.upstream:
             blocks.append("## Steps that feed it (their outputs become its inputs)\n"
                           + json.dumps(need.upstream, indent=2, default=str))
+            if any(isinstance(u, dict) and u.get("output_schema") for u in need.upstream):
+                blocks.append(
+                    "Where a feeding step lists an output_schema, that is exactly what it returns. "
+                    "Every input that carries that data must use the same field names and nesting "
+                    "(no renamed fields, no added unit suffixes such as _gbp), so the workflow can "
+                    "pass the output straight through.")
         if need.downstream:
             blocks.append("## Steps that read its output\n"
                           + json.dumps(need.downstream, indent=2, default=str))
@@ -113,12 +119,45 @@ class ActivityRequirementProfile(RequirementProfile):
             issues.append("output_schema is missing the capability outputs later steps "
                           "will reference: " + ", ".join(missing)
                           + f" (present: {', '.join(sorted(out_props))})")
+        issues += _renamed_upstream_fields(need, req)
         with_output = [e for e in req.examples if isinstance(e, dict) and e.get("output") is not None]
         if len(with_output) < (2 if req.kind == "pure" else 1):
             issues.append("give at least 2 worked examples with exact outputs")
         if req.side_effects in ("write", "delete"):
             issues.append("an activity may not write or delete; that belongs to a connector step")
         return issues
+
+
+def _field_names(schema, depth: int = 0) -> set[str]:
+    props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict):
+        return set()
+    names = set(props)
+    if depth < 1:
+        for sub in props.values():
+            names |= _field_names(sub, depth + 1)
+    return names
+
+
+def _renamed_upstream_fields(need, req: CodeRequirement) -> list[str]:
+    """Inputs that rename a field an upstream activity actually returns (``equipment_cost_gbp``
+    for ``equipment_cost``). Each forces a mapping in the workflow that was easy to get wrong."""
+    upstream = set()
+    for u in need.upstream or []:
+        if isinstance(u, dict):
+            upstream |= _field_names(u.get("output_schema"))
+    if not upstream:
+        return []
+    renamed = []
+    for name in sorted(_field_names(req.input_schema) - upstream):
+        for field in sorted(upstream):
+            if (name.startswith(field + "_") or field.startswith(name + "_")) and field != name:
+                renamed.append(f"'{name}' (the feeding step returns '{field}')")
+                break
+    if not renamed:
+        return []
+    return ["input_schema renames fields the feeding steps return — use their exact names: "
+            + ", ".join(renamed)]
 
 
 PROFILES = {"tool": RequirementProfile(), "activity": ActivityRequirementProfile()}

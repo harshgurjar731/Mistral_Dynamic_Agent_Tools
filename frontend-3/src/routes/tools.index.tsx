@@ -364,7 +364,8 @@ function ToolsPage() {
               <Sparkles className="size-4 text-primary" /> Synthesize Tool
             </DialogTitle>
             <DialogDescription>
-              Describe a capability in plain language and let Codestral write the tool for you.
+              Describe a capability in plain language and the code model chosen in Settings writes
+              the tool for you.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">

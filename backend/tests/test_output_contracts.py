@@ -57,3 +57,33 @@ def test_lookup_resolves_agent_text_with_wrapped_field():
 def test_error_hint_lists_what_the_step_returned():
     hint = _produced_fields_hint(["step_m_output.x"], {"step_m_output": {"a": 1, "b": 2}})
     assert "'step_m_output' has: a, b" in hint
+
+
+def test_checking_activity_rules_reach_the_agent_whose_output_it_checks():
+    """The decision letter failed output moderation for rules its author was never given."""
+    from app.layers.codegen.layers import clean_checks
+    from app.services.workflow_engine.models import StepType, WorkflowStep
+    from app.services.workflow_engine.output_contracts import (
+        attach_output_contracts, requirements_instruction,
+    )
+
+    checks = clean_checks([
+        {"code": "missing_decision_reasons", "requirement": "The letter gives the reasons for the decision."},
+        {"code": "missing_apr", "requirement": "letter_text states the APR as a percentage."},
+        {"code": "", "requirement": ""},
+        "not a dict",
+    ])
+    assert [c["code"] for c in checks] == ["missing_decision_reasons", "missing_apr"]
+    steps = [
+        WorkflowStep(id="letter", type=StepType.AGENT, next_steps=["moderate"],
+                     config={"agent_id": "a", "query_template": "Write the letter."}),
+        WorkflowStep(id="moderate", type=StepType.TOOL, next_steps=[], config={
+            "tool_name": "output_moderation",
+            "arguments": {"decision_letter": "{{step_letter_output.letter_text}}"},
+            "code_requirement": {"name": "output_moderation", "checks": checks}}),
+    ]
+    attach_output_contracts(steps)
+    assert steps[0].config["output_fields"] == ["letter_text"]
+    assert steps[0].config["output_requirements"] == [c["requirement"] for c in checks]
+    text = requirements_instruction(steps[0].config["output_requirements"])
+    assert "APR as a percentage" in text and "rejects it" in text

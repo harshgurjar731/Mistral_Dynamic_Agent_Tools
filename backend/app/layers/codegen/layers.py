@@ -326,7 +326,21 @@ def requirement_from_answer(data: dict, need: CodeNeed, normalised: dict) -> Cod
         side_effects=str(data.get("side_effects") or "none"),
         http_fixtures=[f for f in (data.get("http_fixtures") or []) if isinstance(f, dict)],
         origin=need.origin,
+        checks=clean_checks(data.get("checks")),
     )
+
+
+def clean_checks(raw) -> list[dict]:
+    """The rules a checking activity enforces: ``[{"code", "requirement"}]``, at most 12."""
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()[:80]
+        requirement = str(item.get("requirement") or "").strip()[:300]
+        if requirement:
+            out.append({"code": code or f"check_{len(out) + 1}", "requirement": requirement})
+    return out[:12]
 
 
 # ── R5 / R6 ────────────────────────────────────────────────────────────────

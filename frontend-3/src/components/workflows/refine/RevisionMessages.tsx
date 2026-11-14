@@ -36,6 +36,7 @@ import { Markdown } from "@/components/chat/Markdown";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { FixPlanList } from "./FixPlanProgress";
 
 /* ── Shared bits ─────────────────────────────────────────────────────── */
 
@@ -60,7 +61,7 @@ function AssistantAvatar() {
   );
 }
 
-function AssistantShell({
+export function AssistantShell({
   children,
   className,
   at,
@@ -405,6 +406,11 @@ export function AssistantTurn({
               className="mt-1.5 text-xs"
             />
             {revision.notes.length ? <Notes notes={revision.notes} /> : null}
+            {revision.plan?.length ? (
+              <div className="mt-2.5">
+                <FixPlanList items={revision.plan} compact />
+              </div>
+            ) : null}
             {actions.latest ? (
               <Button
                 variant="outline"
@@ -516,6 +522,17 @@ function ProposalCard({
           <div className="rounded-xl border border-border/50 bg-background-elevated/40 px-3 py-2.5">
             <Disclosure label="What changes" defaultOpen={open && actions.latest}>
               <DiffList diff={diff} />
+            </Disclosure>
+          </div>
+        ) : null}
+
+        {revision.plan?.length ? (
+          <div className="rounded-xl border border-border/50 bg-background-elevated/40 px-3 py-2.5">
+            <Disclosure
+              label="The fix plan"
+              defaultOpen={open && actions.latest && revision.plan.some((i) => i.kind === "code")}
+            >
+              <FixPlanList items={revision.plan} compact />
             </Disclosure>
           </div>
         ) : null}

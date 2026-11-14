@@ -145,8 +145,13 @@ def repin_workflows(name: str, old_version: Optional[int], new_version: int,
             if pinned is not None:
                 new_config["tool_version"] = new_version
             if requirement:
-                new_config["code_requirement"] = {k: v for k, v in requirement.items()
-                                                  if k != "feedback"}
+                kept = {k: v for k, v in requirement.items() if k != "feedback"}
+                # The rules it checks belong to the workflow, not the rebuilt code: keep them.
+                old = config.get("code_requirement")
+                old_checks = old.get("checks") if isinstance(old, dict) else None
+                if old_checks and not kept.get("checks"):
+                    kept["checks"] = old_checks
+                new_config["code_requirement"] = kept
             step.config = new_config
             steps.append(step.id)
         if steps:

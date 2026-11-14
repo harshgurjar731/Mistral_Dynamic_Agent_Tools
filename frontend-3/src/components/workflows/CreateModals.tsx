@@ -854,7 +854,8 @@ export function CreateToolModal({
                 {purpose === "activity" ? "Synthesise Activity" : "Synthesise Tool"}
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                Codestral generates Python code, lints, and executes it in sandbox verification
+                The code model chosen in Settings writes the Python code; it is linted and verified
+                in a sandbox
               </DialogDescription>
             </div>
           </div>
@@ -894,9 +895,9 @@ export function CreateToolModal({
                 onStop={() => synthesis.run && void stopRun(synthesis.run.id)}
               />
               <p className="text-[11px] text-muted-foreground">
-                Codestral is generating the function, verifying type hints, running AST checks, and
-                validating test executions. You can close this dialog — synthesis continues in the
-                background and you will be notified when it is ready.
+                The code model from Settings is writing the function, verifying type hints, running
+                AST checks, and validating test executions. You can close this dialog — synthesis
+                continues in the background and you will be notified when it is ready.
               </p>
             </div>
           ) : synthesis.starting ? (

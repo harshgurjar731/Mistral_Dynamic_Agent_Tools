@@ -16,6 +16,7 @@ import logging
 
 from app.core.context import PipelineContext
 from app.layers.revision.base import RevisionDecisionLayer
+from app.workflow_revisions import fix_plan
 from app.workflow_revisions.operations import validate_operation_shape
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class RevisionIntentLayer(RevisionDecisionLayer):
                 connectors=catalog.get("connectors") or "(none available)",
                 history=json.dumps(spec.history, indent=2) if spec.history else "(this is the first turn)",
                 focus=", ".join(spec.focus_step_ids) or "(none — the whole workflow)",
+                diagnosis=fix_plan.diagnosis_for_prompt(spec.diagnosis),
                 instruction=spec.instruction,
             ),
         )
@@ -91,16 +93,18 @@ class RevisionIntentLayer(RevisionDecisionLayer):
             operations.append(op)
 
         spec.operations = operations[:_MAX_OPERATIONS]
+        spec.code_fixes = fix_plan.clean_code_fixes(data.get("code_fixes"), spec.base)
         spec.summary = str(data.get("summary") or "").strip()[:600]
         spec.reasoning = str(data.get("reasoning") or "").strip()[:1200]
         clarification = str(data.get("clarification") or "").strip()[:600]
 
-        if not operations or data.get("understood") is False:
+        if (not operations and not spec.code_fixes) or data.get("understood") is False:
             spec.status = "needs_clarification"
             spec.clarification = clarification or (
                 "I could not tell what to change from that. Which step should change, and how?"
             )
             spec.operations = []
+            spec.code_fixes = []
 
     def fallback(self, ctx: PipelineContext) -> None:
         spec = ctx.revision_spec

@@ -52,6 +52,8 @@ class WorkflowRevisionRecord(Base):
     validation = Column(Text, nullable=True)                      # JSON object
     proposed_definition = Column(Text, nullable=True)             # JSON object
     trace = Column(Text, nullable=False, default="[]")            # JSON list — layer outcomes
+    #: The fix plan and how each item ended (Refine with AI); JSON list.
+    plan = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
 
     #: The version recorded when this revision was applied.
@@ -81,3 +83,25 @@ class WorkflowVersionRecord(Base):
     __table_args__ = (
         Index("ix_workflow_versions_name_no", "workflow_name", "version_no", unique=True),
     )
+
+
+def ensure_schema() -> None:
+    """Add columns introduced after ``workflow_revisions`` was first created."""
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        existing = {row[1] for row in db.execute(text("PRAGMA table_info(workflow_revisions)"))}
+        if existing and "plan" not in existing:
+            db.execute(text("ALTER TABLE workflow_revisions ADD COLUMN plan TEXT"))
+            db.commit()
+    except Exception as e:  # noqa: BLE001 — a missing column only hides the plan
+        import logging
+
+        logging.getLogger(__name__).warning("Could not migrate workflow_revisions: %s", e)
+    finally:
+        db.close()

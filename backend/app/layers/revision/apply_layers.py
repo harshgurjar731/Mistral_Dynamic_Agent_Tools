@@ -34,7 +34,9 @@ class RevisionApplyLayer(RevisionStepLayer):
             spec.summary = " ".join(o["note"] for o in result.outcomes if o["ok"])[:600]
 
         failed = result.failed
-        if result.applied == 0:
+        # A turn that only fixes activity code has no edits to apply; the
+        # code-fix layer pins the proposal to the rebuilt version.
+        if result.applied == 0 and not (spec.code_fixes and not spec.operations):
             spec.status = "failed"
             reasons = "; ".join(f["note"] for f in failed) or "there was nothing to apply"
             ctx.error = f"None of the edits could be made: {reasons}"

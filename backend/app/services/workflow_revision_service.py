@@ -53,6 +53,11 @@ def _get_workflow(name: str):
     return definition
 
 
+async def ensure_workflow(name: str) -> None:
+    """Raise RevisionNotFound unless the workflow exists (before a run is started for it)."""
+    await asyncio.to_thread(_get_workflow, name)
+
+
 def _layer_trace(ctx: PipelineContext) -> list[dict]:
     """Each layer's final state and its own account of what it decided."""
     trace: dict[str, dict] = {}
@@ -77,7 +82,9 @@ def _manifest() -> list[dict]:
 async def propose(client: Any, workflow_name: str, *, instruction: str = "",
                   focus_step_ids: Optional[list[str]] = None,
                   operations: Optional[list[dict]] = None,
-                  origin: str = "editor") -> dict:
+                  origin: str = "editor",
+                  execution_id: Optional[str] = None,
+                  event_queue: Any = None) -> dict:
     """Run the revision pipeline and return the recorded revision.
 
     ``operations`` given directly (a remove or move chosen in the UI) skip the
@@ -97,8 +104,12 @@ async def propose(client: Any, workflow_name: str, *, instruction: str = "",
         origin=origin,
         operations=list(operations or []),
         operations_given=bool(operations),
+        execution_id=execution_id,
     )
-    ctx = PipelineContext(query=spec.instruction, client=client)
+    ctx = PipelineContext(query=spec.instruction, client=client, stream=event_queue is not None)
+    if event_queue is not None:
+        # A background run: every layer, the fix plan and its progress stream live.
+        ctx.event_queue = event_queue
     ctx.revision_spec = spec
     await revision_pipeline.execute(ctx)
 

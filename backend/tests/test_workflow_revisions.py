@@ -393,3 +393,114 @@ def test_model_failure_is_recorded_not_raised(env, monkeypatch):
     monkeypatch.setattr(decision, "decide", broken)
     rev = _run(svc.propose(None, "claim_flow", instruction="anything"))
     assert rev["status"] == "failed" and "could not be interpreted" in rev["error"]
+
+
+# ── Refine with AI as a planned fix (diagnosis, plan, code fix, live progress) ──
+
+
+def _activity_flow() -> dict:
+    d = _linear()
+    d["name"] = "loan_flow"
+    d["steps"][1] = {"id": "assess", "type": "tool", "description": "affordability",
+                     "config": {"tool_name": "affordability_calculation", "tool_version": 2,
+                                "arguments": {"cost": "{{step_intake_output}}"}},
+                     "next_steps": ["report"], "parallel_group": None}
+    return d
+
+
+class _Queue:
+    def __init__(self):
+        self.events = []
+
+    def put_nowait(self, sse):
+        self.events.append(sse)
+
+
+def test_a_failed_run_is_planned_and_the_activity_code_is_rebuilt(env, monkeypatch):
+    from app.layers.revision import fix_layers
+    from app.services import code_rebuild
+    from app.services import workflow_revision_service as svc
+    from app.workflow_revisions import fix_plan
+
+    env["loan_flow"] = WorkflowDefinition(**_activity_flow())
+    seen: list[str] = []
+    _fake_model(monkeypatch, {
+        "understood": True,
+        "summary": "Rounds the instalment in the code and reports it.",
+        "operations": [{"op": "update_step", "step_id": "report", "reason": "Name the instalment",
+                        "changes": {"config": {"query_template": "Report {{step_assess_output}} with the instalment"}}}],
+        "code_fixes": [{"step_id": "assess", "tool_name": "affordability_calculation",
+                        "problem": "round() is not defined in the code",
+                        "change": "Compute the instalment without round(); return monthly_instalment_gbp."},
+                       {"tool_name": "not_in_this_workflow", "change": "x"}],
+        "reasoning": "The failure is in the activity code.",
+    }, seen)
+
+    async def diagnose(name, base, execution_id):
+        assert execution_id == "exec-1"
+        return {"execution_id": "exec-1", "status": "FAILED", "error": "name 'round' is not defined",
+                "failed_steps": [{"step_id": "assess", "step_type": "tool",
+                                  "tool_name": "affordability_calculation", "tool_version": 2, "tool_id": 41,
+                                  "error": "name 'round' is not defined", "input_preview": '{"cost": 185000}',
+                                  "code": "def affordability_calculation(cost):\n    return round(cost)"}]}
+
+    rebuilt = {}
+
+    async def rebuild(tool_id, **kw):
+        rebuilt.update(tool_id=tool_id, **kw)
+        kw["on_event"]({"message": "verifying against the examples"})
+        return {"status": "approved", "version": 3, "name": "affordability_calculation"}
+
+    monkeypatch.setattr(fix_plan, "diagnose", diagnose)
+    monkeypatch.setattr(code_rebuild, "rebuild_from_failure", rebuild)
+
+    queue = _Queue()
+    rev = _run(svc.propose(None, "loan_flow", instruction="Fix the failed run",
+                           execution_id="exec-1", event_queue=queue))
+
+    assert rev["status"] == "proposed", rev.get("error")
+    # The analysis saw the failure and the failing code.
+    assert "name 'round' is not defined" in seen[0] and "return round(cost)" in seen[0]
+    # The code was rebuilt from the failing input, without re-pinning other workflows.
+    assert rebuilt["tool_id"] == 41 and rebuilt["failing_input"] == {"cost": 185000}
+    assert rebuilt["update_workflows"] is False and "without round()" in rebuilt["comment"]
+    # The proposal is pinned to the new version; applying it adopts the fixed code.
+    assess = _step(rev["proposed_definition"], "assess")
+    assert assess["config"]["tool_version"] == 3
+    # The plan: one workflow edit, one code fix (the unknown activity dropped), then the checks.
+    assert [(i["kind"], i["status"]) for i in rev["plan"]] == [
+        ("workflow", "completed"), ("code", "completed"), ("check", "completed"), ("check", "completed")]
+    assert rev["plan"][1]["version"] == 3
+    # Progress streamed live: the plan was re-published as items changed.
+    names = [e.event for e in queue.events]
+    assert "pipeline" in names and names.count("fix_plan") >= 4
+    assert any(e.event == "status" and "verifying" in str(e.data) for e in queue.events)
+
+
+def test_a_code_fix_that_does_not_build_fails_the_turn_when_nothing_else_changes(env, monkeypatch):
+    from app.services import code_rebuild
+    from app.services import workflow_revision_service as svc
+    from app.workflow_revisions import fix_plan
+
+    env["loan_flow"] = WorkflowDefinition(**_activity_flow())
+    _fake_model(monkeypatch, {"understood": True, "summary": "Fix the code", "operations": [],
+                              "code_fixes": [{"tool_name": "affordability_calculation",
+                                              "change": "Handle a zero cost."}]})
+
+    async def diagnose(name, base, execution_id):
+        return {}
+
+    async def rebuild(tool_id, **kw):
+        return {"status": "failed", "message": "the new version failed its examples"}
+
+    async def record(name, version):
+        return {"id": 7}
+
+    monkeypatch.setattr(fix_plan, "diagnose", diagnose)
+    monkeypatch.setattr(fix_plan, "_activity_record", record)
+    monkeypatch.setattr(code_rebuild, "rebuild_from_failure", rebuild)
+
+    rev = _run(svc.propose(None, "loan_flow", instruction="It crashes on zero cost"))
+    assert rev["status"] == "failed"
+    assert "failed its examples" in rev["error"]
+    assert [i["status"] for i in rev["plan"]] == ["failed", "skipped", "failed"]

@@ -303,8 +303,8 @@ function ActivityGalleryPage() {
               <Sparkles className="size-4 text-pink-400" /> Synthesize Activity
             </DialogTitle>
             <DialogDescription>
-              Describe what the activity should do. Codestral will generate Python code and
-              parameters.
+              Describe what the activity should do. The code model chosen in Settings will generate
+              Python code and parameters.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
