@@ -12,6 +12,7 @@ browsing the logs never produces more of them.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -20,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
 from app.observability import tracing
+from app.observability.http import PRIVATE_PREFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,40 @@ def _kind_of_root(name: str) -> str:
         # A model call made outside any action — a startup or background task.
         return "llm"
     return "other"
+
+
+# ── Private traces ────────────────────────────────────────────────────────────
+#
+# Sign-in and admin-console requests are no longer exported (see
+# ``observability.http``), but traces exported before that may still be on
+# Mistral with the request body in them. The Logs page never shows them — the
+# admin console's audit log is where sign-ins are read — and every attribute
+# it does show is masked for secret-named fields once more on the way out.
+
+def _private_name(name: str) -> bool:
+    _, _, path = (name or "").partition(" ")
+    return path.startswith(PRIVATE_PREFIXES)
+
+
+def _private_span(span: dict) -> bool:
+    a = span.get("attributes") or {}
+    return bool(
+        a.get(tracing.PRIVATE_ATTRIBUTE)
+        or str(a.get("url.path") or "").startswith(PRIVATE_PREFIXES)
+        or str(a.get("http.route") or "").startswith(PRIVATE_PREFIXES)
+        or _private_name(span.get("name") or "")
+    )
+
+
+def _scrub_attrs(attrs: dict) -> dict:
+    out = tracing.scrub(attrs)
+    body = out.get("app.request.body")
+    if isinstance(body, str):
+        try:
+            out["app.request.body"] = json.dumps(tracing.scrub(json.loads(body)), ensure_ascii=False)
+        except Exception:
+            pass
+    return out
 
 
 def _console_link(trace_id: str) -> str:
@@ -169,7 +205,7 @@ def _parent_id(value: Any) -> Optional[str]:
 
 
 def _span_row(s: Any) -> dict:
-    attrs = dict(s.span_attributes or {})
+    attrs = _scrub_attrs(dict(s.span_attributes or {}))
     return {
         "span_id": s.span_id,
         "parent_span_id": _parent_id(s.parent_span_id),
@@ -297,7 +333,7 @@ async def list_traces(
 
     feed = response.traces
     return {
-        "items": [_trace_row(t) for t in feed.results or []],
+        "items": [_trace_row(t) for t in feed.results or [] if not _private_name(t.root_span_name or "")],
         "cursor": feed.cursor if feed.next else None,
         "has_more": bool(feed.next),
     }
@@ -322,6 +358,12 @@ async def _all_spans(trace_id: str) -> list[dict]:
 @router.get("/traces/{trace_id}")
 async def get_trace(trace_id: str):
     """One trace: its summary, every span, and the rule verdicts reached in it."""
+    return await trace_detail(trace_id)
+
+
+async def trace_detail(trace_id: str, *, hide_private: bool = True) -> dict:
+    """A trace read from the calling workspace's Mistral. ``hide_private``
+    refuses sign-in traces — off only for the admin console."""
     try:
         summary, spans = await asyncio.gather(
             _api().traces.get_trace_by_id_async(trace_id=trace_id),
@@ -329,6 +371,11 @@ async def get_trace(trace_id: str):
         )
     except Exception as e:
         raise _upstream_error(e)
+
+    if hide_private and (_private_name(summary.root_span_name or "") or any(
+        _private_span(s) for s in spans if not s["parent_span_id"]
+    )):
+        raise HTTPException(status_code=404, detail="This trace is not available here.")
 
     rules = [_rule_row(s, trace_id) for s in spans if s["kind"] == "rule"]
     verdicts = {"pass": 0, "fixed": 0, "warn": 0, "fail": 0}
@@ -402,3 +449,66 @@ async def list_traced_workflows(hours: float = Query(24 * 30, gt=0, le=24 * 90))
     except Exception as e:
         raise _upstream_error(e)
     return {"workflows": sorted(o for o in (response.options or []) if o)}
+
+
+# ── Actions by person (admin console) ─────────────────────────────────────────
+#
+# Mistral's trace summaries do not say which platform account acted, but every
+# span this backend exports carries ``enduser.id`` (``user:<id>``). An action
+# is the root span of a trace — a request, a workflow execution or a run — so
+# the admin console lists those, with who started them.
+
+#: App span kinds that are always the root of a trace.
+ACTION_KINDS = ("http", "workflow", "run")
+
+
+def _action_row(raw: Any) -> dict:
+    span = _span_row(raw)
+    a = span["attributes"]
+    status = a.get("http.response.status_code")
+    return {
+        "trace_id": raw.trace_id,
+        "span_id": span["span_id"],
+        "name": span["name"],
+        "kind": span["kind"],
+        "start_time": span["start_time"],
+        "duration_ms": span["duration_ms"],
+        "status_code": span["status_code"],
+        "status_message": span["status_message"],
+        "http_status": int(status) if str(status or "").isdigit() else None,
+        "actor_ref": a.get("enduser.id") or None,
+        "workspace_id": a.get(tracing.WORKSPACE_ATTRIBUTE) or None,
+        "workflow_name": span["workflow_name"] or a.get(tracing.GEN_AI_WORKFLOW_NAME),
+        "execution_id": a.get("app.execution.id"),
+        "console_url": _console_link(raw.trace_id),
+    }
+
+
+async def search_actions(
+    *,
+    actor_ref: Optional[str] = None,
+    kind: Optional[str] = None,
+    q: Optional[str] = None,
+    hours: float = 24,
+    page_size: int = 50,
+    cursor: Optional[str] = None,
+) -> dict:
+    """Actions on the calling workspace's Mistral, newest first."""
+    kinds = [kind] if kind in ACTION_KINDS else list(ACTION_KINDS)
+    clauses = [
+        f"service_name = {_quote(settings.OBSERVABILITY_SERVICE_NAME)}",
+        "(" + " OR ".join(f"span_attributes['app.kind'] = {_quote(k)}" for k in kinds) + ")",
+    ]
+    if actor_ref:
+        clauses.append(f"span_attributes['enduser.id'] = {_quote(actor_ref)}")
+    if q:
+        clauses.append(f"span_name ILIKE {_quote('%' + q + '%')}")
+
+    start, end = _window(hours)
+    response = await _api().spans.search_spans_async(
+        from_=start, to=end, page_size=page_size, cursor=cursor or None,
+        search_expression=" AND ".join(clauses),
+    )
+    feed = response.spans
+    rows = [_action_row(raw) for raw in feed.results or [] if not _parent_id(raw.parent_span_id)]
+    return {"items": rows, "cursor": feed.cursor if feed.next else None}

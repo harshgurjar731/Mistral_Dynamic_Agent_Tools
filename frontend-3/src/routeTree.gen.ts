@@ -27,6 +27,7 @@ import { Route as AdminAdminsRouteImport } from './routes/admin.admins'
 import { Route as AdminAuditRouteImport } from './routes/admin.audit'
 import { Route as AdminHealthRouteImport } from './routes/admin.health'
 import { Route as AdminLoginRouteImport } from './routes/admin.login'
+import { Route as AdminLogsRouteImport } from './routes/admin.logs'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as ConnectorsIndexRouteImport } from './routes/connectors.index'
@@ -50,6 +51,7 @@ import { Route as ToolsIndexRouteImport } from './routes/tools.index'
 import { Route as ToolsIdRouteImport } from './routes/tools.$id'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
 import { Route as WorkflowsArchivedRouteImport } from './routes/workflows.archived'
+import { Route as AdminAuditEventIdRouteImport } from './routes/admin.audit_.$eventId'
 import { Route as AdminRolesIndexRouteImport } from './routes/admin.roles.index'
 import { Route as AdminRolesIdRouteImport } from './routes/admin.roles.$id'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin.users.index'
@@ -67,6 +69,7 @@ import { Route as WorkflowsActivitiesIdRouteImport } from './routes/workflows.ac
 import { Route as WorkflowsNewIndexRouteImport } from './routes/workflows.new.index'
 import { Route as WorkflowsNewAiRouteImport } from './routes/workflows.new.ai'
 import { Route as WorkflowsNewVisualRouteImport } from './routes/workflows.new.visual'
+import { Route as AdminLogsWorkspaceIdTraceIdRouteImport } from './routes/admin.logs_.$workspaceId.$traceId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -156,6 +159,11 @@ const AdminHealthRoute = AdminHealthRouteImport.update({
 const AdminLoginRoute = AdminLoginRouteImport.update({
   id: '/admin/login',
   path: '/admin/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminLogsRoute = AdminLogsRouteImport.update({
+  id: '/admin/logs',
+  path: '/admin/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
@@ -273,6 +281,11 @@ const WorkflowsArchivedRoute = WorkflowsArchivedRouteImport.update({
   path: '/workflows/archived',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminAuditEventIdRoute = AdminAuditEventIdRouteImport.update({
+  id: '/admin/audit_/$eventId',
+  path: '/admin/audit/$eventId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminRolesIndexRoute = AdminRolesIndexRouteImport.update({
   id: '/admin/roles/',
   path: '/admin/roles/',
@@ -365,6 +378,12 @@ const WorkflowsNewVisualRoute = WorkflowsNewVisualRouteImport.update({
   path: '/workflows/new/visual',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminLogsWorkspaceIdTraceIdRoute =
+  AdminLogsWorkspaceIdTraceIdRouteImport.update({
+    id: '/admin/logs_/$workspaceId/$traceId',
+    path: '/admin/logs/$workspaceId/$traceId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -384,6 +403,7 @@ export interface FileRoutesByFullPath {
   '/admin/audit': typeof AdminAuditRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/logs': typeof AdminLogsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -408,6 +428,7 @@ export interface FileRoutesByFullPath {
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/admin/audit/$eventId': typeof AdminAuditEventIdRoute
   '/admin/roles/$id': typeof AdminRolesIdRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
   '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
@@ -425,6 +446,7 @@ export interface FileRoutesByFullPath {
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
+  '/admin/logs/$workspaceId/$traceId': typeof AdminLogsWorkspaceIdTraceIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -443,6 +465,7 @@ export interface FileRoutesByTo {
   '/admin/audit': typeof AdminAuditRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/logs': typeof AdminLogsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -467,6 +490,7 @@ export interface FileRoutesByTo {
   '/rules': typeof RulesIndexRoute
   '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
+  '/admin/audit/$eventId': typeof AdminAuditEventIdRoute
   '/admin/roles/$id': typeof AdminRolesIdRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
   '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
@@ -484,6 +508,7 @@ export interface FileRoutesByTo {
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new': typeof WorkflowsNewIndexRoute
+  '/admin/logs/$workspaceId/$traceId': typeof AdminLogsWorkspaceIdTraceIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -504,6 +529,7 @@ export interface FileRoutesById {
   '/admin/audit': typeof AdminAuditRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/logs': typeof AdminLogsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/connectors/$id': typeof ConnectorsIdRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -528,6 +554,7 @@ export interface FileRoutesById {
   '/rules/': typeof RulesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
+  '/admin/audit_/$eventId': typeof AdminAuditEventIdRoute
   '/admin/roles/$id': typeof AdminRolesIdRoute
   '/admin/users/$id': typeof AdminUsersIdRoute
   '/admin/workspaces/$id': typeof AdminWorkspacesIdRoute
@@ -545,6 +572,7 @@ export interface FileRoutesById {
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/workflows/activities/': typeof WorkflowsActivitiesIndexRoute
   '/workflows/new/': typeof WorkflowsNewIndexRoute
+  '/admin/logs_/$workspaceId/$traceId': typeof AdminLogsWorkspaceIdTraceIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -566,6 +594,7 @@ export interface FileRouteTypes {
     | '/admin/audit'
     | '/admin/health'
     | '/admin/login'
+    | '/admin/logs'
     | '/agents/$id'
     | '/connectors/$id'
     | '/invite/$token'
@@ -590,6 +619,7 @@ export interface FileRouteTypes {
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/admin/audit/$eventId'
     | '/admin/roles/$id'
     | '/admin/users/$id'
     | '/admin/workspaces/$id'
@@ -607,6 +637,7 @@ export interface FileRouteTypes {
     | '/workflows/$workflowName/'
     | '/workflows/activities/'
     | '/workflows/new/'
+    | '/admin/logs/$workspaceId/$traceId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -625,6 +656,7 @@ export interface FileRouteTypes {
     | '/admin/audit'
     | '/admin/health'
     | '/admin/login'
+    | '/admin/logs'
     | '/agents/$id'
     | '/connectors/$id'
     | '/invite/$token'
@@ -649,6 +681,7 @@ export interface FileRouteTypes {
     | '/rules'
     | '/tools'
     | '/workflows'
+    | '/admin/audit/$eventId'
     | '/admin/roles/$id'
     | '/admin/users/$id'
     | '/admin/workspaces/$id'
@@ -666,6 +699,7 @@ export interface FileRouteTypes {
     | '/workflows/$workflowName'
     | '/workflows/activities'
     | '/workflows/new'
+    | '/admin/logs/$workspaceId/$traceId'
   id:
     | '__root__'
     | '/'
@@ -685,6 +719,7 @@ export interface FileRouteTypes {
     | '/admin/audit'
     | '/admin/health'
     | '/admin/login'
+    | '/admin/logs'
     | '/agents/$id'
     | '/connectors/$id'
     | '/invite/$token'
@@ -709,6 +744,7 @@ export interface FileRouteTypes {
     | '/rules/'
     | '/tools/'
     | '/workflows/'
+    | '/admin/audit_/$eventId'
     | '/admin/roles/$id'
     | '/admin/users/$id'
     | '/admin/workspaces/$id'
@@ -726,6 +762,7 @@ export interface FileRouteTypes {
     | '/workflows/$workflowName/'
     | '/workflows/activities/'
     | '/workflows/new/'
+    | '/admin/logs_/$workspaceId/$traceId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -746,6 +783,7 @@ export interface RootRouteChildren {
   AdminAuditRoute: typeof AdminAuditRoute
   AdminHealthRoute: typeof AdminHealthRoute
   AdminLoginRoute: typeof AdminLoginRoute
+  AdminLogsRoute: typeof AdminLogsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   ConnectorsIdRoute: typeof ConnectorsIdRoute
   InviteTokenRoute: typeof InviteTokenRoute
@@ -768,6 +806,7 @@ export interface RootRouteChildren {
   RulesIndexRoute: typeof RulesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
+  AdminAuditEventIdRoute: typeof AdminAuditEventIdRoute
   AdminRolesIdRoute: typeof AdminRolesIdRoute
   AdminUsersIdRoute: typeof AdminUsersIdRoute
   AdminWorkspacesIdRoute: typeof AdminWorkspacesIdRoute
@@ -785,6 +824,7 @@ export interface RootRouteChildren {
   WorkflowsWorkflowNameIndexRoute: typeof WorkflowsWorkflowNameIndexRoute
   WorkflowsActivitiesIndexRoute: typeof WorkflowsActivitiesIndexRoute
   WorkflowsNewIndexRoute: typeof WorkflowsNewIndexRoute
+  AdminLogsWorkspaceIdTraceIdRoute: typeof AdminLogsWorkspaceIdTraceIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -913,6 +953,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/login'
       fullPath: '/admin/login'
       preLoaderRoute: typeof AdminLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/logs': {
+      id: '/admin/logs'
+      path: '/admin/logs'
+      fullPath: '/admin/logs'
+      preLoaderRoute: typeof AdminLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents/': {
@@ -1076,6 +1123,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkflowsArchivedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/audit_/$eventId': {
+      id: '/admin/audit_/$eventId'
+      path: '/admin/audit/$eventId'
+      fullPath: '/admin/audit/$eventId'
+      preLoaderRoute: typeof AdminAuditEventIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/roles/': {
       id: '/admin/roles/'
       path: '/admin/roles'
@@ -1195,6 +1249,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkflowsNewVisualRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/logs_/$workspaceId/$traceId': {
+      id: '/admin/logs_/$workspaceId/$traceId'
+      path: '/admin/logs/$workspaceId/$traceId'
+      fullPath: '/admin/logs/$workspaceId/$traceId'
+      preLoaderRoute: typeof AdminLogsWorkspaceIdTraceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -1230,6 +1291,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminAuditRoute: AdminAuditRoute,
   AdminHealthRoute: AdminHealthRoute,
   AdminLoginRoute: AdminLoginRoute,
+  AdminLogsRoute: AdminLogsRoute,
   AgentsIdRoute: AgentsIdRoute,
   ConnectorsIdRoute: ConnectorsIdRoute,
   InviteTokenRoute: InviteTokenRoute,
@@ -1252,6 +1314,7 @@ const rootRouteChildren: RootRouteChildren = {
   RulesIndexRoute: RulesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
+  AdminAuditEventIdRoute: AdminAuditEventIdRoute,
   AdminRolesIdRoute: AdminRolesIdRoute,
   AdminUsersIdRoute: AdminUsersIdRoute,
   AdminWorkspacesIdRoute: AdminWorkspacesIdRoute,
@@ -1269,10 +1332,12 @@ const rootRouteChildren: RootRouteChildren = {
   WorkflowsWorkflowNameIndexRoute: WorkflowsWorkflowNameIndexRoute,
   WorkflowsActivitiesIndexRoute: WorkflowsActivitiesIndexRoute,
   WorkflowsNewIndexRoute: WorkflowsNewIndexRoute,
+  AdminLogsWorkspaceIdTraceIdRoute: AdminLogsWorkspaceIdTraceIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
 
 import type { getRouter } from './router.tsx'
 import type { startInstance } from './start.ts'

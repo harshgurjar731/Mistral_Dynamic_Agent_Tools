@@ -18,7 +18,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.auth import config as cfg
 from app.auth import mistral_keys
@@ -129,11 +129,20 @@ def audit(action: str, **kw) -> None:
         logger.warning("Audit write failed for %s: %s", action, e)
 
 
+#: Audit actions (after ``user.`` / ``admin.``) that make up the authentication
+#: log: the admin console's "Authentication" filter, ``action="auth"``. These
+#: are recorded here only — sign-in requests are never exported to Mistral.
+AUTH_ACTIONS = ("login", "logout", "logout_all", "session_revoke", "password_change",
+                "password_reset", "invite_accept", "switch_workspace")
+
+
 def audit_log(*, limit: int = 100, offset: int = 0, action: str = None, actor: str = None,
               target_id: str = None, workspace_id: str = None) -> dict:
     with _db() as db:
         q = db.query(AuditEvent)
-        if action:
+        if action == "auth":
+            q = q.filter(or_(*(AuditEvent.action.like(f"%.{a}") for a in AUTH_ACTIONS)))
+        elif action:
             q = q.filter(AuditEvent.action.like(f"{action}%"))
         if actor:
             q = q.filter(AuditEvent.actor_email.like(f"%{actor.lower()}%"))
@@ -143,12 +152,55 @@ def audit_log(*, limit: int = 100, offset: int = 0, action: str = None, actor: s
             q = q.filter(AuditEvent.workspace_id == workspace_id)
         total = q.count()
         rows = q.order_by(AuditEvent.id.desc()).offset(offset).limit(max(1, min(limit, 500))).all()
-        return {"total": total, "events": [{
-            "id": r.id, "at": _iso(r.at), "actor_kind": r.actor_kind, "actor_id": r.actor_id,
-            "actor_email": r.actor_email, "action": r.action, "target_type": r.target_type,
-            "target_id": r.target_id, "workspace_id": r.workspace_id, "outcome": r.outcome,
-            "detail": json.loads(r.detail) if r.detail else None, "ip": r.ip,
-        } for r in rows]}
+        return {"total": total, "events": [_event_dict(r) for r in rows]}
+
+
+def _event_dict(r: AuditEvent) -> dict:
+    return {
+        "id": r.id, "at": _iso(r.at), "actor_kind": r.actor_kind, "actor_id": r.actor_id,
+        "actor_email": r.actor_email, "action": r.action, "target_type": r.target_type,
+        "target_id": r.target_id, "workspace_id": r.workspace_id, "outcome": r.outcome,
+        "detail": json.loads(r.detail) if r.detail else None, "ip": r.ip,
+    }
+
+
+def _subject_summary(db, kind: Optional[str], ident: Optional[str]) -> Optional[dict]:
+    """Who or what an id names now, for the audit detail view. None if unknown."""
+    if not ident:
+        return None
+    model = {"user": User, "admin": Admin, "workspace": Workspace, "role": Role}.get(kind or "")
+    row = db.get(model, ident) if model is not None else None
+    if row is None:
+        return {"type": kind, "id": ident, "exists": False}
+    return {"type": kind, "id": ident, "exists": getattr(row, "status", None) != "deleted",
+            "name": getattr(row, "name", None), "email": getattr(row, "email", None),
+            "status": getattr(row, "status", None)}
+
+
+def audit_event(event_id: int, *, related: int = 10) -> dict:
+    """One audit event in full: who and what it names, as they are now, and the
+    events just before and after it by the same person and on the same target."""
+    with _db() as db:
+        r = db.get(AuditEvent, event_id)
+        if r is None:
+            raise AuthError("That audit event does not exist.", 404, "not_found")
+        out = _event_dict(r)
+        out["actor"] = _subject_summary(db, r.actor_kind, r.actor_id)
+        out["target"] = _subject_summary(db, r.target_type, r.target_id)
+        ws = db.get(Workspace, r.workspace_id) if r.workspace_id else None
+        out["workspace"] = {"id": ws.id, "name": ws.name} if ws else None
+
+        def _around(*conds) -> list[dict]:
+            q = db.query(AuditEvent).filter(AuditEvent.id != r.id, *conds)
+            return [_event_dict(e) for e in q.order_by(AuditEvent.id.desc()).limit(related).all()]
+
+        out["by_actor"] = _around(AuditEvent.actor_id == r.actor_id) if r.actor_id else []
+        out["on_target"] = _around(AuditEvent.target_id == r.target_id) if r.target_id else []
+        prev = db.query(AuditEvent.id).filter(AuditEvent.id < r.id).order_by(AuditEvent.id.desc()).first()
+        nxt = db.query(AuditEvent.id).filter(AuditEvent.id > r.id).order_by(AuditEvent.id.asc()).first()
+        out["older_id"] = prev[0] if prev else None
+        out["newer_id"] = nxt[0] if nxt else None
+        return out
 
 
 # ── Roles ───────────────────────────────────────────────────────────────────

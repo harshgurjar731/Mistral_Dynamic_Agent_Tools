@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 import { ArrowLeft, Clock, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
 import type { TraceDetail } from "@/api/observability";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -18,14 +19,22 @@ const notYetOnMistral = (err: unknown) => (err as AxiosError)?.response?.status 
  * so a 404 is retried for a while before it is shown as missing — that is
  * what makes "View trace" right after a run land on the trace, not an error.
  */
-export function TraceDetailPage({
+export function TraceDetailPage<T extends TraceDetail = TraceDetail>({
   queryKey,
   load,
   subtitle,
+  back,
+  header,
+  className = "px-6 py-8",
 }: {
   queryKey: readonly unknown[];
-  load: () => Promise<TraceDetail>;
+  load: () => Promise<T>;
   subtitle?: string;
+  /** Replaces the "← Logs" link — the admin console links back to its own list. */
+  back?: ReactNode;
+  /** Shown under the title once the trace has loaded — who ran it, where. */
+  header?: (detail: T) => ReactNode;
+  className?: string;
 }) {
   const query = useQuery({
     queryKey,
@@ -39,13 +48,15 @@ export function TraceDetailPage({
     t?.kind === "workflow" && detail?.root?.attributes["app.execution.status"] === "RUNNING";
 
   return (
-    <div className="px-6 py-8">
-      <Link
-        to="/logs"
-        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" /> Logs
-      </Link>
+    <div className={className}>
+      {back ?? (
+        <Link
+          to="/logs"
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" /> Logs
+        </Link>
+      )}
 
       {query.isLoading ? (
         <div className="mt-6">
@@ -110,6 +121,7 @@ export function TraceDetailPage({
                 ) : null}{" "}
                 · trace <span className="font-mono">{t.trace_id}</span>
               </p>
+              {header ? <div className="mt-3">{header(detail)}</div> : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button

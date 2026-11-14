@@ -389,6 +389,162 @@ async def system_health(refresh: bool = False):
 def audit(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
           action: Optional[str] = Query(None, max_length=80),
           actor: Optional[str] = Query(None, max_length=254),
-          workspace_id: Optional[str] = None):
+          workspace_id: Optional[str] = None,
+          target_id: Optional[str] = Query(None, max_length=64)):
     return store.audit_log(limit=limit, offset=offset, action=action, actor=actor,
-                           workspace_id=workspace_id)
+                           workspace_id=workspace_id, target_id=target_id)
+
+
+@router.get("/audit/{event_id}")
+def audit_event(event_id: int):
+    """One audit event in full, with the events around it."""
+    return store.audit_event(event_id)
+
+
+# ── Activity logs ───────────────────────────────────────────────────────────
+#
+# What every user did, read from each workspace's Mistral observability with
+# that workspace's key. One row per action (a request, a workflow execution or
+# a run), with the account that started it. Sign-ins are not here: they are
+# never exported, and are read in the audit log instead.
+
+def _encode_cursor(state: dict) -> Optional[str]:
+    import base64
+    import json
+
+    if not state:
+        return None
+    return base64.urlsafe_b64encode(json.dumps(state).encode()).decode()
+
+
+def _decode_cursor(cursor: Optional[str]) -> Optional[dict]:
+    import base64
+    import json
+
+    if not cursor:
+        return None
+    try:
+        state = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        return state if isinstance(state, dict) else None
+    except Exception:
+        raise AuthError("That page of results has expired. Reload the logs.", 422, "cursor")
+
+
+def _people() -> dict[str, dict]:
+    """``user:<id>`` / ``admin:<id>`` → who that is, deleted accounts included."""
+    out: dict[str, dict] = {}
+    for u in store.list_users(include_deleted=True):
+        out[f"user:{u['id']}"] = {"kind": "user", "id": u["id"], "email": u["email"],
+                                  "name": u["name"], "status": u["status"]}
+    for a in store.list_admins():
+        out[f"admin:{a['id']}"] = {"kind": "admin", "id": a["id"], "email": a["email"],
+                                   "name": a["name"], "status": a.get("status")}
+    return out
+
+
+def _actor(ref: Optional[str], people: dict) -> Optional[dict]:
+    if not ref:
+        return None
+    if ref in people:
+        return people[ref]
+    kind, _, ident = ref.partition(":")
+    return {"kind": kind or "user", "id": ident or ref, "email": None, "name": None,
+            "status": "unknown"}
+
+
+@router.get("/logs")
+async def activity_logs(
+    workspace_id: Optional[str] = Query(None, max_length=64),
+    user_id: Optional[str] = Query(None, max_length=64),
+    kind: Optional[str] = Query(None, description="http | workflow | run"),
+    status: Optional[str] = Query(None, description="error | ok"),
+    q: Optional[str] = Query(None, max_length=200),
+    hours: float = Query(24, gt=0, le=24 * 90),
+    page_size: int = Query(50, ge=1, le=100),
+    cursor: Optional[str] = None,
+):
+    """Every user's actions, newest first, across one workspace or all of them."""
+    from app.auth.context import use_workspace
+    from app.observability import tracing
+    from app.routes import observability as obs
+
+    if not tracing.enabled():
+        return {"enabled": False, "items": [], "cursor": None, "has_more": False, "errors": []}
+
+    workspaces = await run_in_threadpool(store.list_workspaces)
+    names = {w["id"]: w["name"] for w in workspaces}
+    state = _decode_cursor(cursor)
+    if state is not None:
+        targets = [w for w in workspaces if w["id"] in state]
+    elif workspace_id:
+        targets = [w for w in workspaces if w["id"] == workspace_id]
+        if not targets:
+            raise AuthError("That workspace does not exist.", 404, "not_found")
+    else:
+        targets = list(workspaces)
+
+    # Two workspaces never share a key, but a disabled one has none to read with.
+    readable, errors, seen = [], [], set()
+    for w in targets:
+        key = await run_in_threadpool(store.workspace_key, w["id"])
+        if not key:
+            errors.append({"workspace_id": w["id"], "workspace_name": w["name"],
+                           "error": "No working Mistral key — this workspace's logs cannot be read."})
+        elif key not in seen:
+            seen.add(key)
+            readable.append(w)
+
+    actor_ref = f"user:{user_id}" if user_id else None
+
+    async def _one(w: dict):
+        with use_workspace(w["id"]):
+            return await obs.search_actions(
+                actor_ref=actor_ref, kind=kind, q=q, hours=hours, page_size=page_size,
+                cursor=(state or {}).get(w["id"]),
+            )
+
+    results = await asyncio.gather(*(_one(w) for w in readable), return_exceptions=True)
+    people = await run_in_threadpool(_people)
+    items, next_state = [], {}
+    for w, result in zip(readable, results):
+        if isinstance(result, BaseException):
+            logger.warning("Activity logs of workspace %s unavailable: %s", w["id"], result)
+            errors.append({"workspace_id": w["id"], "workspace_name": w["name"],
+                           "error": f"Mistral observability API: {str(result)[:300]}"})
+            continue
+        for row in result["items"]:
+            failed = row["status_code"] == "Error" or (row["http_status"] or 0) >= 400
+            if status == "error" and not failed or status == "ok" and failed:
+                continue
+            row["workspace_id"] = row["workspace_id"] or w["id"]
+            row["read_from"] = w["id"]
+            row["workspace_name"] = names.get(row["workspace_id"], w["name"])
+            row["actor"] = _actor(row.pop("actor_ref"), people)
+            items.append(row)
+        if result["cursor"]:
+            next_state[w["id"]] = result["cursor"]
+
+    items.sort(key=lambda r: r["start_time"] or "", reverse=True)
+    return {"enabled": True, "items": items, "cursor": _encode_cursor(next_state),
+            "has_more": bool(next_state), "errors": errors}
+
+
+@router.get("/logs/{workspace_id}/traces/{trace_id}")
+async def activity_trace(workspace_id: str, trace_id: str):
+    """One action in full — every span, rule verdict and model call — read from
+    the Mistral workspace it was exported to."""
+    from app.auth.context import use_workspace
+    from app.routes import observability as obs
+
+    ws = await run_in_threadpool(store.get_workspace, workspace_id)
+    if not await run_in_threadpool(store.workspace_key, workspace_id):
+        raise AuthError("This workspace has no working Mistral key, so its logs cannot be read.",
+                        409, "no_key")
+    with use_workspace(workspace_id):
+        detail = await obs.trace_detail(trace_id, hide_private=False)
+    root = detail.get("root") or {}
+    ref = (root.get("attributes") or {}).get("enduser.id")
+    people = await run_in_threadpool(_people)
+    detail["actor"] = _actor(ref, people)
+    detail["workspace"] = {"id": ws["id"], "name": ws["name"]}
+    return detail

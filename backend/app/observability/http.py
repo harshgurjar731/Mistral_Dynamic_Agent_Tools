@@ -10,6 +10,13 @@ progress every second or two, and tracing that would bury every real action in
 noise. Every request that *does* something — create, run, deploy, delete,
 chat — is a trace, and whatever it starts (model calls, rules, tools, a
 pipeline) is nested under it or linked back to it.
+
+Sign-in, account and admin-console requests are never traced: they carry
+passwords, invite tokens and Mistral keys. They run in ``tracing.private()``,
+so nothing they do reaches Mistral, and are recorded in the local audit log,
+which only platform admins can read. Vault requests are traced without their
+body (it holds secret values), and every other body is exported with
+secret-named fields masked.
 """
 
 from __future__ import annotations
@@ -17,7 +24,9 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
+from app.config import settings
 from app.observability import tracing
 
 _UNTRACED_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -25,11 +34,36 @@ _UNTRACED_PREFIXES = ("/health", "/uploads", "/api/observability")
 _BODY_LIMIT = 64_000
 
 
+def _api(path: str) -> str:
+    return settings.API_PREFIX.rstrip("/") + path
+
+
+#: Requests that must leave no trace on Mistral at all.
+PRIVATE_PREFIXES = (_api("/auth/"), _api("/admin/"))
+#: Requests traced without their body.
+_NO_BODY_PREFIXES = (_api("/vault"),)
+
+
+def is_private_path(path: str) -> bool:
+    return path.startswith(PRIVATE_PREFIXES)
+
+
+def _scrub_query(query: str) -> str | None:
+    if not query:
+        return None
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return urlencode([(k, tracing.REDACTED if tracing.is_secret_field(k) else v) for k, v in pairs])
+
+
 class ActionTracingMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http" and is_private_path(scope.get("path", "")):
+            with tracing.private():
+                await self.app(scope, receive, send)
+            return
         if (
             scope.get("type") != "http"
             or not tracing.enabled()
@@ -43,7 +77,7 @@ class ActionTracingMiddleware:
         path = scope.get("path", "")
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         content_type = headers.get("content-type", "")
-        capture_body = "json" in content_type
+        capture_body = "json" in content_type and not path.startswith(_NO_BODY_PREFIXES)
 
         body_chunks: list[bytes] = []
         body_size = 0
@@ -68,7 +102,7 @@ class ActionTracingMiddleware:
         attrs = {
             "http.request.method": method,
             "url.path": path,
-            "url.query": scope.get("query_string", b"").decode("latin-1") or None,
+            "url.query": _scrub_query(scope.get("query_string", b"").decode("latin-1")),
             "user_agent.original": headers.get("user-agent"),
             "app.action": f"{method} {path}",
         }
@@ -96,9 +130,10 @@ class ActionTracingMiddleware:
                 if body_chunks:
                     raw = b"".join(body_chunks)[:_BODY_LIMIT]
                     try:
-                        payload: Any = json.loads(raw)
+                        payload: Any = tracing.scrub(json.loads(raw))
                     except Exception:
-                        payload = raw.decode("utf-8", "replace")
+                        # Not parseable, so it cannot be checked for secrets.
+                        payload = f"[{len(raw)} bytes, not JSON — not exported]"
                     tracing.set_attrs(s, {"app.request.body": payload})
                 if status >= 500:
                     tracing.mark_error(s, f"HTTP {status}", error_type=str(status))

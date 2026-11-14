@@ -1,11 +1,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { z } from "zod";
 import { adminApi, authKeys } from "@/api/auth";
 import {
   AdminPage,
   describeAction,
+  OutcomeDot,
   PageHeader,
   useWorkspacesAndRoles,
 } from "@/components/admin/parts";
@@ -23,13 +25,22 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/audit")({
   head: () => ({ meta: [{ title: "Audit log — Admin console" }] }),
+  validateSearch: z.object({
+    action: z.string().optional(),
+    actor: z.string().optional(),
+    workspace: z.string().optional(),
+    target: z.string().optional(),
+    offset: z.number().int().min(0).optional(),
+  }),
   component: AuditPage,
 });
 
 const PAGE = 50;
 const ALL = "__all__";
 const CATEGORIES = [
-  ["user.login", "Sign-ins"],
+  ["auth", "Authentication"],
+  ["user.login", "User sign-ins"],
+  ["admin.login", "Admin sign-ins"],
   ["user.", "Users"],
   ["admin.", "Admins"],
   ["workspace.", "Workspaces"],
@@ -37,25 +48,41 @@ const CATEGORIES = [
 ] as const;
 
 function AuditPage() {
-  const [offset, setOffset] = useState(0);
-  const [action, setAction] = useState<string>(ALL);
-  const [actor, setActor] = useState("");
-  const [actorQ, setActorQ] = useState("");
-  const [workspace, setWorkspace] = useState<string>(ALL);
-  const [open, setOpen] = useState<number | null>(null);
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: "/admin/audit" });
+  const offset = search.offset ?? 0;
+  const action = search.action ?? ALL;
+  const workspace = search.workspace ?? ALL;
+  const [actor, setActor] = useState(search.actor ?? "");
   const { workspaces } = useWorkspacesAndRoles();
+
+  const setSearch = (patch: Record<string, string | number | undefined>) =>
+    navigate({
+      search: {
+        ...search,
+        offset: undefined,
+        ...Object.fromEntries(
+          Object.entries(patch).map(([k, v]) => [k, v === ALL || v === "" ? undefined : v]),
+        ),
+      },
+      replace: true,
+    });
+
   useEffect(() => {
-    const t = setTimeout(() => setActorQ(actor.trim()), 300);
+    const next = actor.trim();
+    if (next === (search.actor ?? "")) return;
+    const t = setTimeout(() => setSearch({ actor: next }), 300);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actor]);
-  useEffect(() => setOffset(0), [action, actorQ, workspace]);
 
   const params = {
     limit: PAGE,
     offset,
     action: action === ALL ? undefined : action,
-    actor: actorQ || undefined,
+    actor: search.actor || undefined,
     workspace_id: workspace === ALL ? undefined : workspace,
+    target_id: search.target || undefined,
   };
   const q = useQuery({
     queryKey: authKeys.admin.audit(params),
@@ -69,7 +96,7 @@ function AuditPage() {
     <AdminPage>
       <PageHeader
         title="Audit log"
-        description="Every sign-in, refusal and change to accounts, workspaces and roles — who, what, when and from where."
+        description="Every sign-in, refusal and change to accounts, workspaces and roles — who, what, when and from where. Visible to platform admins only; passwords are never recorded, and sign-ins are not sent to Mistral. Open an event for its full detail."
       />
       <div className="mb-4 flex flex-wrap gap-2">
         <div className="relative min-w-[220px] flex-1">
@@ -81,8 +108,8 @@ function AuditPage() {
             className="h-9 pl-9"
           />
         </div>
-        <Select value={action} onValueChange={setAction}>
-          <SelectTrigger className="h-9 w-40">
+        <Select value={action} onValueChange={(v) => setSearch({ action: v })}>
+          <SelectTrigger className="h-9 w-44">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -94,7 +121,7 @@ function AuditPage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={workspace} onValueChange={setWorkspace}>
+        <Select value={workspace} onValueChange={(v) => setSearch({ workspace: v })}>
           <SelectTrigger className="h-9 w-44">
             <SelectValue />
           </SelectTrigger>
@@ -107,6 +134,16 @@ function AuditPage() {
             ))}
           </SelectContent>
         </Select>
+        {search.target ? (
+          <button
+            type="button"
+            onClick={() => setSearch({ target: undefined })}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            Target <span className="font-mono text-foreground">{search.target.slice(0, 12)}</span>
+            <X className="size-3.5" />
+          </button>
+        ) : null}
       </div>
 
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
@@ -119,61 +156,46 @@ function AuditPage() {
               <th className="px-3 py-2.5 font-medium">Who</th>
               <th className="px-3 py-2.5 font-medium">What</th>
               <th className="px-3 py-2.5 font-medium">Workspace</th>
-              <th className="px-5 py-2.5 text-right font-medium">From</th>
+              <th className="px-3 py-2.5 text-right font-medium">From</th>
+              <th className="w-8 px-3 py-2.5" />
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {(q.data?.events ?? []).map((e) => (
-              <Fragment key={e.id}>
-                <tr
-                  className="cursor-pointer transition hover:bg-surface-hover"
-                  onClick={() => setOpen(open === e.id ? null : e.id)}
-                >
-                  <td className="whitespace-nowrap px-5 py-2.5 text-xs text-muted-foreground">
-                    {e.at ? new Date(e.at).toLocaleString() : "—"}
-                  </td>
-                  <td className="max-w-[220px] truncate px-3 py-2.5">
-                    {e.actor_email ?? <span className="text-muted-foreground">system</span>}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "size-1.5 shrink-0 rounded-full",
-                          e.outcome === "ok"
-                            ? "bg-emerald"
-                            : e.outcome === "denied"
-                              ? "bg-amber"
-                              : "bg-red",
-                        )}
-                      />
-                      {describeAction(e.action, e.outcome)}
-                      <code className="font-mono text-[10px] text-muted-foreground">
-                        {e.action}
-                      </code>
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {wsName(e.workspace_id) ?? "—"}
-                  </td>
-                  <td className="px-5 py-2.5 text-right font-mono text-xs text-muted-foreground">
-                    {e.ip ?? "—"}
-                  </td>
-                </tr>
-                {open === e.id && e.detail ? (
-                  <tr>
-                    <td colSpan={5} className="bg-background-elevated px-5 py-3">
-                      <pre className="custom-scrollbar max-h-64 overflow-auto font-mono text-[11px] text-muted-foreground">
-                        {JSON.stringify(e.detail, null, 2)}
-                      </pre>
-                    </td>
-                  </tr>
-                ) : null}
-              </Fragment>
+              <tr
+                key={e.id}
+                className="cursor-pointer transition hover:bg-surface-hover"
+                onClick={() =>
+                  navigate({ to: "/admin/audit/$eventId", params: { eventId: String(e.id) } })
+                }
+              >
+                <td className="whitespace-nowrap px-5 py-2.5 text-xs text-muted-foreground">
+                  {e.at ? new Date(e.at).toLocaleString() : "—"}
+                </td>
+                <td className="max-w-[220px] truncate px-3 py-2.5">
+                  {e.actor_email ?? <span className="text-muted-foreground">system</span>}
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="flex items-center gap-2">
+                    <OutcomeDot outcome={e.outcome} />
+                    {describeAction(e.action, e.outcome)}
+                    <code className="font-mono text-[10px] text-muted-foreground">{e.action}</code>
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                  {wsName(e.workspace_id) ?? "—"}
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                  {e.ip ?? "—"}
+                </td>
+                <td className="px-3 py-2.5 text-muted-foreground">
+                  <ChevronRight className="size-4" />
+                </td>
+              </tr>
             ))}
             {q.data && !q.data.events.length ? (
               <tr>
-                <td colSpan={5} className="px-5 py-10 text-center text-muted-foreground">
+                <td colSpan={6} className="px-5 py-10 text-center text-muted-foreground">
                   No events match.
                 </td>
               </tr>
@@ -190,7 +212,7 @@ function AuditPage() {
             size="sm"
             variant="outline"
             disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - PAGE))}
+            onClick={() => setSearch({ offset: Math.max(0, offset - PAGE) || undefined })}
           >
             <ChevronLeft /> Newer
           </Button>
@@ -198,7 +220,7 @@ function AuditPage() {
             size="sm"
             variant="outline"
             disabled={offset + PAGE >= total}
-            onClick={() => setOffset(offset + PAGE)}
+            onClick={() => setSearch({ offset: offset + PAGE })}
           >
             Older <ChevronRight />
           </Button>

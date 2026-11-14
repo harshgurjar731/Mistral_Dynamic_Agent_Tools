@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
@@ -130,8 +131,63 @@ def _make_exporter(key: str) -> Any:
     return exporter
 
 
+# ── Private requests ──────────────────────────────────────────────────────────
+#
+# Sign-in, password, invite and admin-console requests carry credentials and
+# personal data. Nothing done while one is handled leaves this process: no app
+# span is opened, and any span something else opens (the Mistral SDK's own) is
+# marked private when it starts and dropped by the exporter. Those actions are
+# recorded in the local audit log instead, which only platform admins can read.
+
+PRIVATE_ATTRIBUTE = "app.private"
+
+_PRIVATE: contextvars.ContextVar[bool] = contextvars.ContextVar("observability_private", default=False)
+
+
+@contextmanager
+def private() -> Iterator[None]:
+    """Run the body with nothing exported to Mistral."""
+    token = _PRIVATE.set(True)
+    try:
+        yield
+    finally:
+        _PRIVATE.reset(token)
+
+
+def is_private() -> bool:
+    return _PRIVATE.get()
+
+
+#: Field names whose values are never exported, whatever route they arrive on.
+#: Matched against whole words of the snake_cased name, so ``new_password`` and
+#: ``accessToken`` are masked but ``max_tokens`` is not.
+_SECRET_WORDS = re.compile(
+    r"(^|_)(password|passwd|passphrase|pwd|secret|token|api_?key|apikey|authorization|"
+    r"credentials?|private_key|cookie)(_|$)"
+)
+REDACTED = "[REDACTED]"
+
+
+def is_secret_field(name: str) -> bool:
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower().replace("-", "_")
+    return bool(_SECRET_WORDS.search(snake))
+
+
+def scrub(value: Any) -> Any:
+    """``value`` with every secret-named field masked, at any depth."""
+    if isinstance(value, dict):
+        return {k: (REDACTED if isinstance(k, str) and is_secret_field(k) and v not in (None, "")
+                    else scrub(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    return value
+
+
 class _WorkspaceTagger(SpanProcessor):
     def on_start(self, span: Any, parent_context: Any = None) -> None:
+        if _PRIVATE.get():
+            span.set_attribute(PRIVATE_ATTRIBUTE, True)
+            return
         try:
             from app.auth.context import current_principal, current_workspace_id
 
@@ -175,6 +231,8 @@ class _WorkspaceRoutingExporter(SpanExporter):
 
         groups: dict[str, list] = {}
         for span in spans:
+            if (span.attributes or {}).get(PRIVATE_ATTRIBUTE):
+                continue
             ws = (span.attributes or {}).get(WORKSPACE_ATTRIBUTE)
             groups.setdefault(self._key_of(ws), []).append(span)
         result = SpanExportResult.SUCCESS
@@ -492,7 +550,7 @@ def _span(
     that request. ``parent`` attaches under a remote span (the worker's view of
     a workflow root).
     """
-    if _provider is None:
+    if _provider is None or _PRIVATE.get():
         yield trace.INVALID_SPAN
         return
 
@@ -554,7 +612,7 @@ def start_detached(
     finishes its own work when it hands off to the next layer, long before its
     ``process`` call returns.
     """
-    if _provider is None:
+    if _provider is None or _PRIVATE.get():
         return trace.INVALID_SPAN
     ctx = trace.set_span_in_context(parent_span) if parent_span is not None else None
     s = tracer().start_span(name, context=ctx)
@@ -586,7 +644,7 @@ def finish_logs(target: Span, handle: tuple[_SpanLogs, contextvars.Token]) -> No
 def event_span(name: str, *, kind: str, attrs: Optional[dict] = None,
                error: Optional[str] = None) -> None:
     """A zero-length span recording one thing that happened — a rule verdict."""
-    if _provider is None:
+    if _provider is None or _PRIVATE.get():
         return
     s = tracer().start_span(name)
     s.set_attribute("app.kind", kind)

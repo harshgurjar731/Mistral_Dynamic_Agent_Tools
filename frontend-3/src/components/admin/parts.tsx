@@ -209,6 +209,18 @@ export function WorkerBadge({ worker }: { worker?: WorkspaceWorker | undefined }
   );
 }
 
+/** The green / amber / red dot of an audit outcome. */
+export function OutcomeDot({ outcome }: { outcome: string }) {
+  return (
+    <span
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        outcome === "ok" ? "bg-emerald" : outcome === "denied" ? "bg-amber" : "bg-red",
+      )}
+    />
+  );
+}
+
 export function Chip({ children, muted }: { children: ReactNode; muted?: boolean }) {
   return (
     <span

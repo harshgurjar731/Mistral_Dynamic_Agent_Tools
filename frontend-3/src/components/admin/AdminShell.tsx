@@ -4,6 +4,7 @@ import {
   Activity,
   Building2,
   ExternalLink,
+  History,
   LayoutDashboard,
   Loader2,
   LogOut,
@@ -41,6 +42,7 @@ const NAV: { to: string; label: string; icon: LucideIcon; exact?: boolean }[] = 
   { to: "/admin/users", label: "Users", icon: Users },
   { to: "/admin/roles", label: "Roles & permissions", icon: ShieldCheck },
   { to: "/admin/admins", label: "Admins", icon: UserCog },
+  { to: "/admin/logs", label: "Activity logs", icon: History },
   { to: "/admin/audit", label: "Audit log", icon: ScrollText },
   { to: "/settings", label: "Platform settings", icon: Settings },
 ];

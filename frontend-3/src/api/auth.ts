@@ -1,4 +1,5 @@
 import { del, get, patch, post, put } from "./client";
+import type { TraceDetail } from "./observability";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -139,6 +140,78 @@ export interface AuditEvent {
   outcome: "ok" | "denied" | "failed";
   detail: Record<string, unknown> | null;
   ip: string | null;
+}
+
+/** An account an audit event or an action names, as it is now. */
+export interface AuditSubject {
+  type: string | null;
+  id: string;
+  exists: boolean;
+  name?: string | null;
+  email?: string | null;
+  status?: string | null;
+}
+
+export interface AuditEventDetail extends AuditEvent {
+  actor: AuditSubject | null;
+  target: AuditSubject | null;
+  workspace: { id: string; name: string } | null;
+  by_actor: AuditEvent[];
+  on_target: AuditEvent[];
+  older_id: number | null;
+  newer_id: number | null;
+}
+
+/** Who started an action, from the trace's ``enduser.id``. */
+export interface ActivityActor {
+  kind: "user" | "admin" | string;
+  id: string;
+  email: string | null;
+  name: string | null;
+  status: string | null;
+}
+
+/** One user action — the root span of a trace on a workspace's Mistral. */
+export interface ActivityRow {
+  trace_id: string;
+  span_id: string;
+  name: string;
+  kind: "http" | "workflow" | "run" | string;
+  start_time: string | null;
+  duration_ms: number | null;
+  status_code: string;
+  status_message: string | null;
+  http_status: number | null;
+  workspace_id: string;
+  workspace_name: string;
+  read_from: string;
+  workflow_name: string | null;
+  execution_id: string | null;
+  console_url: string;
+  actor: ActivityActor | null;
+}
+
+export interface ActivityFeed {
+  enabled: boolean;
+  items: ActivityRow[];
+  cursor: string | null;
+  has_more: boolean;
+  errors: { workspace_id: string; workspace_name: string; error: string }[];
+}
+
+export interface ActivityQuery {
+  workspace_id?: string | undefined;
+  user_id?: string | undefined;
+  kind?: string | undefined;
+  status?: string | undefined;
+  q?: string | undefined;
+  hours?: number | undefined;
+  cursor?: string | undefined;
+}
+
+export interface ActivityTraceDetail extends TraceDetail {
+  actor: ActivityActor | null;
+  workspace: { id: string; name: string };
 }
 
 export interface PlatformUser {
@@ -384,7 +457,17 @@ export const adminApi = {
     action?: string | undefined;
     actor?: string | undefined;
     workspace_id?: string | undefined;
+    target_id?: string | undefined;
   }) => get<{ total: number; events: AuditEvent[] }>(`${A}/audit`, params),
+  auditEvent: (id: number) => get<AuditEventDetail>(`${A}/audit/${id}`),
+
+  activity: (params: ActivityQuery) =>
+    get<ActivityFeed>(
+      `${A}/logs`,
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== "")),
+    ),
+  activityTrace: (workspaceId: string, traceId: string) =>
+    get<ActivityTraceDetail>(`${A}/logs/${enc(workspaceId)}/traces/${enc(traceId)}`),
 };
 
 export const authKeys = {
@@ -404,6 +487,10 @@ export const authKeys = {
     role: (id: string) => ["admin", "roles", id] as const,
     admins: () => ["admin", "admins"] as const,
     audit: (params?: object) => ["admin", "audit", params ?? {}] as const,
+    auditEvent: (id: number) => ["admin", "audit-event", id] as const,
+    activity: (params?: object) => ["admin", "activity", params ?? {}] as const,
+    activityTrace: (workspaceId: string, traceId: string) =>
+      ["admin", "activity-trace", workspaceId, traceId] as const,
     sessions: () => ["admin", "sessions"] as const,
     health: () => ["admin", "health"] as const,
   },

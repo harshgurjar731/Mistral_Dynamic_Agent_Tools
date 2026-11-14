@@ -38,6 +38,7 @@ export const Route = createFileRoute("/admin/users/$id")({
 function UserDetailPage() {
   const { id } = Route.useParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const q = useQuery({ queryKey: authKeys.admin.user(id), queryFn: () => adminApi.user(id) });
   const [link, setLink] = useState<IssuedLink | null>(null);
 
@@ -96,10 +97,37 @@ function UserDetailPage() {
           <div className="space-y-6">
             <AccessPanel u={u} onSaved={saved} />
             <DetailsPanel u={u} onSaved={saved} />
-            <Panel title="Recent activity" bodyClassName="p-0">
+            <Panel
+              title="Recent activity"
+              bodyClassName="p-0"
+              actions={
+                <div className="flex flex-wrap gap-3 text-xs">
+                  <Link
+                    to="/admin/logs"
+                    search={{ user: u.id }}
+                    className="text-primary hover:underline"
+                  >
+                    Activity logs
+                  </Link>
+                  <Link
+                    to="/admin/audit"
+                    search={{ actor: u.email }}
+                    className="text-primary hover:underline"
+                  >
+                    Audit events
+                  </Link>
+                </div>
+              }
+            >
               <ul className="divide-y divide-border">
                 {(u.activity ?? []).map((e) => (
-                  <li key={e.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                  <li
+                    key={e.id}
+                    className="flex cursor-pointer items-center gap-3 px-5 py-2.5 text-sm transition hover:bg-surface-hover"
+                    onClick={() =>
+                      navigate({ to: "/admin/audit/$eventId", params: { eventId: String(e.id) } })
+                    }
+                  >
                     <span
                       className={cn(
                         "size-2 shrink-0 rounded-full",
