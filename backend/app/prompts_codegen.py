@@ -120,8 +120,12 @@ Rules:
 - At least 2 worked examples with EXACT outputs. Compute every output value
   carefully, step by step, before writing it — the code is rejected if it
   disagrees with your example, and a wrong example wastes the whole build.
-  Put the calculation in "note". An example may omit output fields whose
-  exact value cannot be predicted (free-text messages).
+  Put the calculation in "note". Example outputs state ONLY values the code
+  computes deterministically: numbers, booleans, codes, enum values, IDs and
+  values copied from the input. NEVER put composed text (a message, summary,
+  explanation, letter or any sentence) in an example output — code cannot
+  reproduce prose word for word, so it fails the build. Leave such fields out
+  of the example; the output_schema still declares them.
 - Prefer kind "pure". Use "http" only if the capability cannot be computed
   locally, and then give api_details and an http_fixture with "for_input".
 - side_effects must be "none" or "read-only": writes belong to connector steps.

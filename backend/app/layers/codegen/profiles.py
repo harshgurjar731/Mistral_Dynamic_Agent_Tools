@@ -128,6 +128,13 @@ class ActivityRequirementProfile(RequirementProfile):
                           "will reference: " + ", ".join(missing)
                           + f" (present: {', '.join(sorted(out_props))})")
         issues += _renamed_upstream_fields(need, req)
+        dropped = drop_composed_text(req)
+        if dropped:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Activity '%s': composed text left out of worked example outputs: %s",
+                req.name, "; ".join(dropped))
         with_output = [e for e in req.examples if isinstance(e, dict) and e.get("output") is not None]
         if len(with_output) < (2 if req.kind == "pure" else 1):
             issues.append("give at least 2 worked examples with exact outputs")
@@ -171,6 +178,73 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
                 issues.append(f"worked example {i} {part} does not match the data contract at "
                               f"{where}: {e.message}")
     return issues[:6]
+
+
+#: Composed text: a string of this many words or more is prose, not a value.
+_PROSE_WORDS = 6
+
+
+def _strings_in(value) -> set[str]:
+    if isinstance(value, str):
+        return {value.strip()}
+    if isinstance(value, dict):
+        return set().union(*(_strings_in(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_strings_in(v) for v in value)) if value else set()
+    return set()
+
+
+def _enum_values(schema) -> set[str]:
+    out: set[str] = set()
+    if isinstance(schema, dict):
+        out |= {str(v) for v in schema.get("enum") or []}
+        for v in schema.values():
+            out |= _enum_values(v)
+    elif isinstance(schema, list):
+        for v in schema:
+            out |= _enum_values(v)
+    return out
+
+
+def _is_prose(text: str, keep: set[str]) -> bool:
+    text = text.strip()
+    return len(text.split()) >= _PROSE_WORDS and text not in keep
+
+
+def _without_prose(value, keep: set[str], path: str, dropped: list[str]):
+    """``value`` with prose strings removed (dict keys left out, list items kept)."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(v, str) and _is_prose(v, keep):
+                dropped.append(f"{path}.{k}" if path else k)
+                continue
+            out[k] = _without_prose(v, keep, f"{path}.{k}" if path else k, dropped)
+        return out
+    if isinstance(value, list):
+        return [_without_prose(v, keep, f"{path}[{i}]", dropped) for i, v in enumerate(value)]
+    return value
+
+
+def drop_composed_text(req: CodeRequirement) -> list[str]:
+    """Leave composed text out of the worked examples' outputs. Returns what was dropped.
+
+    The tool service compares an example's output with the code's word for word,
+    and no code reproduces a written sentence exactly — "Output Safety and
+    Delivery" failed its build that way. An example only states the fields it
+    names, so the message field stays in the schema and is simply not compared.
+    Text copied from the example's input and enum values are kept.
+    """
+    keep_schema = _enum_values(req.output_schema)
+    dropped: list[str] = []
+    for i, example in enumerate(req.examples, 1):
+        if not isinstance(example, dict) or not isinstance(example.get("output"), (dict, list)):
+            continue
+        keep = keep_schema | _strings_in(example.get("input"))
+        found: list[str] = []
+        example["output"] = _without_prose(example["output"], keep, "", found)
+        dropped += [f"example {i}: {p}" for p in found]
+    return dropped
 
 
 #: Suffixes that only restate a unit or currency — the renames worth refusing.

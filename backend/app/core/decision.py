@@ -296,11 +296,15 @@ async def _complete(client: Any, model: str, system: str, user: str, temperature
                 return await asyncio.to_thread(client.chat.complete, **_kwargs(model, False))
             except Exception as retry_error:
                 e, text = retry_error, str(retry_error).lower()
-        transient = ("timed out" in text or "timeout" in text
-                     or _rate_limit_retry_after(e) is not None)
-        if transient or not fallback or fallback == model:
+        timed_out = "timed out" in text or "timeout" in text
+        if _rate_limit_retry_after(e) is not None or not fallback or fallback == model:
             raise e
-        logger.warning("Decision model %s failed (%s) — trying %s", model, type(e).__name__, fallback)
+        # A timeout on the primary (high reasoning on a long prompt) used to be
+        # final: the decision fell back to its default — for Refine with AI that
+        # is "the model did not answer". The fallback model, without reasoning,
+        # answers the same prompt far faster; if it times out too, that is final.
+        logger.warning("Decision model %s %s — trying %s", model,
+                       "timed out" if timed_out else f"failed ({type(e).__name__})", fallback)
         return await asyncio.to_thread(client.chat.complete, **_kwargs(fallback, False))
 
 
@@ -434,6 +438,13 @@ class DecisionLayer(Layer):
                           label="Fix what the checks found" if handed_back else "Decide")
             raw = await ask(user)
             data = parse_json(raw, None)
+            if not isinstance(data, dict):
+                # An empty or unreadable reply (a reasoning model that spent its
+                # budget thinking) is asked once more before the default is used.
+                logger.warning("Decision '%s' returned no readable JSON object — asking again", self.phase)
+                raw = await ask(user + "\n\nYour previous reply could not be read. Reply with exactly "
+                                       "one JSON object, as specified, and nothing else.")
+                data = parse_json(raw, None)
             if not isinstance(data, dict):
                 raise ValueError(f"{self.phase} returned non-object JSON")
             self.apply(ctx, data)

@@ -191,6 +191,10 @@ def _decimals(value: float) -> Optional[int]:
     return len(text.split(".")[1]) if "." in text else 0
 
 
+#: An expected string of this many words or more is prose, and is not compared word for word.
+PROSE_WORDS = 6
+
+
 def values_match(expected: Any, actual: Any, path: str = "data") -> Optional[str]:
     """None when ``actual`` satisfies ``expected``, else where and how it differs.
 
@@ -209,7 +213,13 @@ def values_match(expected: Any, actual: Any, path: str = "data") -> Optional[str
             return None
         return f"{path}: expected {expected!r}, got {actual!r}"
     if isinstance(expected, str) and isinstance(actual, str):
-        return None if expected.strip() == actual.strip() else f"{path}: expected {expected!r}, got {actual!r}"
+        if expected.strip() == actual.strip():
+            return None
+        if len(expected.split()) >= PROSE_WORDS and actual.strip():
+            # Composed text (a message, a summary) cannot be reproduced word for
+            # word; an example stating one only says that some text is returned.
+            return None
+        return f"{path}: expected {expected!r}, got {actual!r}"
     if isinstance(expected, dict):
         if not isinstance(actual, dict):
             return f"{path}: expected an object, got {type(actual).__name__}"

@@ -83,6 +83,8 @@ class RequirementContext:
     code_check: Any = None
     #: The tool service's attempt budget, read from its "attempt n/m" lines.
     attempt_budget: int = 1
+    #: A build that could not reproduce a worked example was sent back to the author once.
+    example_reauthored: bool = False
 
     def _fraction(self, stage: str, message: str, data: dict) -> Optional[float]:
         if stage != "build":
@@ -504,6 +506,40 @@ class SubmitAndTrackLayer:
         status = ctx.build.get("status")
         if status == "spec_invalid":
             ctx.issues.extend(ctx.build.get("issues") or [ctx.build.get("message", "spec rejected")])
+        elif status == "failed" and not ctx.example_reauthored and ctx.reauthors < MAX_REAUTHORS:
+            mismatches = example_mismatches(ctx.build)
+            if mismatches:
+                # The code never matched a worked example. The example may be the
+                # problem (a value it cannot compute, text it cannot reproduce):
+                # its author gets one chance to correct it before the build fails.
+                ctx.example_reauthored = True
+                ctx.emit("author", "the code could not reproduce a worked example — "
+                                   "sending the examples back to be checked")
+                ctx.issues.append(
+                    "The generated code could not reproduce these worked example outputs: "
+                    + "; ".join(mismatches)
+                    + ". Recompute each stated value from the description step by step and correct "
+                      "it; leave out any output field whose exact value cannot be computed "
+                      "deterministically (composed text, wording).")
+
+
+def example_mismatches(build: dict, limit: int = 3) -> list[str]:
+    """What a failed build's code returned against the worked examples it could not match."""
+    report = build.get("report") if isinstance(build.get("report"), dict) else {}
+    out = []
+    for case in report.get("cases") or []:
+        if not isinstance(case, dict) or case.get("ok"):
+            continue
+        detail = str(case.get("detail") or "")
+        if "worked example" not in detail:
+            continue
+        out.append(f"{case.get('case_id')}: {detail.splitlines()[0][:400]}")
+    message = str(build.get("message") or "")
+    stages = [a.get("stage") for a in report.get("attempts") or [] if isinstance(a, dict)]
+    if not out and ("last stage: example_mismatch" in message
+                    or (stages and stages[-1] == "example_mismatch")):
+        out.append(message[:400])
+    return out[:limit]
 
 
 # ── R7b ─────────────────────────────────────────────────────────────────────

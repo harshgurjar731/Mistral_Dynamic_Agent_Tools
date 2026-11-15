@@ -34,6 +34,9 @@ from app.synthesis.verifiers import values_match, verify_candidate, verify_stati
 
 _ROLE_BY_MODE = {"generate": "codegen", "repair": "repair", "fresh": "codegen_fresh"}
 
+#: Attempts made whatever the wall clock says (the first, and its repair).
+MIN_ATTEMPTS = 2
+
 
 class BuildLoopLayer(Layer):
     name = "build"
@@ -47,9 +50,14 @@ class BuildLoopLayer(Layer):
         mode = "generate"
         last_signature = None
         budget = max(1, int(settings.TOOL_SYNTHESIS_MAX_ATTEMPTS))
+        out_of_time = False
 
         for attempt in range(1, budget + 1):
-            if ctx.seconds_left() <= 0:
+            # A first failure always gets its repair: one slow model call can use
+            # the whole budget, and a build was failed after a single attempt
+            # whose fix needed only one more pass.
+            if attempt > MIN_ATTEMPTS and ctx.seconds_left() <= 0:
+                out_of_time = True
                 ctx.emit("budget", "wall-clock budget exhausted")
                 break
 
@@ -141,10 +149,14 @@ class BuildLoopLayer(Layer):
         last = ctx.candidate.attempts[-1] if ctx.candidate.attempts else None
         metrics.incr(f"synthesis.{spec.purpose}.failed")
         detail = (best.diagnostic if best else (last.diagnostic if last else "no attempt ran"))
+        stopped = (f"; stopped: the {settings.SYNTHESIS_WALL_CLOCK_SECONDS}s time budget was used up"
+                   if out_of_time else "")
+        failing = _failing_cases(best)
         return ctx.finish(
             "failed",
             f"Verification failed after {len(ctx.candidate.attempts)} attempt(s) "
-            f"(last stage: {last.stage if last else 'none'}). {detail[-1500:]}",
+            f"(last stage: {last.stage if last else 'none'}{stopped}). "
+            + (f"Failing: {failing}. " if failing else "") + detail[-(800 if failing else 1500):],
             fault="code", report=_report(ctx), best_code=ctx.best_code)
 
     # ── helpers ─────────────────────────────────────────────────────────
@@ -279,6 +291,15 @@ def _short(value: Any) -> str:
     import json
     text = json.dumps(value, default=str)
     return text if len(text) <= 300 else text[:297] + "..."
+
+
+def _failing_cases(verdict: Optional[Verdict], limit: int = 3) -> str:
+    """The first line of each failing case — what differed, before any input dump."""
+    if verdict is None:
+        return ""
+    lines = [f"{c.case_id}: {(c.detail or '').strip().splitlines()[0][:300]}"
+             for c in verdict.cases if not c.ok and (c.detail or "").strip()]
+    return "; ".join(lines[:limit])
 
 
 def _summary(verdict: Verdict) -> str:

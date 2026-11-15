@@ -39,6 +39,8 @@ RESULT_KEY = "dry_run"
 #: ``async (revision, failed) -> bool`` — asked before a repair is applied. Set when the
 #: user owns the design (a builder test); the planner applies its own repairs.
 CONFIRM_REPAIR_KEY = "dry_run_confirm_repair"
+#: Times a repair's fix is planned before the repair gives up (a model that did not answer).
+PROPOSE_ATTEMPTS = 2
 
 SCENARIO_SYSTEM_PROMPT = """\
 You design the test scenarios a newly built workflow is run on before anyone
@@ -338,13 +340,23 @@ async def repair(ctx: PipelineContext, workflow_name: str, parent: str, round_no
     emit_sublayer(ctx, parent, prefix, "active", label=label,
                   summary=f"{len(failed)} scenario(s) failed — planning the fix")
     execution_id = next((o["execution_id"] for o in failed if o["failed_steps"]), failed[0]["execution_id"])
-    try:
-        revision = await revisions.propose(
-            ctx.client, workflow_name, instruction=_instruction(failed), origin="planner",
-            execution_id=execution_id, event_queue=_SubSink(ctx, parent, prefix, label))
-    except Exception as e:  # noqa: BLE001
-        emit_sublayer(ctx, parent, prefix, "failed", label=label, error=str(e))
-        return {"applied": False, "error": str(e)}
+    revision: dict = {}
+    for attempt in range(1, PROPOSE_ATTEMPTS + 1):
+        try:
+            revision = await revisions.propose(
+                ctx.client, workflow_name, instruction=_instruction(failed), origin="planner",
+                execution_id=execution_id, event_queue=_SubSink(ctx, parent, prefix, label))
+        except Exception as e:  # noqa: BLE001
+            if attempt == PROPOSE_ATTEMPTS:
+                emit_sublayer(ctx, parent, prefix, "failed", label=label, error=str(e))
+                return {"applied": False, "error": str(e)}
+            revision = {"status": "failed", "error": str(e)}
+        # Proposed, or a question for the user: final. A failure (the model did
+        # not answer, timed out) is tried once more before the repair gives up.
+        if revision.get("status") in ("proposed", "needs_clarification") or attempt == PROPOSE_ATTEMPTS:
+            break
+        emit_sublayer(ctx, parent, prefix, "active", label=label,
+                      summary=f"Planning the fix failed ({revision.get('error') or 'no answer'}) — trying again")
     if revision.get("status") != "proposed":
         emit_sublayer(ctx, parent, prefix, "failed", label=label,
                       error=revision.get("error") or revision.get("clarification") or "No fix could be made.")

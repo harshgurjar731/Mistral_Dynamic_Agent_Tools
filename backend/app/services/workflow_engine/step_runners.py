@@ -937,6 +937,19 @@ def _entry_text(entry: Any) -> str:
     return "".join(parts)
 
 
+#: Agents the agents completion endpoint refused because of a built-in connector;
+#: they run through the Conversations API from then on (this process).
+CONVERSATION_ONLY_AGENTS: set[str] = set()
+
+
+def needs_conversations(exc: Exception) -> bool:
+    """Mistral refused the agent's tools on the completion endpoint, e.g.
+    ``400 invalid_tools: CodeInterpreterTool connector is not supported``."""
+    text = str(exc).lower()
+    return "connector is not supported" in text or (
+        "invalid_tools" in text and ("connector" in text or "not supported" in text))
+
+
 async def run_with_handoffs(client: Any, agent_id: str, query: str, step_id: str,
                             max_rounds: int) -> tuple[str, int, bool, list[str]]:
     """Run an agent that delegates to sub-agents, through the Conversations API.
@@ -1081,20 +1094,37 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             )
             hit_tool_limit = False
             handoff_agents: list[str] = []
-            if archetype.get("handoffs"):
-                # A multi-agent step: Mistral routes sub-tasks to its sub-agents.
+            # A multi-agent step (Mistral routes sub-tasks to its sub-agents), or
+            # an agent whose built-in connectors only the Conversations API runs.
+            conversational = bool(archetype.get("handoffs")) or resolved_id in CONVERSATION_ONLY_AGENTS
+            if conversational:
                 result_text, round_num, hit_tool_limit, handoff_agents = await run_with_handoffs(
                     client, resolved_id, query, step.id, MAX_TOOL_ROUNDS)
                 content = result_text
 
-            for round_num in range(0 if archetype.get("handoffs") else MAX_TOOL_ROUNDS):
+            for round_num in range(0 if conversational else MAX_TOOL_ROUNDS):
                 # The Mistral client here is the synchronous one, and a single
                 # completion can take tens of seconds. Running it on the event
                 # loop froze the whole API for the duration of every step —
                 # which is why execution status appeared to stop updating mid-run.
-                response = await _agent_complete_with_backoff(
-                    client, base_kwargs, messages, step.id
-                )
+                try:
+                    response = await _agent_complete_with_backoff(
+                        client, base_kwargs, messages, step.id
+                    )
+                except Exception as e:
+                    if round_num != 0 or not needs_conversations(e):
+                        raise
+                    # The agent carries a built-in connector (code interpreter,
+                    # image generation…) that the agents completion endpoint
+                    # refuses. The Conversations API runs it server-side and
+                    # still hands our function tools back to us.
+                    CONVERSATION_ONLY_AGENTS.add(resolved_id)
+                    logger.info("Step '%s' — agent %s uses a conversation-only connector; "
+                                "running it through the Conversations API", step.id, resolved_id)
+                    result_text, round_num, hit_tool_limit, handoff_agents = await run_with_handoffs(
+                        client, resolved_id, query, step.id, MAX_TOOL_ROUNDS)
+                    content = result_text
+                    break
 
                 msg = _first_choice_message(response)
                 if msg is None:
