@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 SCENARIOS_KEY = "dry_run_scenarios"
 RESULT_KEY = "dry_run"
+#: ``async (revision, failed) -> bool`` — asked before a repair is applied. Set when the
+#: user owns the design (a builder test); the planner applies its own repairs.
+CONFIRM_REPAIR_KEY = "dry_run_confirm_repair"
 
 SCENARIO_SYSTEM_PROMPT = """\
 You design the test scenarios a newly built workflow is run on before anyone
@@ -346,6 +349,19 @@ async def repair(ctx: PipelineContext, workflow_name: str, parent: str, round_no
         emit_sublayer(ctx, parent, prefix, "failed", label=label,
                       error=revision.get("error") or revision.get("clarification") or "No fix could be made.")
         return {"applied": False, "revision_id": revision.get("id"), "error": revision.get("error")}
+    confirm = ctx.metadata.get(CONFIRM_REPAIR_KEY)
+    if confirm is not None:
+        emit_sublayer(ctx, parent, prefix, "active", label=label,
+                      summary="Fix planned — waiting for you to apply or skip it")
+        if not await confirm(revision, failed):
+            try:
+                await revisions.discard(workflow_name, revision["id"])
+            except Exception:  # noqa: BLE001 — an undiscarded proposal changes nothing
+                pass
+            emit_sublayer(ctx, parent, prefix, "skipped", label=label,
+                          summary="You chose not to apply this fix; the workflow is unchanged.")
+            return {"applied": False, "declined": True, "revision_id": revision["id"],
+                    "summary": revision.get("summary")}
     try:
         await revisions.apply(workflow_name, revision["id"])
     except revisions.RevisionError as e:

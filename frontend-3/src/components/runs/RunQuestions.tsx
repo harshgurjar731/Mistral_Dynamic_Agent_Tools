@@ -17,6 +17,8 @@ const PAUSED: Record<string, string> = {
   activity_synthesis: "Building the activity is paused — your answer is needed",
   agent: "Agent creation is paused — your answer is needed",
   workflow_plan: "Planning is paused — your answer is needed",
+  workflow_verify: "The scenario test is paused — your answer is needed",
+  agent_evaluate: "The agent test is paused — your answer is needed",
 };
 
 export function RunQuestions() {

@@ -209,9 +209,11 @@ RULES: list[Rule] = [
     _r("POST", r"/uploads/image", "perm", "chat.use", "orchestrator.use"),
 
     # Background runs
+    _r("POST", r"/runs/agent-evaluate", "perm", "agents.manage"),
     _r("POST", r"/runs/agent", "perm", "orchestrator.use"),
     _r("POST", r"/runs/workflow-plan", "perm", "workflows.manage"),
     _r("POST", r"/runs/workflow-refine", "perm", "workflows.manage"),
+    _r("POST", r"/runs/workflow-verify", "perm", "workflows.manage"),
     _r("POST", r"/runs/rebuild", "perm", "workflows.manage", "tools.manage"),
     _r("POST", r"/runs/synthesis", "perm", "tools.manage"),
     _r("GET", r"/runs(/[^/]+(/events)?)?", USER),

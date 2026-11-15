@@ -815,6 +815,11 @@ _ROUTE_JOBS = {
                           "Turns an instruction into edits of a saved workflow, and repairs "
                           "edits that would leave it invalid.",
                           "layers/revision/intent_layer.py, layers/revision/repair_layer.py"),
+    "argument_wiring": ("Builder argument wiring",
+                        "In the visual builder, binds an activity step's parameters to the "
+                        "fields earlier steps and the workflow inputs provide, where the names "
+                        "differ. Same-name fields are wired without a model call.",
+                        "services/workflow_engine/argument_wiring.py"),
     "prerequisite_analysis": ("Build prerequisites",
                               "Works out, before an agent or workflow is built, which "
                               "credentials, service URLs and facts it needs from you.",

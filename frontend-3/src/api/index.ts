@@ -398,6 +398,15 @@ export const ontologyApi = {
 };
 
 /* ── Workflows ──────────────────────────────────────────────────────── */
+/** `POST /workflows/wire-arguments`: where each argument came from, and what is still open. */
+export interface WireArgumentsResult {
+  arguments: Record<string, unknown>;
+  sources: Record<string, "kept" | "exact" | "model">;
+  notes: Record<string, string>;
+  missing: string[];
+  issues: { code: string; message: string; field?: string | null }[];
+}
+
 export const workflowsApi = {
   list: () => get<{ workflows: WorkflowDefinition[]; count: number }>("/api/workflows"),
   get: async (name: string): Promise<WorkflowDefinition> => {
@@ -423,6 +432,14 @@ export const workflowsApi = {
     ),
   scriptPreview: (definition: WorkflowDefinition) =>
     post<ScriptResult>("/api/workflows/script/preview", { definition }),
+  /** Fan-outs made runnable (parallel group or chain) in a (possibly unsaved) definition. */
+  fixFanOuts: (definition: WorkflowDefinition) =>
+    post<{ definition: WorkflowDefinition; changes: string[] }>("/api/workflows/fix-fan-outs", {
+      definition,
+    }),
+  /** Proposed arguments for one activity step of a (possibly unsaved) definition. */
+  wireArguments: (definition: WorkflowDefinition, stepId: string) =>
+    post<WireArgumentsResult>("/api/workflows/wire-arguments", { definition, step_id: stepId }),
   script: (name: string) => get<ScriptResult>(`/api/workflows/${name}/script`),
   publish: (name: string) => post<Record<string, unknown>>(`/api/workflows/${name}/publish`),
   register: (name: string) => post<Record<string, unknown>>(`/api/workflows/${name}/register`),

@@ -56,12 +56,15 @@ export function BackgroundRuns() {
             void qc.invalidateQueries({ queryKey: QK.workflows() });
             break;
           case "agent":
+          case "agent_evaluate":
             void qc.invalidateQueries({ queryKey: QK.agents() });
             break;
+          case "workflow_verify":
           case "workflow_refine": {
             const wf = run.result?.["workflow_name"] ?? run.request?.["workflow_name"];
             if (typeof wf === "string") {
               void qc.invalidateQueries({ queryKey: QK.workflowRevisions(wf) });
+              void qc.invalidateQueries({ queryKey: QK.workflow(wf) });
             }
             // A code fix builds a new activity version.
             void qc.invalidateQueries({ queryKey: QK.tools() });
@@ -75,7 +78,14 @@ export function BackgroundRuns() {
 
         // A dialog watching a synthesis reports its own outcome.
         const synthesis = run.kind === "tool_synthesis" || run.kind === "activity_synthesis";
-        if (focused && (synthesis || run.kind === "workflow_refine")) return;
+        if (
+          focused &&
+          (synthesis ||
+            run.kind === "workflow_refine" ||
+            run.kind === "workflow_verify" ||
+            run.kind === "agent_evaluate")
+        )
+          return;
         if (run.status === "cancelled") return;
 
         const action = focused ? undefined : { label: "Open", onClick: () => openRun(run) };

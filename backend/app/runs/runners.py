@@ -79,6 +79,171 @@ async def workflow_refine(run: LiveRun, *, client, workflow_name: str, instructi
     return RunOutcome(result=result)
 
 
+async def _agents_with_connectors(client, definition) -> list[dict]:
+    """The workflow's agents that have Mistral connectors (a dry run cannot stub those)."""
+    from app.services import agent_service
+
+    used = {(s.config or {}).get("agent_id") for s in definition.steps}
+    try:
+        listed = await agent_service.list_agents(client, page=0, page_size=200)
+    except Exception:  # noqa: BLE001 — only a warning depends on it
+        return []
+    out = []
+    for a in listed.get("items", []) if isinstance(listed, dict) else []:
+        if a.get("id") in used and a.get("connectors"):
+            names = [c.get("name") or c.get("connector_id") if isinstance(c, dict) else c
+                     for c in a["connectors"]]
+            out.append({"agent_id": a["id"], "connectors": [n for n in names if n]})
+    return out
+
+
+async def workflow_verify(run: LiveRun, *, client, workflow_name: str) -> RunOutcome:
+    """Test a saved workflow on scenarios, as the planner's Verify stage does.
+
+    For a workflow built or edited by hand: the best model designs scenarios
+    (the typical case and each outcome the steps decide), each runs as a dry run
+    (connectors and reviews stubbed), and a failure is diagnosed and a fix
+    planned by Refine with AI. The workflow is the user's design, so each fix is
+    put to them before it is applied — with the decision countdown, the
+    recommended choice being to apply it (every applied fix is a version that
+    can be undone).
+    """
+    from app.core.context import PipelineContext
+    from app.core.specs import WorkflowSpec
+    from app.layers.workflow import verify_layers as vl
+    from app.services.workflow_engine.engine import get_workflow
+
+    definition = await asyncio.to_thread(get_workflow, workflow_name)
+    if definition is None:
+        return RunOutcome(status="failed", error=f"Workflow '{workflow_name}' not found — save it first.")
+    spec = WorkflowSpec(goal=definition.description or workflow_name.replace("_", " "),
+                        workflow_name=workflow_name)
+    spec.definition = definition
+    spec.provisioned_agents = await _agents_with_connectors(client, definition)
+    ctx = PipelineContext(query=spec.goal, stream=True, client=client, workflow_spec=spec)
+    ctx.event_queue = run
+
+    async def confirm(revision: dict, failed: list[dict]) -> bool:
+        items = [{"title": i.get("title"), "kind": i.get("kind"),
+                  "detail": i.get("detail") or i.get("why") or ""}
+                 for i in revision.get("plan") or [] if i.get("kind") != "check"]
+        answer = await run.ask("verify_repair", {
+            "title": f"Apply the fix for {len(failed)} failed scenario(s)?",
+            "workflow_name": workflow_name,
+            "fix_summary": revision.get("summary") or "",
+            "fix_items": items,
+            "scenario_failures": [{"name": o["name"], "problems": o["problems"][:4]} for o in failed],
+        }, options=["apply_fix", "skip_fix"], default="apply_fix")
+        return answer.get("choice") == "apply_fix"
+
+    ctx.metadata[vl.CONFIRM_REPAIR_KEY] = confirm
+    design, dry = vl.ScenarioDesignLayer(), vl.WorkflowDryRunLayer()
+    run.emit("pipeline", {"layers": [design.describe(), dry.describe()]})
+
+    async def _done(c):
+        return c
+
+    for layer in (design, dry):
+        if not layer.should_run(ctx):
+            run.emit("layer", {"name": layer.name, "state": "skipped"})
+            continue
+        run.emit("layer", {"name": layer.name, "state": "active"})
+        started = time.monotonic()
+        await layer.process(ctx, _done)
+        run.emit("layer", {"name": layer.name, "state": "failed" if ctx.error else "completed",
+                           "ms": round((time.monotonic() - started) * 1000),
+                           "summary": ctx.layer_summary(layer.name),
+                           **({"error": ctx.error} if ctx.error else {})})
+        if ctx.error:
+            return RunOutcome(status="failed", result={"workflow_name": workflow_name}, error=ctx.error)
+
+    outcome = ctx.metadata.get(vl.RESULT_KEY) or {}
+    scenarios = outcome.get("scenarios") or []
+    passed = sum(1 for o in scenarios if o.get("passed"))
+    applied = sum(1 for r in outcome.get("rounds") or [] if (r.get("repair") or {}).get("applied"))
+    return RunOutcome(result={"workflow_name": workflow_name, "passed": bool(outcome.get("passed")),
+                              "scenarios": len(scenarios), "scenarios_passed": passed,
+                              "repairs_applied": applied})
+
+
+def _tool_names(tools) -> list[str]:
+    out = []
+    for t in tools or []:
+        if isinstance(t, dict):
+            fn = t.get("function") if isinstance(t.get("function"), dict) else {}
+            name = fn.get("name") or t.get("name") or t.get("type")
+        else:
+            name = str(t)
+        if name:
+            out.append(str(name))
+    return out
+
+
+async def agent_evaluate(run: LiveRun, *, client, agent_id: str) -> RunOutcome:
+    """Test an agent a person created (the builder's agent form), as agent design does.
+
+    Test prompts are designed from the agent's instructions, tools and
+    guardrails; the agent answers them through the same runner workflows use;
+    the answers are judged; a dynamic tool that failed is rebuilt from the call
+    it failed on. Revised instructions are put to the user before they replace
+    what they wrote (decision countdown; the recommended choice is to apply).
+    """
+    from app.core.context import PipelineContext
+    from app.core.specs import AgentSpec, GuardrailSpec
+    from app.layers.agent import verification_layers as av
+    from app.services import agent_service
+
+    try:
+        agent = await agent_service.get_agent(client, agent_id)
+    except Exception as e:  # noqa: BLE001
+        return RunOutcome(status="failed", error=f"Could not load the agent: {e}")
+
+    spec = AgentSpec(agent_name=agent.get("name"), description=agent.get("description"),
+                     tools=_tool_names(agent.get("tools")),
+                     connectors=[str(c.get("name") or c.get("connector_id"))
+                                 if isinstance(c, dict) else str(c)
+                                 for c in agent.get("connectors") or []],
+                     agent_instructions=agent.get("instructions") or "")
+    if agent.get("guardrails"):
+        try:
+            spec.guardrails = GuardrailSpec()
+        except TypeError:
+            pass
+    ctx = PipelineContext(query=agent.get("description") or agent.get("name") or agent_id,
+                          stream=True, client=client)
+    ctx.agent_spec = spec
+    ctx.created_agent_id = agent_id
+    ctx.event_queue = run
+
+    async def confirm(current: str, revised: str, changes: str) -> bool:
+        answer = await run.ask("revise_instructions", {
+            "title": f"Apply revised instructions to {agent.get('name') or 'the agent'}?",
+            "agent_name": agent.get("name"),
+            "changes": changes[:2000],
+            "current_instructions": current[:8000],
+            "revised_instructions": revised[:8000],
+        }, options=["apply_revision", "keep_instructions"], default="apply_revision")
+        return answer.get("choice") == "apply_revision"
+
+    ctx.metadata[av.CONFIRM_REVISION_KEY] = confirm
+    layer = av.AgentEvaluationLayer()
+    run.emit("pipeline", {"layers": [layer.describe()]})
+    run.emit("layer", {"name": layer.name, "state": "active"})
+    started = time.monotonic()
+
+    async def _done(c):
+        return c
+
+    await layer.process(ctx, _done)
+    run.emit("layer", {"name": layer.name, "state": "completed",
+                       "ms": round((time.monotonic() - started) * 1000),
+                       "summary": ctx.layer_summary(layer.name)})
+    result = dict(ctx.metadata.get("agent_evaluation") or {})
+    result.update({"agent_id": agent_id, "agent_name": agent.get("name"),
+                   "summary": ctx.layer_summary(layer.name)})
+    return RunOutcome(result=result)
+
+
 async def agent(
     run: LiveRun,
     *,
@@ -137,7 +302,45 @@ def _prerequisites_stop(ctx, result: dict) -> Optional[RunOutcome]:
     return RunOutcome(status="cancelled", result=result, error=ctx.error)
 
 
-async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
+async def _synthesise_in_place(ctx, task: str, placement: dict, relay, code_check,
+                               guidance: list[str]) -> dict:
+    """An activity for a place on the builder canvas, through the code-requirement pipeline.
+
+    ``placement``: ``{"definition", "after_step_id", "before_step_ids"}``. The
+    author sees what the steps before it return (exact field names) and what the
+    steps after it read, and the contract checks refuse renamed fields — as for
+    activities the planner builds.
+    """
+    from app.core.specs import CodeNeed
+    from app.layers.codegen.pipeline import resolve_code_need
+    from app.services.workflow_engine.builder_context import step_neighbours
+    from app.services.workflow_engine.rule_validation import _activity_catalog
+
+    definition = placement.get("definition") or {}
+    upstream, downstream = step_neighbours(
+        definition, after=placement.get("after_step_id"),
+        before=placement.get("before_step_ids") or [], catalog=await _activity_catalog())
+    if upstream or downstream:
+        ctx.event_queue.emit("status", "Writing it to fit the workflow: reads what "
+                             + (", ".join(u["id"] for u in upstream[:4]) or "the workflow inputs")
+                             + " return")
+    need = CodeNeed(purpose="activity", origin="workflow", intent=task,
+                    goal=str(definition.get("description") or definition.get("name") or ""),
+                    upstream=upstream, downstream=downstream, guidance=list(guidance or []))
+    resolution = await resolve_code_need(need, client=ctx.client, on_event=relay, code_check=code_check)
+    ok = resolution.usable or resolution.status == "pending_approval"
+    return {
+        "status": "success" if resolution.usable else resolution.status if ok else "failed",
+        "tool_name": resolution.name, "name": resolution.name, "version": resolution.version,
+        "tool_id": resolution.tool_id, "message": resolution.message,
+        "issues": list(resolution.issues), "reused": resolution.status == "reused",
+        "output_schema": resolution.output_schema,
+        **({"reason": "prerequisites"} if resolution.reason == "prerequisites" else {}),
+    }
+
+
+async def synthesis(run: LiveRun, *, task: str, purpose: str,
+                    placement: Optional[dict] = None) -> RunOutcome:
     """Tool or activity synthesis, framed as a one-layer pipeline.
 
     Synthesis is a single service call with no events of its own, so the run
@@ -198,9 +401,14 @@ async def synthesis(run: LiveRun, *, task: str, purpose: str) -> RunOutcome:
                 "verify", "arbitrate", "test_plan", "review", "done")):
             run.emit("status", message[:300])
 
-    result = await tool_resolver.synthesize_from_task(
-        task, purpose=purpose, on_event=relay, guidance=prerequisites.code_guidance(ctx),
-        code_check=CodeCheck(ctx))
+    if purpose == "activity" and placement:
+        # Created from the builder canvas: written to fit the steps around it.
+        result = await _synthesise_in_place(ctx, task, placement, relay, CodeCheck(ctx),
+                                            prerequisites.code_guidance(ctx))
+    else:
+        result = await tool_resolver.synthesize_from_task(
+            task, purpose=purpose, on_event=relay, guidance=prerequisites.code_guidance(ctx),
+            code_check=CodeCheck(ctx))
     ms = round((time.monotonic() - started) * 1000)
     result = result if isinstance(result, dict) else {"status": "error", "message": str(result)}
 

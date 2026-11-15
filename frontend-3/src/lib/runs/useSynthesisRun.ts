@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { errorMessage, runsApi } from "@/api";
+import type { StepPlacement } from "@/api/runs";
 import type { TrackedRun } from "@/stores/runs";
 import { focusRun, trackStartedRun } from "./connections";
 import { useTrackedRun } from "./useRun";
@@ -55,10 +56,10 @@ export function useSynthesisRun(
   }, [run]);
 
   const start = useCallback(
-    async (task: string) => {
+    async (task: string, placement?: StepPlacement) => {
       setStarting(true);
       try {
-        const started = await runsApi.startSynthesis(task, purpose);
+        const started = await runsApi.startSynthesis(task, purpose, placement);
         trackStartedRun(started);
         setRunId(started.id);
         return started;

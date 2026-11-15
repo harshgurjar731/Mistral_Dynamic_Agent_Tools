@@ -81,7 +81,7 @@ export interface AgentEvaluationView {
   instructions_revised: boolean;
 }
 
-function AgentEvaluationCard({ data }: { data: AgentEvaluationView }) {
+export function AgentEvaluationCard({ data }: { data: AgentEvaluationView }) {
   const final = data.passed_after ?? data.passed_first;
   const all = final === data.tests;
   return (

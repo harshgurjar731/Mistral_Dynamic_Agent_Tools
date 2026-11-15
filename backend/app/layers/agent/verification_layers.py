@@ -149,6 +149,11 @@ async def _ask_agent(agent_id: str, index: int, prompt: str) -> tuple[str, list[
     return (out if isinstance(out, str) else json.dumps(out, default=str)), log
 
 
+#: ``async (current, revised, changes) -> bool`` — asked before revised instructions are saved.
+#: Set when a person wrote the agent (the builder); a designed agent is revised without asking.
+CONFIRM_REVISION_KEY = "agent_evaluation_confirm_revision"
+
+
 class AgentEvaluationLayer(Layer):
     """Test the new agent, judge it, and repair its tools and instructions when it falls short."""
 
@@ -314,6 +319,14 @@ class AgentEvaluationLayer(Layer):
             emit_sublayer(ctx, self.name, "revise", "failed", label="Revise the instructions",
                           error="The revision came back empty.")
             return False
+        confirm = ctx.metadata.get(CONFIRM_REVISION_KEY)
+        if confirm is not None:
+            emit_sublayer(ctx, self.name, "revise", "active", label="Revise the instructions",
+                          summary="Revision written — waiting for you to apply or keep the current ones")
+            if not await confirm(profile["instructions"], revised, changes):
+                emit_sublayer(ctx, self.name, "revise", "skipped", label="Revise the instructions",
+                              summary="You kept the current instructions.")
+                return False
         await agent_service.update_agent(ctx.client, agent_id, {"instructions": revised})
         ctx.agent_spec.agent_instructions = revised
         if isinstance(ctx.agent_config, dict):

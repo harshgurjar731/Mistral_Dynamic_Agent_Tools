@@ -68,9 +68,18 @@ class WorkflowRefineRun(BaseModel):
     execution_id: Optional[str] = Field(default=None, max_length=200)
 
 
+class StepPlacement(BaseModel):
+    """Where a new activity goes on the builder canvas, so it is written to fit there."""
+    #: The workflow as it is in the builder (it may be unsaved).
+    definition: dict
+    after_step_id: Optional[str] = Field(default=None, max_length=200)
+    before_step_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
 class SynthesisRun(BaseModel):
     task: str = Field(min_length=1)
     purpose: Literal["tool", "activity"] = "tool"
+    placement: Optional[StepPlacement] = None
 
 
 @router.post("/runs/workflow-plan", status_code=202)
@@ -103,6 +112,40 @@ async def start_workflow_refine(body: WorkflowRefineRun, client=Depends(get_mist
     return run.snapshot()
 
 
+class WorkflowVerifyRun(BaseModel):
+    workflow_name: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/runs/workflow-verify", status_code=202)
+async def start_workflow_verify(body: WorkflowVerifyRun, client=Depends(get_mistral_client)):
+    """Test a saved workflow on designed scenarios (dry run); each repair is put to the user."""
+    from app.services import workflow_revision_service as revisions
+
+    try:
+        await revisions.ensure_workflow(body.workflow_name)
+    except revisions.RevisionError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    run = await manager.start(
+        "workflow_verify", f"Test {body.workflow_name} on scenarios", body.model_dump(),
+        partial(runners.workflow_verify, client=client, workflow_name=body.workflow_name),
+    )
+    return run.snapshot()
+
+
+class AgentEvaluateRun(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/runs/agent-evaluate", status_code=202)
+async def start_agent_evaluate(body: AgentEvaluateRun, client=Depends(get_mistral_client)):
+    """Test an existing agent on designed prompts; revised instructions are put to the user."""
+    run = await manager.start(
+        "agent_evaluate", f"Test agent {body.agent_id}", body.model_dump(),
+        partial(runners.agent_evaluate, client=client, agent_id=body.agent_id),
+    )
+    return run.snapshot()
+
+
 @router.post("/runs/agent", status_code=202)
 async def start_agent(body: AgentRun, client=Depends(get_mistral_client)):
     query = body.query.strip()
@@ -126,8 +169,10 @@ async def start_synthesis(body: SynthesisRun):
     task = body.task.strip()
     kind = "activity_synthesis" if body.purpose == "activity" else "tool_synthesis"
     run = await manager.start(
-        kind, task, {"task": task, "purpose": body.purpose},
-        partial(runners.synthesis, task=task, purpose=body.purpose),
+        kind, task, {"task": task, "purpose": body.purpose,
+                     "after_step_id": body.placement.after_step_id if body.placement else None},
+        partial(runners.synthesis, task=task, purpose=body.purpose,
+                placement=body.placement.model_dump() if body.placement else None),
     )
     return run.snapshot()
 

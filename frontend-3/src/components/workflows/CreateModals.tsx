@@ -1,3 +1,4 @@
+import type { StepPlacement } from "@/api/runs";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -801,11 +802,17 @@ export function CreateToolModal({
   onOpenChange,
   purpose,
   onCreated,
+  placement,
+  placementLabel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   purpose: "tool" | "activity";
   onCreated: (toolName: string) => void;
+  /** Builder only: the activity is written to fit after this step. */
+  placement?: StepPlacement | undefined;
+  /** How the step it follows is named to the user. */
+  placementLabel?: string | undefined;
 }) {
   const [task, setTask] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -834,7 +841,7 @@ export function CreateToolModal({
   const submit = async () => {
     if (!canSubmit) return;
     setError(null);
-    await synthesis.start(task.trim());
+    await synthesis.start(task.trim(), placement);
   };
 
   return (
@@ -868,6 +875,21 @@ export function CreateToolModal({
               <span>{error}</span>
             </div>
           )}
+
+          {placement ? (
+            <div className="flex items-start gap-2 rounded-lg border border-cyan/30 bg-cyan/5 p-2.5 text-[11px] text-foreground">
+              <Sparkles className="mt-0.5 size-3.5 shrink-0 text-cyan" />
+              <span>
+                {placementLabel ? (
+                  <>
+                    Added after <span className="font-mono">{placementLabel}</span>.{" "}
+                  </>
+                ) : null}
+                It is written to fit the workflow: its inputs use the exact field names the earlier
+                steps and the workflow inputs provide, and its output suits the steps after it.
+              </span>
+            </div>
+          ) : null}
 
           <div>
             <label className="eyebrow mb-1 block">

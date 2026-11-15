@@ -76,6 +76,35 @@ def _validate_agent_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
             step.id, "query_template",
         )
 
+    # A typed answer: the run holds the agent to this schema, and later steps
+    # and the argument checks read its fields. It must describe a record.
+    schema = cfg.get("output_schema")
+    if schema is not None and schema != {}:
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        if not isinstance(schema, dict) or schema.get("type", "object") != "object" \
+                or (props is not None and not isinstance(props, dict)):
+            yield _issue(
+                "error", "agent.bad_output_schema",
+                "The output schema must be a JSON Schema object "
+                '(e.g. {"type": "object", "properties": {"decision": {"type": "string"}}}).',
+                step.id, "output_schema",
+            )
+        elif not props:
+            yield _issue(
+                "warning", "agent.empty_output_schema",
+                "The output schema declares no properties, so nothing in the answer is checked "
+                "and later steps cannot reference its fields.",
+                step.id, "output_schema",
+            )
+        else:
+            missing = [r for r in schema.get("required") or [] if r not in props]
+            if missing:
+                yield _issue(
+                    "warning", "agent.bad_output_schema",
+                    f"The output schema requires fields it does not declare: {', '.join(map(str, missing))}.",
+                    step.id, "output_schema",
+                )
+
 
 def _validate_tool_step(step: WorkflowStep) -> Iterable[ValidationIssue]:
     """Validate a standalone Activity step — an isolated unit of work the

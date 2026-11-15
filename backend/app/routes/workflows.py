@@ -307,6 +307,43 @@ async def validate_workflow_endpoint(request: ValidateWorkflowRequest):
     return await _validate_with_rules(request.definition)
 
 
+class WireArgumentsRequest(BaseModel):
+    #: The workflow as it is in the builder (it may be unsaved).
+    definition: dict
+    step_id: str
+
+
+@router.post("/workflows/wire-arguments")
+async def wire_arguments_endpoint(request: WireArgumentsRequest):
+    """Propose arguments for one activity step: kept, same-name, then model-matched.
+
+    Nothing is saved — the builder applies the result to its own draft.
+    """
+    from app.services.workflow_engine.argument_wiring import WiringError, wire_arguments
+
+    try:
+        return await wire_arguments(request.definition, request.step_id,
+                                    client=get_mistral_client())
+    except WiringError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+class FixFanOutsRequest(BaseModel):
+    definition: dict
+
+
+@router.post("/workflows/fix-fan-outs")
+async def fix_fan_outs_endpoint(request: FixFanOutsRequest):
+    """Make steps that list several continuations runnable (parallel group or chain).
+
+    Nothing is saved — the builder applies the returned definition to its draft.
+    """
+    from app.services.workflow_engine.builder_context import fix_fan_outs
+
+    definition, changes = fix_fan_outs(request.definition)
+    return {"definition": definition, "changes": changes}
+
+
 @router.post("/workflows/script/preview", response_model=ScriptResponse)
 async def preview_script(request: ValidateWorkflowRequest):
     """Compile an unsaved definition to Mistral Workflows SDK Python.

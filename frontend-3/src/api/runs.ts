@@ -7,7 +7,13 @@ import { get, post } from "./client";
  * started them is closed. Start one, then follow `/api/runs/{id}/events`.
  */
 export type RunKind =
-  "workflow_plan" | "agent" | "tool_synthesis" | "activity_synthesis" | "workflow_refine";
+  | "workflow_plan"
+  | "agent"
+  | "tool_synthesis"
+  | "activity_synthesis"
+  | "workflow_refine"
+  | "workflow_verify"
+  | "agent_evaluate";
 export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface RunProgress {
@@ -54,6 +60,14 @@ export interface AgentRunRequest {
   process_knowledge?: ProcessKnowledgeRequest | undefined;
 }
 
+/** Where a new activity goes in the builder: it is written to fit between these steps. */
+export interface StepPlacement {
+  /** The workflow as it is in the builder (it may be unsaved). */
+  definition: unknown;
+  after_step_id?: string | null;
+  before_step_ids?: string[];
+}
+
 export const runsApi = {
   list: (params: { status?: string; kind?: string; limit?: number } = {}) =>
     get<{ runs: BackgroundRun[] }>("/api/runs", params),
@@ -65,14 +79,25 @@ export const runsApi = {
       ...(processKnowledge ? { process_knowledge: processKnowledge } : {}),
     }),
   startAgent: (body: AgentRunRequest) => post<BackgroundRun>("/api/runs/agent", body),
-  startSynthesis: (task: string, purpose: "tool" | "activity") =>
-    post<BackgroundRun>("/api/runs/synthesis", { task, purpose }),
+  /** `placement`: an activity for a place on the builder canvas, written to fit the steps around it. */
+  startSynthesis: (task: string, purpose: "tool" | "activity", placement?: StepPlacement) =>
+    post<BackgroundRun>("/api/runs/synthesis", {
+      task,
+      purpose,
+      ...(placement ? { placement } : {}),
+    }),
   /** Answer a question a running run is waiting on (its `decision_required` event). */
   /** Rebuild a tool/activity version from a failure; tracked like a synthesis run. */
   startRebuild: (body: RebuildRequest) => post<BackgroundRun>("/api/runs/rebuild", body),
   /** Refine with AI: analyse, plan and carry out a fix (workflow edits and activity code). */
   startWorkflowRefine: (body: WorkflowRefineRequest) =>
     post<BackgroundRun>("/api/runs/workflow-refine", body),
+  /** Test a saved workflow on designed scenarios (dry run); each repair is put to the user. */
+  startWorkflowVerify: (workflowName: string) =>
+    post<BackgroundRun>("/api/runs/workflow-verify", { workflow_name: workflowName }),
+  /** Test an existing agent on designed prompts; revised instructions are put to the user. */
+  startAgentEvaluate: (agentId: string) =>
+    post<BackgroundRun>("/api/runs/agent-evaluate", { agent_id: agentId }),
   /** Keep a question waiting longer before its recommended choice is taken. */
   extendDecision: (id: string, decisionId: string, seconds = 300) =>
     post<{ deadline: string }>(`/api/runs/${id}/decisions/${decisionId}/extend`, { seconds }),
@@ -168,6 +193,15 @@ export interface RunDecision {
   /** Choices that accept a typed message (e.g. retry: what to change first). */
   message_options?: string[];
   last_test?: { passed: boolean; summary: string } | null;
+  /** verify_repair: the fix planned for the failed scenarios, and what failed. */
+  fix_summary?: string;
+  fix_items?: Array<{ title?: string; kind?: string; detail?: string }>;
+  scenario_failures?: Array<{ name: string; problems: string[] }>;
+  /** revise_instructions: what the judge asked for, and the instructions before and after. */
+  agent_name?: string;
+  changes?: string;
+  current_instructions?: string;
+  revised_instructions?: string;
   /** Everything the plan has created so far — what a rollback removes. */
   created?: Array<{ kind: string; id: string; name?: string }>;
   /** prerequisites: what is being built, and where the check ran. */

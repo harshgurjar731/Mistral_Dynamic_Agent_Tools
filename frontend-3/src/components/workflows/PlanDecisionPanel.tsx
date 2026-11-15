@@ -31,7 +31,9 @@ import {
   Loader2,
   MessageSquareText,
   RefreshCw,
+  SkipForward,
   Undo2,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { errorMessage, runsApi, type RunDecision } from "@/api";
@@ -86,6 +88,31 @@ const CHOICES: Record<string, ChoiceMeta> = {
     detail:
       "Run each activity against its worked examples and check every agent exists. Nothing is changed.",
     icon: FlaskConical,
+  },
+  apply_revision: {
+    label: "Apply the revised instructions",
+    confirm: "Apply and re-test",
+    detail: "Replace the agent's instructions with the revision and re-run the tests it failed.",
+    icon: Wrench,
+  },
+  keep_instructions: {
+    label: "Keep my instructions",
+    confirm: "Keep them",
+    detail: "Leave the instructions as you wrote them. The test reports what failed.",
+    icon: SkipForward,
+  },
+  apply_fix: {
+    label: "Apply the fix",
+    confirm: "Apply and re-test",
+    detail:
+      "Apply the planned changes and run the scenarios again. It is saved as a new version you can undo.",
+    icon: Wrench,
+  },
+  skip_fix: {
+    label: "Leave the workflow as it is",
+    confirm: "Skip the fix",
+    detail: "Discard this fix. The test ends and reports which scenarios failed.",
+    icon: SkipForward,
   },
   accept: {
     label: "Accept & register",
@@ -218,11 +245,15 @@ function DecisionForm({
           {decision.title ?? "Planning is waiting for your decision"}
         </DialogTitle>
         <DialogDescription className="text-xs">
-          {decision.kind === "build_failed"
-            ? `Planning is paused. The ${ENTITY_NOUN[entity] ?? "items"} below still failed after ${
-                decision.attempts ?? "every"
-              } automatic attempt(s). Choose what to do — nothing changes until you confirm.`
-            : "Planning is paused at review. Test it, then accept it or roll it back."}
+          {decision.kind === "revise_instructions"
+            ? "Some test answers fell short because of the instructions. A revision has been written — nothing changes until you apply it."
+            : decision.kind === "verify_repair"
+              ? "Some scenarios failed. A fix has been planned — nothing is changed until you apply it."
+              : decision.kind === "build_failed"
+                ? `Planning is paused. The ${ENTITY_NOUN[entity] ?? "items"} below still failed after ${
+                    decision.attempts ?? "every"
+                  } automatic attempt(s). Choose what to do — nothing changes until you confirm.`
+                : "Planning is paused at review. Test it, then accept it or roll it back."}
         </DialogDescription>
       </DialogHeader>
 
@@ -254,6 +285,68 @@ function DecisionForm({
                   ) : null}
                 </div>
               ))}
+            </div>
+          </section>
+        ) : null}
+
+        {decision.kind === "revise_instructions" ? (
+          <section className="space-y-2 text-[11px]">
+            {decision.changes ? (
+              <div className="rounded-lg border border-amber/30 bg-amber/5 px-3 py-2">
+                <p className="font-medium text-foreground">What must change</p>
+                <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">
+                  {decision.changes}
+                </p>
+              </div>
+            ) : null}
+            <details className="rounded-lg border border-border bg-background-elevated/50 px-3 py-2">
+              <summary className="cursor-pointer font-medium text-foreground">
+                Revised instructions
+              </summary>
+              <pre className="mt-1 max-h-64 overflow-y-auto font-mono text-[10px] whitespace-pre-wrap text-muted-foreground">
+                {decision.revised_instructions}
+              </pre>
+            </details>
+            <details className="rounded-lg border border-border bg-background-elevated/50 px-3 py-2">
+              <summary className="cursor-pointer font-medium text-foreground">
+                Your current instructions
+              </summary>
+              <pre className="mt-1 max-h-64 overflow-y-auto font-mono text-[10px] whitespace-pre-wrap text-muted-foreground">
+                {decision.current_instructions}
+              </pre>
+            </details>
+          </section>
+        ) : null}
+
+        {decision.kind === "verify_repair" ? (
+          <section className="space-y-2 text-[11px]">
+            {(decision.scenario_failures ?? []).map((f) => (
+              <div
+                key={f.name}
+                className="rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2"
+              >
+                <p className="font-medium text-foreground">{f.name}</p>
+                {f.problems.map((p) => (
+                  <p key={p} className="mt-0.5 break-words text-destructive/90">
+                    {p}
+                  </p>
+                ))}
+              </div>
+            ))}
+            <div className="rounded-lg border border-border bg-background-elevated/50 px-3 py-2">
+              <p className="font-medium text-foreground">The fix</p>
+              {decision.fix_summary ? (
+                <p className="mt-0.5 text-muted-foreground">{decision.fix_summary}</p>
+              ) : null}
+              <ul className="mt-1 space-y-0.5">
+                {(decision.fix_items ?? []).map((item, i) => (
+                  <li key={i} className="text-muted-foreground">
+                    <span className="font-mono text-[10px] uppercase">{item.kind}</span>{" "}
+                    <span className="text-foreground">{item.title}</span>
+                    {item.detail ? ` — ${item.detail}` : ""}
+                  </li>
+                ))}
+              </ul>
             </div>
           </section>
         ) : null}

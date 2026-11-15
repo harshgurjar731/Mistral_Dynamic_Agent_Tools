@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Flag, Trash2 } from "lucide-react";
-import type { BuilderCatalog, WorkflowStep } from "@/types";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { FlaskConical, Flag, Loader2, Trash2, Wand2 } from "lucide-react";
+import { errorMessage, workflowsApi, type WireArgumentsResult } from "@/api";
+import type { BuilderCatalog, WorkflowDefinition, WorkflowStep } from "@/types";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,8 +85,171 @@ function JsonField({
   );
 }
 
+/**
+ * An agent step's typed answer. With a schema the run holds the agent's answer
+ * to it (and repairs a reply that does not fit), later steps can reference its
+ * fields, and the argument checks know their types. Without one the answer is text.
+ */
+function OutputSchemaField({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (schema: Record<string, unknown> | undefined) => void;
+}) {
+  const typed = Boolean(value && typeof value === "object" && Object.keys(value).length);
+  const [fields, setFields] = useState("");
+  const generate = () => {
+    const names = fields
+      .split(",")
+      .map((f) => f.trim().replace(/[^A-Za-z0-9_]/g, "_"))
+      .filter(Boolean);
+    if (!names.length) return;
+    onChange({
+      type: "object",
+      properties: Object.fromEntries(names.map((n) => [n, { type: "string" }])),
+      required: names,
+    });
+    setFields("");
+  };
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-xs text-foreground">
+        <input
+          type="checkbox"
+          checked={typed}
+          onChange={(e) =>
+            onChange(
+              e.target.checked
+                ? {
+                    type: "object",
+                    properties: { answer: { type: "string" } },
+                    required: ["answer"],
+                  }
+                : undefined,
+            )
+          }
+        />
+        Typed output — hold the agent&apos;s answer to a schema
+      </label>
+      {typed ? (
+        <>
+          <JsonField
+            label="Output schema"
+            hint="JSON Schema of the answer. Later steps read fields as {{step_<id>_output.<field>}}; set types and enums to make the run check them."
+            value={value}
+            onChange={(v) => onChange(v)}
+          />
+          <div className="flex gap-1.5">
+            <Input
+              value={fields}
+              onChange={(e) => setFields(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && generate()}
+              placeholder="Start over from field names, e.g. decision, reason, risk_score"
+              className="h-7 text-[11px]"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px]"
+              onClick={generate}
+            >
+              Generate
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Fill an activity step's arguments from what runs before it: arguments that
+ * already fit are kept, same-name fields are wired exactly, and the rest are
+ * matched by the model and checked against the schemas before they are used.
+ */
+function AutoWireArguments({
+  definition,
+  stepId,
+  onWired,
+}: {
+  definition: WorkflowDefinition;
+  stepId: string;
+  onWired: (args: Record<string, unknown>) => void;
+}) {
+  const [last, setLast] = useState<WireArgumentsResult | null>(null);
+  useEffect(() => setLast(null), [stepId]);
+  const wire = useMutation({
+    mutationFn: () => workflowsApi.wireArguments(definition, stepId),
+    onSuccess: (res) => {
+      setLast(res);
+      onWired(res.arguments);
+      const n = Object.keys(res.arguments).length;
+      if (res.missing.length) toast.warning(`Wired ${n}; still open: ${res.missing.join(", ")}`);
+      else toast.success(`Wired ${n} argument${n === 1 ? "" : "s"}`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const counts = last
+    ? Object.values(last.sources).reduce<Record<string, number>>(
+        (acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }),
+        {},
+      )
+    : null;
+  return (
+    <div className="space-y-1.5">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1.5 text-[11px]"
+        disabled={wire.isPending}
+        onClick={() => wire.mutate()}
+      >
+        {wire.isPending ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <Wand2 className="size-3" />
+        )}
+        {wire.isPending ? "Wiring…" : "Auto-wire arguments"}
+      </Button>
+      {last && counts ? (
+        <div className="space-y-1 rounded-md border border-border/60 bg-background-elevated/50 p-2 text-[11px]">
+          <p className="text-muted-foreground">
+            {[
+              counts["kept"] ? `${counts["kept"]} kept` : null,
+              counts["exact"] ? `${counts["exact"]} by exact name` : null,
+              counts["model"] ? `${counts["model"]} matched by the model` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Nothing could be wired."}
+          </p>
+          {Object.entries(last.notes).map(([param, note]) => (
+            <p key={param}>
+              <span className="font-mono">{param}</span>: {note}
+            </p>
+          ))}
+          {last.missing.length ? (
+            <p className="text-amber">
+              Nothing earlier provides: <span className="font-mono">{last.missing.join(", ")}</span>{" "}
+              — add a workflow input or a step that returns it.
+            </p>
+          ) : null}
+          {last.issues.map((i, n) => (
+            <p key={n} className="text-red">
+              {i.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function StepInspector({
   step,
+  definition,
   catalog,
   stepIds,
   tiers,
@@ -91,8 +257,11 @@ export function StepInspector({
   onChange,
   onDelete,
   onSetEntry,
+  onTestAgent,
 }: {
   step: WorkflowStep | null;
+  /** The whole draft, for helpers that look at the steps around this one. */
+  definition?: WorkflowDefinition | undefined;
   catalog: BuilderCatalog | undefined;
   stepIds: string[];
   tiers: string[];
@@ -100,6 +269,8 @@ export function StepInspector({
   onChange: (next: WorkflowStep) => void;
   onDelete: (id: string) => void;
   onSetEntry: (id: string) => void;
+  /** Test the agent on designed prompts (builder). */
+  onTestAgent?: ((agentId: string) => void) | undefined;
 }) {
   if (!step) {
     return (
@@ -214,6 +385,23 @@ export function StepInspector({
                 className="font-mono text-xs"
               />
             </Field>
+            {onTestAgent && cfg["agent_id"] ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 text-[11px]"
+                title="Design test prompts, run the agent on them and judge the answers. Revised instructions are put to you first."
+                onClick={() => onTestAgent(String(cfg["agent_id"]))}
+              >
+                <FlaskConical className="size-3" />
+                Test this agent
+              </Button>
+            ) : null}
+            <OutputSchemaField
+              value={cfg["output_schema"]}
+              onChange={(schema) => setCfg({ output_schema: schema })}
+            />
           </>
         ) : null}
 
@@ -247,6 +435,18 @@ export function StepInspector({
               value={cfg["arguments_template"] ?? cfg["arguments"] ?? {}}
               onChange={(v) => setCfg({ arguments: v })}
             />
+            {definition && cfg["tool_name"] ? (
+              <AutoWireArguments
+                definition={definition}
+                stepId={step.id}
+                onWired={(args) =>
+                  onChange({
+                    ...step,
+                    config: { ...cfg, arguments: args, arguments_template: undefined },
+                  })
+                }
+              />
+            ) : null}
           </>
         ) : null}
 
@@ -360,7 +560,10 @@ export function StepInspector({
 
         {step.type === "human_review" ? (
           <>
-            <Field label="Reviews the output of" hint="The step whose result the reviewer is shown.">
+            <Field
+              label="Reviews the output of"
+              hint="The step whose result the reviewer is shown."
+            >
               <select
                 className={SELECT_CLASS}
                 value={String(cfg["review_of"] ?? "")}
@@ -387,7 +590,9 @@ export function StepInspector({
                   type="number"
                   min={1}
                   value={Math.round(Number(cfg["sla_seconds"] ?? 86400) / 3600)}
-                  onChange={(e) => setCfg({ sla_seconds: Math.max(1, Number(e.target.value) || 24) * 3600 })}
+                  onChange={(e) =>
+                    setCfg({ sla_seconds: Math.max(1, Number(e.target.value) || 24) * 3600 })
+                  }
                 />
               </Field>
               <Field label="If no decision">
@@ -406,9 +611,15 @@ export function StepInspector({
                   type="number"
                   min={1}
                   max={100}
-                  value={cfg["sample_rate"] == null ? "" : Math.round(Number(cfg["sample_rate"]) * 100)}
+                  value={
+                    cfg["sample_rate"] == null ? "" : Math.round(Number(cfg["sample_rate"]) * 100)
+                  }
                   onChange={(e) =>
-                    setCfg({ sample_rate: e.target.value ? Math.min(100, Number(e.target.value)) / 100 : null })
+                    setCfg({
+                      sample_rate: e.target.value
+                        ? Math.min(100, Number(e.target.value)) / 100
+                        : null,
+                    })
                   }
                 />
               </Field>
@@ -417,7 +628,12 @@ export function StepInspector({
               <Input
                 value={((cfg["editable"] as string[] | undefined) ?? []).join(", ")}
                 onChange={(e) =>
-                  setCfg({ editable: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })
+                  setCfg({
+                    editable: e.target.value
+                      .split(",")
+                      .map((v) => v.trim())
+                      .filter(Boolean),
+                  })
                 }
               />
             </Field>

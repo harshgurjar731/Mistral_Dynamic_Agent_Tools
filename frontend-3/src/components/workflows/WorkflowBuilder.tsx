@@ -15,6 +15,7 @@ import {
   Blocks,
   Code2,
   Columns,
+  FlaskConical,
   Loader2,
   Map,
   Plus,
@@ -28,7 +29,10 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { errorMessage, QK, rulesApi, workflowsApi } from "@/api";
+import { errorMessage, QK, rulesApi, runsApi, workflowsApi } from "@/api";
+import { trackStartedRun } from "@/lib/runs/connections";
+import { useTrackedRun } from "@/lib/runs/useRun";
+import { ScenarioTestPanel } from "./ScenarioTestPanel";
 import { RuleSelector } from "@/components/rules/RuleSelector";
 import type {
   BuilderCatalog,
@@ -99,7 +103,13 @@ function defaultConfig(type: StepType): Record<string, unknown> {
     case "transform":
       return { transform_code: "" };
     case "human_review":
-      return { review_of: "", reviewer_role: "", sla_seconds: 86400, on_timeout: "fail", editable: [] };
+      return {
+        review_of: "",
+        reviewer_role: "",
+        sla_seconds: 86400,
+        on_timeout: "fail",
+        editable: [],
+      };
     default:
       return {};
   }
@@ -211,6 +221,9 @@ export function WorkflowBuilder({
   // Inline creation modals
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [synthesizingActivity, setSynthesizingActivity] = useState(false);
+  // The step a new activity is created after (the selection when "New activity" was
+  // pressed): the code is written to fit between it and the steps it leads to.
+  const [activityAfter, setActivityAfter] = useState<string | null>(null);
 
   const catalogQuery = useQuery({
     queryKey: QK.builderCatalog(),
@@ -551,6 +564,70 @@ export function WorkflowBuilder({
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  // "Test with scenarios": the planner's dry-run verification, for this saved workflow.
+  const [verifyRunId, setVerifyRunId] = useState<string | null>(null);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const verifyRun = useTrackedRun(verifyRunId);
+  const testWithScenarios = useMutation({
+    mutationFn: async () => {
+      if (dirty) {
+        await workflowsApi.update(definition.name, definition);
+        setDirty(false);
+      }
+      return runsApi.startWorkflowVerify(definition.name);
+    },
+    onSuccess: (started) => {
+      trackStartedRun(started);
+      setVerifyRunId(started.id);
+      setVerifyOpen(true);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  // One-click fix for steps that list several continuations (the engine follows only the first).
+  const fixFanOuts = useMutation({
+    mutationFn: () => workflowsApi.fixFanOuts(definition),
+    onSuccess: (res) => {
+      if (!res.changes.length) {
+        toast.info("Nothing to change.");
+        return;
+      }
+      update((d) => ({ ...d, steps: res.definition.steps }));
+      toast.success("Fan-outs fixed", { description: res.changes.join("; ") });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  // "Test this agent": the agent-design evaluation, for an agent made or picked here.
+  const [agentTestRunId, setAgentTestRunId] = useState<string | null>(null);
+  const [agentTestOpen, setAgentTestOpen] = useState(false);
+  const testAgent = useMutation({
+    mutationFn: (agentId: string) => runsApi.startAgentEvaluate(agentId),
+    onSuccess: (started) => {
+      trackStartedRun(started);
+      setAgentTestRunId(started.id);
+      setAgentTestOpen(true);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  // Applied repairs changed the saved workflow: load it, so the canvas shows the fix.
+  const reloadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!verifyRun || verifyRun.status === "running" || reloadedFor.current === verifyRun.id)
+      return;
+    reloadedFor.current = verifyRun.id;
+    const applied = Number(verifyRun.result?.["repairs_applied"] ?? 0);
+    if (applied <= 0) return;
+    void workflowsApi
+      .get(definition.name)
+      .then((fresh) => {
+        update(() => fresh);
+        setDirty(false);
+        toast.success(`Loaded the workflow with ${applied} applied fix(es).`);
+      })
+      .catch((e) => toast.error(errorMessage(e)));
+  }, [verifyRun, definition.name, update]);
+
   const preview = useMutation({
     mutationFn: () => workflowsApi.scriptPreview(definition),
     onSuccess: (res) => setScript(res.code),
@@ -575,8 +652,23 @@ export function WorkflowBuilder({
     // The create modals portal to <body>, which is hidden while the canvas is full screen.
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     if (kind === "agent") setShowAgentModal(true);
-    else setSynthesizingActivity(true);
+    else {
+      setActivityAfter(selectedId);
+      setSynthesizingActivity(true);
+    }
   };
+
+  const afterStep = definition.steps.find((s) => s.id === activityAfter) ?? null;
+  // A condition's branches are wired by hand; any other step gets the new one in between.
+  const insertsBetween = afterStep !== null && afterStep.type !== "condition";
+  const activityPlacement = useMemo(
+    () => ({
+      definition,
+      after_step_id: afterStep?.id ?? null,
+      before_step_ids: insertsBetween ? (afterStep?.next_steps ?? []) : [],
+    }),
+    [definition, afterStep, insertsBetween],
+  );
 
   const issueCount = validation?.issues.length ?? 0;
 
@@ -637,6 +729,26 @@ export function WorkflowBuilder({
               <Code2 className="size-3.5" />
             )}
             Script
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            title={
+              mode === "create"
+                ? "Create the draft first — scenarios run the saved workflow."
+                : "Design test scenarios and dry-run them (connectors and reviews stubbed); failures get a planned fix you approve."
+            }
+            onClick={() =>
+              verifyRun?.status === "running" ? setVerifyOpen(true) : testWithScenarios.mutate()
+            }
+            disabled={mode === "create" || !canSave || testWithScenarios.isPending}
+          >
+            {testWithScenarios.isPending || verifyRun?.status === "running" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <FlaskConical className="size-3.5" />
+            )}
+            {verifyRun?.status === "running" ? "Testing…" : "Test with scenarios"}
           </Button>
           <Button
             size="sm"
@@ -823,6 +935,7 @@ export function WorkflowBuilder({
           <TabsContent value="step" className="mt-3 min-h-0 flex-1">
             <StepInspector
               step={selected}
+              definition={definition}
               catalog={catalog}
               stepIds={definition.steps.map((s) => s.id)}
               tiers={catalog?.tiers ?? ["foundation", "domain", "use_case"]}
@@ -833,6 +946,10 @@ export function WorkflowBuilder({
                 setDetailsTab(null);
               }}
               onSetEntry={(id) => update((d) => ({ ...d, entry_step: id }))}
+              onTestAgent={(agentId) => {
+                setDetailsTab(null);
+                testAgent.mutate(agentId);
+              }}
             />
           </TabsContent>
 
@@ -847,6 +964,13 @@ export function WorkflowBuilder({
               ) : (
                 <IssueList
                   issues={validation?.issues ?? []}
+                  fixes={{
+                    "step.multiple_next": {
+                      label: "Fix: run them all",
+                      run: () => fixFanOuts.mutate(),
+                      busy: fixFanOuts.isPending,
+                    },
+                  }}
                   onSelectStep={(id) => {
                     setSelectedId(id);
                     setDetailsTab("step");
@@ -861,6 +985,38 @@ export function WorkflowBuilder({
             </GlassPanel>
           </TabsContent>
         </Tabs>
+      </CanvasDialog>
+
+      <CanvasDialog
+        open={verifyOpen && verifyRunId !== null}
+        onOpenChange={setVerifyOpen}
+        title="Test with scenarios"
+        description="Dry runs of the saved workflow — closing this keeps the test running"
+        className="h-[min(85dvh,820px)] max-w-2xl"
+      >
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+          {verifyRunId ? (
+            <ScenarioTestPanel runId={verifyRunId} onQuestion={() => setVerifyOpen(false)} />
+          ) : null}
+        </div>
+      </CanvasDialog>
+
+      <CanvasDialog
+        open={agentTestOpen && agentTestRunId !== null}
+        onOpenChange={setAgentTestOpen}
+        title="Test the agent"
+        description="Closing this keeps the test running"
+        className="h-[min(85dvh,820px)] max-w-2xl"
+      >
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+          {agentTestRunId ? (
+            <ScenarioTestPanel
+              runId={agentTestRunId}
+              intro="Test prompts are designed from the agent's instructions, tools and guardrails — a typical request, an edge case and, with guardrails, one it must decline. The answers are judged; a failing tool is rebuilt, and revised instructions are put to you before they replace yours."
+              onQuestion={() => setAgentTestOpen(false)}
+            />
+          ) : null}
+        </div>
       </CanvasDialog>
 
       <CanvasDialog
@@ -887,7 +1043,10 @@ export function WorkflowBuilder({
         onCreated={(agentId, agentName) => {
           qc.invalidateQueries({ queryKey: QK.builderCatalog() });
           qc.invalidateQueries({ queryKey: QK.agents() });
-          toast.success(`Agent "${agentName}" created`);
+          toast.success(`Agent "${agentName}" created`, {
+            description: "Test it on designed prompts before you rely on it.",
+            action: { label: "Test it", onClick: () => testAgent.mutate(agentId) },
+          });
           insertStep({
             ...blankStep(
               uniqueStepId(
@@ -907,11 +1066,13 @@ export function WorkflowBuilder({
           open={synthesizingActivity}
           onOpenChange={(open) => !open && setSynthesizingActivity(false)}
           purpose="activity"
+          placement={activityPlacement}
+          placementLabel={afterStep?.id}
           onCreated={(activityName) => {
             qc.invalidateQueries({ queryKey: QK.builderCatalog() });
             qc.invalidateQueries({ queryKey: QK.tools() });
             toast.success("Activity created");
-            insertStep({
+            const step: WorkflowStep = {
               ...blankStep(
                 uniqueStepId(
                   definition.steps.map((s) => s.id),
@@ -920,7 +1081,20 @@ export function WorkflowBuilder({
                 "tool",
               ),
               config: { tool_name: activityName, arguments: {} },
-            });
+            };
+            if (!insertStep(step) || !insertsBetween || !afterStep) return;
+            // Wire it in after the step it was written for, taking over that step's next steps.
+            const afterId = afterStep.id;
+            update((d) => ({
+              ...d,
+              steps: d.steps.map((s) =>
+                s.id === afterId
+                  ? { ...s, next_steps: [step.id] }
+                  : s.id === step.id
+                    ? { ...s, next_steps: afterStep.next_steps ?? [] }
+                    : s,
+              ),
+            }));
           }}
         />
       )}

@@ -49,10 +49,13 @@ export function IssueList({
   issues,
   onSelectStep,
   emptyLabel = "No issues — the definition is structurally sound.",
+  fixes,
 }: {
   issues: ValidationIssue[];
   onSelectStep?: (stepId: string) => void;
   emptyLabel?: string;
+  /** Issue code → a one-click fix (label and action) the host can apply. */
+  fixes?: Record<string, { label: string; run: (issue: ValidationIssue) => void; busy?: boolean }>;
 }) {
   if (issues.length === 0) {
     return (
@@ -83,6 +86,16 @@ export function IssueList({
                 <p className="text-xs text-foreground">{issue.message}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span className="technical-label">{issue.code}</span>
+                  {fixes?.[issue.code] ? (
+                    <button
+                      type="button"
+                      disabled={fixes[issue.code]?.busy}
+                      onClick={() => fixes[issue.code]?.run(issue)}
+                      className="rounded border border-primary/40 px-1.5 py-px text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                    >
+                      {fixes[issue.code]?.label}
+                    </button>
+                  ) : null}
                   {issue.step_id ? (
                     onSelectStep ? (
                       <button

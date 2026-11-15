@@ -68,6 +68,8 @@ _ROUTES: dict[str, ModelRoute] = {
     "input_schema": ModelRoute("input_schema", PRIMARY, "high", 240_000, None, FALLBACK),
     # Refine with AI: an instruction → edit operations, and their repair.
     "workflow_revision": ModelRoute("workflow_revision", PRIMARY, "high", 300_000, None, FALLBACK),
+    # Builder: bind an activity step's parameters to what earlier steps return.
+    "argument_wiring": ModelRoute("argument_wiring", PRIMARY, "high", 180_000, None, FALLBACK),
 }
 
 #: Routes of the tool/activity code pipeline, and Refine with AI (which can rebuild code).

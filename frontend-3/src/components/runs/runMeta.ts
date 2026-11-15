@@ -4,6 +4,7 @@ import {
   Bot,
   CheckCircle2,
   CircleSlash,
+  FlaskConical,
   GitBranch,
   Loader2,
   Sparkles,
@@ -64,6 +65,24 @@ export const RUN_KIND_META: Record<
     chip: "border-primary/25 bg-primary/10 text-primary",
     box: "border-primary/20 bg-primary/5",
     bar: "bg-primary",
+  },
+  agent_evaluate: {
+    label: "Agent test",
+    noun: "Agent test",
+    icon: Bot,
+    text: "text-cyan",
+    chip: "border-cyan/25 bg-cyan/10 text-cyan",
+    box: "border-cyan/20 bg-cyan/5",
+    bar: "bg-cyan",
+  },
+  workflow_verify: {
+    label: "Scenario test",
+    noun: "Scenario test",
+    icon: FlaskConical,
+    text: "text-amber",
+    chip: "border-amber/25 bg-amber/10 text-amber",
+    box: "border-amber/20 bg-amber/5",
+    bar: "bg-amber",
   },
   activity_synthesis: {
     label: "Activity synthesis",
@@ -151,6 +170,20 @@ export function useOpenRun() {
         case "agent":
           void navigate({ to: "/", search: { run: run.id } });
           break;
+        case "agent_evaluate": {
+          const id = run.request?.["agent_id"];
+          if (typeof id === "string" && id) {
+            void navigate({ to: "/agents/$id", params: { id } });
+          }
+          break;
+        }
+        case "workflow_verify": {
+          const name = run.request?.["workflow_name"];
+          if (typeof name === "string" && name) {
+            void navigate({ to: "/workflows/$workflowName/edit", params: { workflowName: name } });
+          }
+          break;
+        }
         case "workflow_refine": {
           const name = run.request?.["workflow_name"];
           if (typeof name === "string" && name) {

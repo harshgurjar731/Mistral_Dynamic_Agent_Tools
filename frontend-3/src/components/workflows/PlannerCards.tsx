@@ -1727,13 +1727,13 @@ function DataContractCard({ data }: { data: DataContractData }) {
   );
 }
 
-interface ScenarioData {
+export interface ScenarioData {
   name: string;
   description?: string;
   expect?: { path: string; equals?: unknown; in?: unknown[]; why?: string }[];
 }
 
-function ScenariosCard({ data }: { data: ScenarioData[] }) {
+export function ScenariosCard({ data }: { data: ScenarioData[] }) {
   const list = Array.isArray(data) ? data : [];
   return (
     <CardShell
@@ -1760,7 +1760,7 @@ function ScenariosCard({ data }: { data: ScenarioData[] }) {
   );
 }
 
-interface DryRunData {
+export interface DryRunData {
   passed?: boolean;
   scenarios?: { name: string; passed: boolean; problems?: string[]; warnings?: string[] }[];
   rounds?: {
@@ -1771,7 +1771,7 @@ interface DryRunData {
   }[];
 }
 
-function DryRunCard({ data }: { data: DryRunData }) {
+export function DryRunCard({ data }: { data: DryRunData }) {
   const scenarios = data.scenarios ?? [];
   const repairs = (data.rounds ?? []).filter((r) => r.repair?.applied);
   return (

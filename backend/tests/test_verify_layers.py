@@ -146,3 +146,92 @@ def test_agents_with_mistral_connectors_are_flagged(monkeypatch):
     outcome = asyncio.run(vl.run_scenario(ctx, "loan", SCENARIO))
     assert outcome["passed"] is True
     assert outcome["warnings"] and "gmail" in outcome["warnings"][0]
+
+
+def _patch_revisions(monkeypatch, calls):
+    from app.services import workflow_revision_service as revisions
+
+    async def propose(client, name, **kw):
+        return {"id": "rev1", "status": "proposed", "summary": "fix rounding",
+                "plan": [{"kind": "code", "title": "Rebuild affordability"}]}
+
+    async def apply(name, rid, **kw):
+        calls.append(("apply", rid))
+
+    async def discard(name, rid):
+        calls.append(("discard", rid))
+
+    monkeypatch.setattr(revisions, "propose", propose)
+    monkeypatch.setattr(revisions, "apply", apply)
+    monkeypatch.setattr(revisions, "discard", discard)
+    monkeypatch.setattr("app.services.workflow_engine.engine.get_workflow", lambda name: _definition())
+
+
+FAILED = [{"name": "Strong case", "execution_id": "x", "failed_steps": ["policy"], "problems": ["boom"]}]
+
+
+def test_a_builder_repair_is_put_to_the_user_and_can_be_declined(monkeypatch):
+    calls, asked = [], []
+    _patch_revisions(monkeypatch, calls)
+    ctx = _ctx()
+
+    async def decline(revision, failed):
+        asked.append((revision["summary"], failed[0]["name"]))
+        return False
+
+    ctx.metadata[vl.CONFIRM_REPAIR_KEY] = decline
+    out = asyncio.run(vl.repair(ctx, "loan", "workflow_dry_run", 1, FAILED))
+    assert asked == [("fix rounding", "Strong case")]
+    assert out["applied"] is False and out["declined"] is True
+    assert calls == [("discard", "rev1")]
+
+
+def test_an_accepted_builder_repair_is_applied(monkeypatch):
+    calls = []
+    _patch_revisions(monkeypatch, calls)
+    ctx = _ctx()
+
+    async def accept(revision, failed):
+        return True
+
+    async def no_versions(ctx, revision):
+        return None
+
+    monkeypatch.setattr(vl, "_record_versions", no_versions)
+    ctx.metadata[vl.CONFIRM_REPAIR_KEY] = accept
+    out = asyncio.run(vl.repair(ctx, "loan", "workflow_dry_run", 1, FAILED))
+    assert out["applied"] is True and calls == [("apply", "rev1")]
+
+
+def test_the_builder_verify_run_designs_runs_and_reports(monkeypatch):
+    from app.runs import runners
+
+    good = {"decision_record": {"decision": "approve"}}
+    _patch_engine(monkeypatch, [_run("COMPLETED", [StepResult(step_id="policy", status="completed", output=good)],
+                                     {"step_policy_output": good})])
+    monkeypatch.setattr("app.services.workflow_engine.engine.get_workflow", lambda name: _definition())
+
+    async def no_agents(client, definition):
+        return []
+
+    async def design(self, ctx, next):
+        ctx.metadata[vl.SCENARIOS_KEY] = [SCENARIO]
+        return await next(ctx)
+
+    monkeypatch.setattr(runners, "_agents_with_connectors", no_agents)
+    monkeypatch.setattr(vl.ScenarioDesignLayer, "process", design)
+    events = []
+
+    class Run:
+        def emit(self, event, data=None):
+            events.append((event, data))
+
+        def put_nowait(self, sse):
+            events.append((sse.event, sse.data))
+
+    outcome = asyncio.run(runners.workflow_verify(Run(), client=None, workflow_name="loan"))
+    assert outcome.status == "completed"
+    assert outcome.result == {"workflow_name": "loan", "passed": True, "scenarios": 1,
+                              "scenarios_passed": 1, "repairs_applied": 0}
+    states = [(d["name"], d["state"]) for e, d in events if e == "layer" and isinstance(d, dict)]
+    assert ("scenario_design", "completed") in states and ("workflow_dry_run", "completed") in states
