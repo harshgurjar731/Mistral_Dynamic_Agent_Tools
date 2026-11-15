@@ -72,6 +72,9 @@ def _repair_fan_outs(steps: list, deps: dict) -> None:
         targets = [t for t in step["next_steps"] if t in by_id]
         groups = {by_id[t]["parallel_group"] for t in targets}
         if len(groups) == 1 and None not in groups:
+            # Already one group: the engine runs the whole group from its first
+            # member, so the step needs to name only that one.
+            step["next_steps"] = [targets[0]]
             continue
 
         order = _dependency_order(targets, deps)
@@ -100,6 +103,35 @@ def _repair_fan_outs(steps: list, deps: dict) -> None:
                 "Step '%s' fanned out to dependent steps %s — chained them in dependency order",
                 step["id"], order,
             )
+
+
+def normalise_graph(steps: list, deps: dict) -> list[str]:
+    """Fan-outs made runnable and parallel groups converged. Returns what was changed.
+
+    Run on the planned topology and again just before validation, so a later
+    layer (oversight inserting a review, data flow) cannot leave a step that
+    lists several continuations the engine would never follow.
+    """
+    import copy
+
+    before = copy.deepcopy([(s["id"], list(s.get("next_steps") or []), s.get("parallel_group"))
+                            for s in steps])
+    for s in steps:
+        s.setdefault("next_steps", [])
+        s.setdefault("parallel_group", None)
+    _repair_fan_outs(steps, deps)
+    groups: dict[str, list[dict]] = {}
+    for step in steps:
+        if step["parallel_group"]:
+            groups.setdefault(step["parallel_group"], []).append(step)
+    for group_name, members in groups.items():
+        if len({tuple(m["next_steps"]) for m in members}) > 1:
+            canonical = max((m["next_steps"] for m in members), key=len)
+            for m in members:
+                m["next_steps"] = list(canonical)
+    after = [(s["id"], list(s["next_steps"]), s["parallel_group"]) for s in steps]
+    return [f"{a[0]}: {a[1]} → {b[1]}" + (f" (group {b[2]})" if b[2] != a[2] else "")
+            for a, b in zip(before, after) if a != b]
 
 
 def _reachable(steps: list, entry: str) -> set:

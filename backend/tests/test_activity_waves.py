@@ -91,3 +91,33 @@ def test_the_layer_builds_wave_by_wave(monkeypatch):
         ["Completeness check"], ["Affordability"], ["Output moderation"]]
     afford_upstream = calls[1][0]["upstream"][0]
     assert afford_upstream["output_schema"] == OUT
+
+
+def test_a_record_is_not_a_renamed_field_and_contracts_skip_the_check():
+    """The claim workflow's failure: input 'incident' (a record) was refused because the
+    feeding step returns 'incident_date'; 'policy' because it returns 'policy_end_date'."""
+    upstream = {"type": "object", "properties": {"incident_date": {"type": "string"},
+                                                 "policy_end_date": {"type": "string"}}}
+    need = CodeNeed(purpose="activity", capability={"outputs": ["claim_decision"]},
+                    upstream=[{"id": "screen", "output_schema": upstream}])
+    req = CodeRequirement(
+        name="claim_decision_engine", purpose="activity",
+        input_schema={"type": "object", "properties": {
+            "incident": {"type": "object", "properties": {"date": {"type": "string"}}},
+            "policy": {"type": "object", "properties": {"end_date": {"type": "string"}}}}},
+        output_schema={"type": "object", "properties": {"claim_decision": {"type": "string"}}},
+        examples=[{"input": {}, "output": {}}, {"input": {}, "output": {}}])
+    assert ActivityRequirementProfile().bind_contract(need, req) == []
+
+    # A plain value renamed with a unit suffix is still refused…
+    from app.layers.codegen.profiles import _renamed_upstream_fields
+
+    renamed = CodeRequirement(input_schema={"type": "object", "properties": {
+        "incident_date_days": {"type": "integer"}, "cost_gbp": {"type": "number"}}})
+    need2 = CodeNeed(upstream=[{"output_schema": {"type": "object", "properties": {
+        "incident_date": {"type": "string"}, "cost": {"type": "number"}}}}])
+    issues = _renamed_upstream_fields(need2, renamed)
+    assert issues and "'cost_gbp'" in issues[0] and "incident_date_days" in issues[0]
+    # …unless a data contract fixes the names.
+    need2.contract = {"input_schema": {"type": "object", "properties": {}}}
+    assert _renamed_upstream_fields(need2, renamed) == []

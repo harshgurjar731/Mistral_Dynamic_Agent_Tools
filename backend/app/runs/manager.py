@@ -46,6 +46,22 @@ _KEEPALIVE_S = 15
 _MAX_LOGS = 300
 #: How long a run waits for an answer before taking the question's default.
 DECISION_TIMEOUT_S = 6 * 3600
+#: One "keep waiting" adds this much time to a question's deadline.
+DECISION_EXTEND_S = 300
+#: However often "keep waiting" is pressed, a question waits no longer than this.
+DECISION_MAX_WAIT_S = 6 * 3600
+
+
+def decision_timeout() -> float:
+    """How long a question waits before its recommended choice is taken (Settings page)."""
+    from app.config import settings
+
+    seconds = float(getattr(settings, "RUN_DECISION_TIMEOUT_SECONDS", 0) or 0)
+    return seconds if seconds > 0 else DECISION_TIMEOUT_S
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _payload(data: Any) -> str:
@@ -123,6 +139,8 @@ class LiveRun:
 
     # Questions waiting for the user: decision id → (allowed choices, answer).
     _decisions: dict[str, tuple[list[str], asyncio.Future]] = field(default_factory=dict)
+    # decision id → (deadline, latest allowed deadline), epoch seconds.
+    _deadlines: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     # ── Sink interface used by PipelineContext.emit ────────────────────
 
@@ -160,27 +178,55 @@ class LiveRun:
     # ── Decisions ───────────────────────────────────────────────────────
 
     async def ask(self, kind: str, question: dict, *, options: list[str], default: str,
-                  timeout: float = DECISION_TIMEOUT_S) -> dict:
+                  timeout: Optional[float] = None) -> dict:
         """Ask the user to choose one of ``options``; returns ``{"choice", ...}``.
 
-        Waits up to ``timeout`` seconds, then takes ``default``.
+        ``default`` is the recommended choice. The question carries a deadline
+        (``timeout`` seconds, else the Settings page's decision timeout) that
+        the UI counts down; when it passes with no answer, ``default`` is
+        taken. "Keep waiting" (:meth:`extend`) moves the deadline.
         """
         decision_id = uuid.uuid4().hex[:12]
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._decisions[decision_id] = (list(options), future)
+        wait = float(timeout) if timeout else decision_timeout()
+        now = time.time()
+        self._deadlines[decision_id] = (now + wait, now + max(wait, DECISION_MAX_WAIT_S))
         self.emit("decision_required", {"id": decision_id, "kind": kind, "options": options,
-                                        "default": default, **question})
+                                        "default": default, "recommended": default,
+                                        "deadline": _iso(now + wait), "timeout_s": round(wait),
+                                        **question})
         self.note = f"Waiting for your decision: {question.get('title') or kind}"[:300]
         try:
-            answer = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
-            by = "user"
+            while True:
+                remaining = self._deadlines[decision_id][0] - time.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                try:
+                    # Woken at least every few seconds, so an extended deadline is honoured.
+                    answer = await asyncio.wait_for(asyncio.shield(future), timeout=min(remaining, 5.0))
+                    by = "user"
+                    break
+                except asyncio.TimeoutError:
+                    continue
         except asyncio.TimeoutError:
             answer, by = {"choice": default}, "timeout"
         finally:
             self._decisions.pop(decision_id, None)
+            self._deadlines.pop(decision_id, None)
         self.note = None
         self.emit("decision_made", {"id": decision_id, "kind": kind, "by": by, **answer})
         return answer
+
+    def extend(self, decision_id: str, seconds: float = DECISION_EXTEND_S) -> tuple[Optional[str], Optional[str]]:
+        """Push a waiting question's deadline back. Returns ``(new deadline ISO, error)``."""
+        if decision_id not in self._decisions or decision_id not in self._deadlines:
+            return None, "This question is no longer waiting for an answer."
+        deadline, latest = self._deadlines[decision_id]
+        new = min(max(deadline, time.time()) + max(30.0, min(float(seconds), 3600.0)), latest)
+        self._deadlines[decision_id] = (new, latest)
+        self.emit("decision_extended", {"id": decision_id, "deadline": _iso(new)})
+        return _iso(new), None
 
     def answer(self, decision_id: str, choice: str, data: Optional[dict] = None) -> Optional[str]:
         """Resolve a pending question. Returns an error message, or None on success."""
@@ -444,6 +490,13 @@ class RunManager:
                 asyncio.get_running_loop().call_later(
                     _RETAIN_FINISHED_S, self._runs.pop, run.id, None
                 )
+
+    def extend(self, run_id: str, decision_id: str, seconds: float = DECISION_EXTEND_S):
+        """Keep a running run's question waiting longer. Returns ``(deadline, error)``."""
+        run = self._runs.get(run_id)
+        if not run or run.finished:
+            return None, "This run is not running."
+        return run.extend(decision_id, seconds)
 
     def answer(self, run_id: str, decision_id: str, choice: str,
                data: Optional[dict] = None) -> Optional[str]:

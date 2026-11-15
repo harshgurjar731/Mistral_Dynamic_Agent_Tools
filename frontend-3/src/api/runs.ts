@@ -73,6 +73,9 @@ export const runsApi = {
   /** Refine with AI: analyse, plan and carry out a fix (workflow edits and activity code). */
   startWorkflowRefine: (body: WorkflowRefineRequest) =>
     post<BackgroundRun>("/api/runs/workflow-refine", body),
+  /** Keep a question waiting longer before its recommended choice is taken. */
+  extendDecision: (id: string, decisionId: string, seconds = 300) =>
+    post<{ deadline: string }>(`/api/runs/${id}/decisions/${decisionId}/extend`, { seconds }),
   /** `message` only counts for a choice the question lists in `message_options`. */
   decide: (
     id: string,
@@ -140,6 +143,12 @@ export interface RunDecision {
   kind: "build_failed" | "review_workflow" | "prerequisites" | string;
   options: string[];
   default: string;
+  /** The choice taken when the deadline passes with no answer (same as default). */
+  recommended?: string;
+  /** When the recommended choice is taken (ISO); moved by "Keep waiting". */
+  deadline?: string;
+  /** The wait the question was asked with, in seconds. */
+  timeout_s?: number;
   title?: string;
   /** build_failed: what could not be built. */
   entity?: "activity" | "agent" | string;

@@ -491,13 +491,72 @@ def _labels(concept_ids) -> str:
     return ", ".join(sorted(out))
 
 
+def _upstream_of(definition) -> dict[str, set[str]]:
+    """Every step that runs before each step (edges, branches and parallel groups)."""
+    steps = {s.id: s for s in definition.steps}
+    parents: dict[str, set[str]] = {sid: set() for sid in steps}
+    for s in definition.steps:
+        cfg = s.config or {}
+        for nxt in [*(s.next_steps or []), cfg.get("true_step"), cfg.get("false_step")]:
+            if nxt in parents:
+                parents[nxt].add(s.id)
+                if steps[nxt].parallel_group:  # the whole group starts from this step
+                    for m in definition.steps:
+                        if m.parallel_group == steps[nxt].parallel_group:
+                            parents[m.id].add(s.id)
+    out: dict[str, set[str]] = {}
+    for sid in steps:
+        seen, stack = set(), list(parents[sid])
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(parents.get(cur, ()))
+        out[sid] = seen
+    return out
+
+
+def _supplied_by_workflow(step, definition, upstream: set[str]) -> set[str]:
+    """Capabilities the workflow itself gives an agent step: what it is handed, not what it fetches.
+
+    A workflow agent reads figures an activity computed and records earlier
+    steps produced through its prompt, so it needs no tool of its own for them.
+    """
+    import re
+
+    from app.catalog.vocab import Capability
+    from app.services.workflow_engine.models import StepType
+
+    steps = {s.id: s for s in definition.steps}
+    template = str((step.config or {}).get("query_template") or "")
+    refs = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", template)
+    supplied: set[str] = set()
+    if refs:
+        supplied.add(Capability.RETRIEVAL.value)  # its data is handed to it
+    read = {m.group(1) for r in refs for m in [re.match(r"step_(.+?)_output", r)] if m}
+    for sid in upstream:
+        other = steps.get(sid)
+        if other is None:
+            continue
+        if other.type == StepType.TOOL:
+            supplied.add(Capability.COMPUTATION.value)
+            if sid in read:
+                supplied.add(Capability.RETRIEVAL.value)
+        elif other.type == StepType.CONNECTOR:
+            supplied.add(Capability.INTEGRATION_READ.value)
+    return supplied
+
+
 def _capability_coverage(rule, definition, agents_by_id, connectors_by_id) -> list:
-    """Recreated from the ontology check: each agent can reach what it needs."""
+    """Recreated from the ontology check: each agent can reach what it needs —
+    from its own tools and connectors, or from what the workflow hands it."""
     from app.catalog import store
     from app.catalog.vocab import Predicate, SubjectType, capability_covers
     from app.services.workflow_engine.models import StepType
 
     out = []
+    upstream = _upstream_of(definition)
     for step in definition.steps:
         if step.type != StepType.AGENT:
             continue
@@ -521,6 +580,7 @@ def _capability_coverage(rule, definition, agents_by_id, connectors_by_id) -> li
             if name:
                 provided |= set(store.annotations_for(SubjectType.TOOL.value, name)
                                 .get(Predicate.PROVIDES_CAPABILITY.value, []))
+        provided |= _supplied_by_workflow(step, definition, upstream.get(step.id, set()))
         missing = {c for c in required if not any(capability_covers(c, p) for p in provided)}
         missing = {c for c in missing if not c.startswith("capability.reasoning")}
         if not missing:

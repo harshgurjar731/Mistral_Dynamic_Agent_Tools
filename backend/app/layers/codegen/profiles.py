@@ -173,32 +173,71 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
     return issues[:6]
 
 
-def _field_names(schema, depth: int = 0) -> set[str]:
+#: Suffixes that only restate a unit or currency — the renames worth refusing.
+_UNIT_SUFFIXES = ("gbp", "usd", "eur", "inr", "pct", "percent", "percentage", "amount", "value",
+                  "num", "number", "count", "qty", "months", "days", "years")
+_CONTAINERS = ("object", "array")
+
+
+def _fields(schema, depth: int = 0) -> dict[str, dict]:
+    """Field name → its schema, down one level of nesting."""
     props = (schema or {}).get("properties") if isinstance(schema, dict) else None
     if not isinstance(props, dict):
-        return set()
-    names = set(props)
+        return {}
+    out = {k: v for k, v in props.items() if isinstance(v, dict)}
     if depth < 1:
         for sub in props.values():
-            names |= _field_names(sub, depth + 1)
-    return names
+            for k, v in _fields(sub, depth + 1).items():
+                out.setdefault(k, v)
+    return out
+
+
+def _field_names(schema, depth: int = 0) -> set[str]:
+    return set(_fields(schema, depth))
+
+
+def _kind(schema: dict) -> str:
+    t = schema.get("type")
+    if isinstance(t, list):
+        t = next((x for x in t if x != "null"), None)
+    if not t and isinstance(schema.get("properties"), dict):
+        return "object"
+    return str(t or "")
+
+
+def _unit_rename(a: str, b: str) -> bool:
+    """``a`` and ``b`` differ only by a unit suffix (``equipment_cost`` / ``equipment_cost_gbp``)."""
+    short, long = sorted((a, b), key=len)
+    return long.startswith(short + "_") and long[len(short) + 1:] in _UNIT_SUFFIXES
 
 
 def _renamed_upstream_fields(need, req: CodeRequirement) -> list[str]:
-    """Inputs that rename a field an upstream activity actually returns (``equipment_cost_gbp``
-    for ``equipment_cost``). Each forces a mapping in the workflow that was easy to get wrong."""
-    upstream = set()
+    """Inputs that rename a value an upstream activity returns (``equipment_cost_gbp`` for
+    ``equipment_cost``). Each forces a mapping in the workflow that was easy to get wrong.
+
+    Only plain values whose names differ by a unit suffix count: a record such as
+    ``incident`` is not a renamed ``incident_date``. With a data contract the
+    contract fixes the names, so there is nothing to compare.
+    """
+    contract = getattr(need, "contract", None) or {}
+    if contract.get("input_schema") or contract.get("output_schema"):
+        return []
+    upstream: dict[str, dict] = {}
     for u in need.upstream or []:
         if isinstance(u, dict):
-            upstream |= _field_names(u.get("output_schema"))
+            for k, v in _fields(u.get("output_schema")).items():
+                upstream.setdefault(k, v)
     if not upstream:
         return []
     renamed = []
-    for name in sorted(_field_names(req.input_schema) - upstream):
-        for field in sorted(upstream):
-            if (name.startswith(field + "_") or field.startswith(name + "_")) and field != name:
-                renamed.append(f"'{name}' (the feeding step returns '{field}')")
-                break
+    for name, schema in sorted(_fields(req.input_schema).items()):
+        if name in upstream or _kind(schema) in _CONTAINERS:
+            continue
+        for field, theirs in sorted(upstream.items()):
+            if _kind(theirs) in _CONTAINERS or not _unit_rename(name, field):
+                continue
+            renamed.append(f"'{name}' (the feeding step returns '{field}')")
+            break
     if not renamed:
         return []
     return ["input_schema renames fields the feeding steps return — use their exact names: "

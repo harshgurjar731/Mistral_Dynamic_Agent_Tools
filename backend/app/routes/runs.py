@@ -232,6 +232,19 @@ class DecisionAnswer(BaseModel):
     answers: Optional[list[PrerequisiteAnswer]] = Field(default=None, max_length=50)
 
 
+class ExtendDecision(BaseModel):
+    seconds: int = Field(default=300, ge=30, le=3600)
+
+
+@router.post("/runs/{run_id}/decisions/{decision_id}/extend")
+async def extend_decision(run_id: str, decision_id: str, body: Optional[ExtendDecision] = None):
+    """Keep a question waiting longer before its recommended choice is taken."""
+    deadline, error = manager.extend(run_id, decision_id, (body or ExtendDecision()).seconds)
+    if error:
+        raise HTTPException(status_code=409, detail=error)
+    return {"deadline": deadline}
+
+
 @router.post("/runs/{run_id}/decisions/{decision_id}")
 async def answer_decision(run_id: str, decision_id: str, body: DecisionAnswer):
     """Answer a question a running run is waiting on (``decision_required`` event)."""

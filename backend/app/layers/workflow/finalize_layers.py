@@ -113,6 +113,15 @@ class WorkflowValidationLayer(WorkflowStepLayer):
 
         ctx.emit("status", "Validating the workflow…")
 
+        # Whatever the layers after the topology did to the graph, a step's
+        # continuations must be ones the engine follows.
+        from app.layers.workflow.topology_layer import normalise_graph
+
+        fixed = normalise_graph(spec.dag.get("steps") or [],
+                                {c.id: set(c.depends_on) for c in spec.capabilities})
+        for change in fixed:
+            logger.warning("Validation repaired the graph: %s", change)
+
         try:
             definition = WorkflowDefinition(
                 **{**spec.dag, "source": WorkflowSource.PLANNER}

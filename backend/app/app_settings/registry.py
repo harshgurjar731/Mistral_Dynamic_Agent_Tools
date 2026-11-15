@@ -275,6 +275,13 @@ DEFS: list[SettingDef] = [
                impact=("Waiting time when many people build at once", "Rate-limit errors",
                        "Memory use"),
                used_in=("runs/manager.py — RunManager._slot",)),
+    SettingDef("RUN_DECISION_TIMEOUT_SECONDS", "orchestration", "Decision countdown",
+               "How long a question a workflow or agent build asks you — review, a failed build, "
+               "prerequisites — waits before the recommended choice is taken. The dialog counts "
+               "down and offers Keep waiting. 0 waits up to 6 hours.",
+               type="int", minimum=0, maximum=86400, unit="seconds",
+               impact=("Workflow planning", "Agent creation", "Tool & activity synthesis"),
+               used_in=("runs/manager.py — LiveRun.ask",)),
     SettingDef("WORKFLOW_DRY_RUN", "orchestration", "Dry-run planned workflows",
                "Run every planned workflow end to end on designed scenarios before review, with "
                "connectors and human reviews stubbed, and repair what fails (edits and activity "
@@ -897,6 +904,9 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "RUN_CONCURRENCY": (
         "One build at a time per workspace — everyone else waits in line.",
         "Many builds at once — they compete for the same rate quota and run slower."),
+    "RUN_DECISION_TIMEOUT_SECONDS": (
+        "0 — no countdown: a question waits up to 6 hours for you.",
+        "A full day before the recommended choice is taken."),
     "WORKFLOW_DRY_RUN_SCENARIOS": (
         "Only the designed example is run — the cheapest check.",
         "Eight scenarios per dry run — thorough, but each one runs every agent step."),

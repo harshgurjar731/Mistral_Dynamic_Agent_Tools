@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PrerequisitesForm } from "@/components/vault/PrerequisitesForm";
 import { cn } from "@/lib/utils";
 import { LivePercent } from "@/components/activity/LiveProgress";
+import { DecisionCountdown } from "@/components/runs/DecisionCountdown";
 
 interface ChoiceMeta {
   label: string;
@@ -129,10 +130,15 @@ export function PlanDecisionDialog({
     <>
       <Dialog open={open} onOpenChange={(next) => setOpenFor(next ? decision.id : null)}>
         <DialogContent
-          className="max-h-[88vh] max-w-2xl gap-0 overflow-hidden p-0"
+          className="flex max-h-[88vh] max-w-2xl flex-col gap-0 overflow-hidden p-0"
           // A stray click outside must not dismiss a question the plan is waiting on.
           onInteractOutside={(e) => e.preventDefault()}
         >
+          <DecisionCountdown
+            runId={runId}
+            decision={decision}
+            recommendedLabel={CHOICES[decision.default]?.label}
+          />
           {decision.kind === "prerequisites" ? (
             <PrerequisitesForm
               key={decision.id}
@@ -157,6 +163,12 @@ export function PlanDecisionDialog({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground">{pausedText}</p>
             <p className="truncate text-[11px] text-muted-foreground">{decision.title}</p>
+            <DecisionCountdown
+              runId={runId}
+              decision={decision}
+              recommendedLabel={CHOICES[decision.default]?.label}
+              compact
+            />
           </div>
           <Button size="sm" onClick={() => setOpenFor(decision.id)}>
             Answer now
@@ -199,7 +211,7 @@ function DecisionForm({
   };
 
   return (
-    <div className="flex max-h-[88vh] flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <DialogHeader className="border-b border-border bg-amber/5 px-6 py-4 text-left">
         <DialogTitle className="flex items-center gap-2 text-base">
           <AlertTriangle className="size-4 shrink-0 text-amber" />
@@ -334,8 +346,8 @@ function DecisionForm({
                     >
                       <Icon className="size-3.5" /> {m.label}
                       {option === decision.default ? (
-                        <span className="text-[9px] font-normal text-muted-foreground">
-                          (default if unanswered)
+                        <span className="rounded border border-emerald/30 bg-emerald/10 px-1 text-[9px] font-semibold text-emerald">
+                          Recommended
                         </span>
                       ) : null}
                     </span>

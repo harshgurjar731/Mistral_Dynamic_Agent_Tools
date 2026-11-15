@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     # Below this the planner designs a new agent instead of reusing one.
     REUSE_MIN_CONFIDENCE: float = 0.6
 
+    #: How long a question a run asks (review, failed build, prerequisites)
+    #: waits before its recommended choice is taken. 0: wait up to 6 hours.
+    RUN_DECISION_TIMEOUT_SECONDS: int = 120
+
     # ── Verification (planner Verify stage, agent evaluation) ───────────
     #: Run a planned workflow end to end on designed scenarios before review,
     #: repairing what fails (workflow edits and activity code).

@@ -131,7 +131,7 @@ export function PrerequisitesForm({
     set(item.key, { action: "vault", secret_id: secret.id, secret_name: secret.name });
 
   return (
-    <div className="flex max-h-[88vh] flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <DialogHeader className="border-b border-border bg-primary/5 px-6 py-4 text-left">
         <DialogTitle className="flex items-center gap-2 text-base">
           <ShieldCheck className="size-4 shrink-0 text-primary" />

@@ -215,7 +215,7 @@ RULES: list[Rule] = [
     _r("POST", r"/runs/rebuild", "perm", "workflows.manage", "tools.manage"),
     _r("POST", r"/runs/synthesis", "perm", "tools.manage"),
     _r("GET", r"/runs(/[^/]+(/events)?)?", USER),
-    _r("POST", r"/runs/[^/]+/(cancel|decisions/[^/]+)", USER),
+    _r("POST", r"/runs/[^/]+/(cancel|decisions/[^/]+(/extend)?)", USER),
 
     # Agents
     _r("GET", r"/agents(/[^/]+)?", "perm", "agents.view"),

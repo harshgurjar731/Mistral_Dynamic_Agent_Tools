@@ -509,7 +509,10 @@ def validate_workflow(definition: WorkflowDefinition) -> ValidationResponse:
                     f"Step '{step.id}' connects to itself.",
                     step.id, "next_steps",
                 ))
-        if len(step.next_steps or []) > 1 and step.type != StepType.CONDITION:
+        by_group = {s.id: s.parallel_group for s in steps}
+        one_group = {by_group.get(t) for t in step.next_steps or []}
+        if (len(step.next_steps or []) > 1 and step.type != StepType.CONDITION
+                and not (len(one_group) == 1 and None not in one_group)):
             issues.append(_issue(
                 "warning", "step.multiple_next",
                 f"Step '{step.id}' lists {len(step.next_steps)} continuations, but the engine "
