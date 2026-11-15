@@ -523,6 +523,7 @@ function OrchestratorChat() {
                   runtime={run.runtime}
                   activeNote={run.activeNote}
                   activeFraction={run.activeFraction}
+                  rewinds={run.rewinds}
                   cards={cards}
                   raw={raw}
                 />

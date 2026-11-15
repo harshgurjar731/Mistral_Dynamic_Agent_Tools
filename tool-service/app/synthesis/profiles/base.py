@@ -129,6 +129,13 @@ class CodeProfile:
             plan.add(TestCase("failed_input", "feedback", failing, EXPECT_SUCCESS,
                               check_repeat=self.check_determinism(spec),
                               note="the input the previous version failed on at run time"))
+        for i, earlier in enumerate(spec.regression_inputs, 1):
+            # A failure an earlier version had at run time: held to success,
+            # so a rebuild cannot bring it back.
+            if (earlier != failing and not any(e.input == earlier for e in spec.examples)
+                    and validate_input(spec.input_schema, earlier) is None):
+                plan.add(TestCase(f"regression_{i}", "regression", earlier, EXPECT_SUCCESS,
+                                  note="an input an earlier version failed on at run time"))
         for i, inputs in enumerate(llm_inputs, 1):
             plan.add(TestCase(f"realistic_{i}", "llm", inputs, EXPECT_SUCCESS,
                               check_repeat=self.check_determinism(spec)))

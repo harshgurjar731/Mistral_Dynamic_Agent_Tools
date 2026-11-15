@@ -112,8 +112,15 @@ class AgentDesignLayer(WorkflowStepLayer):
 
         design_system = safety.apply(AGENT_DESIGN_SYSTEM_PROMPT, "workflow_agent_design")
 
+        from app.core.stages import emit_sublayer
+        from app.layers.workflow.data_contract_layer import design_block, output_schema_for
+
+        for cap in to_design:
+            emit_sublayer(ctx, self.name, f"design:{cap.id}", "pending", label=f"Design {cap.name}")
+
         async def _design_one(cap):
             async with semaphore:
+                emit_sublayer(ctx, self.name, f"design:{cap.id}", "active", label=f"Design {cap.name}")
                 # This capability's own stage, its controls and exceptions —
                 # not the whole process. "" when the run has no process knowledge.
                 process_block = process_knowledge.block(
@@ -144,7 +151,8 @@ class AgentDesignLayer(WorkflowStepLayer):
                         connector_ids=json.dumps(inv.get("connector_ids", [])),
                         library_descriptions=inv.get("library_descriptions", ""),
                         library_ids=json.dumps(inv.get("library_ids", [])),
-                    ) + process_block + guidance_text + prerequisites.block(ctx, cap.id),
+                    ) + process_block + guidance_text + prerequisites.block(ctx, cap.id)
+                    + design_block(spec, cap),
                     phase=f"agent design ({cap.id})",
                     timeout_ms=LONG_TIMEOUT_MS,
                     temperature=0.2,
@@ -244,10 +252,18 @@ class AgentDesignLayer(WorkflowStepLayer):
             # against, so it is carried on the capability rather than buried in
             # the agent's own configuration.
             cap.outputs = cap.outputs or _str_list(data.get("output_contract"))
+            typed = output_schema_for(spec, cap.id)
             ctx.metadata.setdefault("output_contracts", {})[cap.id] = {
                 "output_contract": str(data.get("output_contract") or ""),
-                "output_contract_detail": str(data.get("output_contract_detail") or ""),
+                # With a data contract the structure is the record's schema, not prose.
+                "output_contract_detail": (json.dumps(typed) if typed
+                                           else str(data.get("output_contract_detail") or "")),
+                **({"output_schema": typed} if typed else {}),
             }
+            emit_sublayer(ctx, self.name, f"design:{cap.id}", "completed",
+                          label=f"Design {cap.name}",
+                          summary=f"{agent_spec.agent_name} on {agent_spec.model}"
+                                  + (f", {len(agent_spec.tools)} tool(s)" if agent_spec.tools else ""))
 
             cap.spec = agent_spec
             designed += 1

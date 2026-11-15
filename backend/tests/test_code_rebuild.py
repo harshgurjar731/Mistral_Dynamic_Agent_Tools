@@ -185,3 +185,14 @@ def test_unapproved_or_side_effecting_versions_need_confirmation(tool_service):
         _test()
     tool_service["response"] = {"result": {"status": "success", "data": {}}}
     assert _test(allow_side_effects=True)["outcome"] == "wrong_output"
+
+
+def test_failing_inputs_accumulate_as_regression_cases():
+    record = {**RECORD, "spec": {**(RECORD.get("spec") or {}), "name": "apply_gst",
+                                 "regression_inputs": [{"subtotal": "12.50"}]}}
+    requirement, _ = code_rebuild.build_request(record, error="ValueError", comment="",
+                                                failing_input={"subtotal": None}, expected_output=None)
+    assert requirement["regression_inputs"] == [{"subtotal": "12.50"}, {"subtotal": None}]
+    again, _ = code_rebuild.build_request(record, error="ValueError", comment="",
+                                          failing_input={"subtotal": "12.50"}, expected_output=None)
+    assert again["regression_inputs"] == [{"subtotal": "12.50"}], "no duplicates"

@@ -407,6 +407,11 @@ class WorkflowSpec:
     # GoalDecompositionLayer / CapabilityReuseLayer / AgentDesignLayer
     capabilities: list[CapabilitySpec] = field(default_factory=list)
 
+    # DataContractLayer — the records passed between steps:
+    # {"records": {name: {"description", "origin", "schema"}},
+    #  "bindings": {capability_id: {"consumes": [...], "produces": name | None}}}
+    data_contract: Optional[dict] = None
+
     # AgentProvisioningLayer — the flat dicts the DAG prompts consume.
     provisioned_agents: list[dict] = field(default_factory=list)
 
@@ -503,6 +508,9 @@ class CodeNeed:
     goal: str = ""                      # the wider goal, for context
     #: Workflow capability this need serves: {"id", "name", "purpose", "inputs", "outputs"}.
     capability: dict = field(default_factory=dict)
+    #: The workflow's data contract for this activity: {"input_schema", "output_schema"} it
+    #: must have exactly (``DataContractLayer``). Empty: no contract.
+    contract: dict = field(default_factory=dict)
     #: Neighbouring capabilities — what feeds this step and what reads its output.
     upstream: list[dict] = field(default_factory=list)
     downstream: list[dict] = field(default_factory=list)
@@ -541,6 +549,8 @@ class CodeRequirement:
     #: Copied onto the agents whose output it checks, so they meet the rules
     #: instead of failing them (``output_contracts.attach_output_contracts``).
     checks: list[dict] = field(default_factory=list)
+    #: Inputs earlier versions failed on; every new version must pass them.
+    regression_inputs: list[dict] = field(default_factory=list)
 
     def as_request(self) -> dict:
         request = {
@@ -555,6 +565,8 @@ class CodeRequirement:
             request["feedback"] = self.feedback
         if self.checks:
             request["checks"] = self.checks
+        if self.regression_inputs:
+            request["regression_inputs"] = self.regression_inputs
         return request
 
     @classmethod

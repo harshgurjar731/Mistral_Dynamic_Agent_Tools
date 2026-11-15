@@ -40,6 +40,9 @@ def _str_list(value) -> list[str]:
 class WorkflowGuardrailLayer(WorkflowDecisionLayer):
     """Trace the assembled workflow for exposure and gate coverage."""
 
+    #: Side-effect free: a later check may send the run back here.
+    rewindable = True
+
     name = "workflow_guardrail"
     process_view = "guardrail"
     label = "Review the whole path"

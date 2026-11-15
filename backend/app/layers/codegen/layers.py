@@ -254,11 +254,54 @@ class ReuseResolutionLayer:
         name = str(data.get("existing_name") or "").strip()
         if str(data.get("action", "")).lower() == "exists" and name in by_name:
             entry = by_name[name]
+            raw_tool = next((t for t in candidates if _catalogue_entry(t).get("name") == name), {})
+            misfit = contract_misfit(getattr(ctx.need, "contract", None) or {}, raw_tool)
+            if misfit:
+                # Does the job, but not to the workflow's data contract: reusing it
+                # would need a mapping every time. Build one that fits instead.
+                ctx.emit("reuse", f"'{name}' does this, but does not fit the data contract "
+                                  f"({'; '.join(misfit[:3])}) — building one that does")
+                return
             ctx.emit("reuse", f"reusing '{name}' — {data.get('reason', '')}")
             ctx.finish("reused", str(data.get("reason") or ""), name=name,
                        version=entry.get("version"), tool_id=entry.get("tool_id"),
                        output_schema=entry.get("output_schema"),
                        reason=str(data.get("reason") or ""))
+
+
+def contract_misfit(contract: dict, tool: dict) -> list[str]:
+    """Why an existing activity cannot serve a contract-bound step; [] when it fits.
+
+    Its parameters must include every consumed record (with the record's
+    required fields), and its output must hold the produced record (with its
+    required fields).
+    """
+    if not contract:
+        return []
+    fn = (tool.get("schema") or {}).get("function", {}) if isinstance(tool.get("schema"), dict) else {}
+    params = (fn.get("parameters") or {}).get("properties") or {}
+    out = (tool.get("output_schema") or {}).get("properties") or {}
+    problems: list[str] = []
+
+    def lacks(have: dict, want: dict, where: str) -> None:
+        have_props = (have or {}).get("properties") if isinstance(have, dict) else None
+        if not isinstance(have_props, dict):
+            return  # an undeclared record: nothing to compare
+        missing = [f for f in (want or {}).get("required") or [] if f not in have_props]
+        if missing:
+            problems.append(f"{where} lacks {', '.join(missing)}")
+
+    for name, schema in ((contract.get("input_schema") or {}).get("properties") or {}).items():
+        if name not in params:
+            problems.append(f"takes no '{name}'")
+        else:
+            lacks(params[name], schema, f"its '{name}'")
+    for name, schema in ((contract.get("output_schema") or {}).get("properties") or {}).items():
+        if name not in out:
+            problems.append(f"returns no '{name}'")
+        else:
+            lacks(out[name], schema, f"its returned '{name}'")
+    return problems
 
 
 def _catalogue_entry(tool: dict) -> dict:

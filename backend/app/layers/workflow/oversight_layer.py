@@ -59,6 +59,8 @@ def _sla_seconds(text: str) -> Optional[int]:
 
 
 class OversightPlacementLayer(WorkflowStepLayer):
+    #: Side-effect free: a later check may send the run back here.
+    rewindable = True
     name = "oversight_placement"
     label = "Place human oversight"
     detail = ("Adds human review where the governance requires it, gates connector actions that "

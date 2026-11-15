@@ -251,7 +251,12 @@ async def resolve_code_needs(
             # Each need fills its own share of the bar, however far the others are.
             with progress.part(index, len(needs),
                                f"Building {need.purpose} {need.name_hint or ''}".strip()):
-                resolution = await resolve_code_need(need, client=client, on_event=on_event,
+                def tagged(event: dict, _i: int = index, _need: CodeNeed = need) -> None:
+                    if on_event:
+                        on_event({**event, "need_index": _i, "need_name": _need.name_hint,
+                                  "capability_id": (_need.capability or {}).get("id")})
+
+                resolution = await resolve_code_need(need, client=client, on_event=tagged,
                                                      catalogue=catalogue, code_check=code_check)
             if resolution.name and resolution.status in ("built", "pending_approval"):
                 catalogue.append({"name": resolution.name, "purpose": need.purpose,

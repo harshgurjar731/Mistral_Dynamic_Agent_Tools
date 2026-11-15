@@ -317,7 +317,9 @@ def test_pipelines_check_prerequisites_before_building(vault):
     wf = workflow_pipeline.layer_names
     # The agent type is decided between them, so a type that needs something
     # (a reasoning model, a connector) is part of what prerequisites check.
-    assert wf.index("agent_archetype") == wf.index("execution_mode") + 1
+    assert wf.index("agent_archetype") > wf.index("execution_mode")
+    # The data contract (no side effects) is decided between them.
+    assert wf.index("execution_mode") < wf.index("data_contract") < wf.index("agent_archetype")
     assert wf.index("workflow_prerequisites") == wf.index("agent_archetype") + 1
     assert wf.index("workflow_prerequisites") < wf.index("activity_gap")
     chat = chat_pipeline.layer_names

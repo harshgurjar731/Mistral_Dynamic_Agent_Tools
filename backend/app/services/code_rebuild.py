@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 #: SynthesisSpec v2 fields a rebuild carries over from the stored version.
 _SPEC_FIELDS = ("name", "description", "purpose", "kind", "input_schema", "output_schema",
-                "examples", "api_details", "secrets", "side_effects", "http_fixtures")
+                "examples", "api_details", "secrets", "side_effects", "http_fixtures",
+                "regression_inputs")
 
 
 class RebuildError(ValueError):
@@ -60,6 +61,12 @@ def build_request(record: dict, *, error: str, comment: str,
     if not error and not comment:
         raise RebuildError("Paste the error, or say what should change — a rebuild needs one of them.")
     requirement = spec_from_record(record)
+    if failing_input:
+        # Kept for every later rebuild too, not only this one.
+        kept = [r for r in requirement.get("regression_inputs") or [] if isinstance(r, dict)]
+        if failing_input not in kept:
+            kept.append(failing_input)
+        requirement["regression_inputs"] = kept[-20:]
     if failing_input and expected_output is not None:
         examples = [e for e in requirement.get("examples") or []
                     if isinstance(e, dict) and e.get("input") != failing_input]

@@ -60,7 +60,10 @@ def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> l
         if cap.process_stage and cap.id in step_ids:
             stage_steps.setdefault(cap.process_stage, []).append(cap.id)
 
-    issues, used = [], []
+    from app.config import settings
+
+    blocking = bool(settings.PROCESS_COVERAGE_BLOCKING)
+    issues, used, trace = [], [], []
     for control in pc.get("controls") or []:
         if control.get("mandatory") is not True:
             continue
@@ -68,19 +71,24 @@ def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> l
         stages |= {str(st.get("id")) for st in pc.get("stages") or []
                    if control.get("id") in (st.get("controls") or [])}
         steps = sorted({step for st in stages for step in stage_steps.get(st, [])})
+        trace.append({"control": control.get("id"), "description": control.get("description"),
+                      "stages": sorted(stages), "steps": steps, "covered": bool(steps)})
         if steps:
             used.append({"ref": control["_ref"],
                          "how": f"covered by step(s) {', '.join(steps)}"})
         else:
-            used.append({"ref": control["_ref"], "how": "not covered by any step — warned"})
+            used.append({"ref": control["_ref"], "how": "not covered by any step — "
+                                                       + ("blocked" if blocking else "warned")})
             issues.append({
-                "severity": "warning", "code": "process_control_uncovered",
+                "severity": "error" if blocking else "warning", "code": "process_control_uncovered",
                 "message": (f"Mandatory process control '{control.get('id')}' "
                             f"({control.get('description') or ''}) applies to stage(s) "
                             f"{', '.join(sorted(stages)) or '—'}, but no step performs them."),
                 "step_id": None,
             })
     process_knowledge.record(ctx, layer, used)
+    # Which step performs each mandatory control — shown in the timeline.
+    ctx.emit("process_traceability", json.dumps({"controls": trace}, default=str))
     return issues
 
 
@@ -203,6 +211,18 @@ class WorkflowValidationLayer(WorkflowStepLayer):
         }))
 
         if not planner_valid:
+            # An earlier, side-effect-free layer made these: send the run back
+            # to it with the problems listed, rather than save a broken plan.
+            from app.core.stages import request_rewind
+            from app.layers.workflow.issue_owners import by_owner
+
+            owners = by_owner(blocking)
+            if owners and request_rewind(ctx, from_layer=self.name, issues_by_layer=owners,
+                                         reason=f"{len(blocking)} validation error(s)"):
+                ctx.set_layer_summary(
+                    self.name, f"{len(blocking)} error(s) — going back to "
+                               + ", ".join(sorted(owners)) + " to fix them")
+                return ctx
             # Saved but not registered — see the module docstring.
             ctx.metadata[VALIDATION_FAILED_KEY] = True
             logger.warning(
@@ -533,6 +553,20 @@ class WorkflowReviewLayer(WorkflowStepLayer):
             if choice == "test":
                 ctx.emit("status", "Testing the workflow…")
                 last_test = await test_workflow(spec.definition, ctx.client)
+                # Then the scenarios, end to end — repairing what fails, code
+                # included — exactly as the Verify stage did.
+                from app.config import settings
+
+                if settings.WORKFLOW_DRY_RUN:
+                    from app.layers.workflow.verify_layers import run_verification
+
+                    await self._sync(ctx)
+                    dry = await run_verification(ctx, self.name)
+                    last_test["dry_run"] = dry
+                    last_test["passed"] = bool(last_test.get("passed")) and dry["passed"]
+                    good = sum(1 for o in dry["scenarios"] if o["passed"])
+                    last_test["summary"] = (f"{last_test.get('summary', '')}; "
+                                            f"{good} of {len(dry['scenarios'])} scenario(s) pass").strip("; ")
                 ctx.emit("workflow_test", json.dumps(last_test, default=str))
                 continue
             if choice == "rollback":

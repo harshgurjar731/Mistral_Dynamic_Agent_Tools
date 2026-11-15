@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     # Below this the planner designs a new agent instead of reusing one.
     REUSE_MIN_CONFIDENCE: float = 0.6
 
+    # ── Verification (planner Verify stage, agent evaluation) ───────────
+    #: Run a planned workflow end to end on designed scenarios before review,
+    #: repairing what fails (workflow edits and activity code).
+    WORKFLOW_DRY_RUN: bool = True
+    WORKFLOW_DRY_RUN_SCENARIOS: int = 3
+    WORKFLOW_DRY_RUN_REPAIRS: int = 2
+    #: A mandatory process control no step covers blocks the plan (else a warning).
+    PROCESS_COVERAGE_BLOCKING: bool = True
+    #: Test a newly created agent on designed prompts and revise it once if it fails.
+    AGENT_EVALUATION: bool = True
+    AGENT_EVALUATION_TESTS: int = 3
+
     WORKFLOW_REGISTRATION_WAIT: float = 30.0
     WORKFLOW_MAX_VERSIONS: int = 50
     UPLOAD_MAX_MB: int = 20

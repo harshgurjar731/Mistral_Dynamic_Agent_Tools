@@ -85,12 +85,14 @@ def _input_schema(field: dict) -> dict:
 
 
 class _Context:
-    def __init__(self, definition: dict, activities: dict[str, dict]):
+    def __init__(self, definition: dict, activities: dict[str, dict],
+                 typed_inputs: Optional[set[str]] = None):
         steps = [s for s in (definition or {}).get("steps") or [] if isinstance(s, dict)]
         self.inputs = {
             str(f.get("name")): _input_schema(f)
             for f in (definition or {}).get("input_schema") or []
             if isinstance(f, dict) and f.get("name")
+            and (typed_inputs is None or f.get("name") in typed_inputs)
         }
         self.contracts = {s.get("id"): activity_contract(s, activities) for s in steps}
 
@@ -115,6 +117,9 @@ def activity_contract(step: dict, activities: dict[str, dict]) -> Optional[dict]
     requirement the step was planned with (``config.code_requirement``).
     """
     kind = getattr(step.get("type"), "value", step.get("type"))
+    if kind == "agent":
+        typed = (step.get("config") or {}).get("output_schema")
+        return {"input": None, "output": typed} if isinstance(typed, dict) else None
     if kind != "tool":
         return None
     config = step.get("config") or {}
@@ -241,14 +246,18 @@ class _Checker:
                 self.schemas(got_props[key], sub, f"{path}.{key}" if path else key, f"{source}.{key}")
 
 
-def check_argument_shapes(definition: dict, activities: Optional[dict[str, dict]] = None) -> list[dict]:
+def check_argument_shapes(definition: dict, activities: Optional[dict[str, dict]] = None,
+                          typed_inputs: Optional[set[str]] = None) -> list[dict]:
     """Issues for activity arguments that cannot match the activity's input schema.
 
     ``activities`` maps an activity name to ``{"input": schema, "output": schema,
     "version": n}``; steps also contribute the requirement they were planned with.
+    ``typed_inputs``: the run inputs whose schema is already settled — while
+    planning, only those the data contract fixed (the rest are typed later, from
+    the activities they feed). None: every declared input (a saved workflow).
     """
     activities = activities or {}
-    ctx = _Context(definition, activities)
+    ctx = _Context(definition, activities, typed_inputs)
     issues: list[dict] = []
     for step in (definition or {}).get("steps") or []:
         if not isinstance(step, dict):

@@ -340,6 +340,26 @@ class DecisionLayer(Layer):
     #: user (``app.build_prereqs.guidance``). Empty when there are none.
     uses_prerequisites: bool = False
 
+    #: How many times a decision that fails its own checks (``postconditions``)
+    #: is sent back to the model with the problems listed.
+    max_repairs: int = 2
+
+    #: A later layer may send the run back to this one (``app.core.stages``):
+    #: only for decisions with no side effects outside the spec.
+    rewindable: bool = False
+
+    def postconditions(self, ctx: PipelineContext) -> list[str]:
+        """Problems with the decision just applied; [] when it is sound.
+
+        Checked deterministically after ``apply``. Each problem is shown to the
+        model, which answers again; ``apply`` must therefore replace what it
+        wrote rather than add to it.
+        """
+        return []
+
+    def _checks(self) -> bool:
+        return type(self).postconditions is not DecisionLayer.postconditions
+
     def model_for(self, ctx: PipelineContext) -> str:
         from app.config import settings
 
@@ -378,6 +398,8 @@ class DecisionLayer(Layer):
         if self.status_message:
             ctx.emit("status", self.status_message)
 
+        from app.core.stages import emit_sublayer, repair_block, repair_issues_for
+
         try:
             system, user = self.build_prompt(ctx)
             process_block = self.process_block(ctx)
@@ -390,20 +412,65 @@ class DecisionLayer(Layer):
                 from app.build_prereqs import guidance as prerequisites
 
                 user = user + prerequisites.block(ctx)
-            raw = await decide(
-                ctx.client,
-                model=None if self.route else self.model_for(ctx),
-                route=self.route,
-                system=system,
-                user=user,
-                phase=self.phase,
-                timeout_ms=self.timeout_ms,
-                temperature=self.temperature,
-            )
+            # Sent back by a later check (a rewind): the problems to fix.
+            handed_back = repair_issues_for(ctx, self.name)
+            if handed_back:
+                user = user + repair_block(handed_back)
+
+            async def ask(prompt: str) -> str:
+                return await decide(
+                    ctx.client,
+                    model=None if self.route else self.model_for(ctx),
+                    route=self.route,
+                    system=system,
+                    user=prompt,
+                    phase=self.phase,
+                    timeout_ms=self.timeout_ms,
+                    temperature=self.temperature,
+                )
+
+            started = time.monotonic()
+            emit_sublayer(ctx, self.name, "decide", "active",
+                          label="Fix what the checks found" if handed_back else "Decide")
+            raw = await ask(user)
             data = parse_json(raw, None)
             if not isinstance(data, dict):
                 raise ValueError(f"{self.phase} returned non-object JSON")
             self.apply(ctx, data)
+            emit_sublayer(ctx, self.name, "decide", "completed",
+                          summary=str(data.get("reasoning") or "")[:240],
+                          ms=(time.monotonic() - started) * 1000)
+
+            # Self-check: the decision's own postconditions, with the model
+            # asked again — shown the problems — until they hold.
+            if self._checks():
+                for attempt in range(self.max_repairs + 1):
+                    issues = self.postconditions(ctx)
+                    check_id = "check" if attempt == 0 else f"check_{attempt + 1}"
+                    if not issues:
+                        emit_sublayer(ctx, self.name, check_id, "completed", label="Check the decision",
+                                      summary="Every check passed.")
+                        break
+                    emit_sublayer(ctx, self.name, check_id, "failed", label="Check the decision",
+                                  summary=f"{len(issues)} problem(s): " + "; ".join(issues[:3]))
+                    if attempt == self.max_repairs:
+                        ctx.metadata.setdefault("unresolved_postconditions", {})[self.name] = issues
+                        logger.warning("Decision '%s' still fails %d check(s) after %d repair(s)",
+                                       self.phase, len(issues), self.max_repairs)
+                        break
+                    repair_id = f"repair_{attempt + 1}"
+                    started = time.monotonic()
+                    emit_sublayer(ctx, self.name, repair_id, "active", label=f"Repair ({attempt + 1})")
+                    fixed = parse_json(await ask(
+                        user + "\n\n## YOUR PREVIOUS ANSWER\n" + raw[:12000] + repair_block(issues)), None)
+                    if isinstance(fixed, dict):
+                        raw = json.dumps(fixed)
+                        data = fixed
+                        self.apply(ctx, data)
+                    emit_sublayer(ctx, self.name, repair_id, "completed",
+                                  summary=str((fixed or {}).get("reasoning") or "")[:240]
+                                  if isinstance(fixed, dict) else "The answer could not be read.",
+                                  ms=(time.monotonic() - started) * 1000)
             if process_block:
                 from app.process import pipeline as process_knowledge
 

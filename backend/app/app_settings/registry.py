@@ -275,6 +275,38 @@ DEFS: list[SettingDef] = [
                impact=("Waiting time when many people build at once", "Rate-limit errors",
                        "Memory use"),
                used_in=("runs/manager.py — RunManager._slot",)),
+    SettingDef("WORKFLOW_DRY_RUN", "orchestration", "Dry-run planned workflows",
+               "Run every planned workflow end to end on designed scenarios before review, with "
+               "connectors and human reviews stubbed, and repair what fails (edits and activity "
+               "code). Agent steps call the model, so each scenario costs one run.",
+               type="bool", impact=("Workflow planning — verification",),
+               used_in=("layers/workflow/verify_layers.py — WorkflowDryRunLayer",)),
+    SettingDef("WORKFLOW_DRY_RUN_SCENARIOS", "orchestration", "Dry-run scenarios",
+               "How many scenarios a dry run covers: the designed example plus cases drawn from "
+               "the process's decision rules.",
+               type="int", minimum=1, maximum=8, unit="scenarios",
+               impact=("Workflow planning — verification",),
+               used_in=("layers/workflow/verify_layers.py — ScenarioDesignLayer",)),
+    SettingDef("WORKFLOW_DRY_RUN_REPAIRS", "orchestration", "Dry-run repair rounds",
+               "How many times a failing dry run is repaired and run again before review.",
+               type="int", minimum=0, maximum=5, unit="rounds",
+               impact=("Workflow planning — verification",),
+               used_in=("layers/workflow/verify_layers.py — WorkflowDryRunLayer",)),
+    SettingDef("PROCESS_COVERAGE_BLOCKING", "orchestration", "Process coverage blocks",
+               "A mandatory process control no workflow step performs is an error (off: a warning).",
+               type="bool", impact=("Workflow planning — validation",),
+               used_in=("layers/workflow/finalize_layers.py — process coverage",)),
+    SettingDef("AGENT_EVALUATION", "orchestration", "Evaluate new agents",
+               "Test a newly created agent on designed prompts, judge the answers against its "
+               "requirement and guardrails, and revise its instructions (and rebuild failing "
+               "tools) once when it falls short.",
+               type="bool", impact=("Agent creation — verification",),
+               used_in=("layers/agent/evaluation_layer.py — AgentEvaluationLayer",)),
+    SettingDef("AGENT_EVALUATION_TESTS", "orchestration", "Agent evaluation prompts",
+               "How many test prompts a new agent is evaluated on.",
+               type="int", minimum=1, maximum=6, unit="prompts",
+               impact=("Agent creation — verification",),
+               used_in=("layers/agent/evaluation_layer.py — AgentEvaluationLayer",)),
     SettingDef("REUSE_MIN_CONFIDENCE", "orchestration", "Minimum reuse confidence",
                "Below this confidence (0-1) the planner designs a new agent instead of reusing "
                "an existing one. A wrong reuse is worse than one redundant agent.",
@@ -865,6 +897,15 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "RUN_CONCURRENCY": (
         "One build at a time per workspace — everyone else waits in line.",
         "Many builds at once — they compete for the same rate quota and run slower."),
+    "WORKFLOW_DRY_RUN_SCENARIOS": (
+        "Only the designed example is run — the cheapest check.",
+        "Eight scenarios per dry run — thorough, but each one runs every agent step."),
+    "WORKFLOW_DRY_RUN_REPAIRS": (
+        "A failing dry run is reported, never repaired automatically.",
+        "Up to five repair rounds — more fixed automatically, longer planning."),
+    "AGENT_EVALUATION_TESTS": (
+        "One test prompt per new agent.",
+        "Six test prompts per new agent — more confidence, more model calls."),
     "REUSE_MIN_CONFIDENCE": (
         "Any existing agent that looks related is reused, even a poor fit.",
         "Existing agents are almost never reused; a new agent is designed every time."),

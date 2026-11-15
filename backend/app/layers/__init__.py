@@ -21,6 +21,7 @@ register it here:
 from app.build_prereqs.layer import BuildPrerequisitesLayer
 from app.core.layer import ParallelGroup
 from app.core.pipeline import Pipeline
+from app.core.stages import Stage
 
 from app.layers.agent import (
     AgentAssemblyLayer,
@@ -38,6 +39,9 @@ from app.layers.agent import (
     ToolSelectionLayer,
 )
 from app.layers.cleanup_layer import CleanupLayer
+from app.layers.workflow.data_contract_layer import DataContractLayer
+from app.layers.workflow.verify_layers import ScenarioDesignLayer, WorkflowDryRunLayer
+from app.layers.agent.verification_layers import AgentEvaluationLayer, FacetConsistencyLayer
 from app.layers.agent.archetype_layer import AgentArchetypeLayer
 from app.layers.knowledge_context_layer import KnowledgeContextLayer
 from app.layers.workflow.oversight_layer import OversightPlacementLayer
@@ -103,35 +107,60 @@ from app.layers.workflow import (
 
 chat_pipeline = Pipeline("agent_chat")
 chat_pipeline.add(CleanupLayer())
-chat_pipeline.add(RequirementAnalysisLayer())
-chat_pipeline.add(BuildPrerequisitesLayer("agent"))
-chat_pipeline.add(CapabilityGapLayer())
-chat_pipeline.add(AgentInventoryLayer())
-# After inventory (it resolves the scope this reads), before the facet group so
-# every branch shares one process context and one guidance pack. Each source is
-# off when it has nothing to give, and the prompts are then unchanged.
-chat_pipeline.add(KnowledgeContextLayer("agent"))
-# After knowledge (it reads the process facts and guidance), before the facets so
-# model, tools and instructions are chosen for the agent type.
-chat_pipeline.add(AgentArchetypeLayer("agent"))
-chat_pipeline.add(ParallelGroup(
-    "agent_facets",
-    [
-        ToolSelectionLayer(),
-        ConnectorSelectionLayer(),
-        LibrarySelectionLayer(),
-        ModelSelectionLayer(),
-        IdentityLayer(),
-    ],
-    label="Design the agent",
-    detail="Five independent decisions, made at the same time.",
-))
-chat_pipeline.add(LibraryProvisioningLayer())
-chat_pipeline.add(GuardrailConfigLayer())
-chat_pipeline.add(AgentRuleSelectionLayer())
-chat_pipeline.add(InstructionAuthoringLayer())
-chat_pipeline.add(AgentAssemblyLayer())
-chat_pipeline.add(ExecutionLayer())
+chat_pipeline.add(Stage("understand", "Understand the request",
+                        "What is asked, and what the build needs from you first.", [
+    RequirementAnalysisLayer(),
+    BuildPrerequisitesLayer("agent"),
+]))
+chat_pipeline.add(Stage("equip", "Build missing tools",
+                        "Writes and tests any tool the agent needs that does not exist yet.", [
+    CapabilityGapLayer(),
+]))
+chat_pipeline.add(Stage("ground", "Gather what it can use",
+                        "The tools, connectors and libraries available, the process knowledge and "
+                        "guidance in scope, and the kind of agent this is.", [
+    AgentInventoryLayer(),
+    # After inventory (it resolves the scope this reads), before the facets so
+    # every branch shares one process context and one guidance pack.
+    KnowledgeContextLayer("agent"),
+    # After knowledge (it reads the process facts and guidance), before the
+    # facets so model, tools and instructions are chosen for the agent type.
+    AgentArchetypeLayer("agent"),
+]))
+chat_pipeline.add(Stage("design", "Design the agent",
+                        "Five independent decisions made at once, then checked against each other.", [
+    ParallelGroup(
+        "agent_facets",
+        [
+            ToolSelectionLayer(),
+            ConnectorSelectionLayer(),
+            LibrarySelectionLayer(),
+            ModelSelectionLayer(),
+            IdentityLayer(),
+        ],
+        label="Decide tools, connectors, libraries, model and identity",
+        detail="Five independent decisions, made at the same time.",
+    ),
+    FacetConsistencyLayer(),
+]))
+chat_pipeline.add(Stage("govern", "Provision and govern",
+                        "Creates the library it was designed around, then its guardrails and rules.", [
+    LibraryProvisioningLayer(),
+    GuardrailConfigLayer(),
+    AgentRuleSelectionLayer(),
+]))
+chat_pipeline.add(Stage("author", "Write and create",
+                        "Instructions that express every decision, then the agent on Mistral.", [
+    InstructionAuthoringLayer(),
+    AgentAssemblyLayer(),
+]))
+chat_pipeline.add(Stage("verify", "Test the agent",
+                        "Runs it on designed prompts and repairs its tools and instructions if it falls short.", [
+    AgentEvaluationLayer(),
+]))
+chat_pipeline.add(Stage("answer", "Answer", "The agent answers your request.", [
+    ExecutionLayer(),
+]))
 
 # ── Workflow Pipeline ───────────────────────────────────────────────────────
 #
@@ -145,35 +174,66 @@ chat_pipeline.add(ExecutionLayer())
 # before it has spent anything.
 
 workflow_pipeline = Pipeline("workflow_design")
-workflow_pipeline.add(ResourceInventoryLayer())
-workflow_pipeline.add(KnowledgeContextLayer("workflow"))
-workflow_pipeline.add(GoalDecompositionLayer())
-workflow_pipeline.add(ExecutionModeLayer())
-# Only capabilities routed to "agent" need a type; decided before prerequisites so a
-# type that needs something (a reasoning model, a connector) is caught early.
-workflow_pipeline.add(AgentArchetypeLayer("workflow"))
-workflow_pipeline.add(BuildPrerequisitesLayer("workflow"))
-workflow_pipeline.add(CapabilityReuseLayer())
-# After reuse (only capabilities being created are expanded), before design so
-# the sub-agents are designed and created like any other agent.
-workflow_pipeline.add(PatternExpansionLayer())
-workflow_pipeline.add(ActivityGapLayer())
-workflow_pipeline.add(AgentDesignLayer())
-workflow_pipeline.add(WorkflowAgentRulesLayer())
-workflow_pipeline.add(AgentProvisioningLayer())
-workflow_pipeline.add(StepTopologyLayer())
-# After the graph exists, before data flow wires the review steps it adds.
-workflow_pipeline.add(OversightPlacementLayer())
-workflow_pipeline.add(DataFlowLayer())
-# Its own decision: the run form's inputs and a valid, coherent example.
-workflow_pipeline.add(InputSchemaLayer())
-workflow_pipeline.add(WorkflowGuardrailLayer())
-workflow_pipeline.add(WorkflowRuleSelectionLayer())
-workflow_pipeline.add(WorkflowValidationLayer())
-workflow_pipeline.add(WorkflowPersistenceLayer())
-workflow_pipeline.add(WorkflowCompilationLayer())
-workflow_pipeline.add(WorkflowReviewLayer())
-workflow_pipeline.add(WorkflowRegistrationLayer())
+workflow_pipeline.add(Stage("understand", "Understand the goal",
+                            "What exists, what the business knows, the work to do and how each part runs.", [
+    ResourceInventoryLayer(),
+    KnowledgeContextLayer("workflow"),
+    GoalDecompositionLayer(),
+    ExecutionModeLayer(),
+]))
+workflow_pipeline.add(Stage("contract", "Define the data",
+                            "Every record passed between steps — fields, types, units — decided once.", [
+    DataContractLayer(),
+]))
+workflow_pipeline.add(Stage("plan", "Plan the agents",
+                            "Agent types, what the build needs from you, what is reused, what is expanded.", [
+    # Only capabilities routed to "agent" need a type; decided before
+    # prerequisites so a type that needs something is caught early.
+    AgentArchetypeLayer("workflow"),
+    BuildPrerequisitesLayer("workflow"),
+    CapabilityReuseLayer(),
+    # After reuse (only capabilities being created are expanded), before design
+    # so the sub-agents are designed and created like any other agent.
+    PatternExpansionLayer(),
+]))
+workflow_pipeline.add(Stage("build", "Build activities and agents",
+                            "Activities written and tested to the data contract; agents designed, governed "
+                            "and created.", [
+    ActivityGapLayer(),
+    AgentDesignLayer(),
+    WorkflowAgentRulesLayer(),
+    AgentProvisioningLayer(),
+]))
+workflow_pipeline.add(Stage("assemble", "Assemble the workflow",
+                            "The graph, human oversight, the wiring between steps and the run inputs.", [
+    StepTopologyLayer(),
+    # After the graph exists, before data flow wires the review steps it adds.
+    OversightPlacementLayer(),
+    DataFlowLayer(),
+    # Its own decision: the run form's inputs and a valid, coherent example.
+    InputSchemaLayer(),
+]))
+workflow_pipeline.add(Stage("govern", "Govern",
+                            "Exposure and gates traced; the workflow rules chosen.", [
+    WorkflowGuardrailLayer(),
+    WorkflowRuleSelectionLayer(),
+]))
+workflow_pipeline.add(Stage("check", "Check and save",
+                            "Validated (going back to the layer at fault when it is not), saved and compiled.", [
+    WorkflowValidationLayer(),
+    WorkflowPersistenceLayer(),
+    WorkflowCompilationLayer(),
+]))
+workflow_pipeline.add(Stage("verify", "Verify by running",
+                            "Test scenarios run end to end; what fails is repaired — edits and code — and run again.", [
+    ScenarioDesignLayer(),
+    WorkflowDryRunLayer(),
+]))
+workflow_pipeline.add(Stage("deliver", "Review and register",
+                            "You test, refine and accept it; then it is registered on Mistral.", [
+    WorkflowReviewLayer(),
+    WorkflowRegistrationLayer(),
+]))
 
 # ── Revision Pipeline ───────────────────────────────────────────────────────
 #

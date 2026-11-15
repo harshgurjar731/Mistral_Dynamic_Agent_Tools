@@ -106,6 +106,9 @@ class WorkflowAgentRulesLayer(WorkflowStepLayer):
 class WorkflowRuleSelectionLayer(WorkflowStepLayer):
     """Choose optional workflow rules for the assembled workflow."""
 
+    #: Side-effect free: a later check may send the run back here.
+    rewindable = True
+
     name = "workflow_rule_selection"
     label = "Choose workflow rules"
     detail = "Decides which of your optional workflow rules this workflow must follow."

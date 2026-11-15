@@ -64,6 +64,9 @@ def finalise_dag_inputs(ctx: PipelineContext, input_schema: list,
 class InputSchemaLayer(WorkflowDecisionLayer):
     """Design the run form: precise inputs and one coherent, valid example."""
 
+    #: Side-effect free: a later check may send the run back here.
+    rewindable = True
+
     name = "input_schema"
     label = "Design the run inputs"
     detail = "Decides exactly what a run needs from you, and fills in a realistic example."

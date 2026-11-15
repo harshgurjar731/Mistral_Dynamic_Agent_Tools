@@ -102,7 +102,12 @@ class ActivityGapLayer(WorkflowStepLayer):
                 {"id": c.id, "name": c.name, "kind": c.kind, "inputs": c.inputs}
                 for c in spec.capabilities if cap.id in c.depends_on
             ]
+            from app.layers.workflow.data_contract_layer import input_schema_for, output_schema_for
+
+            contract = {k: v for k, v in (("input_schema", input_schema_for(spec, cap.id)),
+                                          ("output_schema", output_schema_for(spec, cap.id))) if v}
             needs.append(CodeNeed(
+                contract=contract,
                 purpose="activity",
                 origin="workflow",
                 intent=cap.purpose,
@@ -117,11 +122,24 @@ class ActivityGapLayer(WorkflowStepLayer):
                 guidance=prerequisites.code_guidance(ctx, cap.id),
             ))
 
+        from app.core.stages import emit_sublayer
+
+        names = {c.id: c.name for c in activity_caps}
+        for cap in activity_caps:
+            emit_sublayer(ctx, self.name, f"build:{cap.id}", "pending", label=f"Build {cap.name}")
+
         def relay(event: dict) -> None:
             stage = event.get("stage")
+            message = str(event.get("message", ""))[:240]
+            cap_id = event.get("capability_id")
+            if cap_id:
+                # Every stage of every activity's build, live, on its own row.
+                emit_sublayer(ctx, self.name, f"build:{cap_id}", "active",
+                              label=f"Build {names.get(cap_id, cap_id)}",
+                              summary=f"{stage}: {message}" if stage else message)
             if stage in ("reuse", "author", "submit", "contract", "preflight", "credentials", "smoke",
                          "rollback"):
-                ctx.emit("status", str(event.get("message", ""))[:200])
+                ctx.emit("status", message[:200])
 
         code_check = CodeCheck(ctx)
         # In dependency order: an activity that consumes another's output is
@@ -190,6 +208,12 @@ class ActivityGapLayer(WorkflowStepLayer):
         reused, built, failed = [], [], []
 
         for cap, resolution in zip(activity_caps, resolutions):
+            emit_sublayer(ctx, self.name, f"build:{cap.id}",
+                          "completed" if _resolved(resolution) else "failed",
+                          label=f"Build {cap.name}",
+                          summary=(f"{resolution.status}: {resolution.name}"
+                                   + (f" v{resolution.version}" if resolution.version else "")
+                                   if _resolved(resolution) else str(resolution.message or "")[:240]))
             row = {
                 "capability": cap.id,
                 "capability_name": cap.name,

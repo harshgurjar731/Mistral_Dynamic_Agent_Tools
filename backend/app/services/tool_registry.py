@@ -502,6 +502,14 @@ def _tool_tier(tool_name: str) -> str:
     return "unknown"
 
 
+#: When set to a list (agent evaluation), every tool call is appended to it:
+#: {"tool", "tier", "arguments", "result", "error"} — so a failing tool can be
+#: found and rebuilt from the exact arguments it failed on.
+from contextvars import ContextVar as _ContextVar
+
+TOOL_CALL_LOG: _ContextVar = _ContextVar("tool_call_log", default=None)
+
+
 async def execute_tool(tool_name: str, arguments: dict, version: int | None = None) -> str:
     """Route one tool call, traced as a GenAI ``execute_tool`` span on Mistral.
 
@@ -524,10 +532,15 @@ async def execute_tool(tool_name: str, arguments: dict, version: int | None = No
         text = result if isinstance(result, str) else json.dumps(result, default=str)
         tracing.set_attrs(span, {"gen_ai.tool.call.result": text})
         lowered = text.lstrip()[:200].lower()
-        if lowered.startswith("error") or lowered.startswith("blocked by rule") or (
+        failed = lowered.startswith("error") or lowered.startswith("blocked by rule") or (
             lowered.startswith("tool '") and "not found" in lowered
-        ):
+        ) or '"status": "error"' in text[:400]
+        if failed:
             tracing.mark_error(span, text[:1000], error_type="tool_error")
+        log = TOOL_CALL_LOG.get()
+        if log is not None:
+            log.append({"tool": tool_name, "tier": _tool_tier(tool_name), "arguments": arguments,
+                        "result": text[:2000], "error": failed})
         return result
 
 
@@ -580,6 +593,13 @@ async def _route_tool(tool_name: str, arguments: dict, version: int | None = Non
     # Tier 3: MCP tools
     if ":" in tool_name:
         server, mcp_tool = tool_name.split(":", 1)
+        from app.services.workflow_engine import dry_run
+
+        if dry_run.active():
+            # A dry run never touches an outside system: say what would be sent.
+            logger.info("Dry run: not calling MCP tool %s", tool_name)
+            return json.dumps({"dry_run": True, "tool": tool_name, "would_send": arguments,
+                               "note": "Not called — this is a dry run."}, default=str)
         logger.info("Proxying MCP tool to Docker Tool Service: %s -> %s", server, mcp_tool)
         from app.services.tool_resolver import tool_resolver
         result = await tool_resolver.execute_mcp_tool(server, mcp_tool, arguments)

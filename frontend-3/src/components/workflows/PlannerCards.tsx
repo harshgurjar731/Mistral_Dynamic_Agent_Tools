@@ -85,6 +85,10 @@ export type PlannerStepType =
   | "workflow_test"
   | "workflow_accepted"
   | "registered"
+  | "data_contract"
+  | "test_scenarios"
+  | "dry_run"
+  | "process_traceability"
   | "fatal_error"
   | "error";
 
@@ -127,6 +131,10 @@ export const PLANNER_CARD_OWNER: Partial<Record<PlannerStepType, string>> = {
   workflow_test: "workflow_review",
   workflow_accepted: "workflow_review",
   registered: "workflow_registration",
+  data_contract: "data_contract",
+  test_scenarios: "scenario_design",
+  dry_run: "workflow_dry_run",
+  process_traceability: "workflow_validation",
 };
 
 export const PLANNER_CARD_EVENTS = new Set<string>(Object.keys(PLANNER_CARD_OWNER));
@@ -1674,6 +1682,168 @@ export function RollbackReportCard({ data }: { data: RollbackData }) {
   );
 }
 
+// ── Data contract, scenarios, dry run, traceability ─────────────────────────
+
+interface DataContractData {
+  records?: { name: string; origin: string; description?: string; fields?: string[] }[];
+  bindings?: Record<string, { consumes?: string[]; produces?: string | null }>;
+  ordering?: string[];
+}
+
+function DataContractCard({ data }: { data: DataContractData }) {
+  const records = data.records ?? [];
+  return (
+    <CardShell
+      icon={<Share2 className="size-3 text-primary" />}
+      title={`Data contract — ${records.length} record(s)`}
+    >
+      <ul className="space-y-2">
+        {records.map((r) => (
+          <li
+            key={r.name}
+            className="rounded-lg border border-border/60 bg-background/40 px-2.5 py-2"
+          >
+            <p className="flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-[11px] font-semibold text-foreground">{r.name}</span>
+              <Chip className="border-border text-muted-foreground">
+                {r.origin === "run_input" ? "run input" : `from ${r.origin}`}
+              </Chip>
+            </p>
+            {r.description ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{r.description}</p>
+            ) : null}
+            {r.fields?.length ? (
+              <p className="mt-1 font-mono text-[10px] break-words text-muted-foreground">
+                {r.fields.join(" · ")}
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {data.ordering?.length ? (
+        <p className="mt-2 text-[10px] text-amber">Ordering added: {data.ordering.join("; ")}</p>
+      ) : null}
+    </CardShell>
+  );
+}
+
+interface ScenarioData {
+  name: string;
+  description?: string;
+  expect?: { path: string; equals?: unknown; in?: unknown[]; why?: string }[];
+}
+
+function ScenariosCard({ data }: { data: ScenarioData[] }) {
+  const list = Array.isArray(data) ? data : [];
+  return (
+    <CardShell
+      icon={<ListChecks className="size-3 text-primary" />}
+      title={`${list.length} test scenario(s)`}
+    >
+      <ul className="space-y-2">
+        {list.map((sc) => (
+          <li key={sc.name}>
+            <p className="text-[11px] font-semibold text-foreground">{sc.name}</p>
+            {sc.description ? (
+              <p className="text-[11px] text-muted-foreground">{sc.description}</p>
+            ) : null}
+            {(sc.expect ?? []).map((e) => (
+              <p key={e.path} className="font-mono text-[10px] break-words text-muted-foreground">
+                {e.path} {e.equals !== undefined ? `= ${JSON.stringify(e.equals)}` : ""}
+                {e.in ? `∈ ${JSON.stringify(e.in)}` : ""}
+              </p>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </CardShell>
+  );
+}
+
+interface DryRunData {
+  passed?: boolean;
+  scenarios?: { name: string; passed: boolean; problems?: string[]; warnings?: string[] }[];
+  rounds?: {
+    round: number;
+    passed?: number;
+    failed?: number;
+    repair?: { applied?: boolean; summary?: string };
+  }[];
+}
+
+function DryRunCard({ data }: { data: DryRunData }) {
+  const scenarios = data.scenarios ?? [];
+  const repairs = (data.rounds ?? []).filter((r) => r.repair?.applied);
+  return (
+    <CardShell
+      icon={
+        data.passed ? (
+          <CheckCircle2 className="size-3 text-emerald" />
+        ) : (
+          <AlertCircle className="size-3 text-destructive" />
+        )
+      }
+      title={`Dry run ${data.passed ? "passed" : "has failures"} — ${scenarios.filter((s) => s.passed).length} of ${scenarios.length} scenario(s)`}
+      tone={data.passed ? "border-emerald/25 bg-emerald/5" : "border-amber/25 bg-amber/5"}
+    >
+      <ul className="space-y-1.5">
+        {scenarios.map((sc) => (
+          <li key={sc.name} className="text-[11px]">
+            <span className={cn("font-semibold", sc.passed ? "text-emerald" : "text-red")}>
+              {sc.passed ? "✓" : "✗"} {sc.name}
+            </span>
+            {(sc.problems ?? []).slice(0, 3).map((p) => (
+              <p key={p} className="ml-4 break-words text-muted-foreground">
+                {p}
+              </p>
+            ))}
+            {(sc.warnings ?? []).slice(0, 2).map((w) => (
+              <p key={w} className="ml-4 break-words text-amber">
+                {w}
+              </p>
+            ))}
+          </li>
+        ))}
+      </ul>
+      {repairs.length ? (
+        <div className="mt-2 space-y-1">
+          {repairs.map((r) => (
+            <p key={r.round} className="flex gap-1.5 text-[11px] text-muted-foreground">
+              <Wrench className="mt-0.5 size-3 shrink-0 text-primary" />
+              Repair after round {r.round + 1}: {r.repair?.summary ?? "applied"}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </CardShell>
+  );
+}
+
+interface TraceabilityData {
+  controls?: { control: string; description?: string; steps: string[]; covered: boolean }[];
+}
+
+function TraceabilityCard({ data }: { data: TraceabilityData }) {
+  const controls = data.controls ?? [];
+  if (!controls.length) return null;
+  return (
+    <CardShell icon={<Shield className="size-3 text-primary" />} title="Mandatory controls → steps">
+      <ul className="space-y-1">
+        {controls.map((c) => (
+          <li key={c.control} className="text-[11px]">
+            <span className={cn("font-mono", c.covered ? "text-emerald" : "text-red")}>
+              {c.control}
+            </span>{" "}
+            <span className="text-muted-foreground">
+              {c.covered ? `→ ${c.steps.join(", ")}` : "→ no step performs it"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </CardShell>
+  );
+}
+
 /** The card for one payload. */
 export function renderPlannerCard(step: PlannerStep): ReactNode {
   const c = step.content;
@@ -1736,6 +1906,14 @@ export function renderPlannerCard(step: PlannerStep): ReactNode {
       );
     case "registered":
       return <RegisteredCard data={c as RegisteredData} />;
+    case "data_contract":
+      return <DataContractCard data={c as DataContractData} />;
+    case "test_scenarios":
+      return <ScenariosCard data={c as ScenarioData[]} />;
+    case "dry_run":
+      return <DryRunCard data={c as DryRunData} />;
+    case "process_traceability":
+      return <TraceabilityCard data={c as TraceabilityData} />;
     default:
       return null;
   }

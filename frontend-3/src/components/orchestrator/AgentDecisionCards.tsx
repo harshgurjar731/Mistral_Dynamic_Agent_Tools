@@ -69,9 +69,48 @@ export interface AgentDecisions {
   process_knowledge_applied?: ProcessAppliedEvent;
   prerequisites?: PrerequisitesEvent;
   code_prerequisites?: PrerequisitesEvent;
+  agent_evaluation?: AgentEvaluationView;
+}
+
+/** The new agent tested on designed prompts — and repaired when it fell short. */
+export interface AgentEvaluationView {
+  tests: number;
+  passed_first: number;
+  passed_after: number | null;
+  tools_rebuilt: string[];
+  instructions_revised: boolean;
+}
+
+function AgentEvaluationCard({ data }: { data: AgentEvaluationView }) {
+  const final = data.passed_after ?? data.passed_first;
+  const all = final === data.tests;
+  return (
+    <div
+      className={cn(
+        "mt-2.5 rounded-xl border p-3.5 text-xs",
+        all ? "border-emerald/25 bg-emerald/5" : "border-amber/25 bg-amber/5",
+      )}
+    >
+      <p className="font-semibold text-foreground">
+        {final} of {data.tests} test prompt(s) pass
+        {data.passed_after !== null ? ` (${data.passed_first} before repair)` : ""}
+      </p>
+      {data.tools_rebuilt.length ? (
+        <p className="mt-1 flex items-center gap-1.5 text-muted-foreground">
+          <Wrench className="size-3" /> Rebuilt: {data.tools_rebuilt.join(", ")}
+        </p>
+      ) : null}
+      {data.instructions_revised ? (
+        <p className="mt-1 text-muted-foreground">
+          Instructions revised from the judge’s findings.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export const AGENT_DECISION_EVENTS = new Set<keyof AgentDecisions>([
+  "agent_evaluation",
   "requirements",
   "tool_new",
   "library_provisioned",
@@ -313,6 +352,7 @@ export function agentLayerCards(d: AgentDecisions): Record<string, ReactNode> {
           />
         </>
       ) : null,
+    agent_evaluation: d.agent_evaluation ? <AgentEvaluationCard data={d.agent_evaluation} /> : null,
     execution: d.rule_outcomes?.length ? (
       <RuleOutcomesCard title="Rules on this answer" outcomes={d.rule_outcomes} />
     ) : null,

@@ -131,6 +131,10 @@ class SynthesisSpec:
     #: ``directives`` are the user's instructions as a checklist: every one is
     #: mandatory and is repeated in each repair round.
     feedback: dict = field(default_factory=dict)
+    #: Inputs earlier versions failed on at run time. Every new version must run
+    #: each of them without error and with output matching the output schema —
+    #: so a fix, once made, stays made through later rebuilds.
+    regression_inputs: list[dict] = field(default_factory=list)
 
     # ── Construction ────────────────────────────────────────────────────
 
@@ -169,6 +173,7 @@ class SynthesisSpec:
             http_fixtures=[f for f in (kw.get("http_fixtures") or []) if isinstance(f, dict)],
             origin=str(kw.get("origin") or "explicit"),
             feedback=_feedback(kw.get("feedback")),
+            regression_inputs=_regressions(kw.get("regression_inputs")),
         )
 
     @classmethod
@@ -205,6 +210,7 @@ class SynthesisSpec:
                 "api_details": self.api_details,
                 # Only when present, so every spec without it keeps its identity.
                 **({"feedback": self.feedback} if self.feedback else {}),
+                **({"regression_inputs": self.regression_inputs} if self.regression_inputs else {}),
             },
             sort_keys=True,
             default=str,
@@ -340,6 +346,15 @@ CodeSpec = SynthesisSpec
 
 #: Bounds on what a rebuild request may carry into the generation prompt.
 _FEEDBACK_LIMITS = {"previous_code": 12000, "runtime_error": 4000, "comment": 2000}
+
+
+def _regressions(raw) -> list[dict]:
+    """Distinct input objects, newest kept when there are more than 20."""
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and item and item not in out:
+            out.append(item)
+    return out[-20:]
 
 
 def _feedback(raw) -> dict:

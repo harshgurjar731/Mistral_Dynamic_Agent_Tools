@@ -98,3 +98,15 @@ def test_every_numeric_setting_has_bounds_and_what_they_mean():
             assert d.minimum is not None and d.maximum is not None, key
             assert d.low_effect and d.high_effect, key
     assert not set(EFFECTS) - set(defs)
+
+
+def test_regression_inputs_become_cases_every_rebuild_must_pass():
+    base = gst_spec()
+    data = {**base.to_dict(), "regression_inputs": [{"subtotal": 0}, {"subtotal": 0}, "junk"]}
+    spec = SynthesisSpec.from_request(**data)
+    assert spec.regression_inputs == [{"subtotal": 0}]
+    plan = get_profile(spec.purpose).build_test_plan(spec, [])
+    cases = [c for c in plan.cases if c.origin == "regression"]
+    assert [c.kwargs for c in cases] == [{"subtotal": 0}]
+    assert cases[0].expect == "success"
+    assert spec.content_hash() != base.content_hash(), "a regression case changes what gets built"

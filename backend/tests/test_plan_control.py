@@ -153,7 +153,7 @@ def test_manual_finishes_the_plan_without_the_failed_activity(monkeypatch):
 # ── Review: user-driven test, accept, rollback ─────────────────────────────
 
 
-def _review_ctx(run, monkeypatch, tests):
+def _review_ctx(run, monkeypatch, tests, dry_runs=None):
     definition = WorkflowDefinition(name="invoice_flow", entry_step="gst", steps=[
         {"id": "gst", "type": "tool", "config": {"tool_name": "apply_gst"}}])
     spec = WorkflowSpec(goal="invoice", workflow_name="invoice_flow")
@@ -169,6 +169,16 @@ def _review_ctx(run, monkeypatch, tests):
         return tests.pop(0)
 
     monkeypatch.setattr(plan_test, "test_workflow", fake_test)
+
+    # "Test" also dry-runs the scenarios (with repair) — stubbed here.
+    from app.layers.workflow import verify_layers
+
+    dry = list(dry_runs or [])
+
+    async def fake_verification(c, parent):
+        return dry.pop(0) if dry else {"passed": True, "scenarios": [], "rounds": []}
+
+    monkeypatch.setattr(verify_layers, "run_verification", fake_verification)
     return ctx
 
 
@@ -177,10 +187,24 @@ def test_review_tests_only_when_asked_then_accepts(monkeypatch):
     ctx = _review_ctx(run, monkeypatch, [{"passed": True, "summary": "1 passed"}])
     asyncio.run(finalize_layers.WorkflowReviewLayer().process(ctx, _done))
     assert [q["kind"] for q in run.questions] == ["review_workflow", "review_workflow"]
-    assert run.questions[1]["last_test"] == {"passed": True, "summary": "1 passed"}
+    assert run.questions[1]["last_test"] == {"passed": True, "summary": "1 passed; 0 of 0 scenario(s) pass"}
     assert run.payloads("workflow_test")[0]["passed"] is True
     assert run.payloads("workflow_accepted")[0] == {
         "workflow_name": "invoice_flow", "tested": True, "passed": True}
+    assert ctx.error is None
+
+
+def test_review_test_fails_when_a_dry_run_scenario_fails(monkeypatch):
+    run = FakeRun("test", "accept")
+    failing = {"passed": False, "rounds": [{"round": 0, "failed": 1}],
+               "scenarios": [{"name": "Strong case", "passed": False, "problems": ["step 'gst' failed"]}]}
+    ctx = _review_ctx(run, monkeypatch, [{"passed": True, "summary": "1 passed"}], [failing])
+    asyncio.run(finalize_layers.WorkflowReviewLayer().process(ctx, _done))
+    payload = run.payloads("workflow_test")[0]
+    assert payload["passed"] is False and payload["dry_run"]["scenarios"][0]["name"] == "Strong case"
+    assert "0 of 1 scenario(s) pass" in payload["summary"]
+    assert run.payloads("workflow_accepted")[0] == {
+        "workflow_name": "invoice_flow", "tested": True, "passed": False}
     assert ctx.error is None
 
 

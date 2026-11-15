@@ -12,7 +12,13 @@
  */
 import { useCallback, useState } from "react";
 import type { ProcessUse } from "@/api/processes";
-import type { LayerManifestEntry, LayerRuntime, LayerState } from "./PipelineTimeline";
+import type {
+  LayerManifestEntry,
+  LayerRuntime,
+  LayerState,
+  RewindNote,
+  SubLayer,
+} from "./PipelineTimeline";
 
 export interface PipelineRun {
   manifest: LayerManifestEntry[];
@@ -23,6 +29,8 @@ export interface PipelineRun {
   activeFraction?: number | undefined;
   /** True once a manifest has arrived — i.e. there is a chain worth drawing. */
   started: boolean;
+  /** Each time a check sent the run back to an earlier layer to fix what it found. */
+  rewinds?: RewindNote[] | undefined;
 }
 
 export const EMPTY_PIPELINE: PipelineRun = {
@@ -31,7 +39,33 @@ export const EMPTY_PIPELINE: PipelineRun = {
   activeNote: "",
   activeFraction: 0,
   started: false,
+  rewinds: [],
 };
+
+interface SubLayerEvent extends Partial<SubLayer> {
+  parent: string;
+  id: string;
+}
+
+/** Insert or update one sublayer of ``parent``, keeping the order they first appeared in. */
+function upsertSub(prev: PipelineRun, p: SubLayerEvent): PipelineRun {
+  const layer = prev.runtime[p.parent] ?? { state: "active" as LayerState };
+  const subs = [...(layer.subs ?? [])];
+  const i = subs.findIndex((x) => x.id === p.id);
+  const before = i >= 0 ? subs[i] : undefined;
+  const next: SubLayer = {
+    id: p.id,
+    label: p.label || before?.label || p.id,
+    state: p.state ?? before?.state ?? "active",
+    summary: p.summary || before?.summary,
+    detail: p.detail || before?.detail,
+    error: p.error || (p.state === "failed" ? before?.error : undefined),
+    ms: p.ms ?? before?.ms,
+  };
+  if (i >= 0) subs[i] = next;
+  else subs.push(next);
+  return { ...prev, runtime: { ...prev.runtime, [p.parent]: { ...layer, subs } } };
+}
 
 interface LayerEvent {
   name: string;
@@ -102,6 +136,8 @@ export function applyPipelineEvent(
             summary: p.summary || prev.runtime[p.name]?.summary,
             error: p.error,
             process: p.process ?? prev.runtime[p.name]?.process,
+            // Sublayers arrive on their own events; a state change keeps them.
+            subs: prev.runtime[p.name]?.subs,
           },
         },
       };
@@ -111,6 +147,36 @@ export function applyPipelineEvent(
   }
 
   if (type === "status") return { ...prev, activeNote: data };
+
+  // One atomic step inside a layer: decide / check / repair, each build, each scenario.
+  if (type === "sublayer") {
+    try {
+      const p = JSON.parse(data) as SubLayerEvent;
+      return p.parent && p.id ? upsertSub(prev, p) : prev;
+    } catch {
+      return prev;
+    }
+  }
+
+  // A check sent the run back: the layers it re-runs start again from pending.
+  if (type === "rewind") {
+    try {
+      const p = JSON.parse(data) as RewindNote & { reset?: string[] };
+      const runtime = { ...prev.runtime };
+      for (const name of p.reset ?? []) delete runtime[name];
+      return {
+        ...prev,
+        runtime,
+        activeNote: "",
+        rewinds: [
+          ...(prev.rewinds ?? []),
+          { to: p.to, from: p.from, round: p.round, reason: p.reason, issues: p.issues },
+        ],
+      };
+    } catch {
+      return prev;
+    }
+  }
 
   // Progress inside the running layer (``app.progress`` on the backend).
   if (type === "stage") {
@@ -162,7 +228,16 @@ export function failPipeline(prev: PipelineRun, message: string): PipelineRun {
   };
 }
 
-const PIPELINE_EVENTS = new Set(["pipeline", "layer", "status", "stage", "step", "log"]);
+const PIPELINE_EVENTS = new Set([
+  "pipeline",
+  "layer",
+  "status",
+  "stage",
+  "step",
+  "log",
+  "sublayer",
+  "rewind",
+]);
 
 export function usePipelineRun() {
   const [run, setRun] = useState<PipelineRun>(EMPTY_PIPELINE);

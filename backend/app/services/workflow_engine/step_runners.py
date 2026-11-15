@@ -1015,9 +1015,16 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 "Step '%s' prompt references data no earlier step produced: %s",
                 step.id, sorted(set(_missing_refs)),
             )
-        # Later steps read named fields from this agent's answer; say which.
+        # Later steps read named fields from this agent's answer; say which —
+        # as the full schema when the step has a typed output (data contract).
+        output_schema = config.get("output_schema") if isinstance(config.get("output_schema"), dict) else None
         output_fields = [f for f in (config.get("output_fields") or []) if isinstance(f, str)]
-        if output_fields:
+        if output_schema:
+            from app.services.workflow_engine.structured_output import schema_instruction, top_fields
+
+            query += schema_instruction(output_schema)
+            output_fields = list(dict.fromkeys([*top_fields(output_schema), *output_fields]))
+        elif output_fields:
             from app.services.workflow_engine.output_contracts import contract_instruction
 
             query += contract_instruction(output_fields)
@@ -1240,6 +1247,15 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
             output: Any = result_text
             parsed_dict = extract_json_object(result_text, output_fields)
+            if output_schema:
+                # A typed output: held to its schema, converted when it does not match.
+                from app.services.workflow_engine.structured_output import conform
+
+                conformed, notes = await conform(client, step.id, result_text, parsed_dict, output_schema)
+                for note in notes:
+                    logger.warning("Step '%s' — output: %s", step.id, note)
+                if isinstance(conformed, dict):
+                    parsed_dict = conformed
             if parsed_dict is not None:
                 output = parsed_dict
                 absent = [f for f in output_fields if find_field(parsed_dict, f) is MISSING]
@@ -1941,7 +1957,12 @@ async def run_step(step: WorkflowStep, variables: dict) -> StepResult:
 
     with tracing.span(f"step {step.id}", kind="step", attrs=attrs, parent=parent) as span:
         runner = STEP_RUNNERS.get(step.type)
-        if not runner:
+        from app.services.workflow_engine import dry_run
+
+        if dry_run.stubs(step):
+            # A dry run: no outside system is touched and nobody is waited for.
+            result = dry_run.stub_result(step, variables)
+        elif not runner:
             result = StepResult(step_id=step.id, status="failed", error=f"Unknown step type: {step.type}")
         else:
             # A document input arrives as a reference to its library; the step

@@ -73,7 +73,7 @@ def _layer_trace(ctx: PipelineContext) -> list[dict]:
 def _manifest() -> list[dict]:
     from app.layers import revision_pipeline
 
-    return revision_pipeline.manifest()
+    return revision_pipeline.flat_manifest()
 
 
 # ── Propose ─────────────────────────────────────────────────────────────────
@@ -212,6 +212,14 @@ def _apply_sync(workflow_name: str, revision_id: str, allow_errors: bool) -> dic
     )
     updated = store.update_revision(revision_id, status="applied", applied_version=version)
     store.supersede_open(workflow_name, except_id=revision_id)
+    # What this fix fixed is counted; a fix that keeps recurring becomes
+    # proposed build guidance (app.learning).
+    try:
+        from app import learning
+
+        learning.record_fix(workflow_name, updated or revision)
+    except Exception as e:  # noqa: BLE001 — learning never blocks applying a change
+        logger.warning("Learning loop skipped: %s", e)
 
     saved = get_workflow(workflow_name)
     return {

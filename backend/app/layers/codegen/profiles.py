@@ -94,6 +94,14 @@ class ActivityRequirementProfile(RequirementProfile):
                              indent=2)
                 + "\nThe output_schema must contain every name in \"outputs\"."
             )
+        contract = getattr(need, "contract", None) or {}
+        if contract.get("input_schema") or contract.get("output_schema"):
+            blocks.append(
+                "## DATA CONTRACT (mandatory — the workflow is built to it)\n"
+                "input_schema MUST be exactly:\n" + json.dumps(contract.get("input_schema"), indent=2)
+                + "\noutput_schema MUST be exactly:\n" + json.dumps(contract.get("output_schema"), indent=2)
+                + "\nUse these property names, nesting, types and required fields as given; write "
+                  "the worked examples to these exact shapes.")
         if need.upstream:
             blocks.append("## Steps that feed it (their outputs become its inputs)\n"
                           + json.dumps(need.upstream, indent=2, default=str))
@@ -109,7 +117,7 @@ class ActivityRequirementProfile(RequirementProfile):
         return blocks
 
     def bind_contract(self, need, req: CodeRequirement) -> list[str]:
-        issues = []
+        issues = _hold_to_contract(need, req)
         out_props = ((req.output_schema or {}).get("properties") or {})
         if not out_props:
             return ["output_schema must declare the fields later steps read"]
@@ -126,6 +134,43 @@ class ActivityRequirementProfile(RequirementProfile):
         if req.side_effects in ("write", "delete"):
             issues.append("an activity may not write or delete; that belongs to a connector step")
         return issues
+
+
+def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
+    """The workflow's data contract is the activity's schema: set it, and check the examples fit.
+
+    The author was told the schemas; enforcing them here means a spec that
+    drifted (a renamed field, a flattened record) is corrected rather than
+    built, and worked examples written to another shape send it back.
+    """
+    contract = getattr(need, "contract", None) or {}
+    if not (contract.get("input_schema") or contract.get("output_schema")):
+        return []
+    if contract.get("input_schema"):
+        req.input_schema = json.loads(json.dumps(contract["input_schema"]))
+    if contract.get("output_schema"):
+        req.output_schema = json.loads(json.dumps(contract["output_schema"]))
+    try:
+        import jsonschema
+    except ImportError:  # pragma: no cover — declared in requirements
+        return []
+    issues = []
+    for i, example in enumerate(req.examples, 1):
+        if not isinstance(example, dict):
+            continue
+        for part, schema in (("input", req.input_schema), ("output", req.output_schema)):
+            value = example.get(part)
+            if value is None or not isinstance(schema, dict):
+                continue
+            try:
+                jsonschema.validate(value, schema)
+            except jsonschema.ValidationError as e:
+                where = "/".join(str(p) for p in e.absolute_path) or part
+                if part == "output" and e.validator == "required":
+                    continue  # an example may leave out fields it cannot predict
+                issues.append(f"worked example {i} {part} does not match the data contract at "
+                              f"{where}: {e.message}")
+    return issues[:6]
 
 
 def _field_names(schema, depth: int = 0) -> set[str]:

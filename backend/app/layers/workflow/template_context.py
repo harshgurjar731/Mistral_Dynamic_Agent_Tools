@@ -256,6 +256,12 @@ def add_value_legend(steps: list[dict], provisioned_agents: Iterable[dict],
                     if notes:
                         seen.add(head)
                         lines.extend(notes)
+            elif producer and producer.get("type") == "agent" and isinstance(
+                    (producer.get("config") or {}).get("output_schema"), dict):
+                notes = _schema_notes(producer["config"]["output_schema"], f"{head}.")
+                if notes:
+                    seen.add(head)
+                    lines.extend(notes)
             elif producer and producer.get("type") == "agent":
                 agent = contracts.get(producer["id"]) or {}
                 detail = str(agent.get("output_contract_detail") or agent.get("output_contract") or "").strip()

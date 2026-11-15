@@ -149,6 +149,9 @@ def _wire_unreachable_conditions(steps: list, entry: str, deps: dict) -> None:
 class StepTopologyLayer(WorkflowDecisionLayer):
     """Decide steps, types, edges, parallel groups and bindings."""
 
+    #: Side-effect free: a later check may send the run back here.
+    rewindable = True
+
     name = "step_topology"
     uses_prerequisites = True
     process_view = "topology"

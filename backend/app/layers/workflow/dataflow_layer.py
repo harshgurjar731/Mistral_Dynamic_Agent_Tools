@@ -21,6 +21,8 @@ tries.
 import json
 import logging
 
+from app.layers.workflow.data_contract_layer import wiring_block
+
 from app.core.context import PipelineContext
 from app.core.decision import LONG_TIMEOUT_MS
 from app.layers.workflow.base import WorkflowDecisionLayer
@@ -46,6 +48,9 @@ class DataFlowLayer(WorkflowDecisionLayer):
     # Templates are instructions to another model, not a classification. A
     # little latitude produces better-framed prompts than near-greedy decoding.
     temperature = 0.2
+    #: Validation may send the run back here with the wiring problems it found.
+    rewindable = True
+    max_repairs = 2
 
     async def process(self, ctx: PipelineContext, next):
         """The decision, retried once before anything is composed locally.
@@ -78,7 +83,7 @@ class DataFlowLayer(WorkflowDecisionLayer):
                 topology=json.dumps(spec.topology, indent=2),
                 agents=json.dumps(spec.provisioned_agents, indent=2),
                 activities=json.dumps(spec.inventory.get("activities", []), indent=2),
-            ),
+            ) + wiring_block(spec),
         )
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:
@@ -127,6 +132,9 @@ class DataFlowLayer(WorkflowDecisionLayer):
 
         input_schema = data.get("input_schema")
         input_schema = input_schema if isinstance(input_schema, list) else []
+        # The data contract decides the wiring of every activity, what every
+        # agent returns, and the run inputs — the model's answer fills the rest.
+        input_schema = _apply_contract(ctx, merged_steps, input_schema)
         # Every input a capability declares reaches its agent (wired before the
         # input schema is normalised, so a field added to the run's input
         # record is declared with it).
@@ -167,6 +175,10 @@ class DataFlowLayer(WorkflowDecisionLayer):
             ],
             "reasoning": spec.rationale["data_flow"],
         }))
+
+    def postconditions(self, ctx: PipelineContext) -> list[str]:
+        """The wiring must pass the contract checks: fields that exist, arguments of the right shape."""
+        return _blocking_contract_issues(ctx)
 
     def _compose_template(self, ctx: PipelineContext, step: dict) -> str:
         """Write a usable template for a step the model left bare.
@@ -264,6 +276,44 @@ class DataFlowLayer(WorkflowDecisionLayer):
 _FALLBACK_KEY = "dataflow_fell_back"
 
 
+def _apply_contract(ctx: PipelineContext, steps: list[dict], input_schema: list) -> list:
+    """Wire activity arguments, type agent outputs and declare run inputs from the contract."""
+    from app.layers.workflow.data_contract_layer import (
+        contract_of, output_schema_for, record_ref, run_input_fields,
+    )
+    from app.services.workflow_engine.argument_shapes import catalog_from_inventory
+
+    spec = ctx.workflow_spec
+    contract = contract_of(spec)
+    if not contract:
+        return input_schema
+    catalog = catalog_from_inventory((spec.inventory or {}).get("activities", []))
+    for step in steps:
+        binding = contract["bindings"].get(step["id"]) or {}
+        config = step["config"]
+        if step["type"] == "tool":
+            params = ((catalog.get(config.get("tool_name")) or {}).get("input") or {}).get("properties") or {}
+            arguments = dict(config.get("arguments") or {})
+            for record in binding.get("consumes") or []:
+                ref = record_ref(spec, record)
+                if ref and (record in params or not params):
+                    arguments[record] = ref
+            config["arguments"] = arguments
+        elif step["type"] == "agent":
+            typed = output_schema_for(spec, step["id"])
+            if typed:
+                config["output_schema"] = typed
+    declared = {f.get("name"): f for f in input_schema if isinstance(f, dict)}
+    for field in run_input_fields(spec):
+        declared[field["name"]] = {**(declared.get(field["name"]) or {}), **field}
+    return list(declared.values())
+
+
+def _blocking_contract_issues(ctx: PipelineContext) -> list[str]:
+    return [i["message"] for i in ctx.metadata.get("contract_issues") or []
+            if i.get("severity") == "error"]
+
+
 def _enrich_templates(ctx: PipelineContext, steps: list[dict], input_schema: list[dict], *,
                       before_schema: bool) -> None:
     """Deterministic passes over the agent templates (``template_context``).
@@ -344,8 +394,11 @@ def _check_contracts(ctx: PipelineContext) -> None:
         catalog_from_inventory, check_argument_shapes,
     )
 
+    from app.layers.workflow.data_contract_layer import run_input_fields
+
     issues += check_argument_shapes(
-        spec.dag or {}, catalog_from_inventory((spec.inventory or {}).get("activities", [])))
+        spec.dag or {}, catalog_from_inventory((spec.inventory or {}).get("activities", [])),
+        typed_inputs={f["name"] for f in run_input_fields(spec)})
     issues += list(ctx.metadata.get("dataflow_unwired") or [])
     issues += list(ctx.metadata.get("dataflow_notes") or [])
     ctx.metadata["contract_issues"] = issues
