@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useTheme, type ThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { headerIconButton } from "./NavSection";
 
 const META: Record<ThemeMode, { label: string; icon: LucideIcon }> = {
   light: { label: "Day", icon: Sun },
@@ -25,8 +26,8 @@ export function ThemeToggle({
   variant = "icon",
   collapsed = false,
 }: {
-  /** rail: a full-width sidebar row; icon: a small square button. */
-  variant?: "rail" | "icon";
+  /** rail: a full-width sidebar row; icon: a small bordered square; ghost: a header icon button. */
+  variant?: "rail" | "icon" | "ghost";
   collapsed?: boolean;
 }) {
   const { mode, resolved, chosen, setMode } = useTheme();
@@ -48,12 +49,14 @@ export function ThemeToggle({
           className={cn(
             variant === "rail"
               ? "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
-              : "relative rounded-md border border-border bg-secondary p-2 text-foreground transition hover:bg-surface-hover",
+              : variant === "ghost"
+                ? headerIconButton
+                : "relative rounded-md border border-border bg-secondary p-2 text-foreground transition hover:bg-surface-hover",
             variant === "rail" && collapsed && "justify-center",
           )}
         >
           <span className="relative shrink-0">
-            <Icon className="size-4" />
+            <Icon className={variant === "ghost" ? "size-[18px]" : "size-4"} />
             {mode === "system" ? (
               <Monitor className="absolute -right-1.5 -bottom-1 size-2.5 rounded-sm bg-background" />
             ) : null}
@@ -71,6 +74,7 @@ export function ThemeToggle({
       <DropdownMenuContent
         side={variant === "rail" ? "right" : "bottom"}
         align="end"
+        sideOffset={8}
         className="w-52"
       >
         <DropdownMenuLabel className="text-[11px] text-muted-foreground">

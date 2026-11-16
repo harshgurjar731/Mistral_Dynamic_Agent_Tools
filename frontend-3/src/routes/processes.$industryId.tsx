@@ -129,7 +129,7 @@ function IndustryPage() {
       {/* ── Body ── */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside
-          className="custom-scrollbar h-fit max-h-[calc(100vh-12rem)] overflow-y-auto rounded-2xl border border-border/60 p-3 lg:sticky lg:top-6"
+          className="custom-scrollbar h-fit max-h-[calc(100vh-12rem)] overflow-y-auto rounded-2xl border border-border/60 p-3 lg:sticky lg:top-20"
           style={{ background: "var(--surface)" }}
         >
           <div className="mb-2 flex items-center justify-between px-1">

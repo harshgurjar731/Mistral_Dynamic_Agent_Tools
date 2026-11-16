@@ -42,7 +42,7 @@ function OntologyLibraryPage() {
   const library = data?.libraries.find((l) => l.id === libraryId);
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-[36rem] flex-col gap-3 p-3 sm:p-4 md:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-[36rem] flex-col gap-3 p-3 sm:p-4">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 px-1 text-xs">
         <Link to="/ontology" className="text-muted-foreground transition hover:text-foreground">
           Ontology

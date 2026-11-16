@@ -9,6 +9,7 @@ import { forgetRun, stopRun } from "@/lib/runs/connections";
 import { useElapsed } from "@/lib/runs/useRun";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { headerIconButton } from "@/components/layout/NavSection";
 import { useRunsStore, type TrackedRun } from "@/stores/runs";
 import { RunProgressBar, runPercent } from "./RunProgress";
 import {
@@ -261,9 +262,9 @@ export function RunsIndicator({
             type="button"
             aria-label="Background runs"
             title="Background runs"
-            className="grid size-7 place-items-center rounded-full border border-border/60 text-muted-foreground transition hover:border-border hover:text-foreground"
+            className={headerIconButton}
           >
-            <Layers className="size-3.5" />
+            <Layers className="size-[18px]" />
           </button>
         )}
       </PopoverTrigger>

@@ -103,7 +103,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** Structured data, laid out: figures as cards, record lists as tables, prose as markdown. */
-function DataView({ value, depth = 0 }: { value: unknown; depth?: number }) {
+export function DataView({ value, depth = 0 }: { value: unknown; depth?: number }) {
   const v = peel(value);
   if (typeof v === "string") return <Markdown content={v} className="text-[14px] leading-7" />;
   if (isScalar(v)) {
@@ -373,8 +373,7 @@ export function ExecutionResult({
               ))}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              The result appears here when the run finishes. Step-by-step progress is in the
-              execution details below.
+              The result appears here when the run finishes. Step-by-step progress is shown above.
             </p>
           </div>
         ) : (

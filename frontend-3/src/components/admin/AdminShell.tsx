@@ -3,8 +3,8 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   Building2,
-  ChevronsUpDown,
-  ExternalLink,
+  ChevronDown,
+  Globe,
   History,
   LayoutDashboard,
   Loader2,
@@ -23,7 +23,8 @@ import { useRef, useState, type ReactNode } from "react";
 import { adminApi, authKeys, type SessionAdmin } from "@/api/auth";
 import { PasswordCard } from "@/components/auth/AccountCards";
 import { BrandMark } from "@/components/auth/AuthParts";
-import { NavLink, NavSection, footerButton } from "@/components/layout/NavSection";
+import { Breadcrumb, HeaderBar } from "@/components/layout/AppHeader";
+import { NavLink, NavSection, headerIconButton } from "@/components/layout/NavSection";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import {
   DropdownMenu,
@@ -80,6 +81,10 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
       ? pathname === to || pathname === `${to}/`
       : pathname === to || pathname.startsWith(`${to}/`);
 
+  const current = NAV.flatMap((section) => section.items.map((item) => ({ section, item }))).find(
+    ({ item }) => active(item.to, item.exact),
+  );
+
   if (admin.must_change_password) return <ForcedPasswordChange admin={admin} />;
 
   return (
@@ -99,7 +104,7 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
           open ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex h-[73px] items-center gap-2 border-b border-border px-4">
+        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
           <BrandMark size="sm" to="/admin" />
           <button
             type="button"
@@ -110,12 +115,12 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
             <X className="size-4" />
           </button>
         </div>
-        <div className="border-b border-border px-3 py-2.5">
+        <div className="px-3 pt-3 pb-1">
           <span className="flex items-center gap-2 rounded-md border border-primary/25 bg-primary/8 px-2.5 py-1.5 text-[11px] font-semibold tracking-wide text-primary uppercase">
             <ShieldCheck className="size-3.5" /> Admin console
           </span>
         </div>
-        <nav aria-label="Admin" className="custom-scrollbar flex-1 overflow-y-auto px-2 py-3">
+        <nav aria-label="Admin" className="custom-scrollbar flex-1 overflow-y-auto px-2 pt-2 pb-4">
           {NAV.map((section, index) => (
             <NavSection
               key={section.label}
@@ -137,36 +142,49 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
             </NavSection>
           ))}
         </nav>
-        <div className="space-y-1 border-t border-border px-2 py-2">
-          <AdminMenu admin={admin} />
-          <div className="flex gap-0.5">
-            <div className="flex flex-1">
-              <ThemeToggle variant="rail" collapsed />
-            </div>
-            <a
-              href="/welcome"
-              className={footerButton}
-              title="Public site"
-              aria-label="Public site"
-            >
-              <ExternalLink className="size-4" />
-            </a>
-          </div>
-        </div>
       </aside>
 
       <div className="relative z-10 flex min-h-screen flex-col md:pl-64">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur-xl md:hidden">
-          <button
-            type="button"
-            aria-label="Open navigation"
-            onClick={() => setOpen(true)}
-            className="rounded-md border border-border bg-secondary p-2"
-          >
-            <Menu className="size-4" />
-          </button>
-          <span className="font-display text-sm font-bold">Admin console</span>
-        </header>
+        <HeaderBar
+          left={
+            <>
+              <button
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setOpen(true)}
+                className={cn(headerIconButton, "md:hidden")}
+              >
+                <Menu className="size-[18px]" />
+              </button>
+              {current ? (
+                <Breadcrumb
+                  section={current.section.label}
+                  page={current.item.label}
+                  pageTo={current.item.to}
+                />
+              ) : (
+                <span className="truncate text-sm font-semibold text-foreground">
+                  Admin console
+                </span>
+              )}
+            </>
+          }
+          right={
+            <>
+              <a
+                href="/welcome"
+                title="Public site"
+                aria-label="Public site"
+                className={cn(headerIconButton, "hidden sm:grid")}
+              >
+                <Globe className="size-[18px]" />
+              </a>
+              <ThemeToggle variant="ghost" />
+              <span aria-hidden className="mx-1 h-5 w-px bg-border" />
+              <AdminMenu admin={admin} />
+            </>
+          }
+        />
         <main ref={mainRef} className="w-full">
           {children}
         </main>
@@ -185,21 +203,28 @@ function AdminMenu({ admin }: { admin: SessionAdmin }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition hover:bg-surface-hover"
+          aria-label={`Admin account: ${admin.name}`}
+          className="flex items-center gap-2 rounded-full py-1 pr-2 pl-1 transition hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <span className="grid size-7 shrink-0 place-items-center rounded-full bg-gradient-brand text-[11px] font-bold text-primary-foreground">
             {initials(admin.name)}
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium text-foreground">{admin.name}</span>
-            <span className="block truncate text-[11px] text-muted-foreground">{admin.email}</span>
+          <span className="hidden max-w-[10rem] min-w-0 text-left lg:block">
+            <span className="block truncate text-xs leading-tight font-medium text-foreground">
+              {admin.name}
+            </span>
+            <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+              Platform admin
+            </span>
           </span>
-          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronDown className="hidden size-3.5 shrink-0 text-muted-foreground lg:block" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-56">
-        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-          Signed in as admin
+      <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-60">
+        <DropdownMenuLabel className="font-normal">
+          <span className="block truncate text-sm font-medium">{admin.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">{admin.email}</span>
+          <span className="mt-1.5 block text-[11px] text-muted-foreground">Signed in as admin</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>

@@ -123,3 +123,7 @@ export function NavLink({
 /** The small square buttons in a sidebar's footer row. */
 export const footerButton =
   "grid h-8 min-w-8 flex-1 place-items-center rounded-md text-muted-foreground transition hover:bg-surface-hover hover:text-foreground";
+
+/** An icon button in the top header. */
+export const headerIconButton =
+  "relative grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";

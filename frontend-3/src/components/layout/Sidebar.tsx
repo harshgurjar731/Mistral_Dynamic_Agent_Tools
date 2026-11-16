@@ -1,45 +1,38 @@
-import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  ChevronDown,
-  ChevronsLeft,
-  ChevronsRight,
-  ExternalLink,
-  Plus,
-  Boxes,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ChevronDown, Plus, Boxes, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { arrangeNav, groupRows, navLabel, parseNavLayout, type NavGroupId } from "./nav-items";
-import { NavLink, NavSection, footerButton } from "./NavSection";
-import { HealthIndicator } from "./HealthIndicator";
-import { RunsIndicator } from "@/components/runs/RunsIndicator";
-import { ThemeToggle } from "./ThemeToggle";
+import type { NavGroupId } from "./nav-items";
+import { NavLink, NavSection } from "./NavSection";
+import { useNavSections } from "./useNav";
 import { useSessionStore } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
 import { useUiConfig } from "@/lib/uiConfig";
-import { canOpen, useCurrentUser } from "@/lib/auth";
-import { UserMenu, WorkspaceSwitcher } from "@/components/auth/AccountMenus";
+import { WorkspaceSwitcher } from "@/components/auth/AccountMenus";
 import { ResizeHandle, type ResizablePanel } from "@/components/shared/ResizeHandle";
 
-/** Width comes from `--nav-w`, set by the app shell from `collapsed` and `resize`. */
+/**
+ * The pages, and nothing else: brand, workspace, then the tabs by section.
+ * Status, runs, notifications, theme and account are in the top header
+ * (AppHeader), and so is the button that collapses this rail.
+ *
+ * Width comes from `--nav-w`, set by the app shell from `collapsed` and `resize`.
+ */
 export function Sidebar({
-  collapsed,
-  onToggleCollapsed,
+  collapsed: railCollapsed,
   mobileOpen,
   onCloseMobile,
   resize,
 }: {
   collapsed: boolean;
-  onToggleCollapsed: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
   /** Present while expanded: the rail can then be dragged wider or narrower. */
   resize?: ResizablePanel | undefined;
 }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const ui = useUiConfig();
-  const user = useCurrentUser();
+  const { sections, active } = useNavSections();
+  // The phone drawer always shows labels; only the desktop rail collapses to icons.
+  const collapsed = railCollapsed && !mobileOpen;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [folded, setFolded] = useFoldedSections();
 
@@ -50,28 +43,7 @@ export function Sidebar({
 
   const generalSessions = useMemo(() => sessions.filter((s) => s.type === "general"), [sessions]);
 
-  const matches = (to: string) =>
-    to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
-  // Order, visibility and labels come from Settings → Layout → Navigation menu.
-  const sections = useMemo(
-    () =>
-      groupRows(
-        arrangeNav(parseNavLayout(ui.UI_NAV_LAYOUT))
-          .filter((r) => !r.hidden)
-          // Only pages the user's role in this workspace can open.
-          .filter((r) => canOpen(user, r.item.to)),
-      ).map(({ group, rows }) => ({
-        group,
-        items: rows.map((r) => ({ ...r.item, label: navLabel(r) })),
-      })),
-    [ui.UI_NAV_LAYOUT, user],
-  );
-  const navItems = useMemo(() => sections.flatMap((s) => s.items), [sections]);
-  // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
-  const activeTo = navItems
-    .filter((i) => matches(i.to))
-    .sort((a, b) => b.to.length - a.to.length)[0]?.to;
-  const isActive = (to: string) => to === activeTo;
+  const isActive = (to: string) => to === active?.item.to;
 
   const showLabels = !collapsed;
 
@@ -88,7 +60,7 @@ export function Sidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[var(--nav-w)] flex-col border-r border-border bg-sidebar backdrop-blur-xl",
+          "fixed inset-y-0 left-0 z-50 flex w-[min(18rem,85vw)] flex-col border-r border-border bg-sidebar backdrop-blur-xl md:w-[var(--nav-w)]",
           resize?.dragging
             ? "transition-transform duration-300 ease-out"
             : "transition-[width,transform] duration-300 ease-out",
@@ -98,35 +70,47 @@ export function Sidebar({
         {resize ? (
           <ResizeHandle panel={resize} label="Resize navigation" className="hidden md:flex" />
         ) : null}
-        <div className="flex h-[73px] items-center gap-2.5 border-b border-border px-4">
-          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary shadow-sm">
-            <Boxes className="size-5 text-primary-foreground" />
-          </span>
-          {showLabels ? (
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-display text-base font-bold leading-tight text-foreground">
-                {ui.UI_BRAND_TITLE}
-              </p>
-              <p className="mt-0.5 truncate text-[13px] leading-tight text-muted-foreground">
-                {ui.UI_BRAND_SUBTITLE}
-              </p>
-            </div>
-          ) : null}
+        <div
+          className={cn(
+            "flex h-14 shrink-0 items-center gap-2.5 border-b border-border",
+            collapsed ? "justify-center px-2" : "px-4",
+          )}
+        >
+          <Link
+            to="/"
+            onClick={onCloseMobile}
+            title={collapsed ? ui.UI_BRAND_TITLE : undefined}
+            className="flex min-w-0 items-center gap-2.5"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary shadow-sm ring-1 ring-primary/30">
+              <Boxes className="size-[18px] text-primary-foreground" />
+            </span>
+            {showLabels ? (
+              <span className="min-w-0">
+                <span className="block truncate font-display text-[15px] leading-tight font-bold text-foreground">
+                  {ui.UI_BRAND_TITLE}
+                </span>
+                <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+                  {ui.UI_BRAND_SUBTITLE}
+                </span>
+              </span>
+            ) : null}
+          </Link>
           <button
             type="button"
             onClick={onCloseMobile}
             aria-label="Close navigation"
-            className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-surface-hover hover:text-foreground md:hidden"
+            className="ml-auto rounded-md p-1.5 text-muted-foreground hover:bg-surface-hover hover:text-foreground md:hidden"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="border-b border-border px-2 py-2.5">
+        <div className="px-2 pt-3 pb-1">
           <WorkspaceSwitcher collapsed={collapsed} />
         </div>
 
-        <nav aria-label="Main" className="custom-scrollbar flex-1 overflow-y-auto px-2 py-3">
+        <nav aria-label="Main" className="custom-scrollbar flex-1 overflow-y-auto px-2 pt-2 pb-4">
           {sections.map(({ group, items }, index) => {
             // The section holding the current page never folds away.
             const holdsActive = items.some((i) => isActive(i.to));
@@ -210,45 +194,6 @@ export function Sidebar({
             );
           })}
         </nav>
-
-        <div className="space-y-1 border-t border-border px-2 py-2">
-          {/* Desktop only: on phones the top header carries these. */}
-          <div className="hidden space-y-0.5 md:block">
-            <RunsIndicator variant="rail" collapsed={collapsed} />
-            <HealthIndicator variant="rail" collapsed={collapsed} />
-          </div>
-          <div className="border-t border-border pt-1.5 md:mt-1">
-            <UserMenu collapsed={collapsed} />
-          </div>
-          <div className={cn("flex gap-0.5", collapsed && "flex-col")}>
-            <div className={cn("flex", collapsed ? "justify-center" : "flex-1")}>
-              <ThemeToggle variant="rail" collapsed />
-            </div>
-            <a
-              href="/docs"
-              target="_blank"
-              rel="noreferrer"
-              className={footerButton}
-              title="API docs (opens in a new tab)"
-              aria-label="API docs"
-            >
-              <ExternalLink className="size-4" />
-            </a>
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              className={cn(footerButton, "hidden md:grid")}
-              title={collapsed ? "Expand the menu" : "Collapse the menu"}
-              aria-label={collapsed ? "Expand the menu" : "Collapse the menu"}
-            >
-              {collapsed ? (
-                <ChevronsRight className="size-4" />
-              ) : (
-                <ChevronsLeft className="size-4" />
-              )}
-            </button>
-          </div>
-        </div>
       </aside>
     </>
   );

@@ -413,7 +413,7 @@ function OrchestratorChat() {
   const empty = !submittedQuery && !run.started && !answer;
 
   return (
-    <div className="relative mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-4xl md:min-h-dvh flex-col px-5 pb-8">
+    <div className="relative mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-4xl flex-col px-5 pb-8">
       {/* ── History toggle ── */}
       <div className="flex items-center justify-end gap-2 py-3">
         {!empty && (

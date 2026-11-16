@@ -156,34 +156,58 @@ export interface HumanReview {
 }
 
 export const knowledgeApi = {
-  items: (params: { kind?: string; status?: string; category?: string; concept_id?: string; source_id?: number } = {}) =>
-    get<{ items: KnowledgeItem[]; count: number }>("/api/knowledge/items", params),
+  items: (
+    params: {
+      kind?: string;
+      status?: string;
+      category?: string;
+      concept_id?: string;
+      source_id?: number;
+    } = {},
+  ) => get<{ items: KnowledgeItem[]; count: number }>("/api/knowledge/items", params),
   create: (body: ItemInput) => post<KnowledgeItem>("/api/knowledge/items", body),
-  update: (id: number, body: Partial<ItemInput>) => put<KnowledgeItem>(`/api/knowledge/items/${id}`, body),
+  update: (id: number, body: Partial<ItemInput>) =>
+    put<KnowledgeItem>(`/api/knowledge/items/${id}`, body),
   remove: (id: number) => del<{ deleted: number }>(`/api/knowledge/items/${id}`),
   setStatus: (ids: number[], status: ItemStatus) =>
     post<{ updated: number }>("/api/knowledge/items/status", { ids, status }),
   counts: () =>
-    get<{ counts: Partial<Record<KnowledgeKind, Partial<Record<ItemStatus, number>>>>; sources: number }>(
-      "/api/knowledge/counts",
-    ),
+    get<{
+      counts: Partial<Record<KnowledgeKind, Partial<Record<ItemStatus, number>>>>;
+      sources: number;
+    }>("/api/knowledge/counts"),
   vocabulary: () => get<KnowledgeVocabulary>("/api/knowledge/vocabulary"),
   sources: () => get<{ sources: KnowledgeSource[] }>("/api/knowledge/sources"),
-  addSource: (input: { file?: File; url?: string; text?: string; title?: string; concept_id?: string }) => {
+  addSource: (input: {
+    file?: File;
+    url?: string;
+    text?: string;
+    title?: string;
+    concept_id?: string;
+  }) => {
     const form = new FormData();
     if (input.file) form.append("file", input.file);
     if (input.url) form.append("url", input.url);
     if (input.text) form.append("text", input.text);
     if (input.title) form.append("title", input.title);
     if (input.concept_id) form.append("concept_id", input.concept_id);
-    return postForm<{ source: KnowledgeSource; result: DistillResult }>("/api/knowledge/sources", form);
+    return postForm<{ source: KnowledgeSource; result: DistillResult }>(
+      "/api/knowledge/sources",
+      form,
+    );
   },
   redistill: (id: number) => post<DistillResult>(`/api/knowledge/sources/${id}/distill`),
   removeSource: (id: number, items = true) =>
     del<{ deleted: boolean; items_removed: number }>(`/api/knowledge/sources/${id}`, { items }),
-  retrieve: (body: { goal: string; concept_ids?: string[]; facts?: Record<string, unknown>; subject?: string; include_proposed?: boolean }) =>
-    post<RetrieveResult>("/api/knowledge/retrieve", body),
-  feedback: () => get<{ items: FeedbackRow[]; rollback_threshold: number }>("/api/knowledge/feedback"),
+  retrieve: (body: {
+    goal: string;
+    concept_ids?: string[];
+    facts?: Record<string, unknown>;
+    subject?: string;
+    include_proposed?: boolean;
+  }) => post<RetrieveResult>("/api/knowledge/retrieve", body),
+  feedback: () =>
+    get<{ items: FeedbackRow[]; rollback_threshold: number }>("/api/knowledge/feedback"),
   embedMissing: () => post<{ embedded: number }>("/api/knowledge/embed"),
 };
 
@@ -201,9 +225,19 @@ export const recommendationsApi = {
 };
 
 export const reviewsApi = {
-  list: (status: string | null = "pending") =>
-    get<{ reviews: HumanReview[]; count: number }>("/api/reviews", status ? { status } : {}),
+  list: (status: string | null = "pending", executionId?: string | null) =>
+    get<{ reviews: HumanReview[]; count: number }>("/api/reviews", {
+      ...(status ? { status } : {}),
+      ...(executionId ? { execution_id: executionId } : {}),
+    }),
   get: (id: number) => get<HumanReview>(`/api/reviews/${id}`),
-  decide: (id: number, body: { decision: "approve" | "edit" | "reject"; comment?: string; edits?: Record<string, unknown>; decided_by?: string }) =>
-    post<HumanReview>(`/api/reviews/${id}/decision`, body),
+  decide: (
+    id: number,
+    body: {
+      decision: "approve" | "edit" | "reject";
+      comment?: string;
+      edits?: Record<string, unknown>;
+      decided_by?: string;
+    },
+  ) => post<HumanReview>(`/api/reviews/${id}/decision`, body),
 };

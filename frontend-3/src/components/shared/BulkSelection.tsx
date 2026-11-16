@@ -90,7 +90,7 @@ export function BulkActionBar({
   return (
     // Quiet until something is picked; then a compact pill that stays in reach
     // while the list scrolls. Same height either way, so the grid never jumps.
-    <div className={cn("flex h-10 items-center", n > 0 && "sticky top-3 z-30", className)}>
+    <div className={cn("flex h-10 items-center", n > 0 && "sticky top-[4.25rem] z-20", className)}>
       <div
         className={cn(
           "flex h-10 items-center gap-1 rounded-full border text-xs transition-[background-color,border-color,box-shadow] duration-200",

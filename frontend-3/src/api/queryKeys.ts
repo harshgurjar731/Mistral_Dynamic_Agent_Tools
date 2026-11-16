@@ -113,4 +113,6 @@ export const QK = {
   knowledgeSources: () => ["knowledge", "sources"] as const,
   knowledgeFeedback: () => ["knowledge", "feedback"] as const,
   reviews: (status: string | null = "pending") => ["reviews", status] as const,
+  executionReviews: (executionId: string) => ["reviews", "execution", executionId] as const,
+  review: (id: number) => ["reviews", "one", id] as const,
 };

@@ -31,7 +31,7 @@ function EditWorkflowPage() {
   });
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] flex-col gap-3 px-4 py-3 md:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col gap-3 px-4 py-3">
       <BuilderHeader
         title={workflowName}
         description="Saving keeps the change local. Publishing recompiles the module and re-registers it with the worker."

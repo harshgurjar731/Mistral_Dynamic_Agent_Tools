@@ -1,6 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Building2, Check, ChevronsUpDown, Loader2, LogOut, UserRound } from "lucide-react";
+import {
+  Building2,
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Loader2,
+  LogOut,
+  UserRound,
+} from "lucide-react";
 import { toast } from "sonner";
 import { authApi } from "@/api/auth";
 import { errorMessage } from "@/api/client";
@@ -97,44 +105,87 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-export function UserMenu({ collapsed }: { collapsed: boolean }) {
+export function UserMenu({
+  collapsed = false,
+  variant = "rail",
+}: {
+  collapsed?: boolean;
+  /** rail: a sidebar row; header: the avatar (and, on wide screens, the name) in the top bar. */
+  variant?: "rail" | "header";
+}) {
   const user = useCurrentUser();
   const logout = useMutation({
     mutationFn: authApi.logout,
     onSettled: () => window.location.assign("/"),
   });
   if (!user) return null;
+  const header = variant === "header";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          title={collapsed ? user.name : undefined}
-          className={cn(
-            "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition hover:bg-surface-hover",
-            collapsed && "justify-center px-0",
-          )}
-        >
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-gradient-brand text-[11px] font-bold text-primary-foreground">
-            {initials(user.name)}
-          </span>
-          {!collapsed ? (
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs font-medium text-foreground">
+        {header ? (
+          <button
+            type="button"
+            aria-label={`Account: ${user.name}`}
+            className="flex items-center gap-2 rounded-full py-1 pr-2 pl-1 transition hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-gradient-brand text-[11px] font-bold text-primary-foreground">
+              {initials(user.name)}
+            </span>
+            <span className="hidden max-w-[10rem] min-w-0 text-left lg:block">
+              <span className="block truncate text-xs leading-tight font-medium text-foreground">
                 {user.name}
               </span>
-              <span className="block truncate text-[11px] text-muted-foreground">{user.email}</span>
+              <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+                {user.workspace.role_name ?? user.workspace.name}
+              </span>
             </span>
-          ) : null}
-          {!collapsed ? (
-            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : null}
-        </button>
+            <ChevronDown className="hidden size-3.5 shrink-0 text-muted-foreground lg:block" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            title={collapsed ? user.name : undefined}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition hover:bg-surface-hover",
+              collapsed && "justify-center px-0",
+            )}
+          >
+            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-gradient-brand text-[11px] font-bold text-primary-foreground">
+              {initials(user.name)}
+            </span>
+            {!collapsed ? (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium text-foreground">
+                  {user.name}
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {user.email}
+                </span>
+              </span>
+            ) : null}
+            {!collapsed ? (
+              <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : null}
+          </button>
+        )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side={collapsed ? "right" : "top"} className="w-60">
+      <DropdownMenuContent
+        align={header ? "end" : "start"}
+        side={header ? "bottom" : collapsed ? "right" : "top"}
+        sideOffset={8}
+        className="w-64"
+      >
         <DropdownMenuLabel className="font-normal">
           <span className="block truncate text-sm font-medium">{user.name}</span>
           <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+          <span className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Building2 className="size-3 shrink-0" />
+            <span className="truncate">
+              {user.workspace.name}
+              {user.workspace.role_name ? ` · ${user.workspace.role_name}` : ""}
+            </span>
+          </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>

@@ -32,9 +32,19 @@ export function VocabularyTab() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [activeScheme, setActiveScheme] = useState<string>("");
-  const [conceptDialog, setConceptDialog] = useState<{ mode: "create" | "edit"; concept?: Concept | undefined; parentId?: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ kind: "scheme" | "concept"; id: string } | null>(null);
-  const [schemeDialog, setSchemeDialog] = useState<{ mode: "create" | "edit"; scheme?: ConceptScheme } | null>(null);
+  const [conceptDialog, setConceptDialog] = useState<{
+    mode: "create" | "edit";
+    concept?: Concept | undefined;
+    parentId?: string;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    kind: "scheme" | "concept";
+    id: string;
+  } | null>(null);
+  const [schemeDialog, setSchemeDialog] = useState<{
+    mode: "create" | "edit";
+    scheme?: ConceptScheme;
+  } | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   const schemesQ = useQuery({
@@ -67,7 +77,8 @@ export function VocabularyTab() {
   });
 
   const createScheme = useMutation({
-    mutationFn: (body: { id: string; label: string; description?: string }) => ontologyApi.createScheme(body),
+    mutationFn: (body: { id: string; label: string; description?: string }) =>
+      ontologyApi.createScheme(body),
     onSuccess: () => {
       toast.success("Scheme created.");
       setSchemeDialog(null);
@@ -86,7 +97,8 @@ export function VocabularyTab() {
     onError: (e) => toast.error(errorMessage(e)),
   });
   const deleteScheme = useMutation({
-    mutationFn: ({ id, cascade }: { id: string; cascade: boolean }) => ontologyApi.deleteScheme(id, cascade),
+    mutationFn: ({ id, cascade }: { id: string; cascade: boolean }) =>
+      ontologyApi.deleteScheme(id, cascade),
     onSuccess: () => {
       toast.success("Scheme deleted.");
       setDeleteTarget(null);
@@ -96,7 +108,8 @@ export function VocabularyTab() {
   });
 
   const createConcept = useMutation({
-    mutationFn: (body: Parameters<typeof ontologyApi.createConcept>[0]) => ontologyApi.createConcept(body),
+    mutationFn: (body: Parameters<typeof ontologyApi.createConcept>[0]) =>
+      ontologyApi.createConcept(body),
     onSuccess: () => {
       toast.success("Concept created.");
       setConceptDialog(null);
@@ -105,8 +118,13 @@ export function VocabularyTab() {
     onError: (e) => toast.error(errorMessage(e)),
   });
   const updateConcept = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Parameters<typeof ontologyApi.updateConcept>[1] }) =>
-      ontologyApi.updateConcept(id, body),
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: Parameters<typeof ontologyApi.updateConcept>[1];
+    }) => ontologyApi.updateConcept(id, body),
     onSuccess: () => {
       toast.success("Concept updated.");
       setConceptDialog(null);
@@ -115,7 +133,8 @@ export function VocabularyTab() {
     onError: (e) => toast.error(errorMessage(e)),
   });
   const deleteConcept = useMutation({
-    mutationFn: ({ id, cascade }: { id: string; cascade: boolean }) => ontologyApi.deleteConcept(id, cascade),
+    mutationFn: ({ id, cascade }: { id: string; cascade: boolean }) =>
+      ontologyApi.deleteConcept(id, cascade),
     onSuccess: () => {
       toast.success("Concept deleted.");
       setDeleteTarget(null);
@@ -157,8 +176,13 @@ export function VocabularyTab() {
     [groups, openGroups, searching],
   );
   const allowed = useAllowed();
-  const selection = useBulkSelection(shownConcepts, (c) => c.id, () => true, (c) => c.label,
-    allowed("DELETE", "/api/ontology/concepts/x"));
+  const selection = useBulkSelection(
+    shownConcepts,
+    (c) => c.id,
+    () => true,
+    (c) => c.label,
+    allowed("DELETE", "/api/ontology/concepts/x"),
+  );
   const bulkDelete = useBulkDelete({
     noun: "concept",
     // Concepts are graph entities, so deletion cascades: descendants and all
@@ -171,16 +195,16 @@ export function VocabularyTab() {
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
       {/* ── Schemes rail ── */}
-      <GlassPanel className="lg:sticky lg:top-0">
+      <GlassPanel className="lg:sticky lg:top-16">
         <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <div>
             <p className="text-sm font-semibold text-foreground">Schemes</p>
             <p className="text-[11px] text-muted-foreground">Top-level groupings</p>
           </div>
           {allowed("POST", "/api/ontology/schemes") ? (
-          <Button size="sm" variant="outline" onClick={() => setSchemeDialog({ mode: "create" })}>
-            <Plus className="size-3.5" /> New
-          </Button>
+            <Button size="sm" variant="outline" onClick={() => setSchemeDialog({ mode: "create" })}>
+              <Plus className="size-3.5" /> New
+            </Button>
           ) : null}
         </div>
         <ul className="custom-scrollbar max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
@@ -198,10 +222,12 @@ export function VocabularyTab() {
               count={activeScheme === "" ? conceptCount.get(sc.id) : undefined}
               active={activeScheme === sc.id}
               onSelect={() => setActiveScheme(sc.id)}
-              {...(allowed("PATCH", "/api/ontology/schemes/x") ? {
-                onEdit: () => setSchemeDialog({ mode: "edit", scheme: sc }),
-                onDelete: () => setDeleteTarget({ kind: "scheme", id: sc.id }),
-              } : {})}
+              {...(allowed("PATCH", "/api/ontology/schemes/x")
+                ? {
+                    onEdit: () => setSchemeDialog({ mode: "edit", scheme: sc }),
+                    onDelete: () => setDeleteTarget({ kind: "scheme", id: sc.id }),
+                  }
+                : {})}
             />
           ))}
         </ul>
@@ -237,13 +263,13 @@ export function VocabularyTab() {
             </Button>
           ) : null}
           {allowed("POST", "/api/ontology/concepts") ? (
-          <Button
-            size="sm"
-            onClick={() => setConceptDialog({ mode: "create" })}
-            disabled={schemes.length === 0}
-          >
-            <Plus className="size-3.5" /> New concept
-          </Button>
+            <Button
+              size="sm"
+              onClick={() => setConceptDialog({ mode: "create" })}
+              disabled={schemes.length === 0}
+            >
+              <Plus className="size-3.5" /> New concept
+            </Button>
           ) : null}
         </div>
 
@@ -255,53 +281,61 @@ export function VocabularyTab() {
           ) : filtered.length === 0 ? (
             <EmptyState
               title={searching ? "Nothing matches." : "No vocabulary loaded."}
-              description={searching ? "Try another term or synonym." : "Create a scheme and add concepts."}
+              description={
+                searching ? "Try another term or synonym." : "Create a scheme and add concepts."
+              }
             />
           ) : (
             <>
-            <BulkActionBar
-              selection={selection}
-              noun="concept"
-              onDelete={bulkDelete.run}
-              deleting={bulkDelete.running}
-              warning="Deletion cascades: each concept's descendants and every annotation on them are deleted too, and all of them are removed from the knowledge graph."
-            />
-            {groups.map((g) => {
-              const open = isOpen(g.id);
-              return (
-                <section key={g.id} className="overflow-hidden rounded-xl border border-border/60">
-                  <button
-                    type="button"
-                    onClick={() => setOpenGroups((o) => ({ ...o, [g.id]: !open }))}
-                    aria-expanded={open}
-                    className="flex w-full items-center gap-2 bg-background-elevated/60 px-3 py-2.5 text-left transition hover:bg-surface-hover"
+              <BulkActionBar
+                selection={selection}
+                noun="concept"
+                onDelete={bulkDelete.run}
+                deleting={bulkDelete.running}
+                warning="Deletion cascades: each concept's descendants and every annotation on them are deleted too, and all of them are removed from the knowledge graph."
+              />
+              {groups.map((g) => {
+                const open = isOpen(g.id);
+                return (
+                  <section
+                    key={g.id}
+                    className="overflow-hidden rounded-xl border border-border/60"
                   >
-                    <ChevronRight
-                      className={cn("size-3.5 text-muted-foreground transition", open && "rotate-90")}
-                    />
-                    <span className="text-sm font-semibold text-foreground">{g.label}</span>
-                    <span className="font-mono text-[10px] text-muted-foreground">{g.id}</span>
-                    <span className="ml-auto rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground tabular-nums">
-                      {g.items.length}
-                    </span>
-                  </button>
-                  {open ? (
-                    <ul className="grid gap-px border-t border-border/60 bg-border/40 xl:grid-cols-2">
-                      {g.items.map((c) => (
-                        <ConceptRow
-                          key={c.id}
-                          concept={c}
-                          selection={selection}
-                          onAddChild={() => setConceptDialog({ mode: "create", parentId: c.id })}
-                          onEdit={() => setConceptDialog({ mode: "edit", concept: c })}
-                          onDelete={() => setDeleteTarget({ kind: "concept", id: c.id })}
-                        />
-                      ))}
-                    </ul>
-                  ) : null}
-                </section>
-              );
-            })}
+                    <button
+                      type="button"
+                      onClick={() => setOpenGroups((o) => ({ ...o, [g.id]: !open }))}
+                      aria-expanded={open}
+                      className="flex w-full items-center gap-2 bg-background-elevated/60 px-3 py-2.5 text-left transition hover:bg-surface-hover"
+                    >
+                      <ChevronRight
+                        className={cn(
+                          "size-3.5 text-muted-foreground transition",
+                          open && "rotate-90",
+                        )}
+                      />
+                      <span className="text-sm font-semibold text-foreground">{g.label}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">{g.id}</span>
+                      <span className="ml-auto rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+                        {g.items.length}
+                      </span>
+                    </button>
+                    {open ? (
+                      <ul className="grid gap-px border-t border-border/60 bg-border/40 xl:grid-cols-2">
+                        {g.items.map((c) => (
+                          <ConceptRow
+                            key={c.id}
+                            concept={c}
+                            selection={selection}
+                            onAddChild={() => setConceptDialog({ mode: "create", parentId: c.id })}
+                            onEdit={() => setConceptDialog({ mode: "edit", concept: c })}
+                            onDelete={() => setDeleteTarget({ kind: "concept", id: c.id })}
+                          />
+                        ))}
+                      </ul>
+                    ) : null}
+                  </section>
+                );
+              })}
             </>
           )}
         </div>
@@ -310,7 +344,9 @@ export function VocabularyTab() {
       <Dialog open={!!schemeDialog} onOpenChange={(o) => !o && setSchemeDialog(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{schemeDialog?.mode === "edit" ? "Edit scheme" : "New scheme"}</DialogTitle>
+            <DialogTitle>
+              {schemeDialog?.mode === "edit" ? "Edit scheme" : "New scheme"}
+            </DialogTitle>
           </DialogHeader>
           <SchemeForm
             scheme={schemeDialog?.scheme}
@@ -330,7 +366,9 @@ export function VocabularyTab() {
       <Dialog open={!!conceptDialog} onOpenChange={(o) => !o && setConceptDialog(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{conceptDialog?.mode === "edit" ? "Edit concept" : "New concept"}</DialogTitle>
+            <DialogTitle>
+              {conceptDialog?.mode === "edit" ? "Edit concept" : "New concept"}
+            </DialogTitle>
           </DialogHeader>
           <ConceptForm
             concept={conceptDialog?.concept}
@@ -357,8 +395,9 @@ export function VocabularyTab() {
           </DialogHeader>
           {deleteTarget?.kind === "concept" && usageQ.data ? (
             <p className="text-sm text-muted-foreground">
-              This concept has {usageQ.data.children.length} children, {usageQ.data.annotations} annotation(s)
-              affecting {usageQ.data.subjects.length} subject(s). A cascading delete removes all of it.
+              This concept has {usageQ.data.children.length} children, {usageQ.data.annotations}{" "}
+              annotation(s) affecting {usageQ.data.subjects.length} subject(s). A cascading delete
+              removes all of it.
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -370,7 +409,8 @@ export function VocabularyTab() {
               variant="outline"
               onClick={() => {
                 if (!deleteTarget) return;
-                if (deleteTarget.kind === "scheme") deleteScheme.mutate({ id: deleteTarget.id, cascade: false });
+                if (deleteTarget.kind === "scheme")
+                  deleteScheme.mutate({ id: deleteTarget.id, cascade: false });
                 else deleteConcept.mutate({ id: deleteTarget.id, cascade: false });
               }}
             >
@@ -380,7 +420,8 @@ export function VocabularyTab() {
               variant="destructive"
               onClick={() => {
                 if (!deleteTarget) return;
-                if (deleteTarget.kind === "scheme") deleteScheme.mutate({ id: deleteTarget.id, cascade: true });
+                if (deleteTarget.kind === "scheme")
+                  deleteScheme.mutate({ id: deleteTarget.id, cascade: true });
                 else deleteConcept.mutate({ id: deleteTarget.id, cascade: true });
               }}
             >
@@ -416,10 +457,25 @@ function SchemeForm({
       }}
     >
       {!editing ? (
-        <Input placeholder="id (e.g. domain)" value={id} onChange={(e) => setId(e.target.value)} required />
+        <Input
+          placeholder="id (e.g. domain)"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          required
+        />
       ) : null}
-      <Input placeholder="Label" value={label} onChange={(e) => setLabel(e.target.value)} required />
-      <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+      <Input
+        placeholder="Label"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        required
+      />
+      <Textarea
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={3}
+      />
       <DialogFooter>
         <Button type="submit" disabled={pending}>
           {pending ? "Saving…" : "Save"}
@@ -447,7 +503,9 @@ function ConceptForm({
   editing?: boolean | undefined;
 }) {
   const [id, setId] = useState(concept?.id ?? "");
-  const [schemeId, setSchemeId] = useState(concept?.scheme_id ?? defaultScheme ?? schemes[0]?.id ?? "");
+  const [schemeId, setSchemeId] = useState(
+    concept?.scheme_id ?? defaultScheme ?? schemes[0]?.id ?? "",
+  );
   const [label, setLabel] = useState(concept?.label ?? "");
   const [definition, setDefinition] = useState(concept?.definition ?? "");
   const [synonyms, setSynonyms] = useState((concept?.synonyms ?? []).join(", "));
@@ -456,17 +514,32 @@ function ConceptForm({
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        const synonymList = synonyms.split(",").map((s) => s.trim()).filter(Boolean);
+        const synonymList = synonyms
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
         if (editing) {
           onSubmit({ label, definition, synonyms: synonymList });
         } else {
-          onSubmit({ id, scheme_id: schemeId, label, definition, synonyms: synonymList, parent_id: parentId ?? null });
+          onSubmit({
+            id,
+            scheme_id: schemeId,
+            label,
+            definition,
+            synonyms: synonymList,
+            parent_id: parentId ?? null,
+          });
         }
       }}
     >
       {!editing ? (
         <>
-          <Input placeholder="domain.bfsi.banking" value={id} onChange={(e) => setId(e.target.value)} required />
+          <Input
+            placeholder="domain.bfsi.banking"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            required
+          />
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={schemeId}
@@ -480,9 +553,23 @@ function ConceptForm({
           </select>
         </>
       ) : null}
-      <Input placeholder="Label" value={label} onChange={(e) => setLabel(e.target.value)} required />
-      <Textarea placeholder="Definition" value={definition} onChange={(e) => setDefinition(e.target.value)} rows={2} />
-      <Input placeholder="Synonyms, comma separated" value={synonyms} onChange={(e) => setSynonyms(e.target.value)} />
+      <Input
+        placeholder="Label"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        required
+      />
+      <Textarea
+        placeholder="Definition"
+        value={definition}
+        onChange={(e) => setDefinition(e.target.value)}
+        rows={2}
+      />
+      <Input
+        placeholder="Synonyms, comma separated"
+        value={synonyms}
+        onChange={(e) => setSynonyms(e.target.value)}
+      />
       <DialogFooter>
         <Button type="submit" disabled={pending}>
           {pending ? "Saving…" : "Save"}
@@ -517,10 +604,17 @@ function SchemeRow({
       )}
     >
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 px-2.5 py-1.5 text-left">
-        <span className={cn("block truncate text-xs font-medium", active ? "text-primary" : "text-foreground")}>
+        <span
+          className={cn(
+            "block truncate text-xs font-medium",
+            active ? "text-primary" : "text-foreground",
+          )}
+        >
           {label}
         </span>
-        {sub ? <span className="block truncate font-mono text-[10px] text-muted-foreground">{sub}</span> : null}
+        {sub ? (
+          <span className="block truncate font-mono text-[10px] text-muted-foreground">{sub}</span>
+        ) : null}
       </button>
       {typeof count === "number" ? (
         <span className="px-1 text-[10px] text-muted-foreground tabular-nums">{count}</span>
@@ -581,20 +675,28 @@ function ConceptRow({
           ) : null}
         </p>
         <p className="truncate font-mono text-[10px] text-muted-foreground">{c.id}</p>
-        {c.definition ? <p className="truncate text-xs text-muted-foreground">{c.definition}</p> : null}
+        {c.definition ? (
+          <p className="truncate text-xs text-muted-foreground">{c.definition}</p>
+        ) : null}
       </div>
       {canEdit ? (
-      <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
-        <Button size="sm" variant="ghost" title="Add a child concept" onClick={onAddChild}>
-          <Plus className="size-3.5" />
-        </Button>
-        <Button size="sm" variant="ghost" title="Edit" onClick={onEdit}>
-          <Pencil className="size-3.5" />
-        </Button>
-        <Button size="sm" variant="ghost" title="Delete" className="text-red hover:text-red" onClick={onDelete}>
-          <Trash2 className="size-3.5" />
-        </Button>
-      </div>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition group-hover:opacity-100">
+          <Button size="sm" variant="ghost" title="Add a child concept" onClick={onAddChild}>
+            <Plus className="size-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" title="Edit" onClick={onEdit}>
+            <Pencil className="size-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Delete"
+            className="text-red hover:text-red"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
       ) : null}
     </li>
   );

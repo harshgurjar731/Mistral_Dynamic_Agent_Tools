@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Eraser,
   FileText,
   History,
   Link2,
@@ -38,12 +39,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { BLOCK, blockForMode } from "@/lib/terminology";
 import { cn } from "@/lib/utils";
 import { DocumentInput } from "./DocumentInput";
+import { canStructure, StructuredInput } from "./StructuredInput";
 import {
   buildPayload,
   emptyDocuments,
   examplePayload,
   exampleValue,
+  holdsExample,
   initialValue,
+  prefillValue,
   isDocumentValue,
   isEmpty,
   resolveFields,
@@ -353,8 +357,8 @@ function FieldControl({
           ) : null}
         </div>
       );
-    case "json":
-      return (
+    case "json": {
+      const jsonEditor = (
         <div>
           <Textarea
             id={id}
@@ -393,6 +397,19 @@ function FieldControl({
           })()}
         </div>
       );
+      return canStructure(r) ? (
+        <StructuredInput
+          r={r}
+          id={id}
+          text={text}
+          onChange={onChange}
+          onBlur={onBlur}
+          jsonEditor={jsonEditor}
+        />
+      ) : (
+        jsonEditor
+      );
+    }
     case "currency":
       return (
         <Adorned prefix={<Banknote className="size-3.5" />}>
@@ -611,7 +628,12 @@ export function WorkflowRunForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const fields = useMemo(() => resolveFields(definition), [signature]);
   const usesForm = fields.length > 0;
+  // The form opens filled with the workflow's example run, ready to send.
   const initial = useMemo(
+    () => Object.fromEntries(fields.map((r) => [r.name, prefillValue(r)])) as FormValues,
+    [fields],
+  );
+  const blank = useMemo(
     () => Object.fromEntries(fields.map((r) => [r.name, initialValue(r)])) as FormValues,
     [fields],
   );
@@ -789,9 +811,25 @@ export function WorkflowRunForm({
     setValues(initial);
     setTouched({});
     setSubmitted(false);
+    setJsonText(mode === "json" ? JSON.stringify(examplePayload(fields), null, 2) : "{}");
+    setJsonError(null);
+  };
+
+  const clearAll = () => {
+    setValues((prev) => {
+      const next = { ...blank };
+      // An upload in flight must not be reset.
+      for (const r of fields)
+        if (r.control === "file" && isDocumentValue(prev[r.name])) next[r.name] = prev[r.name]!;
+      return next;
+    });
+    setTouched({});
+    setSubmitted(false);
     setJsonText("{}");
     setJsonError(null);
   };
+
+  const exampleHeld = fields.filter((r) => holdsExample(r, values[r.name])).length;
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -911,9 +949,31 @@ export function WorkflowRunForm({
             onClick={reset}
             className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-border hover:text-foreground"
           >
-            <RotateCcw className="size-3" /> Reset
+            <RotateCcw className="size-3" /> Restore example
           </button>
+          {usesForm ? (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-border hover:text-foreground"
+            >
+              <Eraser className="size-3" /> Clear all
+            </button>
+          ) : null}
         </div>
+
+        {usesForm && mode === "form" && exampleHeld > 0 ? (
+          <div className="mt-2.5 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            <WandSparkles className="mt-0.5 size-3 shrink-0 text-primary" />
+            <span>
+              {exampleHeld === fields.length
+                ? "Every field holds"
+                : `${exampleHeld} field${exampleHeld === 1 ? "" : "s"} hold`}{" "}
+              the workflow&apos;s example values. Replace them with real data, or run as is to try
+              the workflow.
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Fields */}

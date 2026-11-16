@@ -9,20 +9,19 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { Menu, ServerCrash } from "lucide-react";
+import { ServerCrash } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { HealthIndicator } from "@/components/layout/HealthIndicator";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { BackgroundRuns } from "@/components/runs/BackgroundRuns";
-import { RunsIndicator } from "@/components/runs/RunsIndicator";
+import { ExecutionWatcher } from "@/components/runs/ExecutionWatcher";
 import { AppConfigApplier } from "@/components/layout/AppConfigApplier";
 import { useUiConfig } from "@/lib/uiConfig";
 import { THEME_BOOT_SCRIPT, useTheme } from "@/lib/theme";
-import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useResizablePanel } from "@/components/shared/ResizeHandle";
 import { cn } from "@/lib/utils";
 import { RunQuestions } from "@/components/runs/RunQuestions";
@@ -309,10 +308,6 @@ function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSetting
 
         <Sidebar
           collapsed={collapsed}
-          onToggleCollapsed={() => {
-            setTouched(true);
-            setCollapsed((c) => !c);
-          }}
           mobileOpen={mobileOpen}
           onCloseMobile={() => setMobileOpen(false)}
           resize={collapsed ? undefined : navPanel}
@@ -325,27 +320,16 @@ function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSetting
             !navPanel.dragging && "transition-[padding] duration-300 ease-out",
           )}
         >
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur-xl md:hidden">
-            <button
-              type="button"
-              aria-label="Open navigation"
-              onClick={() => setMobileOpen(true)}
-              className="rounded-md border border-border bg-secondary p-2 text-foreground"
-            >
-              <Menu className="size-4" />
-            </button>
-            <span className="truncate font-display text-sm font-bold text-foreground">
-              {ui.UI_BRAND_TITLE} {ui.UI_BRAND_SUBTITLE}
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              <RunsIndicator />
-              <HealthIndicator />
-              <ThemeToggle />
-            </div>
-          </header>
+          <AppHeader
+            collapsed={collapsed}
+            onToggleCollapsed={() => {
+              setTouched(true);
+              setCollapsed((c) => !c);
+            }}
+            onOpenMobile={() => setMobileOpen(true)}
+          />
 
-          {/* Required: nested routes render here. */}
-          {/* Full width, no top bar on desktop: the run and health indicators live in the sidebar. */}
+          {/* Required: nested routes render here. Full-height pages subtract the header (3.5rem). */}
           <main ref={mainRef} className="relative z-10 min-h-[60vh] w-full">
             <GuardedOutlet user={user} canEditSettings={canEditSettings} />
           </main>
@@ -356,6 +340,8 @@ function AppShell({ user, canEditSettings }: { user: SessionUser; canEditSetting
         <ActivityTray />
       </div>
       <BackgroundRuns />
+      {/* Workflow runs ending, and runs waiting for a review — wherever you are. */}
+      <ExecutionWatcher />
       {/* A run waiting on an answer, wherever you are — unless its page shows it. */}
       <RunQuestions />
     </>

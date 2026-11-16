@@ -56,7 +56,7 @@ function VisualBuilderPage() {
   });
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] flex-col gap-3 px-4 py-3 md:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col gap-3 px-4 py-3">
       <BuilderHeader
         title={from ? `Copy of ${from}` : "New workflow"}
         description={

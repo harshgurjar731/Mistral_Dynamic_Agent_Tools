@@ -505,7 +505,7 @@ function AgentsIdPage() {
   const contextWindow = findModel(allModels, form.model)?.max_context_length ?? null;
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col md:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col">
       {/* ── Top Bar ── */}
       <header className="relative z-30 flex items-center gap-3 border-b border-border px-5 py-3">
         {/* Back + Sessions dropdown */}

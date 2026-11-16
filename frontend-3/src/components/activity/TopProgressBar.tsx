@@ -75,7 +75,7 @@ export function TopProgressBar() {
       {captioned && shown && loading && load.started > 0 ? (
         <div
           role="status"
-          className="pointer-events-none fixed top-2 left-1/2 z-[80] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-border glass-elevated px-3 py-1 text-[11px] text-muted-foreground md:left-[calc(50%+var(--nav-w)/2)]"
+          className="pointer-events-none fixed top-[4.25rem] left-1/2 z-[80] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-border glass-elevated px-3 py-1 text-[11px] text-muted-foreground md:left-[calc(50%+var(--nav-w)/2)]"
         >
           <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
           <span className="shrink-0 text-foreground">Loading page data</span>

@@ -211,7 +211,7 @@ function OntologyPage() {
   const fillsFrame = active.view.value === "graph";
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-[34rem] flex-col p-3 sm:p-4 md:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] min-h-[34rem] flex-col p-3 sm:p-4">
       {/* The open feature, as one card that fills the page. */}
       <section className="glass flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl">
         <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/60 px-3 py-2.5 sm:px-4">

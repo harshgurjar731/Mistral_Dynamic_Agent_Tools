@@ -473,7 +473,7 @@ function AiPlannerPage() {
   return (
     <div
       className={cn(
-        "relative mx-auto flex min-h-[calc(100vh-6rem)] w-full flex-col px-5 py-6 transition-[max-width] duration-500",
+        "relative mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full flex-col px-5 py-6 transition-[max-width] duration-500",
         showRefine ? "max-w-6xl" : "max-w-3xl",
       )}
     >

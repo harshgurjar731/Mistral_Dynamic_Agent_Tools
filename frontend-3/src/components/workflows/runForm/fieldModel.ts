@@ -550,6 +550,9 @@ export function exampleValue(r: ResolvedField): FieldValue {
   if (ex !== undefined && ex !== null) {
     if (r.control === "boolean") return ex === true || ex === "true";
     if (r.control === "list") return Array.isArray(ex) ? ex.map(String) : [String(ex)];
+    // Date inputs only show their own format.
+    if (r.control === "datetime" && typeof ex === "string") return toLocalDateTime(ex);
+    if (r.control === "date" && typeof ex === "string") return ex.slice(0, 10);
     return typeof ex === "object" ? JSON.stringify(ex, null, 2) : String(ex);
   }
   const today = new Date();
@@ -586,6 +589,40 @@ export function exampleValue(r: ResolvedField): FieldValue {
     default:
       return `Sample ${r.label.toLowerCase()}`;
   }
+}
+
+/**
+ * What a field starts with when the form opens: its default, else the
+ * workflow's own example — the input designer gives every field one that
+ * passes the run check, so the form can be run as it opens. A structured
+ * input without an example starts as the empty shape of its schema, so its
+ * fields show. A field with neither starts empty.
+ */
+export function prefillValue(r: ResolvedField): FieldValue {
+  if (r.control === "file") return emptyDocuments();
+  const d = r.field.default;
+  if (d !== undefined && d !== null) return initialValue(r);
+  const ex = r.field.example;
+  if (ex !== undefined && ex !== null && ex !== "") return exampleValue(r);
+  if (r.control === "json" && r.field.schema) return exampleValue(r);
+  return initialValue(r);
+}
+
+/** True while the field holds exactly the workflow's example. */
+export function holdsExample(r: ResolvedField, v: FieldValue | undefined): boolean {
+  const ex = r.field.example;
+  if (r.control === "file" || ex === undefined || ex === null || ex === "" || v === undefined)
+    return false;
+  const sample = exampleValue(r);
+  if (Array.isArray(v) && Array.isArray(sample)) return v.join("\u0000") === sample.join("\u0000");
+  if (typeof v === "string" && typeof sample === "string" && r.control === "json") {
+    try {
+      return JSON.stringify(JSON.parse(v)) === JSON.stringify(JSON.parse(sample));
+    } catch {
+      return false;
+    }
+  }
+  return v === sample;
 }
 
 /** The whole example run, as the JSON editor shows it. Documents are left out. */

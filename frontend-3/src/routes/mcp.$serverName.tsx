@@ -292,7 +292,7 @@ function McpServerPage() {
         </div>
 
         {canManage ? (
-          <div id="mcp-playground" className="lg:sticky lg:top-6">
+          <div id="mcp-playground" className="lg:sticky lg:top-20">
             <PlaygroundCard
               serverName={serverName}
               tools={tools}

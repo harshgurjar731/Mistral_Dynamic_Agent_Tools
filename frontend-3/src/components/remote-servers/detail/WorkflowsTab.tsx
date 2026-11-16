@@ -83,7 +83,7 @@ function SshWorkflows({
     <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] [&>*]:min-w-0">
       {/* ── Deployed workflows ── */}
       <aside
-        className="rounded-2xl border border-border/60 backdrop-blur-md lg:sticky lg:top-6"
+        className="rounded-2xl border border-border/60 backdrop-blur-md lg:sticky lg:top-20"
         style={{ background: "var(--surface)" }}
       >
         <div className="flex items-center gap-2 border-b border-border/40 px-4 py-3">
