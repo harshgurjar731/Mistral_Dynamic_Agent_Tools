@@ -268,9 +268,9 @@ function StepRow({
             {step.id}
           </span>
           <TypeChip type={step.type} />
-          {step.attempts.length > 1 ? (
+          {step.attemptCount > 1 ? (
             <span className="shrink-0 rounded-full border border-amber/30 bg-amber/10 px-1.5 text-[9px] text-amber">
-              {step.attempts.length} attempts
+              {step.attemptCount} attempts
             </span>
           ) : null}
           <span className={cn("ml-auto shrink-0 text-[10px] font-medium", meta.text)}>

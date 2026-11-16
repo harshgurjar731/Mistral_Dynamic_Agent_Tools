@@ -14,10 +14,12 @@ be written against one contract:
   execution_id, workflow_name, status, start_time, end_time, result,
   root_execution_id, parent_execution_id, run_id, total_duration_ms
 
-Step-level progress comes from the trace ``EVENT_PROGRESS`` events, which the
-Mistral runtime emits per activity with a RUNNING → COMPLETED/FAILED lifecycle.
-That is the only server-side source of per-step state; the local engine's
-``StepResult`` list is normalised onto the same shape.
+Step-level progress on Mistral comes from the workflow events API
+(``ACTIVITY_TASK_STARTED / _RETRYING / _COMPLETED / _FAILED``), which is
+written while the run goes; the trace ``EVENT_PROGRESS`` events only land once
+their spans end — usually when the run finishes — so they add detail but
+cannot drive a live view. The local engine's ``StepResult`` list is normalised
+onto the same shape.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import ast
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -419,6 +422,178 @@ async def fetch_progress_steps(
     return steps
 
 
+# ── Live step progress from the workflow's events ─────────────────────────────
+#
+# Trace progress events are built from OpenTelemetry spans, and a span reaches
+# Mistral only when it ends — in practice the whole trace lands when the run
+# finishes, so a timeline built from it stays empty while the run is going.
+# The workflow events API (GET /v1/workflows/events/list) is written as the run
+# happens: ACTIVITY_TASK_STARTED / _RETRYING / _COMPLETED / _FAILED for every
+# activity, with its input, result and failure message. Those drive the live
+# timeline; the trace, once it arrives, only adds detail.
+
+_EVENT_PAGES = 20
+_EVENT_PAGE_SIZE = 100
+
+_ACTIVITY_STATUS = {
+    "ACTIVITY_TASK_STARTED": "RUNNING",
+    "ACTIVITY_TASK_RETRYING": "RETRYING_AFTER_ERROR",
+    "ACTIVITY_TASK_COMPLETED": "COMPLETED",
+    "ACTIVITY_TASK_FAILED": "FAILED",
+}
+
+
+def _event_ms(raw: Any) -> Optional[int]:
+    """Event timestamps are documented as Unix nanoseconds; accept ms and s too."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value > 1e17:
+        return int(value / 1e6)
+    if value > 1e14:
+        return int(value / 1e3)
+    if value > 1e11:
+        return int(value)
+    if value > 1e8:
+        return int(value * 1000)
+    return None
+
+
+def _payload_preview(payload: Any) -> Optional[str]:
+    """``{"value": X}`` payloads (input / result), as preview text."""
+    if isinstance(payload, dict) and "value" in payload:
+        payload = payload["value"]
+    payload = safe_serialize(payload)
+    if payload in (None, "", {}, []):
+        return None
+    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, default=str)
+    return text[:_PREVIEW_LIMIT] + ("…" if len(text) > _PREVIEW_LIMIT else "")
+
+
+def _failure_message(attrs: dict) -> Optional[str]:
+    failure = attrs.get("failure")
+    if isinstance(failure, dict):
+        return str(failure.get("message") or "") or None
+    return str(failure) if failure else None
+
+
+def step_id_for_activity(activity_name: str, workflow_name: str) -> Optional[str]:
+    """The workflow step an activity runs — inverse of the compiler's ``_fn_name``."""
+    prefix = re.sub(r"\W", "_", f"run_{workflow_name}_")
+    if workflow_name and activity_name.startswith(prefix):
+        return activity_name[len(prefix):] or None
+    return None
+
+
+async def fetch_workflow_events(execution_id: str) -> list[dict]:
+    """Every event of the execution so far, oldest first. Best effort: [] on failure."""
+    events: list[dict] = []
+    cursor: Optional[str] = None
+    try:
+        for _ in range(_EVENT_PAGES):
+            params: dict = {"workflow_exec_id": execution_id, "limit": _EVENT_PAGE_SIZE}
+            if cursor:
+                params["cursor"] = cursor
+            page = await _raw_get("/v1/workflows/events/list", params, timeout=10.0) or {}
+            events.extend(e for e in (page.get("events") or []) if isinstance(e, dict))
+            cursor = page.get("next_cursor")
+            if not cursor:
+                break
+    except Exception as e:
+        logger.debug("Workflow events unavailable for %s: %s", execution_id, e)
+    events.sort(key=lambda e: _event_ms(e.get("event_timestamp")) or 0)
+    return events
+
+
+def steps_from_workflow_events(events: list[dict], workflow_name: str = "") -> tuple[list[ExecutionStep], Optional[str]]:
+    """Fold activity events into one step per activity task.
+
+    Returns the steps, in start order, and the workflow's own failure message
+    when a ``WORKFLOW_EXECUTION_FAILED`` event carries one.
+    """
+    steps: dict[str, ExecutionStep] = {}
+    workflow_failure: Optional[str] = None
+
+    for event in events:
+        kind = str(event.get("event_type") or "").upper()
+        attrs = event.get("attributes") if isinstance(event.get("attributes"), dict) else {}
+        at = _event_ms(event.get("event_timestamp"))
+
+        if kind == "WORKFLOW_EXECUTION_FAILED":
+            workflow_failure = _failure_message(attrs) or workflow_failure
+            continue
+        status = _ACTIVITY_STATUS.get(kind)
+        if status is None:
+            continue
+
+        activity = str(attrs.get("activity_name") or "activity")
+        key = str(attrs.get("task_id") or event.get("event_id") or activity)
+        step = steps.get(key)
+        if step is None:
+            step_id = step_id_for_activity(activity, workflow_name or str(event.get("workflow_name") or ""))
+            step = ExecutionStep(
+                id=key,
+                name=activity,
+                status="RUNNING",
+                start_time_ms=at,
+                attributes={"activity_name": activity, "task_id": key, "source": "workflow_events",
+                            **({"app.step.id": step_id} if step_id else {})},
+            )
+            steps[key] = step
+
+        if kind == "ACTIVITY_TASK_STARTED":
+            # A retry starts again: it is running, the last attempt's error stays visible.
+            step.status = "RUNNING"
+            step.start_time_ms = step.start_time_ms or at
+            step.input_preview = _payload_preview(attrs.get("input")) or step.input_preview
+        elif kind == "ACTIVITY_TASK_RETRYING":
+            step.status = status
+            step.error = _failure_message(attrs) or step.error
+            step.attributes["attempt"] = attrs.get("attempt")
+        elif kind == "ACTIVITY_TASK_COMPLETED":
+            step.status = status
+            step.error = None
+            step.end_time_ms = at
+            step.output_preview = _payload_preview(attrs.get("result")) or step.output_preview
+        else:  # ACTIVITY_TASK_FAILED — final, after all retries
+            step.status = status
+            step.end_time_ms = at
+            step.error = _failure_message(attrs) or step.error or "The activity failed."
+            step.attributes["attempt"] = attrs.get("attempt")
+
+        if step.start_time_ms and step.end_time_ms:
+            step.duration_ms = float(max(0, step.end_time_ms - step.start_time_ms))
+
+    ordered = sorted(steps.values(), key=lambda s: (s.start_time_ms or 0, s.name))
+    return ordered, workflow_failure
+
+
+def _merge_trace_detail(live: list[ExecutionStep], trace: list[ExecutionStep]) -> list[ExecutionStep]:
+    """Live steps, with what the trace knows filled in where it matches.
+
+    The events are authoritative for state; the trace (once it lands) can add
+    previews, errors and attributes. Trace steps that match no activity are
+    left out, so one step never shows twice.
+    """
+    if not live:
+        return trace
+    unused = list(trace)
+    for step in live:
+        step_id = step.attributes.get("app.step.id")
+        match = next((t for t in unused if t.name == step.name
+                      or (step_id and t.attributes.get("app.step.id") == step_id)), None)
+        if match is None:
+            continue
+        unused.remove(match)
+        step.input_preview = step.input_preview or match.input_preview
+        step.output_preview = step.output_preview or match.output_preview
+        step.error = step.error or match.error
+        step.attributes = {**match.attributes, **step.attributes}
+        step.parallel_group = step.parallel_group or match.parallel_group
+    return live
+
+
 async def fetch_execution(
     execution_id: str,
     with_steps: bool = True,
@@ -439,7 +614,12 @@ async def fetch_execution(
         return _detail_from_local_run(run) if run else None
 
     if with_steps:
-        detail.steps = await fetch_progress_steps(execution_id)
+        events, trace = await asyncio.gather(
+            fetch_workflow_events(execution_id), fetch_progress_steps(execution_id))
+        live, workflow_failure = steps_from_workflow_events(events, detail.workflow_name)
+        detail.steps = _merge_trace_detail(live, trace)
+        if detail.status in ("FAILED", "TIMED_OUT") and not detail.error and workflow_failure:
+            detail.error = workflow_failure
 
     # A server-side execution that finished without a return value still needs
     # *something* to render. The workflow's own query handler is the last place

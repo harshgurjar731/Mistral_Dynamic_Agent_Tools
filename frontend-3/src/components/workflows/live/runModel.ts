@@ -21,6 +21,8 @@ export interface LiveStep {
   state: StepState;
   /** Every report for this step, oldest first — more than one means it was retried. */
   attempts: ExecutionStep[];
+  /** How many times the step has been tried — reports, or the attempt number Mistral gives. */
+  attemptCount: number;
   /** The latest report, if the step has started. */
   latest: ExecutionStep | null;
   error: string | null;
@@ -147,7 +149,8 @@ export function buildLiveRun(
         state = failed ? "failed" : "done";
     } else state = terminal ? (failed ? "not_reached" : "skipped") : "pending";
     const error = [...attempts].reverse().find((a) => a.error)?.error ?? null;
-    return { id, type, description, state, attempts, latest, error, review };
+    const attemptCount = Math.max(attempts.length, Number(latest?.attributes?.["attempt"]) || 0);
+    return { id, type, description, state, attempts, attemptCount, latest, error, review };
   };
 
   const steps: LiveStep[] = def
