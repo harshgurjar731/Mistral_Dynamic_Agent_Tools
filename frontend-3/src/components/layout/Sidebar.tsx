@@ -9,8 +9,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { arrangeNav, navLabel, parseNavLayout } from "./nav-items";
+import { useEffect, useMemo, useState } from "react";
+import { arrangeNav, groupRows, navLabel, parseNavLayout, type NavGroupId } from "./nav-items";
+import { NavLink, NavSection, footerButton } from "./NavSection";
 import { HealthIndicator } from "./HealthIndicator";
 import { RunsIndicator } from "@/components/runs/RunsIndicator";
 import { ThemeToggle } from "./ThemeToggle";
@@ -40,6 +41,7 @@ export function Sidebar({
   const ui = useUiConfig();
   const user = useCurrentUser();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [folded, setFolded] = useFoldedSections();
 
   const sessions = useSessionStore((s) => s.sessions);
   const createSession = useSessionStore((s) => s.createSession);
@@ -51,15 +53,20 @@ export function Sidebar({
   const matches = (to: string) =>
     to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(`${to}/`);
   // Order, visibility and labels come from Settings → Layout → Navigation menu.
-  const navItems = useMemo(
+  const sections = useMemo(
     () =>
-      arrangeNav(parseNavLayout(ui.UI_NAV_LAYOUT))
-        .filter((r) => !r.hidden)
-        // Only pages the user's role in this workspace can open.
-        .filter((r) => canOpen(user, r.item.to))
-        .map((r) => ({ ...r.item, label: navLabel(r) })),
+      groupRows(
+        arrangeNav(parseNavLayout(ui.UI_NAV_LAYOUT))
+          .filter((r) => !r.hidden)
+          // Only pages the user's role in this workspace can open.
+          .filter((r) => canOpen(user, r.item.to)),
+      ).map(({ group, rows }) => ({
+        group,
+        items: rows.map((r) => ({ ...r.item, label: navLabel(r) })),
+      })),
     [ui.UI_NAV_LAYOUT, user],
   );
+  const navItems = useMemo(() => sections.flatMap((s) => s.items), [sections]);
   // Only the most specific item lights up (/workflows/activities/x → Activities, not Workflows).
   const activeTo = navItems
     .filter((i) => matches(i.to))
@@ -119,123 +126,163 @@ export function Sidebar({
           <WorkspaceSwitcher collapsed={collapsed} />
         </div>
 
-        <nav className="custom-scrollbar flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.to);
-            const key = item.expandable ?? item.to;
-            const open = Boolean(expanded[key]);
+        <nav aria-label="Main" className="custom-scrollbar flex-1 overflow-y-auto px-2 py-3">
+          {sections.map(({ group, items }, index) => {
+            // The section holding the current page never folds away.
+            const holdsActive = items.some((i) => isActive(i.to));
+            const open = holdsActive || !folded.has(group.id);
             return (
-              <div key={item.to}>
-                <div
-                  className={cn(
-                    "group flex items-center gap-1 rounded-md border border-transparent transition",
-                    active ? "border-border bg-secondary text-foreground" : "text-muted-foreground",
-                  )}
-                >
-                  <Link
-                    to={item.to}
-                    onClick={onCloseMobile}
-                    title={collapsed ? item.label : undefined}
-                    className={cn(
-                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium transition hover:bg-surface-hover hover:text-foreground",
-                      collapsed && "justify-center",
-                    )}
-                  >
-                    <Icon
-                      className={cn("size-4 shrink-0", active ? "text-primary" : "opacity-80")}
-                    />
-                    {showLabels ? <span className="truncate">{item.label}</span> : null}
-                  </Link>
-                  {item.expandable && showLabels ? (
-                    <button
-                      type="button"
-                      aria-label={`Toggle ${item.label} sessions`}
-                      onClick={() => setExpanded((e) => ({ ...e, [key]: !e[key] }))}
-                      className="mr-1.5 rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                    >
-                      <ChevronDown
-                        className={cn("size-3.5 transition-transform", open && "rotate-180")}
+              <NavSection
+                key={group.id}
+                label={group.label}
+                collapsed={collapsed}
+                first={index === 0}
+                open={open}
+                onToggle={holdsActive ? undefined : () => setFolded(group.id, open)}
+              >
+                {items.map((item) => {
+                  const key = item.expandable ?? item.to;
+                  const subOpen = Boolean(expanded[key]);
+                  return (
+                    <div key={item.to}>
+                      <NavLink
+                        to={item.to}
+                        label={item.label}
+                        icon={item.icon}
+                        active={isActive(item.to)}
+                        collapsed={collapsed}
+                        onNavigate={onCloseMobile}
+                        trailing={
+                          item.expandable ? (
+                            <button
+                              type="button"
+                              aria-label={`Toggle ${item.label} sessions`}
+                              aria-expanded={subOpen}
+                              onClick={() => setExpanded((e) => ({ ...e, [key]: !e[key] }))}
+                              className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                            >
+                              <ChevronDown
+                                className={cn(
+                                  "size-3.5 transition-transform",
+                                  subOpen && "rotate-180",
+                                )}
+                              />
+                            </button>
+                          ) : null
+                        }
                       />
-                    </button>
-                  ) : null}
-                </div>
-
-                {item.expandable === "playground" && open && showLabels ? (
-                  <div className="mt-1 ml-4 space-y-0.5 border-l border-border pl-2">
-                    <div className="flex items-center justify-between px-1.5 py-1">
-                      <span className="eyebrow">Chats</span>
-                      <button
-                        type="button"
-                        aria-label="New chat session"
-                        onClick={() => createSession("general")}
-                        className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                      >
-                        <Plus className="size-3.5" />
-                      </button>
+                      {item.expandable === "playground" && subOpen && showLabels ? (
+                        <div className="mt-0.5 mb-1 ml-[18px] space-y-0.5 border-l border-border pl-2">
+                          <div className="flex items-center justify-between px-1.5 py-1">
+                            <span className="eyebrow">Chats</span>
+                            <button
+                              type="button"
+                              aria-label="New chat session"
+                              onClick={() => createSession("general")}
+                              className="rounded-md p-1 text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                            >
+                              <Plus className="size-3.5" />
+                            </button>
+                          </div>
+                          {generalSessions.length === 0 ? (
+                            <p className="px-1.5 py-1 text-[11px] text-muted-foreground">
+                              No sessions
+                            </p>
+                          ) : (
+                            generalSessions.map((s) => (
+                              <SessionRow
+                                key={s.id}
+                                title={s.title}
+                                to="/playground"
+                                search={{ session: s.id }}
+                                onRename={(t) => renameSession(s.id, t)}
+                                onDelete={() => removeSession(s.id)}
+                                onNavigate={onCloseMobile}
+                              />
+                            ))
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                    {generalSessions.length === 0 ? (
-                      <p className="px-1.5 py-1 text-[11px] text-muted-foreground">No sessions</p>
-                    ) : (
-                      generalSessions.map((s) => (
-                        <SessionRow
-                          key={s.id}
-                          title={s.title}
-                          to="/playground"
-                          search={{ session: s.id }}
-                          onRename={(t) => renameSession(s.id, t)}
-                          onDelete={() => removeSession(s.id)}
-                          onNavigate={onCloseMobile}
-                        />
-                      ))
-                    )}
-                  </div>
-                ) : null}
-              </div>
+                  );
+                })}
+              </NavSection>
             );
           })}
         </nav>
 
-        <div className="space-y-1 border-t border-border px-2 py-3">
+        <div className="space-y-1 border-t border-border px-2 py-2">
           {/* Desktop only: on phones the top header carries these. */}
-          <div className="hidden space-y-1 border-b border-border pb-2 md:block">
+          <div className="hidden space-y-0.5 md:block">
             <RunsIndicator variant="rail" collapsed={collapsed} />
             <HealthIndicator variant="rail" collapsed={collapsed} />
-            <ThemeToggle variant="rail" collapsed={collapsed} />
           </div>
-          <a
-            href="/docs"
-            target="_blank"
-            rel="noreferrer"
-            className={cn(
-              "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground",
-              collapsed && "justify-center",
-            )}
-            title="API Docs"
-          >
-            <ExternalLink className="size-4 shrink-0" />
-            {showLabels ? <span>API Docs</span> : null}
-          </a>
-          <UserMenu collapsed={collapsed} />
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            className={cn(
-              "hidden w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground md:flex",
-              collapsed && "justify-center",
-            )}
-          >
-            {collapsed ? (
-              <ChevronsRight className="size-4 shrink-0" />
-            ) : (
-              <ChevronsLeft className="size-4 shrink-0" />
-            )}
-            {showLabels ? <span>Collapse</span> : null}
-          </button>
+          <div className="border-t border-border pt-1.5 md:mt-1">
+            <UserMenu collapsed={collapsed} />
+          </div>
+          <div className={cn("flex gap-0.5", collapsed && "flex-col")}>
+            <div className={cn("flex", collapsed ? "justify-center" : "flex-1")}>
+              <ThemeToggle variant="rail" collapsed />
+            </div>
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noreferrer"
+              className={footerButton}
+              title="API docs (opens in a new tab)"
+              aria-label="API docs"
+            >
+              <ExternalLink className="size-4" />
+            </a>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className={cn(footerButton, "hidden md:grid")}
+              title={collapsed ? "Expand the menu" : "Collapse the menu"}
+              aria-label={collapsed ? "Expand the menu" : "Collapse the menu"}
+            >
+              {collapsed ? (
+                <ChevronsRight className="size-4" />
+              ) : (
+                <ChevronsLeft className="size-4" />
+              )}
+            </button>
+          </div>
         </div>
       </aside>
     </>
   );
+}
+
+const FOLDED_KEY = "nav-folded-sections";
+
+/** Sections folded shut, remembered in this browser. */
+function useFoldedSections(): [Set<NavGroupId>, (id: NavGroupId, fold: boolean) => void] {
+  const [folded, setState] = useState<Set<NavGroupId>>(() => new Set());
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(FOLDED_KEY);
+      const ids = raw ? (JSON.parse(raw) as unknown) : [];
+      if (Array.isArray(ids)) {
+        setState(new Set(ids.filter((x): x is NavGroupId => typeof x === "string")));
+      }
+    } catch {
+      // Storage unavailable: every section starts open.
+    }
+  }, []);
+  const set = (id: NavGroupId, fold: boolean) =>
+    setState((prev) => {
+      const next = new Set(prev);
+      if (fold) next.add(id);
+      else next.delete(id);
+      try {
+        window.localStorage.setItem(FOLDED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Not remembered; it still applies now.
+      }
+      return next;
+    });
+  return [folded, set];
 }
 
 function SessionRow({

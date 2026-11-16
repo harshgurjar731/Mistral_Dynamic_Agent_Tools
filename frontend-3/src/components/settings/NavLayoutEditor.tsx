@@ -3,9 +3,10 @@
  * which are shown, and rename each feature — its sidebar label, page title,
  * page description and browser tab name. Drag a row by its grip or use the
  * arrows; the switch shows or hides the page; the pencil opens its texts.
+ * Pages are listed under the sidebar's sections and move within their own.
  * Edits go into the Settings page's draft and save with everything else.
  */
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -21,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   LOCKED_NAV,
+  NAV_GROUPS,
   arrangeNav,
   navLabel,
   parseNavLayout,
@@ -46,8 +48,10 @@ export function NavLayoutEditor({
 
   const commit = (next: NavRow[]) => onChange(serializeNavLayout(next));
 
+  // A page moves within its own section of the sidebar.
+  const sameSection = (a: number, b: number) => rows[a]?.item.group === rows[b]?.item.group;
   const move = (from: number, to: number) => {
-    if (from === to || to < 0 || to >= rows.length) return;
+    if (from === to || to < 0 || to >= rows.length || !sameSection(from, to)) return;
     const next = rows.slice();
     const [row] = next.splice(from, 1);
     next.splice(to, 0, row!);
@@ -115,164 +119,177 @@ export function NavLayoutEditor({
           const isRenamed = Object.keys(row.text).length > 0;
           // Where the dragged row would land: a line above or below this one.
           const dropLine =
-            dragFrom !== null && dragOver === index && dragOver !== dragFrom
+            dragFrom !== null &&
+            dragOver === index &&
+            dragOver !== dragFrom &&
+            sameSection(dragFrom, index)
               ? dragFrom < index
                 ? "after"
                 : "before"
               : null;
+          const sectionStart = index === 0 || rows[index - 1]!.item.group !== row.item.group;
+          const section = NAV_GROUPS.find((g) => g.id === row.item.group);
           return (
-            <li
-              key={row.item.to}
-              // Not while its texts are open: a draggable parent fights text selection.
-              draggable={!disabled && !isOpen}
-              onDragStart={(e) => {
-                setDragFrom(index);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", row.item.to);
-              }}
-              onDragOver={(e) => {
-                if (dragFrom === null) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                if (dragOver !== index) setDragOver(index);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragFrom !== null) move(dragFrom, index);
-                setDragFrom(null);
-                setDragOver(null);
-              }}
-              onDragEnd={() => {
-                setDragFrom(null);
-                setDragOver(null);
-              }}
-              className={cn(
-                "relative transition-colors",
-                row.hidden ? "bg-transparent" : "bg-background-elevated/40",
-                isDragged && "opacity-40",
-                dropLine === "before" && "shadow-[inset_0_2px_0_0_var(--primary)]",
-                dropLine === "after" && "shadow-[inset_0_-2px_0_0_var(--primary)]",
-              )}
-            >
-              <div className="flex items-center gap-2.5 px-2.5 py-2">
-                <span
+            <Fragment key={row.item.to}>
+              {sectionStart ? (
+                <li
                   aria-hidden
-                  className={cn(
-                    "grid size-6 shrink-0 place-items-center rounded text-muted-foreground",
-                    disabled || isOpen
-                      ? "opacity-40"
-                      : "cursor-grab hover:bg-accent hover:text-foreground active:cursor-grabbing",
-                  )}
-                  title={isOpen ? "Close the texts to drag" : "Drag to reorder"}
+                  className="bg-background/60 px-3 pt-2.5 pb-1 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground uppercase"
                 >
-                  <GripVertical className="size-3.5" />
-                </span>
-                <span className="w-5 shrink-0 text-right font-mono text-[10px] text-muted-foreground/70 tabular-nums">
-                  {index + 1}
-                </span>
-                <Icon
-                  className={cn(
-                    "size-4 shrink-0",
-                    row.hidden ? "text-muted-foreground/50" : "text-primary",
-                  )}
-                />
-                <div className="min-w-0 flex-1">
-                  <p
+                  {section?.label}
+                </li>
+              ) : null}
+              <li
+                // Not while its texts are open: a draggable parent fights text selection.
+                draggable={!disabled && !isOpen}
+                onDragStart={(e) => {
+                  setDragFrom(index);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", row.item.to);
+                }}
+                onDragOver={(e) => {
+                  if (dragFrom === null || !sameSection(dragFrom, index)) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dragOver !== index) setDragOver(index);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragFrom !== null) move(dragFrom, index);
+                  setDragFrom(null);
+                  setDragOver(null);
+                }}
+                onDragEnd={() => {
+                  setDragFrom(null);
+                  setDragOver(null);
+                }}
+                className={cn(
+                  "relative transition-colors",
+                  row.hidden ? "bg-transparent" : "bg-background-elevated/40",
+                  isDragged && "opacity-40",
+                  dropLine === "before" && "shadow-[inset_0_2px_0_0_var(--primary)]",
+                  dropLine === "after" && "shadow-[inset_0_-2px_0_0_var(--primary)]",
+                )}
+              >
+                <div className="flex items-center gap-2.5 px-2.5 py-2">
+                  <span
+                    aria-hidden
                     className={cn(
-                      "flex min-w-0 items-center gap-1.5 text-xs font-medium",
-                      row.hidden
-                        ? "text-muted-foreground line-through decoration-muted-foreground/40"
-                        : "text-foreground",
+                      "grid size-6 shrink-0 place-items-center rounded text-muted-foreground",
+                      disabled || isOpen
+                        ? "opacity-40"
+                        : "cursor-grab hover:bg-accent hover:text-foreground active:cursor-grabbing",
+                    )}
+                    title={isOpen ? "Close the texts to drag" : "Drag to reorder"}
+                  >
+                    <GripVertical className="size-3.5" />
+                  </span>
+                  <Icon
+                    className={cn(
+                      "size-4 shrink-0",
+                      row.hidden ? "text-muted-foreground/50" : "text-primary",
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={cn(
+                        "flex min-w-0 items-center gap-1.5 text-xs font-medium",
+                        row.hidden
+                          ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                          : "text-foreground",
+                      )}
+                    >
+                      <span className="truncate">{label}</span>
+                      {isRenamed ? (
+                        <span className="shrink-0 rounded border border-blue/30 bg-blue/10 px-1 text-[9px] font-semibold tracking-wide text-blue uppercase no-underline">
+                          renamed
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="truncate font-mono text-[10px] text-muted-foreground/70">
+                      {row.item.to}
+                      {label !== row.item.label ? (
+                        <span className="font-sans"> · was “{row.item.label}”</span>
+                      ) : null}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setEditing(isOpen ? null : row.item.to)}
+                    aria-expanded={isOpen}
+                    aria-label={`Rename ${label}`}
+                    title="Rename this feature and edit its page texts"
+                    className={cn(
+                      "rounded p-1 transition disabled:pointer-events-none disabled:opacity-30",
+                      isOpen
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
                     )}
                   >
-                    <span className="truncate">{label}</span>
-                    {isRenamed ? (
-                      <span className="shrink-0 rounded border border-blue/30 bg-blue/10 px-1 text-[9px] font-semibold tracking-wide text-blue uppercase no-underline">
-                        renamed
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="truncate font-mono text-[10px] text-muted-foreground/70">
-                    {row.item.to}
-                    {label !== row.item.label ? (
-                      <span className="font-sans"> · was “{row.item.label}”</span>
-                    ) : null}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setEditing(isOpen ? null : row.item.to)}
-                  aria-expanded={isOpen}
-                  aria-label={`Rename ${label}`}
-                  title="Rename this feature and edit its page texts"
-                  className={cn(
-                    "rounded p-1 transition disabled:pointer-events-none disabled:opacity-30",
-                    isOpen
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <PencilLine className="size-3.5" />
-                </button>
-
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    disabled={disabled || index === 0}
-                    onClick={() => move(index, index - 1)}
-                    aria-label={`Move ${label} up`}
-                    className="rounded p-1 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                  >
-                    <ArrowUp className="size-3.5" />
+                    <PencilLine className="size-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    disabled={disabled || index === rows.length - 1}
-                    onClick={() => move(index, index + 1)}
-                    aria-label={`Move ${label} down`}
-                    className="rounded p-1 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                  >
-                    <ArrowDown className="size-3.5" />
-                  </button>
-                </div>
 
-                <div className="flex w-20 shrink-0 items-center justify-end gap-1.5">
-                  {locked ? (
-                    <span
-                      className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
-                      title="Settings is always shown, so this menu can always be reached"
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      type="button"
+                      disabled={disabled || index === 0 || !sameSection(index, index - 1)}
+                      onClick={() => move(index, index - 1)}
+                      aria-label={`Move ${label} up`}
+                      className="rounded p-1 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
                     >
-                      <Lock className="size-3" /> Always
-                    </span>
-                  ) : (
-                    <>
-                      {row.hidden ? (
-                        <EyeOff className="size-3 text-muted-foreground/60" />
-                      ) : (
-                        <Eye className="size-3 text-emerald" />
-                      )}
-                      <Switch
-                        checked={!row.hidden}
-                        disabled={disabled}
-                        onCheckedChange={(on) => setHidden(index, !on)}
-                        aria-label={`${row.hidden ? "Show" : "Hide"} ${label}`}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
+                      <ArrowUp className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={
+                        disabled || index === rows.length - 1 || !sameSection(index, index + 1)
+                      }
+                      onClick={() => move(index, index + 1)}
+                      aria-label={`Move ${label} down`}
+                      className="rounded p-1 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                    >
+                      <ArrowDown className="size-3.5" />
+                    </button>
+                  </div>
 
-              {isOpen ? (
-                <TextEditor
-                  row={row}
-                  disabled={disabled}
-                  onChange={(field, text) => setText(index, field, text)}
-                  onReset={() => resetText(index)}
-                />
-              ) : null}
-            </li>
+                  <div className="flex w-20 shrink-0 items-center justify-end gap-1.5">
+                    {locked ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+                        title="Settings is always shown, so this menu can always be reached"
+                      >
+                        <Lock className="size-3" /> Always
+                      </span>
+                    ) : (
+                      <>
+                        {row.hidden ? (
+                          <EyeOff className="size-3 text-muted-foreground/60" />
+                        ) : (
+                          <Eye className="size-3 text-emerald" />
+                        )}
+                        <Switch
+                          checked={!row.hidden}
+                          disabled={disabled}
+                          onCheckedChange={(on) => setHidden(index, !on)}
+                          aria-label={`${row.hidden ? "Show" : "Hide"} ${label}`}
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isOpen ? (
+                  <TextEditor
+                    row={row}
+                    disabled={disabled}
+                    onChange={(field, text) => setText(index, field, text)}
+                    onReset={() => resetText(index)}
+                  />
+                ) : null}
+              </li>
+            </Fragment>
           );
         })}
       </ol>

@@ -30,19 +30,36 @@ export interface PageText {
   tab: string;
 }
 
+export type NavGroupId = "build" | "operate" | "knowledge" | "integrations" | "system";
+
+/**
+ * The sidebar's sections, in order. Every page belongs to one; the saved
+ * layout (Settings → Layout) orders, hides and renames pages within them.
+ */
+export const NAV_GROUPS: { id: NavGroupId; label: string }[] = [
+  { id: "build", label: "Build" },
+  { id: "operate", label: "Operate" },
+  { id: "knowledge", label: "Knowledge" },
+  { id: "integrations", label: "Integrations" },
+  { id: "system", label: "System" },
+];
+
+const GROUP_INDEX = new Map(NAV_GROUPS.map((g, i) => [g.id, i]));
+
 export interface NavItem {
   label: string;
   to: string;
+  group: NavGroupId;
   icon: LucideIcon;
   expandable?: "playground";
   page: PageText;
 }
 
-/** Order matches frontend navigation */
-export const NAV_ITEMS: NavItem[] = [
+const ITEMS: NavItem[] = [
   {
     label: "Orchestrator",
     to: "/",
+    group: "build",
     icon: BotMessageSquare,
     page: {
       title: "Describe your goal.\nWe design the agent.",
@@ -53,6 +70,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Playground",
     to: "/playground",
+    group: "build",
     icon: Terminal,
     expandable: "playground",
     page: { title: "Playground", description: null, tab: "Playground" },
@@ -60,6 +78,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Agents",
     to: "/agents",
+    group: "build",
     icon: Cpu,
     page: {
       title: "Agent Studio",
@@ -70,6 +89,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Tools",
     to: "/tools",
+    group: "build",
     icon: Wrench,
     page: {
       title: "Tool Lifecycle",
@@ -80,6 +100,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Workflows",
     to: "/workflows",
+    group: "build",
     icon: GitBranch,
     page: {
       title: "Workflows",
@@ -91,6 +112,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Activities",
     to: "/workflows/activities",
+    group: "build",
     icon: Zap,
     page: {
       title: "Activity Gallery",
@@ -102,6 +124,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Connectors",
     to: "/connectors",
+    group: "integrations",
     icon: Plug,
     page: {
       title: "Connector Registry",
@@ -112,6 +135,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Rules",
     to: "/rules",
+    group: "operate",
     icon: ShieldCheck,
     page: {
       title: "Rules & Gates",
@@ -123,6 +147,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Reviews",
     to: "/reviews",
+    group: "operate",
     icon: UserCheck,
     page: {
       title: "Human reviews",
@@ -133,6 +158,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Logs",
     to: "/logs",
+    group: "operate",
     icon: ScrollText,
     page: {
       title: "Logs & Traces",
@@ -144,6 +170,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Catalog",
     to: "/ontology",
+    group: "knowledge",
     icon: Network,
     page: {
       title: "Catalog",
@@ -155,6 +182,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Knowledge",
     to: "/knowledge",
+    group: "knowledge",
     icon: Lightbulb,
     page: {
       title: "Knowledge",
@@ -166,6 +194,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "MCP Servers",
     to: "/mcp",
+    group: "integrations",
     icon: Server,
     page: {
       title: "MCP Servers",
@@ -177,6 +206,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Remote Servers",
     to: "/remote-servers",
+    group: "integrations",
     icon: HardDrive,
     page: {
       title: "Remote Servers",
@@ -188,6 +218,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Libraries",
     to: "/libraries",
+    group: "knowledge",
     icon: Library,
     page: {
       title: "Libraries",
@@ -199,6 +230,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Processes",
     to: "/processes",
+    group: "knowledge",
     icon: Workflow,
     page: {
       title: "Processes",
@@ -210,6 +242,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Status",
     to: "/health",
+    group: "system",
     icon: Activity,
     page: {
       title: "System status",
@@ -220,6 +253,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Settings",
     to: "/settings",
+    group: "system",
     icon: Settings,
     page: {
       title: "Settings",
@@ -229,6 +263,11 @@ export const NAV_ITEMS: NavItem[] = [
     },
   },
 ];
+
+/** Every page in its built-in order: section by section (a stable sort keeps the order within one). */
+export const NAV_ITEMS: NavItem[] = ITEMS.slice().sort(
+  (a, b) => (GROUP_INDEX.get(a.group) ?? 0) - (GROUP_INDEX.get(b.group) ?? 0),
+);
 
 /** Always shown — hiding it would leave no way back to this setting. */
 export const LOCKED_NAV = new Set(["/settings"]);
@@ -305,12 +344,24 @@ export function arrangeNav(layout: NavLayout): NavRow[] {
       .find((p) => ordered.includes(p));
     ordered.splice(before ? ordered.indexOf(before) + 1 : 0, 0, item);
   });
+  // Sections are fixed; the saved order applies within each one.
+  ordered.sort((a, b) => (GROUP_INDEX.get(a.group) ?? 0) - (GROUP_INDEX.get(b.group) ?? 0));
   const hidden = new Set(layout.hidden);
   return ordered.map((item) => ({
     item,
     hidden: hidden.has(item.to) && !LOCKED_NAV.has(item.to),
     text: layout.text[item.to] ?? {},
   }));
+}
+
+/** Rows split into the sidebar's sections, in section order; empty sections are left out. */
+export function groupRows<T extends { item: NavItem }>(
+  rows: T[],
+): { group: (typeof NAV_GROUPS)[number]; rows: T[] }[] {
+  return NAV_GROUPS.map((group) => ({
+    group,
+    rows: rows.filter((r) => r.item.group === group.id),
+  })).filter((g) => g.rows.length > 0);
 }
 
 /** Back to the setting's text; the built-in layout is saved as "" (no override). */

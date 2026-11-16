@@ -3,6 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   Building2,
+  ChevronsUpDown,
   ExternalLink,
   History,
   LayoutDashboard,
@@ -22,6 +23,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { adminApi, authKeys, type SessionAdmin } from "@/api/auth";
 import { PasswordCard } from "@/components/auth/AccountCards";
 import { BrandMark } from "@/components/auth/AuthParts";
+import { NavLink, NavSection, footerButton } from "@/components/layout/NavSection";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import {
   DropdownMenu,
@@ -35,16 +37,37 @@ import { initials } from "@/lib/auth";
 import { usePageTransition } from "@/lib/gsap";
 import { cn } from "@/lib/utils";
 
-const NAV: { to: string; label: string; icon: LucideIcon; exact?: boolean }[] = [
-  { to: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
-  { to: "/admin/health", label: "System health", icon: Activity },
-  { to: "/admin/workspaces", label: "Workspaces", icon: Building2 },
-  { to: "/admin/users", label: "Users", icon: Users },
-  { to: "/admin/roles", label: "Roles & permissions", icon: ShieldCheck },
-  { to: "/admin/admins", label: "Admins", icon: UserCog },
-  { to: "/admin/logs", label: "Activity logs", icon: History },
-  { to: "/admin/audit", label: "Audit log", icon: ScrollText },
-  { to: "/settings", label: "Platform settings", icon: Settings },
+type AdminLink = { to: string; label: string; icon: LucideIcon; exact?: boolean };
+
+/** The admin console's menu, by section. */
+const NAV: { label: string; items: AdminLink[] }[] = [
+  {
+    label: "General",
+    items: [
+      { to: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
+      { to: "/admin/health", label: "System health", icon: Activity },
+    ],
+  },
+  {
+    label: "Access",
+    items: [
+      { to: "/admin/workspaces", label: "Workspaces", icon: Building2 },
+      { to: "/admin/users", label: "Users", icon: Users },
+      { to: "/admin/roles", label: "Roles & permissions", icon: ShieldCheck },
+      { to: "/admin/admins", label: "Admins", icon: UserCog },
+    ],
+  },
+  {
+    label: "Monitoring",
+    items: [
+      { to: "/admin/logs", label: "Activity logs", icon: History },
+      { to: "/admin/audit", label: "Audit log", icon: ScrollText },
+    ],
+  },
+  {
+    label: "Platform",
+    items: [{ to: "/settings", label: "Platform settings", icon: Settings }],
+  },
 ];
 
 export function AdminShell({ admin, children }: { admin: SessionAdmin; children: ReactNode }) {
@@ -76,7 +99,7 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
           open ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex h-[73px] items-center border-b border-border px-4">
+        <div className="flex h-[73px] items-center gap-2 border-b border-border px-4">
           <BrandMark size="sm" to="/admin" />
           <button
             type="button"
@@ -87,41 +110,48 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
             <X className="size-4" />
           </button>
         </div>
-        <div className="px-4 pt-4">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
-            <ShieldCheck className="size-3" /> Admin console
+        <div className="border-b border-border px-3 py-2.5">
+          <span className="flex items-center gap-2 rounded-md border border-primary/25 bg-primary/8 px-2.5 py-1.5 text-[11px] font-semibold tracking-wide text-primary uppercase">
+            <ShieldCheck className="size-3.5" /> Admin console
           </span>
         </div>
-        <nav className="flex-1 space-y-0.5 px-2 py-4">
-          {NAV.map((item) => {
-            const on = active(item.to, item.exact);
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={() => setOpen(false)}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-md border border-transparent px-2.5 py-2 text-xs font-medium transition",
-                  on
-                    ? "border-border bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                )}
-              >
-                <item.icon className={cn("size-4", on ? "text-primary" : "opacity-80")} />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav aria-label="Admin" className="custom-scrollbar flex-1 overflow-y-auto px-2 py-3">
+          {NAV.map((section, index) => (
+            <NavSection
+              key={section.label}
+              label={section.label}
+              collapsed={false}
+              first={index === 0}
+            >
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  label={item.label}
+                  icon={item.icon}
+                  active={active(item.to, item.exact)}
+                  collapsed={false}
+                  onNavigate={() => setOpen(false)}
+                />
+              ))}
+            </NavSection>
+          ))}
         </nav>
-        <div className="space-y-1 border-t border-border px-2 py-3">
-          <a
-            href="/welcome"
-            className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
-          >
-            <ExternalLink className="size-4" /> Public site
-          </a>
-          <ThemeToggle variant="rail" />
+        <div className="space-y-1 border-t border-border px-2 py-2">
           <AdminMenu admin={admin} />
+          <div className="flex gap-0.5">
+            <div className="flex flex-1">
+              <ThemeToggle variant="rail" collapsed />
+            </div>
+            <a
+              href="/welcome"
+              className={footerButton}
+              title="Public site"
+              aria-label="Public site"
+            >
+              <ExternalLink className="size-4" />
+            </a>
+          </div>
         </div>
       </aside>
 
@@ -164,6 +194,7 @@ function AdminMenu({ admin }: { admin: SessionAdmin }) {
             <span className="block truncate text-xs font-medium text-foreground">{admin.name}</span>
             <span className="block truncate text-[11px] text-muted-foreground">{admin.email}</span>
           </span>
+          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56">

@@ -126,6 +126,9 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
               <span className="block truncate text-[11px] text-muted-foreground">{user.email}</span>
             </span>
           ) : null}
+          {!collapsed ? (
+            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : null}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side={collapsed ? "right" : "top"} className="w-60">
