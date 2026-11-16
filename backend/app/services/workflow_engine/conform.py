@@ -49,10 +49,36 @@ def conform_arguments(arguments: dict, parameters: Optional[dict]) -> tuple[dict
         return arguments, []
     notes: list[str] = []
     out = {}
-    for key, value in arguments.items():
+    for key, value in drop_optional_nulls(arguments, parameters, notes, "").items():
         schema = props.get(key)
         out[key] = conform(value, schema, notes, key) if isinstance(schema, dict) else value
     return out, notes
+
+
+def drop_optional_nulls(value: dict, schema: Any, notes: Optional[list] = None, path: str = "") -> dict:
+    """``value`` without the optional fields that are null where null is not allowed.
+
+    "No email" arrives as ``"email": null`` — from a run form's empty field, an
+    upstream model, or a worked example — while the schema says ``email`` is an
+    optional *string*. An activity validates strictly and refused the whole call
+    ("None is not of type 'string'"). Absent is what null means for an optional
+    field, so the key is left out. A required field is never touched.
+    """
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict) or not isinstance(value, dict):
+        return value
+    required = set(schema.get("required") or [])
+    out = {}
+    for key, item in value.items():
+        prop = props.get(key)
+        if (item is None and isinstance(prop, dict) and key not in required
+                and _types(prop) and "null" not in _types(prop)
+                and not (prop.get("anyOf") or prop.get("oneOf"))):
+            if notes is not None:
+                notes.append(f"{path + '.' if path else ''}{key}: null left out (the field is optional)")
+            continue
+        out[key] = item
+    return out
 
 
 def conform(value: Any, schema: Any, notes: Optional[list] = None, path: str = "") -> Any:
@@ -78,6 +104,17 @@ def conform(value: Any, schema: Any, notes: Optional[list] = None, path: str = "
             return value  # nothing safe to do; the tool reports the mismatch
         value = reshaped
     return _descend(value, schema, notes, path)
+
+
+def drop_optional_nulls_deep(value: Any, schema: Any) -> Any:
+    """:func:`drop_optional_nulls` at every depth of a record or a list of records."""
+    if isinstance(value, dict) and isinstance(schema, dict):
+        value = drop_optional_nulls(value, schema)
+        props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        return {k: drop_optional_nulls_deep(v, props.get(k)) for k, v in value.items()}
+    if isinstance(value, list) and isinstance(schema, dict) and isinstance(schema.get("items"), dict):
+        return [drop_optional_nulls_deep(v, schema["items"]) for v in value]
+    return value
 
 
 # ── Matching ──────────────────────────────────────────────────────────────
@@ -123,6 +160,7 @@ def _descend(value: Any, schema: dict, notes: list, path: str) -> Any:
         props = schema.get("properties")
         if isinstance(props, dict):
             value = _lift_required(value, schema, notes, path)
+            value = drop_optional_nulls(value, schema, notes, path)
             return {k: conform(v, props[k], notes, f"{path}.{k}") if isinstance(props.get(k), dict) else v
                     for k, v in value.items()}
         return value

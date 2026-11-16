@@ -132,6 +132,11 @@ def _nested_problems(label: str, field: dict, value: Any) -> list[str]:
     nested = field.get("schema")
     if not isinstance(nested, dict):
         return []
+    # An optional field sent as null (an empty form field) is an absent field,
+    # as the step runner treats it — not a type error that refuses the run.
+    from app.services.workflow_engine.conform import drop_optional_nulls_deep
+
+    value = drop_optional_nulls_deep(value, nested)
     try:
         import jsonschema
 

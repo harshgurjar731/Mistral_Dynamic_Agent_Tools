@@ -13,12 +13,16 @@ class Settings(BaseSettings):
     # Mistral AI
     MISTRAL_API_KEY: str = ""
     #: Every planning decision (workflow and agent layers, rule selection,
-    #: refine-with-AI) runs on this — the largest Mistral model by default.
-    MISTRAL_ORCHESTRATOR_MODEL: str = "mistral-large-4"
+    #: refine-with-AI) runs on this. Measured (app/llm_routes.py): the medium
+    #: model with high reasoning answers a design decision in ~16 s with the same
+    #: result the large model takes 140–190 s (or a timeout) to give.
+    MISTRAL_ORCHESTRATOR_MODEL: str = "mistral-medium-2604"
     #: Reasoning effort for decisions on the orchestrator model: high | medium |
     #: low | none | omit. A model that rejects the value is retried without it.
     ORCHESTRATOR_REASONING_EFFORT: str = "high"
-    #: Tried once when the orchestrator model fails for a non-transient reason.
+    #: The second model: used when the orchestrator model fails, and raced
+    #: against it when it is slow. When it names the orchestrator model itself,
+    #: the other default (mistral-large-4 / mistral-medium-2604) is used.
     ORCHESTRATOR_FALLBACK_MODEL: str = "mistral-medium-2604"
     # Retired: code-related decisions now use model routes (app/llm_routes.py,
     # override with ROUTE_<ROLE>_MODEL). Kept so an existing .env still loads.
@@ -79,7 +83,10 @@ class Settings(BaseSettings):
     # the agent pipeline's facet layers ask five of them at once. That is fine
     # against a generous quota and a 429 storm against a modest one, so the
     # concurrency is capped and every call retries on a rate limit.
-    DECISION_CONCURRENCY: int = 2
+    DECISION_CONCURRENCY: int = 6
+    #: A decision whose model has not answered after this many seconds is also
+    #: asked of the fallback model, and the first good answer is used. 0: never.
+    DECISION_HEDGE_SECONDS: int = 45
     DECISION_MAX_RETRIES: int = 4
     DECISION_RETRY_BASE_SECONDS: float = 2.0
     # Fan-out caps for the workflow planner's parallel layers.
@@ -100,6 +107,12 @@ class Settings(BaseSettings):
     # ── Verification (planner Verify stage, agent evaluation) ───────────
     #: Run a planned workflow end to end on designed scenarios before review,
     #: repairing what fails (workflow edits and activity code).
+    #: Build attempts an activity or agent gets before the planner stops
+    #: recommending "retry" (the choice taken when a question times out).
+    WORKFLOW_BUILD_AUTO_ATTEMPTS: int = 3
+    #: Times an unanswered review re-tests (and repairs) a workflow that has
+    #: not passed verification before it is kept as a draft.
+    WORKFLOW_REVIEW_AUTO_TESTS: int = 1
     WORKFLOW_DRY_RUN: bool = True
     WORKFLOW_DRY_RUN_SCENARIOS: int = 3
     WORKFLOW_DRY_RUN_REPAIRS: int = 2

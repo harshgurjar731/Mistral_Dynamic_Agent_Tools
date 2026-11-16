@@ -42,6 +42,12 @@ async def workflow_plan(run: LiveRun, *, client, goal: str,
         "mistral_workflow_id": done.get("mistral_workflow_id"),
         "created": plan_control.created(ctx),
     }
+    if "verified" in done:
+        # False: saved as a draft (or accepted by the user as it is) without
+        # every check and test scenario passing.
+        result["verified"] = bool(done.get("verified"))
+        if done.get("not_verified_reason"):
+            result["not_verified_reason"] = done["not_verified_reason"]
     if ctx.metadata.get(plan_control.ROLLED_BACK_KEY):
         result["rolled_back"] = True
         return RunOutcome(status="cancelled", result=result, error=ctx.error)

@@ -15,6 +15,7 @@ talked around, whereas this runs outside the model and holds regardless. The
 instruction layer is told not to restate it.
 """
 
+from typing import Optional
 import json
 import logging
 
@@ -55,6 +56,23 @@ _TOPIC_CATEGORY_DOMAINS: dict[str, tuple[str, ...]] = {
 #: health=0.9997. Omission is not neutral, which is what made the first
 #: attempt at this guard fail in exactly the same way it was meant to prevent.
 _CATEGORY_DISABLED = 1.0
+
+
+#: Words that say an agent's inputs are records about people. For such an agent
+#: `pii` is not a sign of harm: every turn carries a name, an address, an account.
+_PERSONAL_DATA_WORDS = (
+    "customer", "client", "applicant", "claimant", "patient", "employee", "candidate",
+    "tenant", "borrower", "policyholder", "member", "subscriber", "passenger", "student",
+    "contact", "email", "e-mail", "phone", "address", "postcode", "date of birth", "dob",
+    "full name", "first name", "surname", "customer_name", "account_id", "account number",
+    "national insurance", "passport", "personal data", "personal detail", "pii",
+)
+
+
+def handles_personal_data(text: str) -> bool:
+    """Whether ``text`` (an agent's subject, its inputs, the goal) describes records about people."""
+    low = (text or "").lower()
+    return any(word in low for word in _PERSONAL_DATA_WORDS)
 
 
 def _own_topic_categories(domain: str) -> set[str]:
@@ -103,6 +121,9 @@ def describe_capabilities(ctx: PipelineContext) -> dict[str, str]:
 class GuardrailConfigLayer(AgentDecisionLayer):
     """Decide the moderation configuration from the assembled agent."""
 
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
+
     name = "guardrail_config"
     process_view = "agent_guardrail"
     label = "Configure guardrails"
@@ -146,7 +167,11 @@ class GuardrailConfigLayer(AgentDecisionLayer):
 
     def apply(self, ctx: PipelineContext, data: dict) -> None:
         domain = ctx.requirements.domain if ctx.requirements else ""
-        ctx.agent_spec.guardrails = parse_guardrails(data, domain)
+        subject = " ".join(str(x or "") for x in (
+            ctx.query, getattr(ctx.requirements, "intent", ""),
+            getattr(ctx.requirements, "deliverable", ""), ctx.agent_spec.description))
+        ctx.agent_spec.guardrails = parse_guardrails(
+            data, domain, personal_data=handles_personal_data(f"{domain} {subject}"))
         g = ctx.agent_spec.guardrails
         ctx.agent_spec.rationale["guardrails"] = g.rationale
 
@@ -172,7 +197,7 @@ class GuardrailConfigLayer(AgentDecisionLayer):
         ctx.emit("guardrails", json.dumps(ctx.agent_spec.guardrails.describe()))
 
 
-def parse_guardrails(data: dict, domain: str = "") -> GuardrailSpec:
+def parse_guardrails(data: dict, domain: str = "", personal_data: Optional[bool] = None) -> GuardrailSpec:
     """Coerce a model-supplied guardrail block into a valid configuration.
 
     Shared with the workflow pipeline's AgentDesignLayer, which decides the
@@ -215,6 +240,13 @@ def parse_guardrails(data: dict, domain: str = "") -> GuardrailSpec:
     # every turn scores ~1.0 on `health`. Setting it to 1 is the documented way
     # to exempt a category.
     own_topics = _own_topic_categories(domain)
+    # An agent that works on records about people — a customer's dispute, an
+    # applicant's file — sees personal data on every turn, by design. A `pii`
+    # threshold blocks it from its own input: an output-safety agent was
+    # refused (403, pii 0.87) the customer reply it existed to check. The data
+    # is protected by who may run the workflow, not by refusing to read it.
+    if personal_data if personal_data is not None else handles_personal_data(domain):
+        own_topics = own_topics | {"pii"}
     for category in sorted(own_topics):
         current = thresholds.get(category)
         if current is None:

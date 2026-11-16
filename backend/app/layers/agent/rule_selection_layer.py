@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 class AgentRuleSelectionLayer(AgentDecisionLayer):
     """Choose the optional agent rules that fit this agent."""
 
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
+
     name = "rule_selection"
     process_view = "agent_rules"
     label = "Choose rules"

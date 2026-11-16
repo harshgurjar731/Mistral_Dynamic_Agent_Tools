@@ -23,25 +23,40 @@ import re
 import time
 from typing import Any, Optional
 
+import concurrent.futures
+
 from app import metrics
 from app.config import settings
-from app.llm.routes import ModelRoute, route_for
+from app.llm import speed
+from app.llm.routes import ModelRoute, other_model, route_for
 
 logger = logging.getLogger(__name__)
+
+#: Threads for hedged model calls (a call left behind runs on to its own timeout).
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm")
 
 
 class LLMUnavailable(Exception):
     """No model on the route answered within its attempt budget."""
 
 
-def _is_retryable(exc: Exception) -> bool:
-    """Timeouts, rate limits and gateway errors are worth another go; a 400 is not."""
+def _is_timeout(exc: Exception) -> bool:
     text = str(exc).lower()
-    return any(
-        marker in text
-        for marker in ("timed out", "timeout", "429", "rate limit", "502", "503", "504",
-                       "connection", "temporarily")
-    )
+    return "timed out" in text or "timeout" in text
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Rate limits and gateway errors are worth another go on the same model; a 400 is not.
+
+    Nor is a timeout: a model that took its whole budget once takes it again —
+    three 5-minute waits used up a build's time before the fallback was tried.
+    The next model is asked instead.
+    """
+    if _is_timeout(exc):
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in ("429", "rate limit", "502", "503", "504",
+                                             "connection", "temporarily"))
 
 
 def _rejects_effort(exc: Exception) -> bool:
@@ -131,19 +146,23 @@ def _attempt_model(route: ModelRoute, model: str, messages: list[dict],
                    json_mode: bool) -> tuple[str, Any]:
     """Call one model with transport retries. Raises the last error."""
     attempts = max(1, int(settings.TOOL_MODEL_MAX_ATTEMPTS))
-    # The fallback is a different model; the primary's effort may not apply.
-    use_effort = model == route.model
+    # The fallback reasons too when it can; a model that rejects the effort is
+    # asked again without it (below).
+    use_effort = True
     last: Optional[Exception] = None
     for attempt in range(attempts):
         try:
-            return _call(route, model, messages, json_mode=json_mode, use_effort=use_effort)
-        except Exception as e:  # noqa: BLE001 — classified below
-            if use_effort and _rejects_effort(e):
+            try:
+                return _call(route, model, messages, json_mode=json_mode, use_effort=use_effort)
+            except Exception as e:  # noqa: BLE001
+                if not (use_effort and _rejects_effort(e)):
+                    raise
+                # Not a failed attempt: the model answers, just not with this parameter.
                 logger.warning("%s rejected reasoning_effort=%s — retrying without it",
                                model, route.reasoning_effort)
                 use_effort = False
-                last = e
-                continue
+                return _call(route, model, messages, json_mode=json_mode, use_effort=False)
+        except Exception as e:  # noqa: BLE001 — classified below
             if not _is_retryable(e):
                 raise
             last = e
@@ -166,18 +185,18 @@ def complete(role: str, messages: list[dict], *, json_mode: bool = False) -> tup
     into a result instead of a 500.
     """
     route = route_for(role)
-    models = [route.model] + ([route.fallback_model] if route.fallback_model else [])
+    primary = route.model
+    fallback = other_model(primary, route.fallback_model)
     errors: list[str] = []
-    for model in models:
+
+    def ask(model: str) -> tuple[str, Any, float]:
         started = time.monotonic()
-        try:
-            text, usage = _attempt_model(route, model, messages, json_mode)
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"{model}: {type(e).__name__}: {e}")
-            metrics.incr(f"llm.{role}.{model}.error")
-            logger.warning("%s: %s failed: %s", role, model, e)
-            continue
+        text, usage = _attempt_model(route, model, messages, json_mode)
         elapsed = time.monotonic() - started
+        speed.record(model, elapsed)
+        return text, usage, elapsed
+
+    def done(model: str, text: str, usage: Any, elapsed: float) -> tuple[str, str]:
         metrics.incr(f"llm.{role}.{model}.ok")
         metrics.observe(f"llm.{role}.seconds", elapsed)
         tokens = getattr(usage, "total_tokens", None)
@@ -185,6 +204,54 @@ def complete(role: str, messages: list[dict], *, json_mode: bool = False) -> tup
             metrics.observe(f"llm.{role}.tokens", float(tokens))
         logger.info("%s: %s answered %d chars in %.1fs", role, model, len(text), elapsed)
         return text, model
+
+    def failed(model: str, e: BaseException) -> None:
+        errors.append(f"{model}: {type(e).__name__}: {e}")
+        metrics.incr(f"llm.{role}.{model}.error")
+        logger.warning("%s: %s failed: %s", role, model, e)
+
+    order = [primary] + ([fallback] if fallback else [])
+    if fallback and speed.skipped(primary):
+        order = [fallback, primary]  # the primary has been too slow lately
+
+    hedge = float(getattr(settings, "TOOL_MODEL_HEDGE_SECONDS", 0) or 0)
+    first, second = order[0], (order[1] if len(order) > 1 else None)
+    if second and hedge > 0 and speed.expected(second) < speed.expected(first):
+        # Race: the first model gets a head start; if it has not answered by then,
+        # the second is asked too and the first good answer is used.
+        started = time.monotonic()
+        future = _POOL.submit(ask, first)
+        try:
+            return done(first, *future.result(timeout=hedge))
+        except concurrent.futures.TimeoutError:
+            logger.warning("%s: %s has not answered after %.0fs — also asking %s",
+                           role, first, hedge, second)
+            other = _POOL.submit(ask, second)
+            pending = {future: first, other: second}
+            while pending:
+                finished, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
+                for f in finished:
+                    model = pending.pop(f)
+                    if f.exception() is None:
+                        if model == second:
+                            speed.strike(first, time.monotonic() - started, "the fallback answered first")
+                        return done(model, *f.result())
+                    failed(model, f.exception())
+            raise LLMUnavailable(f"No model answered for '{role}': " + " | ".join(errors))
+        except Exception as e:  # noqa: BLE001 — the first model failed outright
+            if _is_timeout(e):
+                speed.strike(first, time.monotonic() - started, "it timed out")
+            failed(first, e)
+            order = [second]
+
+    for model in order:
+        started = time.monotonic()
+        try:
+            return done(model, *ask(model))
+        except Exception as e:  # noqa: BLE001
+            if _is_timeout(e):
+                speed.strike(model, time.monotonic() - started, "it timed out")
+            failed(model, e)
     raise LLMUnavailable(f"No model answered for '{role}': " + " | ".join(errors))
 
 

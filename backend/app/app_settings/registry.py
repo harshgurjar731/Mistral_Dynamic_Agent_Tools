@@ -107,16 +107,18 @@ DEFS: list[SettingDef] = [
                    "services/conversational_workflow_service.py — conversational gateway",
                )),
     SettingDef("ORCHESTRATOR_REASONING_EFFORT", "models", "Orchestrator reasoning effort",
-               "How hard the orchestrator model thinks before each planning decision. High "
-               "plans most accurately; a model that does not reason ignores it.",
+               "How hard the orchestrator model thinks before each design decision (the goal, "
+               "the data contract, the wiring). Decisions that only pick or classify skip "
+               "reasoning. A model that does not reason ignores it.",
                type="enum", options=("high", "medium", "low", "none", "omit"),
                option_labels=_EFFORT_LABELS, default="high",
                impact=("Agent creation (Orchestrator chat)", "Workflow planning (AI builder)",
                        "Refine with AI"),
                used_in=("core/decision.py — decide() on the orchestrator model",)),
     SettingDef("ORCHESTRATOR_FALLBACK_MODEL", "models", "Orchestrator fallback model",
-               "Tried once when the orchestrator model fails for a reason other than a timeout "
-               "or a rate limit; 'none' disables.",
+               "The second model for planning decisions: used when the orchestrator model "
+               "fails, and asked alongside it when it is slow (Decision hedge). If it names the "
+               "orchestrator model itself, the other default model is used; 'none' disables.",
                type="model", capability="chat", allow_none=True, default="mistral-medium-2604",
                impact=("Agent creation (Orchestrator chat)", "Workflow planning (AI builder)"),
                used_in=("core/decision.py — decide() on the orchestrator model",)),
@@ -236,6 +238,14 @@ DEFS: list[SettingDef] = [
                type="int", minimum=1, maximum=32, unit="calls",
                impact=("Agent creation speed", "Workflow planning speed", "Rate-limit errors"),
                used_in=("core/decision.py — _concurrency_gate",)),
+    SettingDef("DECISION_HEDGE_SECONDS", "orchestration", "Decision hedge",
+               "When the model has not answered a planning decision after this long, the fallback "
+               "model is asked as well and the first good answer is used. A model that keeps "
+               "losing is skipped for 15 minutes. Stops a slow model stalling a build; 0 turns "
+               "it off (a decision then waits for the model's full timeout).",
+               type="int", minimum=0, maximum=600, unit="seconds",
+               impact=("Agent creation speed", "Workflow planning speed", "Refine with AI"),
+               used_in=("core/decision.py — _complete", "core/model_speed.py")),
     SettingDef("DECISION_MAX_RETRIES", "orchestration", "Retries on rate limit",
                "Attempts per planning call when Mistral answers with a rate limit, before the "
                "step falls back to its default.",
@@ -299,6 +309,20 @@ DEFS: list[SettingDef] = [
                type="int", minimum=0, maximum=5, unit="rounds",
                impact=("Workflow planning — verification",),
                used_in=("layers/workflow/verify_layers.py — WorkflowDryRunLayer",)),
+    SettingDef("WORKFLOW_BUILD_AUTO_ATTEMPTS", "orchestration", "Automatic build attempts",
+               "How many times an activity or agent that fails to build is built again before the "
+               "planner stops recommending Retry. After that it recommends handing an activity's "
+               "step to an agent, so an unanswered question never leaves a step with nothing to run.",
+               type="int", minimum=1, maximum=8, unit="attempts",
+               impact=("Workflow planning",),
+               used_in=("layers/workflow/plan_control.py — ask_build_failed",)),
+    SettingDef("WORKFLOW_REVIEW_AUTO_TESTS", "orchestration", "Automatic review re-tests",
+               "When the review question is not answered and the workflow has not passed its "
+               "checks and test scenarios, it is tested and repaired again this many times, then "
+               "kept as a draft. A workflow that has not passed is never accepted automatically.",
+               type="int", minimum=0, maximum=5, unit="tests",
+               impact=("Workflow planning — verification",),
+               used_in=("layers/workflow/finalize_layers.py — WorkflowReviewLayer",)),
     SettingDef("PROCESS_COVERAGE_BLOCKING", "orchestration", "Process coverage blocks",
                "A mandatory process control no workflow step performs is an error (off: a warning).",
                type="bool", impact=("Workflow planning — validation",),
@@ -888,6 +912,9 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "DECISION_CONCURRENCY": (
         "One planning call at a time — slow builds, but never rate limited.",
         "Many calls at once — fastest, but a modest quota will hit rate limits."),
+    "DECISION_HEDGE_SECONDS": (
+        "0 — never hedge: a slow model is waited on for its full timeout, every decision.",
+        "10 minutes — in effect off; a slow model stalls each decision for that long."),
     "DECISION_MAX_RETRIES": (
         "A rate-limited call is not retried; the step falls back to its default at once.",
         "Keeps retrying for a long time before giving up — builds stay slow under limits."),
@@ -918,6 +945,12 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "WORKFLOW_DRY_RUN_REPAIRS": (
         "A failing dry run is reported, never repaired automatically.",
         "Up to five repair rounds — more fixed automatically, longer planning."),
+    "WORKFLOW_BUILD_AUTO_ATTEMPTS": (
+        "One attempt — a failed build goes straight to an agent (or to you).",
+        "Eight attempts — a spec that cannot be built is retried for a long time first."),
+    "WORKFLOW_REVIEW_AUTO_TESTS": (
+        "0 — an unverified workflow is kept as a draft as soon as the review times out.",
+        "Five more test-and-repair passes before it is kept as a draft."),
     "AGENT_EVALUATION_TESTS": (
         "One test prompt per new agent.",
         "Six test prompts per new agent — more confidence, more model calls."),

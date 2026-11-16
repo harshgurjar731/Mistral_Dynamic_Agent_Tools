@@ -38,6 +38,12 @@ DEFS: list[SettingDef] = [
                "Retries of one model call on a transport error before the route's fallback "
                "model is tried.", type="int", minimum=1, maximum=10, unit="attempts",
                impact=_BUILD, used_in=("app/llm/client.py — complete",)),
+    SettingDef("TOOL_MODEL_HEDGE_SECONDS", "ts_synthesis", "Model call hedge",
+               "When a model has not answered after this long, the route's fallback model is "
+               "asked as well and the first good answer is used. A model that keeps losing is "
+               "skipped for 15 minutes. 0 turns it off.",
+               type="int", minimum=0, maximum=600, unit="seconds",
+               impact=_BUILD, used_in=("app/llm/client.py — complete", "app/llm/speed.py")),
     SettingDef("TOOL_SYNTHESIS_MAX_ATTEMPTS", "ts_synthesis", "Generate / repair passes",
                "How many times a candidate is generated or repaired before the job is reported "
                "as failed. More passes succeed more often but take longer.",
@@ -139,6 +145,9 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "TOOL_MODEL_MAX_ATTEMPTS": (
         "One try per model call; a brief network error goes straight to the fallback model.",
         "Up to 10 tries per call — a model outage is waited out for a long time."),
+    "TOOL_MODEL_HEDGE_SECONDS": (
+        "0 — never hedge: a slow model is waited on for its full timeout, every call.",
+        "10 minutes — in effect off; a slow model stalls each call for that long."),
     "TOOL_SYNTHESIS_MAX_ATTEMPTS": (
         "One generation, no repair — any first-draft bug fails the build.",
         "Up to 20 generate/repair passes — succeeds more often, but builds can take long."),

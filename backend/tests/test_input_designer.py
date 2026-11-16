@@ -191,7 +191,7 @@ def test_layer_cannot_rename_retype_or_invent_inputs():
     assert fields["customer_name"]["example"] == "Daniel Okafor"
     assert fields["tier"]["example"] == "silver"
     call = ctx.client.calls[0]
-    assert call["model"] == "mistral-large-4" and call["reasoning_effort"] == "high"
+    assert call["model"] == "mistral-medium-2604" and call["reasoning_effort"] == "high"
 
 
 def test_layer_fallback_still_produces_an_accurate_schema():

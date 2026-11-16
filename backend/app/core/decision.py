@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 # a few thousand tokens.
 #
 # Decisions run on a reasoning model (ORCHESTRATOR_REASONING_EFFORT), which
-# thinks before it answers, so the budgets allow for that.
-DEFAULT_TIMEOUT_MS = 180_000
+# thinks before it answers, so the budgets allow for that. They are a ceiling,
+# not what a decision waits: a slow model is hedged with the fallback long
+# before this (``app.core.model_speed``).
+DEFAULT_TIMEOUT_MS = 120_000
 
 # The DAG and instruction-authoring layers write substantially more than a
 # facet layer does, and are given room accordingly.
-LONG_TIMEOUT_MS = 300_000
+LONG_TIMEOUT_MS = 240_000
 
 
 class DecisionTimeout(Exception):
@@ -119,8 +121,13 @@ async def decide(
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
     temperature: float = 0.1,
     route: Optional[str] = None,
+    tier: str = "deep",
 ) -> dict:
     """Run one decision completion off the event loop, with a real timeout.
+
+    ``tier``: "deep" decisions reason before answering (the configured effort);
+    "fast" ones — picking from a list, classifying — do not, and answer in a
+    fraction of the time. A route carries its own effort and ignores it.
 
     The Mistral client is synchronous. Called inline from a coroutine it blocks
     the whole API for the duration of the request — during a long planning call
@@ -155,8 +162,9 @@ async def decide(
         # A planning decision on the orchestrator model: reason before
         # answering (when the model can), and fall back to a second model
         # rather than to a default.
-        effort = _orchestrator_effort() if reasoning_capable(model) is not False else None
-        fallback = _orchestrator_fallback()
+        effort = (_orchestrator_effort()
+                  if tier != "fast" and reasoning_capable(model) is not False else None)
+        fallback = _orchestrator_fallback(model)
     if not model:
         raise ValueError("decide() needs a model or a route")
 
@@ -249,11 +257,15 @@ def _orchestrator_effort() -> Optional[str]:
     return None if value in ("", "omit") else value
 
 
-def _orchestrator_fallback() -> Optional[str]:
+def _orchestrator_fallback(model: Optional[str] = None) -> Optional[str]:
+    """The second model for planning decisions; never the same as ``model``."""
     from app.config import settings
+    from app.llm_routes import other_model
 
     value = str(getattr(settings, "ORCHESTRATOR_FALLBACK_MODEL", "") or "").strip()
-    return None if value.lower() in ("", "none") else value
+    if value.lower() in ("", "none"):
+        return None
+    return other_model(model, value) if model else value
 
 
 def rejects_effort(exc: Exception) -> bool:
@@ -268,14 +280,28 @@ def rejects_effort(exc: Exception) -> bool:
         marker in text for marker in ("not supported", "not enabled", "invalid", "unsupported"))
 
 
+def _is_timeout(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "timed out" in text or "timeout" in text
+
+
 async def _complete(client: Any, model: str, system: str, user: str, temperature: float,
                     timeout_ms: int, effort: Optional[str], fallback: Optional[str]):
-    """One completion, with the route's reasoning effort and fallback model.
+    """One completion, with the reasoning effort, the fallback model and the slow-model guard.
 
-    A model that rejects the effort value is retried without it. Any other
-    non-transient failure is retried once on the fallback model; timeouts and
-    rate limits are re-raised for ``decide`` to handle as before.
+    * A model that rejects the effort value is retried without it.
+    * A failure other than a rate limit is retried on the fallback model.
+    * A primary that has not answered after ``DECISION_HEDGE_SECONDS`` — when the
+      fallback is expected to be faster — is raced against the fallback, and the
+      first good answer is used. A model that keeps losing is skipped for a while
+      (``app.core.model_speed``): a plan used to wait out a 3–5 minute timeout on
+      nearly every decision before the fallback answered in seconds.
+
+    Rate limits are re-raised for ``decide`` to queue and retry.
     """
+    from app.config import settings
+    from app.core import model_speed
+
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     def _kwargs(m: str, with_effort: bool) -> dict:
@@ -287,25 +313,71 @@ async def _complete(client: Any, model: str, system: str, user: str, temperature
             kw["temperature"] = temperature
         return kw
 
-    try:
-        return await asyncio.to_thread(client.chat.complete, **_kwargs(model, True))
-    except Exception as e:
-        text = str(e).lower()
-        if effort and rejects_effort(e):
-            try:
-                return await asyncio.to_thread(client.chat.complete, **_kwargs(model, False))
-            except Exception as retry_error:
-                e, text = retry_error, str(retry_error).lower()
-        timed_out = "timed out" in text or "timeout" in text
-        if _rate_limit_retry_after(e) is not None or not fallback or fallback == model:
-            raise e
-        # A timeout on the primary (high reasoning on a long prompt) used to be
-        # final: the decision fell back to its default — for Refine with AI that
-        # is "the model did not answer". The fallback model, without reasoning,
-        # answers the same prompt far faster; if it times out too, that is final.
+    async def call(m: str):
+        """One model, with the effort when it accepts it; records how long it took."""
+        started = time.monotonic()
+        try:
+            result = await asyncio.to_thread(client.chat.complete, **_kwargs(m, True))
+        except Exception as e:
+            if not (effort and rejects_effort(e)):
+                raise
+            result = await asyncio.to_thread(client.chat.complete, **_kwargs(m, False))
+        model_speed.record(m, time.monotonic() - started)
+        return result
+
+    has_fallback = bool(fallback) and fallback != model
+    if has_fallback and model_speed.skipped(model):
+        # The primary has been too slow lately: the fallback answers, and the
+        # primary is the backup if the fallback fails.
+        try:
+            return await call(fallback)
+        except Exception as e:
+            if _rate_limit_retry_after(e) is not None:
+                raise
+            logger.warning("Decision model %s failed (%s) — trying %s", fallback, type(e).__name__, model)
+            return await call(model)
+
+    hedge = float(getattr(settings, "DECISION_HEDGE_SECONDS", 0) or 0)
+    can_hedge = (has_fallback and hedge > 0
+                 and model_speed.expected(fallback) < model_speed.expected(model))
+    started = time.monotonic()
+    primary = asyncio.ensure_future(call(model))
+    if can_hedge:
+        await asyncio.wait({primary}, timeout=hedge)
+    else:
+        await asyncio.wait({primary})
+
+    if primary.done():
+        error = primary.exception()
+        if error is None:
+            return primary.result()
+        if _rate_limit_retry_after(error) is not None or not has_fallback:
+            raise error
+        timed_out = _is_timeout(error)
+        if timed_out:
+            model_speed.strike(model, time.monotonic() - started, "it timed out")
         logger.warning("Decision model %s %s — trying %s", model,
-                       "timed out" if timed_out else f"failed ({type(e).__name__})", fallback)
-        return await asyncio.to_thread(client.chat.complete, **_kwargs(fallback, False))
+                       "timed out" if timed_out else f"failed ({type(error).__name__})", fallback)
+        return await call(fallback)
+
+    # Still thinking after the hedge delay: race it against the fallback.
+    logger.warning("Decision model %s has not answered after %.0fs — also asking %s",
+                   model, hedge, fallback)
+    second = asyncio.ensure_future(call(fallback))
+    pending = {primary, second}
+    failure: Optional[BaseException] = None
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if task.exception() is None:
+                if task is second:
+                    model_speed.strike(model, time.monotonic() - started, "the fallback answered first")
+                for other in pending:
+                    # Its thread runs on to its own timeout; its outcome is not needed.
+                    other.add_done_callback(lambda t: t.cancelled() or t.exception())
+                return task.result()
+            failure = task.exception() if task is primary or failure is None else failure
+    raise failure  # both failed
 
 
 class DecisionLayer(Layer):
@@ -329,6 +401,10 @@ class DecisionLayer(Layer):
     #: A model route (``app/llm_routes.py``) for this decision. None: the
     #: orchestrator model with its reasoning effort and fallback.
     route: Optional[str] = None
+
+    #: "deep": reason before answering (design decisions whose mistakes spread).
+    #: "fast": no reasoning — choosing from a list or classifying.
+    tier: str = "deep"
 
     #: Which view of the run's process knowledge this decision reads (see
     #: ``app.process.context.render``). None: it reads none. When the
@@ -431,6 +507,7 @@ class DecisionLayer(Layer):
                     phase=self.phase,
                     timeout_ms=self.timeout_ms,
                     temperature=self.temperature,
+                    tier=self.tier,
                 )
 
             started = time.monotonic()

@@ -76,10 +76,13 @@ def test_rejected_effort_messages_are_recognised():
     assert client._rejects_effort(RuntimeError("reasoning_effort none is not supported"))
 
 
-def test_code_jobs_run_on_the_largest_model():
+def test_code_jobs_reason_on_the_measured_fast_model_with_a_different_fallback():
+    """mistral-medium-2604 at high effort: 16 s against the large model's 140-190 s (or a
+    timeout) for the same correct result — see app/llm/routes.py."""
     for role in ("codegen", "repair", "codegen_fresh", "arbiter", "testplan"):
         route = route_for(role)
-        assert route.model == "mistral-large-4" and route.reasoning_effort == "high", role
+        assert route.model == "mistral-medium-2604" and route.reasoning_effort == "high", role
+        assert route.fallback_model == "mistral-large-4", role
 
 
 def test_strict_policy_accepts_thousands_separators_and_currency_signs():

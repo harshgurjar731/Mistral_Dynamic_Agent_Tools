@@ -74,6 +74,9 @@ def _kept(selected, valid: list[str], what: str) -> list[str]:
 class ToolSelectionLayer(AgentDecisionLayer):
     """Decide which platform tools this agent needs."""
 
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
+
     name = "tool_selection"
     uses_prerequisites = True
     process_view = "agent_tools"
@@ -126,6 +129,9 @@ class ToolSelectionLayer(AgentDecisionLayer):
 
 class ConnectorSelectionLayer(AgentDecisionLayer):
     """Decide which external services this agent must reach."""
+
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
 
     name = "connector_selection"
     uses_prerequisites = True
@@ -180,6 +186,9 @@ class ConnectorSelectionLayer(AgentDecisionLayer):
 
 class LibrarySelectionLayer(AgentDecisionLayer):
     """Decide what grounding material this agent reads."""
+
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
 
     name = "library_selection"
     process_view = "agent_libraries"
@@ -242,6 +251,9 @@ class LibrarySelectionLayer(AgentDecisionLayer):
 class ModelSelectionLayer(AgentDecisionLayer):
     """Decide the model and sampling temperature."""
 
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
+
     name = "model_selection"
     label = "Choose a model"
     detail = "Decides the model and how deterministic its answers should be."
@@ -298,6 +310,9 @@ class IdentityLayer(AgentDecisionLayer):
     misfiled, and a use-case agent without a product word is ambiguous. Split
     across two layers, neither could enforce that.
     """
+
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
 
     name = "identity"
     process_view = "agent_identity"

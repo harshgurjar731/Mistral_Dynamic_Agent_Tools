@@ -77,6 +77,9 @@ def _describe_exposure(spec) -> str:
 class CapabilityReuseLayer(WorkflowDecisionLayer):
     """Match each required capability against the existing agent inventory."""
 
+    #: Picks from what exists — answered without reasoning (core.decision tiers).
+    tier = "fast"
+
     name = "capability_reuse"
     label = "Reuse or create"
     detail = "Decides, per capability, whether an existing agent already covers it."

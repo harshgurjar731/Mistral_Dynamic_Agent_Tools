@@ -176,7 +176,9 @@ def _review_ctx(run, monkeypatch, tests, dry_runs=None):
     dry = list(dry_runs or [])
 
     async def fake_verification(c, parent):
-        return dry.pop(0) if dry else {"passed": True, "scenarios": [], "rounds": []}
+        result = dry.pop(0) if dry else {"passed": True, "scenarios": [], "rounds": []}
+        c.metadata[verify_layers.RESULT_KEY] = result  # as the real one records it
+        return result
 
     monkeypatch.setattr(verify_layers, "run_verification", fake_verification)
     return ctx
@@ -190,7 +192,7 @@ def test_review_tests_only_when_asked_then_accepts(monkeypatch):
     assert run.questions[1]["last_test"] == {"passed": True, "summary": "1 passed; 0 of 0 scenario(s) pass"}
     assert run.payloads("workflow_test")[0]["passed"] is True
     assert run.payloads("workflow_accepted")[0] == {
-        "workflow_name": "invoice_flow", "tested": True, "passed": True}
+        "workflow_name": "invoice_flow", "tested": True, "passed": True, "verified": True}
     assert ctx.error is None
 
 
@@ -203,8 +205,12 @@ def test_review_test_fails_when_a_dry_run_scenario_fails(monkeypatch):
     payload = run.payloads("workflow_test")[0]
     assert payload["passed"] is False and payload["dry_run"]["scenarios"][0]["name"] == "Strong case"
     assert "0 of 1 scenario(s) pass" in payload["summary"]
+    # The user may still accept it — their decision — but it is reported as not verified,
+    # and it is no longer what an unanswered question would do.
+    assert run.questions[1]["default"] == "test" and run.questions[1]["verified"] is False
+    assert "accept" != run.questions[1]["default"]
     assert run.payloads("workflow_accepted")[0] == {
-        "workflow_name": "invoice_flow", "tested": True, "passed": False}
+        "workflow_name": "invoice_flow", "tested": True, "passed": False, "verified": False}
     assert ctx.error is None
 
 

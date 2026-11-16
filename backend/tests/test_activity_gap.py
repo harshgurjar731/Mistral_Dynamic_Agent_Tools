@@ -67,17 +67,21 @@ def test_failed_activity_is_retried_once_on_its_own(resolve):
 
 
 def test_blocked_activity_is_not_retried(resolve):
+    """Refused by the safety screen: never built again, and never handed to an agent instead."""
     calls = resolve([CodeResolution(status="blocked", name="x", message="policy")])
     ctx = _run(_ctx("a"))
     assert calls == [["a"]]
     assert ctx.metadata["build_issues"][0]["code"] == "activity.unbuilt"
+    assert ctx.workflow_spec.capabilities[0].kind == "activity"
 
 
 def test_build_failure_with_sound_spec_is_deferred_to_first_run(resolve):
     failing = CodeResolution(status="failed", name="apply_gst", message="rolled back",
                              retry_requirement=REQ, rolled_back=True)
-    resolve([failing], [failing])
+    calls = resolve([failing], [failing], [failing])
     ctx = _run(_ctx("gst"))
+    assert len(calls) == 3, "built, retried, and retried once more before it is deferred"
+    assert ctx.workflow_spec.capabilities[0].kind == "activity", "a sound specification is kept"
     assert ctx.metadata["activity_bindings"] == {"gst": "apply_gst"}
     assert ctx.metadata["activity_requirements"]["gst"] == REQ
     issue = ctx.metadata["build_issues"][0]
@@ -87,15 +91,16 @@ def test_build_failure_with_sound_spec_is_deferred_to_first_run(resolve):
     assert any(a["name"] == "apply_gst" for a in ctx.workflow_spec.inventory["activities"])
 
 
-def test_unsound_spec_is_reported_as_an_error_and_left_unbound(resolve):
+def test_an_activity_that_cannot_be_specified_is_done_by_an_agent(resolve):
+    """It used to be left unbound — a step with nothing to run in a "finished" workflow."""
     failing = CodeResolution(status="failed", name="apply_gst", message="could not be made implementable")
-    resolve([failing], [failing])
+    calls = resolve([failing], [failing], [failing])
     ctx = _run(_ctx("gst"))
-    assert ctx.metadata["activity_bindings"] == {}
-    issue = ctx.metadata["build_issues"][0]
-    assert issue["code"] == "activity.unbuilt" and issue["severity"] == "error"
-    assert issue["step_id"] == "gst"
-    assert _plan(ctx)["failed"][0]["deferred"] is False
+    assert len(calls) == 3
+    assert ctx.metadata["activity_bindings"] == {} and ctx.metadata["build_issues"] == []
+    assert ctx.workflow_spec.capabilities[0].kind == "agent"
+    row = _plan(ctx)["failed"][0]
+    assert row["status"] == "handed_to_agent" and row["deferred"] is False
 
 
 # ── On-demand rebuild of a saved step ──────────────────────────────────────

@@ -118,6 +118,7 @@ class ActivityRequirementProfile(RequirementProfile):
 
     def bind_contract(self, need, req: CodeRequirement) -> list[str]:
         issues = _hold_to_contract(need, req)
+        normalise_example_nulls(req)
         out_props = ((req.output_schema or {}).get("properties") or {})
         if not out_props:
             return ["output_schema must declare the fields later steps read"]
@@ -161,6 +162,7 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
         import jsonschema
     except ImportError:  # pragma: no cover — declared in requirements
         return []
+    normalise_example_nulls(req)
     issues = []
     for i, example in enumerate(req.examples, 1):
         if not isinstance(example, dict):
@@ -178,6 +180,24 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
                 issues.append(f"worked example {i} {part} does not match the data contract at "
                               f"{where}: {e.message}")
     return issues[:6]
+
+
+def normalise_example_nulls(req: CodeRequirement) -> None:
+    """Leave out of every worked example the optional fields written as null.
+
+    Three of six specifications in one plan were sent back to their author —
+    minutes each — because an example said ``"email": null`` for an optional
+    string field. Null there means "absent"; the example is rewritten to say so,
+    at every depth, exactly as the step runner treats run-time arguments.
+    """
+    from app.services.workflow_engine.conform import drop_optional_nulls_deep
+
+    for example in req.examples:
+        if not isinstance(example, dict):
+            continue
+        for part, schema in (("input", req.input_schema), ("output", req.output_schema)):
+            if isinstance(example.get(part), dict) and isinstance(schema, dict):
+                example[part] = drop_optional_nulls_deep(example[part], schema)
 
 
 #: Composed text: a string of this many words or more is prose, not a value.

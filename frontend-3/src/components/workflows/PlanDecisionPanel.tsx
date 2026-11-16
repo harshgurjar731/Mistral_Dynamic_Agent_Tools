@@ -24,7 +24,9 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   BellRing,
+  Bot,
   CheckCircle2,
+  FileClock,
   ChevronDown,
   FlaskConical,
   Hand,
@@ -88,6 +90,20 @@ const CHOICES: Record<string, ChoiceMeta> = {
     detail:
       "Run each activity against its worked examples and check every agent exists. Nothing is changed.",
     icon: FlaskConical,
+  },
+  agent: {
+    label: "Let an agent do this step",
+    confirm: "Use an agent",
+    detail:
+      "No code could be built for it. An agent performs the step instead, following the same rules and returning the same fields, so the workflow is complete.",
+    icon: Bot,
+  },
+  draft: {
+    label: "Keep as a draft",
+    confirm: "Keep as a draft",
+    detail:
+      "Save the workflow without registering it. Fix it with Refine with AI or in the builder, then publish it.",
+    icon: FileClock,
   },
   apply_revision: {
     label: "Apply the revised instructions",
@@ -357,6 +373,18 @@ function DecisionForm({
               <span className="font-mono text-foreground">{decision.workflow_name}</span> is saved
               {decision.valid ? "" : " but has validation errors, so it will not be registered"}.
             </p>
+            {decision.verified === false ? (
+              <p className="mt-1 text-amber">
+                Not verified yet
+                {decision.not_verified_reason ? `: ${decision.not_verified_reason}` : ""}. If this
+                is not answered it is tested and repaired again, then kept as a draft — it is never
+                accepted automatically while it is failing.
+              </p>
+            ) : decision.verified ? (
+              <p className="mt-1 text-emerald">
+                Verified: it is valid and every test scenario passed.
+              </p>
+            ) : null}
             <p className="mt-1">
               {decision.last_test ? (
                 <>

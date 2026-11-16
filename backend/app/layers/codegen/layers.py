@@ -233,6 +233,13 @@ class ReuseResolutionLayer:
         if ctx.need.origin == "runtime":
             return
         candidates = [t for t in (ctx.catalogue or []) if ctx.profile.in_catalogue(t)]
+        contract = getattr(ctx.need, "contract", None) or {}
+        if contract and candidates:
+            # Only an activity that already fits the workflow's records can be
+            # reused, and that is a deterministic check. Asking the model about
+            # the whole catalogue (a 60–95k-character prompt, once per activity)
+            # to then refuse its choice here was most of a minute each time.
+            candidates = [t for t in candidates if not contract_misfit(contract, t)]
         if not candidates:
             return
 

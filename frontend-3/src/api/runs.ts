@@ -188,6 +188,9 @@ export interface RunDecision {
   /** review_workflow */
   workflow_name?: string;
   valid?: boolean;
+  /** review_workflow: valid and every dry-run scenario passed; and why not. */
+  verified?: boolean;
+  not_verified_reason?: string;
   /** The workflow can be changed by revision while this waits. */
   revisable?: boolean;
   /** Choices that accept a typed message (e.g. retry: what to change first). */

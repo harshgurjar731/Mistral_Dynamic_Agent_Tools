@@ -31,6 +31,8 @@ ROLLED_BACK_KEY = "plan_rolled_back"
 
 #: Choices offered when something could not be built.
 BUILD_FAILED_OPTIONS = ["retry", "rollback", "manual"]
+#: For an activity there is one more: hand the step to an agent instead.
+ACTIVITY_FAILED_OPTIONS = ["retry", "agent", "rollback", "manual"]
 #: Choices that may carry a typed message (what to change before retrying).
 MESSAGE_OPTIONS = ["retry"]
 #: Longest message kept from an answer.
@@ -80,23 +82,38 @@ async def ask_user_with_message(ctx: PipelineContext, kind: str, question: dict,
 
 
 async def ask_build_failed(ctx: PipelineContext, entity: str, failures: list[dict],
-                           *, attempts: int) -> tuple[str, str]:
+                           *, attempts: int, recommend: Optional[str] = None) -> tuple[str, str]:
     """Ask what to do about ``failures`` (rows with ``name`` and ``error``).
 
     Returns ``(choice, message)``:
 
     retry    — try building the failed entities again; ``message`` is what the
                user wants changed first (may be empty)
+    agent    — (activities) let an agent do the step instead of code
     rollback — remove everything this plan created and stop
     manual   — finish the workflow without them; build or write them later
+
+    ``recommend`` is the caller's recommended choice — what is taken when nobody
+    answers in time. The activity layer works it out from *why* each build
+    failed (:func:`recommended_for_activities`); without it: build again while
+    automatic attempts remain (``WORKFLOW_BUILD_AUTO_ATTEMPTS``), then "manual".
     """
+    from app.config import settings
+
     noun = {"activity": "activity(ies)", "agent": "agent(s)"}.get(entity, entity)
+    options = ACTIVITY_FAILED_OPTIONS if entity == "activity" else BUILD_FAILED_OPTIONS
+    if recommend in options:
+        default = recommend
+    elif attempts < max(1, int(settings.WORKFLOW_BUILD_AUTO_ATTEMPTS)):
+        default = "retry"
+    else:
+        default = "manual"
     return await ask_user_with_message(ctx, "build_failed", {
         "entity": entity,
         "title": f"{len(failures)} {noun} could not be built after {attempts} attempt(s)",
         "failures": failures,
         "attempts": attempts,
-    }, options=BUILD_FAILED_OPTIONS, default="manual", message_options=MESSAGE_OPTIONS)
+    }, options=options, default=default, message_options=MESSAGE_OPTIONS)
 
 
 # ── Rollback ────────────────────────────────────────────────────────────────
@@ -209,6 +226,36 @@ async def reclaim_unused(ctx: PipelineContext, reason: str) -> list[dict]:
     logger.info("Reclaimed %d item(s) of an unfinished plan (%s)",
                 sum(1 for r in report if r.get("removed")), reason)
     return report
+
+
+def recommended_for_activities(failing: list, attempts: int, final_statuses: tuple = ("blocked",)) -> str:
+    """What to do about activities that could not be built, when nobody decides.
+
+    ``failing``: their ``CodeResolution``s. The recommendation never leaves a
+    step with nothing to run when that can be avoided, and never works around a
+    refusal:
+
+    * refused by the safety screen (``blocked``) — never retried, never given to
+      an agent instead: "manual" (the workflow is then saved as a draft);
+    * otherwise built again while automatic attempts remain;
+    * then: a specification that passed every check but whose build failed is
+      kept ("manual" — the step is bound to it and it is built on first use,
+      which the dry run exercises); one that could not be specified at all goes
+      to an agent, which can do the step without code.
+
+    "Finish without them" used to be the default for everything: a plan nobody
+    was watching completed with a step that had nothing to run.
+    """
+    from app.config import settings
+
+    open_ = [r for r in failing if getattr(r, "status", "") not in final_statuses]
+    if not open_:
+        return "manual"
+    if attempts < max(1, int(settings.WORKFLOW_BUILD_AUTO_ATTEMPTS)):
+        return "retry"
+    if any(not getattr(r, "retry_requirement", None) for r in open_):
+        return "agent"
+    return "manual"
 
 
 def failure_rows(rows: list[dict]) -> list[dict]:

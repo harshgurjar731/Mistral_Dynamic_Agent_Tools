@@ -40,7 +40,7 @@ def test_falls_back_to_second_model(monkeypatch):
     text, model = client.complete("codegen", [])
     route = route_for("codegen")
     assert text == "ok" and model == route.fallback_model
-    assert seen[-1] == (route.fallback_model, False), "fallback model must not get the primary's effort"
+    assert seen[-1] == (route.fallback_model, True), "the fallback reasons too when it can"
 
 
 def test_rejected_effort_is_dropped_and_retried(monkeypatch):
@@ -53,7 +53,8 @@ def test_rejected_effort_is_dropped_and_retried(monkeypatch):
         return "ok", None
 
     monkeypatch.setattr(client, "_call", fake_call)
-    assert client.complete("codegen", [])[0] == "ok"
+    text, model = client.complete("codegen", [])
+    assert text == "ok" and model == route_for("codegen").model, "the same model, without the effort"
     assert calls == [True, False]
 
 

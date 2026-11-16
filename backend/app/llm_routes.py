@@ -1,13 +1,24 @@
 """
 Model routing for the backend's model jobs — which model does which job.
 
-The same choice as the tool service (``tool-service/app/llm/routes.py``):
-``mistral-large-4`` is the largest Mistral model (reasoning, 1M context) and
-takes every job where a wrong answer is expensive — deciding reuse, authoring
-the specification code is generated and *tested* against, revising it from a
-user's rebuild instructions, designing a workflow's run inputs, and refining a
-workflow from an instruction. ``mistral-medium-2604`` (Medium 3.5, also
-reasoning) is the fallback.
+The same choice as the tool service (``tool-service/app/llm/routes.py``), and it
+is a measured one. The same activity specification, with worked examples whose
+arithmetic was checked:
+
+    mistral-large-4      low effort   140 s    3/3 examples correct
+    mistral-large-4      medium       191 s    3/3
+    mistral-medium-2604  high effort   16 s    3/3
+    mistral-medium-2604  no reasoning   6.5 s  3/3
+    mistral-small-2603   no reasoning   6.9 s  2/3
+
+On real planner prompts the large model did not answer inside its 3–5 minute
+budget at all: a plan took 140 minutes, nearly all of it waiting for timeouts,
+and the answers came from the medium model anyway. So ``mistral-medium-2604``
+is the primary — with high reasoning where a wrong answer spreads (the
+specification code is tested against, a revision, the run inputs), without it
+where the job is to pick or classify — and ``mistral-large-4`` is the fallback.
+A model that answers slowly is hedged and then skipped (``core.model_speed``),
+whatever is configured here.
 
 Measured reasoning efforts: ``mistral-large-4`` accepts low/medium/high and
 rejects "none"; ``mistral-medium-2604`` accepts high/none; ``mistral-large-2512``
@@ -33,9 +44,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PRIMARY = "mistral-large-4"
-FALLBACK = "mistral-medium-2604"
+PRIMARY = "mistral-medium-2604"
+FALLBACK = "mistral-large-4"
 LIGHT = "mistral-small-2603"
+
+
+def other_model(model: Optional[str], fallback: Optional[str]) -> Optional[str]:
+    """``fallback``, unless it is ``model`` itself — then the other of the two defaults.
+
+    A deployment that sets its primary to what used to be the fallback (or the
+    reverse) must still have a second model to turn to.
+    """
+    if not fallback or fallback != model:
+        return fallback
+    return FALLBACK if model != FALLBACK else PRIMARY
 
 
 @dataclass(frozen=True)
@@ -50,24 +72,24 @@ class ModelRoute:
 
 _ROUTES: dict[str, ModelRoute] = {
     # R1 — turn a free-text request into a structured need.
-    "need_normalise": ModelRoute("need_normalise", PRIMARY, "high", 120_000, None, FALLBACK),
+    "need_normalise": ModelRoute("need_normalise", PRIMARY, None, 90_000, None, FALLBACK),
     # R2 — safety screen against the blocklist.
-    "policy_gate": ModelRoute("policy_gate", PRIMARY, "high", 120_000, None, FALLBACK),
+    "policy_gate": ModelRoute("policy_gate", PRIMARY, None, 90_000, None, FALLBACK),
     # R3 — does an existing tool/activity already do this?
-    "reuse_resolution": ModelRoute("reuse_resolution", PRIMARY, "high", 180_000, None, FALLBACK),
+    "reuse_resolution": ModelRoute("reuse_resolution", PRIMARY, None, 120_000, None, FALLBACK),
     # R4 — the specification code is generated and tested against.
-    "spec_author": ModelRoute("spec_author", PRIMARY, "high", 300_000, None, FALLBACK),
+    "spec_author": ModelRoute("spec_author", PRIMARY, "high", 240_000, None, FALLBACK),
     # Rebuild from an error: the stored spec revised to do what the user asked.
-    "spec_revision": ModelRoute("spec_revision", PRIMARY, "high", 300_000, None, FALLBACK),
+    "spec_revision": ModelRoute("spec_revision", PRIMARY, "high", 240_000, None, FALLBACK),
     # Gap decisions made by the chat pipeline (CapabilityGapLayer).
     "capability_gap": ModelRoute("capability_gap", PRIMARY, "high", 180_000, None, FALLBACK),
     # What a build needs from the user before it starts (build_prereqs).
-    "prerequisite_analysis": ModelRoute("prerequisite_analysis", PRIMARY, "high", 180_000, None,
+    "prerequisite_analysis": ModelRoute("prerequisite_analysis", PRIMARY, None, 120_000, None,
                                         FALLBACK),
     # The workflow's run inputs: fields, types and one coherent worked example.
     "input_schema": ModelRoute("input_schema", PRIMARY, "high", 240_000, None, FALLBACK),
     # Refine with AI: an instruction → edit operations, and their repair.
-    "workflow_revision": ModelRoute("workflow_revision", PRIMARY, "high", 300_000, None, FALLBACK),
+    "workflow_revision": ModelRoute("workflow_revision", PRIMARY, "high", 240_000, None, FALLBACK),
     # Builder: bind an activity step's parameters to what earlier steps return.
     "argument_wiring": ModelRoute("argument_wiring", PRIMARY, "high", 180_000, None, FALLBACK),
 }
@@ -127,7 +149,10 @@ def route_for(role: str) -> ModelRoute:
     if (fallback := _env(role, "FALLBACK")):
         overrides["fallback_model"] = None if fallback.lower() == "none" else fallback
     route = replace(base, **overrides) if overrides else base
-    return _guard_code_route(role, route, base)
+    route = _guard_code_route(role, route, base)
+    if route.fallback_model and route.fallback_model == route.model:
+        route = replace(route, fallback_model=other_model(route.model, route.fallback_model))
+    return route
 
 
 def all_routes() -> dict[str, ModelRoute]:

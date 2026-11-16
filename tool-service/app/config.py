@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # ── Code synthesis ──────────────────────────────────────────────────
     # Transport retries per model call, before the route's fallback model.
     TOOL_MODEL_MAX_ATTEMPTS: int = 3
+    #: A model call not answered after this many seconds is also sent to the
+    #: fallback model; the first good answer is used. 0: never.
+    TOOL_MODEL_HEDGE_SECONDS: int = 45
     # Generate/repair passes per job.
     TOOL_SYNTHESIS_MAX_ATTEMPTS: int = 4
     # Hard wall-clock budget per job, across every attempt. Reasoning calls are

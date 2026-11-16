@@ -49,7 +49,7 @@ def test_overrides_persist_to_disk(tmp_path):
 def test_route_override_wins_over_code_default():
     from app.llm_routes import PRIMARY
 
-    assert route_for("spec_author").model == PRIMARY == "mistral-large-4"
+    assert route_for("spec_author").model == PRIMARY == "mistral-medium-2604"
     get_store().update({"ROUTE_SPEC_AUTHOR_MODEL": "mistral-large-2512",
                         "ROUTE_SPEC_AUTHOR_EFFORT": "omit",
                         "ROUTE_SPEC_AUTHOR_FALLBACK": "none"})

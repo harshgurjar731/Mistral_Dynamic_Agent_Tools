@@ -242,13 +242,17 @@ def test_not_enabled_effort_is_dropped_not_sent_to_the_fallback():
     client = _Client(behaviour)
     out = asyncio.run(decision.decide(client, route="spec_author", system="s", user="u", phase="p"))
     assert out == '{"ok": 1}'
-    assert [c["model"] for c in client.calls] == ["mistral-large-4", "mistral-large-4"]
+    assert [c["model"] for c in client.calls] == ["mistral-medium-2604", "mistral-medium-2604"]
 
 
-def test_heavy_routes_use_the_largest_model_with_high_effort():
+def test_design_routes_reason_on_the_measured_fast_model_and_picking_routes_do_not():
+    """Measured (app/llm_routes.py): medium at high effort answers in ~16 s what the large
+    model takes 140-190 s — or a timeout — to answer, with the same result."""
     from app.llm_routes import route_for
 
-    for role in ("spec_author", "spec_revision", "reuse_resolution", "input_schema",
-                 "workflow_revision", "capability_gap"):
+    for role in ("spec_author", "spec_revision", "input_schema", "workflow_revision", "capability_gap"):
         route = route_for(role)
-        assert route.model == "mistral-large-4" and route.reasoning_effort == "high", role
+        assert route.model == "mistral-medium-2604" and route.reasoning_effort == "high", role
+        assert route.fallback_model == "mistral-large-4", role
+    for role in ("reuse_resolution", "need_normalise", "policy_gate", "prerequisite_analysis"):
+        assert route_for(role).reasoning_effort is None, role

@@ -44,11 +44,12 @@ TRANSFORM_NAMES = ("variables", "output", "json")
 #: One line for prompts: what transform code may use.
 TRANSFORM_CONTRACT = (
     "Python run in a sandbox. `variables` is a dict of every workflow variable "
-    "(step outputs as `variables['step_<id>_output']`, workflow inputs by name); "
-    "a JSON string value may need `json.loads`. Either write ONE expression whose "
-    "value is the step's output, or write statements that assign the result to "
-    "`output` (a dict). Available: " + ", ".join(SAFE_BUILTIN_NAMES) + ", and `json`. "
-    "No imports, no other modules, no other functions."
+    "(step outputs as `variables['step_<id>_output']`, workflow inputs by name). "
+    "Records and lists are already Python dicts and lists — index them directly "
+    "(`variables['step_x_output']['field']`); `json.loads` on one is harmless. Either "
+    "write ONE expression whose value is the step's output, or write statements that "
+    "assign the result to `output` (a dict). Available: " + ", ".join(SAFE_BUILTIN_NAMES)
+    + ", and `json`. No imports, no other modules, no other functions."
 )
 
 #: One line for prompts: what a condition expression may use.
@@ -63,9 +64,53 @@ class SandboxError(ValueError):
     """The code cannot run in the sandbox — found before or while running it."""
 
 
-def _transform_scope(variables: dict, output: Any) -> tuple[dict, dict]:
-    return ({"__builtins__": dict(SAFE_BUILTINS), "json": json},
-            {"variables": variables, "output": output})
+class _Json:
+    """``json`` for transform code: ``loads`` of a value that is already a record returns it.
+
+    The engine keeps a step's record output as a JSON string, so transform code
+    was told it "may need json.loads" — and half of it indexed the string
+    instead ("string indices must be integers"). Transforms now receive records
+    parsed (:func:`structured`); code that still calls ``json.loads`` on one —
+    every transform written under the old contract — keeps working.
+    """
+
+    JSONDecodeError = json.JSONDecodeError
+
+    @staticmethod
+    def loads(value, *args, **kwargs):
+        if isinstance(value, (dict, list)):
+            return value
+        return json.loads(value, *args, **kwargs)
+
+    dumps = staticmethod(json.dumps)
+
+
+def structured(variables: dict) -> dict:
+    """``variables`` with every JSON-encoded record or list parsed (one level of values)."""
+    out = {}
+    for key, value in (variables or {}).items():
+        if isinstance(value, str):
+            text = value.strip()
+            if text[:1] in ("{", "[") and text[-1:] in ("}", "]"):
+                try:
+                    value = json.loads(text)
+                except ValueError:
+                    pass
+        out[key] = value
+    return out
+
+
+def _transform_scope(variables: dict, output: Any) -> dict:
+    """One namespace for the code — its globals *and* its locals.
+
+    With separate dicts, a name the code assigns lives in the locals, and a
+    comprehension, generator or nested function (each its own scope) looks only
+    in the globals: ``mean = sum(xs) / n`` followed by
+    ``[(x - mean) ** 2 for x in xs]`` failed every run with "name 'mean' is not
+    defined", although plan validation — rightly — found nothing wrong with it.
+    """
+    return {"__builtins__": dict(SAFE_BUILTINS), "json": _Json,
+            "variables": structured(variables), "output": output}
 
 
 def is_expression(code: str) -> bool:
@@ -79,17 +124,17 @@ def is_expression(code: str) -> bool:
 def run_transform(code: str, variables: dict, output: Optional[dict] = None) -> Any:
     """Run transform code. An expression's value, else whatever it assigned to ``output``."""
     code = (code or "").strip()
-    globals_, locals_ = _transform_scope(variables, output if output is not None else {})
+    scope = _transform_scope(variables, output if output is not None else {})
     if is_expression(code):
-        return eval(compile(code, "<transform>", "eval"), globals_, locals_)  # noqa: S307
-    exec(compile(code, "<transform>", "exec"), globals_, locals_)  # noqa: S102
-    return locals_.get("output")
+        return eval(compile(code, "<transform>", "eval"), scope)  # noqa: S307
+    exec(compile(code, "<transform>", "exec"), scope)  # noqa: S102
+    return scope.get("output")
 
 
 def eval_condition(expression: str) -> Any:
     """Evaluate an already-substituted condition expression."""
-    globals_ = {"__builtins__": dict(SAFE_BUILTINS), **CONDITION_CONSTANTS}
-    return eval(compile(expression, "<condition>", "eval"), globals_, {})  # noqa: S307
+    scope = {"__builtins__": dict(SAFE_BUILTINS), **CONDITION_CONSTANTS}
+    return eval(compile(expression, "<condition>", "eval"), scope)  # noqa: S307
 
 
 # ── Static checks (plan validation) ──────────────────────────────────────

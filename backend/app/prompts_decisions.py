@@ -485,6 +485,11 @@ asking: `sexual`, `hate_and_discrimination`, `violence_and_threats`,
 `dangerous`, `criminal`, `selfharm`, `jailbreaking`, `pii`. Scoring high on
 these means something is wrong.
 
+`pii` is the exception among them: for an agent whose inputs are records about
+people (a customer's case, an applicant's file, a reply addressed to someone) it
+scores high on every turn by design. Set `pii` to 1 for such an agent — a `pii`
+threshold blocks it from reading its own input.
+
 **Topic categories** describe subject matter, not danger: `health`,
 `financial`, `law`. An agent whose job is that subject scores near 1.0 on it on
 every single turn. A clinical agent discussing a routine medication review
@@ -932,8 +937,13 @@ subject scores near 1.0 on it every turn. **Set this agent's own topic category
 to 1**, or it is blocked on its first real question. Loosening to 0.9 does not
 help, and omitting it does not help — only an explicit 1 exempts it.
 
+`pii` behaves like a topic category for an agent that is handed records about
+people (customer, applicant, claimant, patient data; a reply addressed to a
+person): **set `pii` to 1** — otherwise the agent is blocked from its own input.
+
 For the harm categories (sexual, hate_and_discrimination, violence_and_threats,
-dangerous, criminal, selfharm, jailbreaking, pii), use 0.1-0.3 where the agent
+dangerous, criminal, selfharm, jailbreaking — and pii only for an agent that
+should never see personal data), use 0.1-0.3 where the agent
 carries real exposure and 0.4-0.6 for incidental exposure. Omit anything its
 work does not touch. Set `jailbreaking` low for any agent holding tools or
 reading private documents.

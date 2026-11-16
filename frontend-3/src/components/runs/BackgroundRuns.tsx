@@ -89,7 +89,17 @@ export function BackgroundRuns() {
         if (run.status === "cancelled") return;
 
         const action = focused ? undefined : { label: "Open", onClick: () => openRun(run) };
-        if (run.status === "completed") {
+        if (run.status === "completed" && run.result?.["verified"] === false) {
+          // Built, but its checks or test scenarios did not all pass: a draft.
+          const why = run.result?.["not_verified_reason"];
+          toast.warning(`${name ? `“${name}”` : "The workflow"} is saved but not verified`, {
+            description:
+              (typeof why === "string" && why ? `${why}. ` : "") +
+              "Fix it with Refine with AI or in the builder before running it.",
+            action,
+            duration: 15000,
+          });
+        } else if (run.status === "completed") {
           toast.success(name ? `${meta.noun} “${name}” is ready` : `${meta.label} finished`, {
             description: focused ? undefined : run.title,
             action,

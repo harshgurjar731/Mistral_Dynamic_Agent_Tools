@@ -34,6 +34,26 @@ logger = logging.getLogger(__name__)
 
 #: Set when validation found blocking errors; read by the registration layer.
 VALIDATION_FAILED_KEY = "workflow_validation_failed"
+#: The user accepted the workflow at review (their decision, whatever the tests said).
+ACCEPTED_KEY = "workflow_accepted_at_review"
+#: Set (to the reason) when the workflow is kept as a draft because it has not
+#: passed verification: saved, never registered, and reported as not verified.
+DRAFT_KEY = "workflow_kept_as_draft"
+
+
+def verification_state(ctx: PipelineContext) -> tuple[bool, str]:
+    """``(verified, why not)`` — valid, and every dry-run scenario passed (when dry runs are on)."""
+    from app.config import settings
+    from app.layers.workflow.verify_layers import RESULT_KEY
+
+    if ctx.metadata.get(VALIDATION_FAILED_KEY):
+        return False, "it has validation errors"
+    dry = ctx.metadata.get(RESULT_KEY)
+    if settings.WORKFLOW_DRY_RUN and isinstance(dry, dict) and not dry.get("passed"):
+        scenarios = dry.get("scenarios") or []
+        good = sum(1 for o in scenarios if o.get("passed"))
+        return False, f"{good} of {len(scenarios)} test scenario(s) pass"
+    return True, ""
 #: The definition the review step last validated — changed by a revision or rebuild.
 _REVIEWED_HASH_KEY = "workflow_reviewed_hash"
 
@@ -393,6 +413,31 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
             ctx.emit("done", json.dumps({
                 "workflow_name": spec.workflow_name,
                 "mistral_workflow_id": None,
+                "verified": False,
+                "not_verified_reason": "it has validation errors",
+            }))
+            return await next(ctx)
+
+        # Nobody reviewed it (no interactive run) and it has not passed its own
+        # verification: it is a draft, exactly as an unanswered review leaves it.
+        if not ctx.metadata.get(DRAFT_KEY) and not ctx.metadata.get(ACCEPTED_KEY):
+            verified, why = verification_state(ctx)
+            if not verified:
+                ctx.metadata[DRAFT_KEY] = why
+        if ctx.metadata.get(DRAFT_KEY):
+            reason = str(ctx.metadata[DRAFT_KEY])
+            ctx.emit("registered", json.dumps({
+                "workflow_name": spec.workflow_name,
+                "skipped": True,
+                "error": f"Not registered — the workflow has not passed verification ({reason}). "
+                         "It is saved as a draft: fix it with Refine with AI or in the builder, "
+                         "then publish it.",
+            }))
+            ctx.emit("done", json.dumps({
+                "workflow_name": spec.workflow_name,
+                "mistral_workflow_id": None,
+                "verified": False,
+                "not_verified_reason": reason,
             }))
             return await next(ctx)
 
@@ -506,9 +551,12 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
                          "it will run via the local DAG engine.",
             }))
 
+        verified, why = verification_state(ctx)
         ctx.emit("done", json.dumps({
             "workflow_name": workflow_name,
             "mistral_workflow_id": mistral_workflow_id,
+            "verified": verified,
+            **({} if verified else {"not_verified_reason": why}),
         }))
 
         return await next(ctx)
@@ -545,19 +593,46 @@ class WorkflowReviewLayer(WorkflowStepLayer):
 
         # Per run, not per layer: one layer instance serves every concurrent plan.
         ctx.metadata[_REVIEWED_HASH_KEY] = spec.definition.semantic_hash()
+        from app.config import settings as _settings
+
         last_test = None
+        auto_tests = 0
         while True:
             await self._sync(ctx)
+            # The recommended choice is what an unanswered question takes. A
+            # workflow that has not passed is never accepted that way: it is
+            # tested (and repaired) again while that is allowed, then kept as a
+            # draft. "Accept" used to be the default whatever the tests said —
+            # a workflow failing 0 of 3 scenarios was registered as complete.
+            verified, why = verification_state(ctx)
+            if verified:
+                default, title = "accept", ("The workflow is built and verified — accept it, "
+                                            "or test and refine it further")
+            else:
+                more = auto_tests < max(0, int(_settings.WORKFLOW_REVIEW_AUTO_TESTS))
+                default = "test" if more else "draft"
+                title = f"The workflow is built but not verified ({why}) — test and fix it before accepting"
             choice = await plan_control.ask_user(ctx, "review_workflow", {
-                "title": "The workflow is built — test it, refine it, then accept it or roll it back",
+                "title": title,
                 "workflow_name": spec.workflow_name,
                 "valid": not ctx.metadata.get(VALIDATION_FAILED_KEY),
+                "verified": verified,
+                "not_verified_reason": why,
                 "revisable": True,
                 "last_test": last_test and {"passed": last_test["passed"],
                                             "summary": last_test["summary"]},
-            }, options=["test", "accept", "rollback"], default="accept")
+            }, options=["test", "accept", "rollback"] if verified
+               else ["test", "draft", "accept", "rollback"], default=default)
 
             await self._sync(ctx)
+            if choice == "test" and default == "test":
+                auto_tests += 1
+            if choice == "draft":
+                _, why = verification_state(ctx)
+                ctx.metadata[DRAFT_KEY] = why or "kept as a draft at review"
+                ctx.emit("workflow_draft", json.dumps({
+                    "workflow_name": spec.workflow_name, "reason": ctx.metadata[DRAFT_KEY]}))
+                return await next(ctx)
 
             if choice == "test":
                 ctx.emit("status", "Testing the workflow…")
@@ -581,10 +656,12 @@ class WorkflowReviewLayer(WorkflowStepLayer):
             if choice == "rollback":
                 await plan_control.roll_back_plan(ctx, "rolled back after review")
                 return await next(ctx)
+            ctx.metadata[ACCEPTED_KEY] = True
             ctx.emit("workflow_accepted", json.dumps({
                 "workflow_name": spec.workflow_name,
                 "tested": last_test is not None,
                 "passed": bool(last_test and last_test["passed"]),
+                "verified": verification_state(ctx)[0],
             }))
             return await next(ctx)
 

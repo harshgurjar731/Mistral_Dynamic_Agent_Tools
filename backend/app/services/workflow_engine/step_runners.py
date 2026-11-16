@@ -937,6 +937,38 @@ def _entry_text(entry: Any) -> str:
     return "".join(parts)
 
 
+_VIOLATED = re.compile(r'"([a-z_]+)"\s*:\s*\{\s*"score"\s*:\s*[-+0-9.eE]+\s*,\s*"violated"\s*:\s*true')
+
+
+def guardrail_block(exc: Exception) -> Optional[list[str]]:
+    """The moderation categories that blocked an agent call; None when it was not a guardrail block."""
+    text = str(exc)
+    if "blocked by guardrail" not in text.lower():
+        return None
+    return sorted(set(_VIOLATED.findall(text)))
+
+
+_BLOCKED_ON = re.compile(r"stopped this step on ((?:'[a-z_]+'(?:, )?)+)")
+
+
+def blocked_categories(error: str) -> Optional[list[str]]:
+    """The categories named by a step error from a guardrail block; None for any other error."""
+    text = str(error or "")
+    if "blocked by guardrail" not in text.lower():
+        return None
+    m = _BLOCKED_ON.search(text)
+    named = re.findall(r"'([a-z_]+)'", m.group(1)) if m else []
+    return sorted(set(named) | set(_VIOLATED.findall(text)))
+
+
+def guardrail_message(agent_id: Any, categories: list[str], exc: Exception) -> str:
+    named = ", ".join(f"'{c}'" for c in categories) or "a moderation category"
+    return (f"Blocked by guardrail policy: agent {agent_id}'s own moderation guardrail stopped this "
+            f"step on {named}. If the step's input legitimately contains that kind of content "
+            f"(e.g. customer details for 'pii'), exempt the category on the agent — set its threshold "
+            f"to 1 under Agents → the agent → Guardrails. [{str(exc)[:300]}]")
+
+
 #: Agents the agents completion endpoint refused because of a built-in connector;
 #: they run through the Conversations API from then on (this process).
 CONVERSATION_ONLY_AGENTS: set[str] = set()
@@ -1374,10 +1406,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
     except Exception as e:
         duration = (time.time() - start) * 1000
         logger.error("Agent step '%s' failed: %s", step.id, e)
+        blocked = guardrail_block(e)
         return StepResult(
-            step_id=step.id, 
-            status="failed", 
-            error=str(e), 
+            step_id=step.id,
+            status="failed",
+            error=(guardrail_message(step.config.get("agent_id"), blocked, e)
+                   if blocked is not None else str(e)),
             duration_ms=duration,
             input_preview=step.config.get("query_template") or step.config.get("instructions", "")
         )

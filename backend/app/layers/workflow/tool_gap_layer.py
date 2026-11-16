@@ -146,6 +146,11 @@ class ActivityGapLayer(WorkflowStepLayer):
         # authored after it, shown its real output schema, so the two agree on
         # field names and nesting instead of each assuming its own.
         waves = activity_waves(activity_caps, spec.capabilities)
+        if needs and all(n.contract.get("input_schema") or n.contract.get("output_schema") for n in needs):
+            # The data contract already fixes every activity's fields, so nothing
+            # has to wait for another's authored schema: all are built at once.
+            # (Four sequential stages took most of a 70-minute build.)
+            waves = [0] * len(needs)
         resolutions: list = [None] * len(needs)
         wave_ids = sorted(set(waves))
         for n, wave in enumerate(wave_ids):
@@ -183,7 +188,9 @@ class ActivityGapLayer(WorkflowStepLayer):
                 {"id": activity_caps[i].id, "name": resolutions[i].name or activity_caps[i].name,
                  "step": activity_caps[i].name, "error": resolutions[i].message,
                  "rolled_back": resolutions[i].rolled_back}
-                for i in failing]), attempts=attempts)
+                for i in failing]), attempts=attempts,
+                recommend=plan_control.recommended_for_activities(
+                    [resolutions[i] for i in failing], attempts, _FINAL_FAILURES))
             if choice == "retry":
                 if message:
                     # What the user wants changed: the spec author follows it,
@@ -198,7 +205,17 @@ class ActivityGapLayer(WorkflowStepLayer):
             if choice == "rollback":
                 await plan_control.roll_back_plan(ctx, "activities could not be built")
                 return await next(ctx)
-            break  # manual
+            if choice == "agent":
+                # No code could be built for these steps: an agent does each one.
+                # AgentDesignLayer (next) designs it like any other agent, and the
+                # data contract still fixes what it reads and must return.
+                # Not what the safety screen refused (that is not worked around),
+                # and not a build with a sound specification, which is kept.
+                for i in failing:
+                    r = resolutions[i]
+                    if r.status not in _FINAL_FAILURES and not r.retry_requirement:
+                        hand_to_agent(ctx, activity_caps[i], r)
+            break  # agent, or manual
 
         bindings = ctx.metadata.setdefault("activity_bindings", {})
         versions = ctx.metadata.setdefault("activity_versions", {})
@@ -207,7 +224,18 @@ class ActivityGapLayer(WorkflowStepLayer):
         build_issues = ctx.metadata.setdefault("build_issues", [])
         reused, built, failed = [], [], []
 
+        handed = {c.id for c in activity_caps if c.kind == "agent"}
         for cap, resolution in zip(activity_caps, resolutions):
+            if cap.id in handed:
+                emit_sublayer(ctx, self.name, f"build:{cap.id}", "skipped", label=f"Build {cap.name}",
+                              summary="No code could be built — an agent does this step instead.")
+                failed.append({"capability": cap.id, "capability_name": cap.name,
+                               "tool_name": resolution.name, "version": None,
+                               "why_activity": cap.mode_rationale, "reason": resolution.message,
+                               "status": "handed_to_agent", "error": resolution.message,
+                               "issues": resolution.issues, "deferred": False,
+                               "rolled_back": resolution.rolled_back, "manual": False})
+                continue
             emit_sublayer(ctx, self.name, f"build:{cap.id}",
                           "completed" if _resolved(resolution) else "failed",
                           label=f"Build {cap.name}",
@@ -286,6 +314,24 @@ class ActivityGapLayer(WorkflowStepLayer):
 
 def _resolved(resolution) -> bool:
     return resolution is not None and resolution.status in ("reused", "built", "pending_approval")
+
+
+#: Added to the purpose of a step handed from code to an agent.
+AGENT_HANDOVER_NOTE = (" This step was planned as code; carry it out exactly as specified: compute every "
+                       "figure precisely (use the code interpreter for arithmetic, never estimate) and "
+                       "apply every rule as written, returning exactly the fields of the output record.")
+
+
+def hand_to_agent(ctx: PipelineContext, cap, resolution) -> None:
+    """Re-route a capability whose activity could not be built to an agent."""
+    cap.kind = "agent"
+    cap.mode_rationale = ((cap.mode_rationale or "").rstrip() + " No activity could be built for it ("
+                          + _short(getattr(resolution, "message", "") or "build failed")
+                          + "), so an agent performs it.").strip()
+    if AGENT_HANDOVER_NOTE.strip() not in (cap.purpose or ""):
+        cap.purpose = (cap.purpose or "").rstrip() + AGENT_HANDOVER_NOTE
+    ctx.emit("status", f"'{cap.name}' could not be built as code — an agent will do it")
+    logger.warning("Capability '%s' handed to an agent: %s", cap.id, getattr(resolution, "message", ""))
 
 
 def activity_waves(activity_caps: list, capabilities: list) -> list[int]:

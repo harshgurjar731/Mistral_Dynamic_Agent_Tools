@@ -25,7 +25,7 @@ from app.config import resolve_agent_model, settings
 from app.core.context import PipelineContext
 from app.core.decision import LONG_TIMEOUT_MS, decide, parse_json
 from app.core.specs import AgentSpec, GuardrailSpec
-from app.layers.agent.guardrail_layer import parse_guardrails
+from app.layers.agent.guardrail_layer import handles_personal_data, parse_guardrails
 from app.layers.workflow.base import WorkflowStepLayer
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,11 @@ class AgentDesignLayer(WorkflowStepLayer):
                 guardrails=parse_guardrails(
                     data.get("guardrails") or {},
                     f"{cap.name} {cap.purpose} {spec.goal}",
+                    # What it is handed, by the data contract: records about
+                    # people make `pii` its own data, not a sign of harm.
+                    personal_data=handles_personal_data(
+                        f"{cap.name} {cap.purpose} {spec.goal} {cap.inputs} "
+                        + design_block(spec, cap)),
                 ),
             )
             agent_spec.rationale["design"] = str(data.get("reasoning") or "")

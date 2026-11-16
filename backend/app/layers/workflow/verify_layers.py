@@ -41,6 +41,8 @@ RESULT_KEY = "dry_run"
 CONFIRM_REPAIR_KEY = "dry_run_confirm_repair"
 #: Times a repair's fix is planned before the repair gives up (a model that did not answer).
 PROPOSE_ATTEMPTS = 2
+#: Scenarios run at once (each is a full run of the workflow).
+SCENARIO_CONCURRENCY = 3
 
 SCENARIO_SYSTEM_PROMPT = """\
 You design the test scenarios a newly built workflow is run on before anyone
@@ -60,6 +62,10 @@ workflow's own rules determine for it.
   CONTRACT). Expect decisions, enums, flags and computed figures — never exact
   model-written prose. Operators: "equals", "in" (a list), "exists" (true),
   "min" / "max" (numbers). Each expectation says "why" — the rule behind it.
+- An expected figure must be the EXACT result of the rules on that input:
+  compute it step by step before writing it, and never round or simplify it
+  "for convenience" — a wrong expectation fails a correct workflow. When you
+  are not certain of a figure, expect the decision it leads to instead.
 
 ## Output
 {
@@ -180,10 +186,9 @@ class ScenarioDesignLayer(WorkflowDecisionLayer):
 
 
 def _compare(actual: Any, expectation: dict) -> Optional[str]:
-    from app.services.workflow_engine.step_runners import _MISSING
 
     path = expectation["path"]
-    if actual is _MISSING or actual is None:
+    if actual is _missing() or actual is None:
         return None if expectation.get("exists") is False else f"{path} is missing"
     if "equals" in expectation:
         want = expectation["equals"]
@@ -205,6 +210,12 @@ def _compare(actual: Any, expectation: dict) -> Optional[str]:
     return None
 
 
+def _missing():
+    from app.services.workflow_engine.step_runners import _MISSING
+
+    return _MISSING
+
+
 def _live_connectors(ctx: PipelineContext) -> dict[str, list]:
     """Agents with Mistral connectors attached: those run on Mistral and a dry run cannot stub them."""
     out = {}
@@ -217,8 +228,10 @@ def _live_connectors(ctx: PipelineContext) -> dict[str, list]:
 async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict) -> dict:
     """Run one scenario as a dry run and say whether it passed, and why not."""
     from app.services.workflow_engine import dry_run, engine
-    from app.services.workflow_engine.step_runners import _lookup
+    from app.services.workflow_engine.step_runners import _lookup, blocked_categories
     from app.services.workflow_engine.structured_output import problems as schema_problems
+
+    _MISSING = _missing()
 
     definition = await asyncio.to_thread(engine.get_workflow, workflow_name)
     steps = {s.id: s for s in (definition.steps if definition else [])}
@@ -244,6 +257,10 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
         if result.status == "failed":
             outcome["failed_steps"].append(result.step_id)
             outcome["problems"].append(f"step '{result.step_id}' failed: {(result.error or '')[:400]}")
+            blocked = blocked_categories(result.error or "")
+            if blocked is not None and agent_id:
+                outcome.setdefault("guardrail_blocks", []).append(
+                    {"step_id": result.step_id, "agent_id": agent_id, "categories": blocked})
             continue
         schema = (step.config or {}).get("output_schema") if step else None
         if isinstance(schema, dict) and isinstance(result.output, (dict, list)):
@@ -253,14 +270,176 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
     if status != "COMPLETED" and not outcome["failed_steps"]:
         reason = (run.result or {}).get("error") if isinstance(run.result, dict) else None
         outcome["problems"].append(f"the run ended {status.lower()}" + (f": {reason}" if reason else ""))
-    for expectation in scenario.get("expect") or []:
-        miss = _compare(_lookup(str(expectation["path"]), run.variables or {}), expectation)
+    # Until here every problem is the run's own (a failed step, an output that
+    # breaks its record). An unmet expectation may be the expectation's fault.
+    outcome["hard_problems"] = len(outcome["problems"])
+    outcome["expectation_misses"] = []
+    for index, expectation in enumerate(scenario.get("expect") or []):
+        actual = _lookup(str(expectation["path"]), run.variables or {})
+        miss = _compare(actual, expectation)
         if miss:
-            outcome["problems"].append(f"expected outcome not met — {miss}"
-                                       + (f" ({expectation['why']})" if expectation.get("why") else ""))
+            text = (f"expected outcome not met — {miss}"
+                    + (f" ({expectation['why']})" if expectation.get("why") else ""))
+            outcome["problems"].append(text)
+            outcome["expectation_misses"].append({
+                "index": index, "path": expectation["path"], "text": text,
+                "actual": None if actual is _MISSING else actual})
     outcome["passed"] = not outcome["problems"]
     outcome["steps_run"] = len(run.step_results)
     return outcome
+
+
+# ── Is it the workflow or the expectation that is wrong? ───────────────────
+
+EXPECTATION_REVIEW_SYSTEM = """A workflow was run on a test scenario and produced a value that differs from
+what the scenario expected. Decide which is right. Work only from the GOAL and
+its rules and the scenario INPUT: recompute each value step by step, exactly as
+the rules state (no rounding the rules do not ask for), then compare.
+
+For each mismatch answer:
+- "workflow"     the workflow's value is what the rules give; the expectation was wrong
+- "expectation"  the expectation is what the rules give; the workflow is wrong
+- "unclear"      the rules do not determine it
+
+{"verdicts": [{"index": 0, "correct": "workflow|expectation|unclear",
+               "computed": "<the value the rules give>", "why": "one line"}],
+ "reasoning": "string"}
+"""
+
+
+async def review_expectations(ctx: PipelineContext, parent: str, round_no: int,
+                              scenarios: list[dict], outcomes: list[dict]) -> int:
+    """Correct expectations the workflow rightly did not meet. Returns how many were corrected.
+
+    Only scenarios whose run was clean — every step completed, every typed
+    output fits — and that failed on expectations alone are reviewed: a
+    scenario's own note once read "example expects £98.00 for simplicity"
+    against a computed £98.06, and a correct workflow was sent for repair.
+    The decision is made on the reasoning tier and shown as its own step; a
+    corrected expectation is rewritten to the value the workflow produced.
+    """
+    from app.config import settings
+    from app.core.decision import decide, parse_json
+
+    todo = [(i, o) for i, o in enumerate(outcomes)
+            if not o["passed"] and not o.get("hard_problems") and o.get("expectation_misses")]
+    if not todo:
+        return 0
+    sub = f"r{round_no}:expectations"
+    label = "Check the expectations that were not met"
+    emit_sublayer(ctx, parent, sub, "active", label=label,
+                  summary=f"{sum(len(o['expectation_misses']) for _, o in todo)} unmet expectation(s) "
+                          "in runs that otherwise completed — is the workflow or the expectation wrong?")
+    corrected = 0
+    for i, outcome in todo:
+        scenario = scenarios[i]
+        misses = outcome["expectation_misses"]
+        try:
+            data = parse_json(await decide(
+                ctx.client, model=settings.MISTRAL_ORCHESTRATOR_MODEL,
+                system=EXPECTATION_REVIEW_SYSTEM,
+                user=json.dumps({
+                    "GOAL": ctx.workflow_spec.goal,
+                    "SCENARIO": {"name": scenario["name"], "description": scenario.get("description", "")},
+                    "INPUT": scenario["input"],
+                    "MISMATCHES": [{"index": n, "path": m["path"],
+                                    "expected": {k: v for k, v in scenario["expect"][m["index"]].items()
+                                                 if k != "path"},
+                                    "workflow_value": m["actual"]} for n, m in enumerate(misses)],
+                }, indent=2, default=str)[:24_000],
+                phase="expectation review", timeout_ms=LONG_TIMEOUT_MS, temperature=0.0), None)
+        except Exception as e:  # noqa: BLE001 — unreviewed expectations stay failures
+            logger.warning("Expectation review failed for '%s': %s", scenario["name"], e)
+            continue
+        verdicts = {v.get("index"): v for v in (data or {}).get("verdicts") or [] if isinstance(v, dict)}
+        notes = outcome.setdefault("corrected_expectations", [])
+        for n, miss in enumerate(misses):
+            verdict = verdicts.get(n) or {}
+            if verdict.get("correct") != "workflow" or miss["actual"] is None:
+                continue
+            expectation = scenario["expect"][miss["index"]]
+            was = {k: v for k, v in expectation.items() if k not in ("path", "why")}
+            for key in ("equals", "in", "min", "max", "exists"):
+                expectation.pop(key, None)
+            expectation["equals"] = miss["actual"]
+            expectation["why"] = (str(verdict.get("why") or expectation.get("why") or "")[:240]
+                                  + " (expectation corrected after review)").strip()
+            outcome["problems"].remove(miss["text"])
+            notes.append({"path": miss["path"], "was": was, "now": miss["actual"],
+                          "why": str(verdict.get("why") or "")[:240]})
+            corrected += 1
+        outcome["expectation_misses"] = [m for m in misses if m["text"] in outcome["problems"]]
+        outcome["passed"] = not outcome["problems"]
+    emit_sublayer(ctx, parent, sub, "completed", label=label,
+                  summary=(f"{corrected} expectation(s) were wrong and were corrected; the workflow's "
+                           "values are what the rules give." if corrected
+                           else "The expectations stand — the workflow needs fixing."))
+    return corrected
+
+
+# ── An agent blocked by its own guardrail ──────────────────────────────────
+
+#: Categories that describe what an agent's input *is* (records about people,
+#: money, health, law) rather than harm. Only these are ever relaxed; a block on
+#: jailbreaking or a harm category is a finding, never repaired away.
+RELAXABLE_CATEGORIES = frozenset({"pii", "financial", "health", "law"})
+
+
+async def relax_blocking_guardrails(ctx: PipelineContext, parent: str, round_no: int,
+                                    failed: list[dict]) -> list[dict]:
+    """Exempt the data categories that blocked agents this plan created. Returns what changed.
+
+    A workflow edit cannot fix this: the agent's moderation guardrail refuses
+    the step's own input (an output-safety agent was blocked on `pii` by the
+    customer reply it had to check). Only agents created by this plan are
+    touched — their guardrail was this plan's decision — and the update goes
+    through the platform's agent rules, so an admin rule that requires the
+    category still wins.
+    """
+    from app.layers.workflow import plan_control
+    from app.services import agent_service
+
+    mine = {str(i.get("id")) for i in plan_control.created(ctx) if i.get("kind") == "agent"}
+    wanted: dict[str, set[str]] = {}
+    for outcome in failed:
+        for block in outcome.get("guardrail_blocks") or []:
+            cats = set(block.get("categories") or []) & RELAXABLE_CATEGORIES
+            if cats and str(block.get("agent_id")) in mine:
+                wanted.setdefault(str(block["agent_id"]), set()).update(cats)
+    changed = []
+    for agent_id, cats in wanted.items():
+        sub = f"guardrail{round_no}:{agent_id[-8:]}"
+        label = f"Repair {round_no}: the agent's guardrail"
+        emit_sublayer(ctx, parent, sub, "active", label=label,
+                      summary=f"Its own guardrail blocked the step on {', '.join(sorted(cats))} — "
+                              "that is the data it is handed, so the category is exempted")
+        try:
+            agent = await agent_service.get_agent(ctx.client, agent_id)
+            guardrails = [dict(g) for g in agent.get("guardrails") or [] if isinstance(g, dict)]
+            touched = False
+            for entry in guardrails:
+                for key in ("moderation_llm_v2", "moderation_llm_v1"):
+                    config = entry.get(key)
+                    if not isinstance(config, dict):
+                        continue
+                    thresholds = dict(config.get("custom_category_thresholds") or {})
+                    thresholds = {k: v for k, v in thresholds.items() if v is not None}
+                    for cat in cats:
+                        thresholds[cat] = 1.0
+                    entry[key] = {**config, "custom_category_thresholds": thresholds}
+                    touched = True
+            if not touched:
+                raise ValueError("the agent has no moderation guardrail to change")
+            await agent_service.update_agent(ctx.client, agent_id, {"guardrails": guardrails})
+        except Exception as e:  # noqa: BLE001 — reported; the failure then stands for review
+            emit_sublayer(ctx, parent, sub, "failed", label=label,
+                          error=f"The guardrail could not be changed: {e}")
+            continue
+        summary = (f"Exempted {', '.join(sorted(cats))} on agent "
+                   f"{agent.get('name') or agent_id} (its own input data)")
+        emit_sublayer(ctx, parent, sub, "completed", label=label, summary=summary)
+        changed.append({"agent_id": agent_id, "categories": sorted(cats), "summary": summary})
+    return changed
 
 
 # ── Repairing from failed scenarios ────────────────────────────────────────
@@ -398,24 +577,46 @@ async def run_verification(ctx: PipelineContext, parent: str) -> dict:
     rounds = max(0, settings.WORKFLOW_DRY_RUN_REPAIRS)
     history: list[dict] = []
     outcomes: list[dict] = []
+    gate = asyncio.Semaphore(SCENARIO_CONCURRENCY)
+
+    def _report(round_no: int, i: int, scenario: dict, outcome: dict) -> None:
+        summary = ("Passed — every step completed and every expected outcome held."
+                   if outcome["passed"] else "; ".join(outcome["problems"][:3]))
+        if outcome.get("corrected_expectations"):
+            summary += f" ({len(outcome['corrected_expectations'])} expectation(s) corrected after review.)"
+        if outcome.get("warnings"):
+            summary += " Note: " + outcome["warnings"][0]
+        emit_sublayer(ctx, parent, f"r{round_no}:s{i}", "completed" if outcome["passed"] else "failed",
+                      label=f"{'Re-run' if round_no else 'Run'} '{scenario['name']}'", summary=summary)
+
     for round_no in range(rounds + 1):
-        outcomes = []
-        for i, scenario in enumerate(scenarios):
-            sub = f"r{round_no}:s{i}"
-            label = f"{'Re-run' if round_no else 'Run'} '{scenario['name']}'"
-            emit_sublayer(ctx, parent, sub, "active", label=label, detail=scenario.get("description", ""))
-            outcome = await run_scenario(ctx, workflow_name, scenario)
-            outcomes.append(outcome)
-            summary = ("Passed — every step completed and every expected outcome held."
-                       if outcome["passed"] else "; ".join(outcome["problems"][:3]))
-            if outcome.get("warnings"):
-                summary += " Note: " + outcome["warnings"][0]
-            emit_sublayer(ctx, parent, sub, "completed" if outcome["passed"] else "failed", label=label,
-                          summary=summary)
+        async def _one(i: int, scenario: dict, _round: int = round_no) -> dict:
+            async with gate:
+                emit_sublayer(ctx, parent, f"r{_round}:s{i}", "active",
+                              label=f"{'Re-run' if _round else 'Run'} '{scenario['name']}'",
+                              detail=scenario.get("description", ""))
+                outcome = await run_scenario(ctx, workflow_name, scenario)
+                _report(_round, i, scenario, outcome)
+                return outcome
+
+        # Scenarios are independent runs: together, not one after another.
+        outcomes = list(await asyncio.gather(*(_one(i, sc) for i, sc in enumerate(scenarios))))
+        # A clean run that only missed an expectation: check which is wrong
+        # before anything is "repaired".
+        if await review_expectations(ctx, parent, round_no, scenarios, outcomes):
+            for i, (scenario, outcome) in enumerate(zip(scenarios, outcomes)):
+                if outcome.get("corrected_expectations"):
+                    _report(round_no, i, scenario, outcome)
         failed = [o for o in outcomes if not o["passed"]]
         history.append({"round": round_no, "passed": len(outcomes) - len(failed), "failed": len(failed)})
         if not failed or round_no == rounds:
             break
+        relaxed = await relax_blocking_guardrails(ctx, parent, round_no + 1, failed)
+        if relaxed:
+            # The cause was an agent's own guardrail, not the workflow: run again.
+            history[-1]["repair"] = {"applied": True, "guardrails": relaxed,
+                                     "summary": "; ".join(r["summary"] for r in relaxed)}
+            continue
         fixed = await repair(ctx, workflow_name, parent, round_no + 1, failed)
         history[-1]["repair"] = fixed
         if not fixed.get("applied"):
