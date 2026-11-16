@@ -315,6 +315,34 @@ def _restore_sync(workflow_name: str, version_no: int, label: str) -> dict:
     }
 
 
+async def restore_definition(workflow_name: str, snapshot: dict, label: str) -> dict:
+    """Put the workflow back to ``snapshot`` (a dumped definition), as a new recorded version.
+
+    Used when a repair did not help (verify_layers): the workflow returns to
+    the best state its tests have seen. Activity steps pin the version they
+    run, so versions a discarded repair built are simply no longer referenced.
+    """
+    from app.services.workflow_engine.engine import get_workflow, save_workflow
+    from app.services.workflow_engine.models import WorkflowDefinition
+    from app.workflow_revisions import store
+
+    def _go():
+        current = _get_workflow(workflow_name)
+        definition = WorkflowDefinition(**snapshot)
+        if definition.semantic_hash() == current.semantic_hash():
+            return {"version_no": None, "changed": False}
+        _keep_server_fields(definition, current)
+        store.ensure_baseline(workflow_name, current)
+        save_workflow(definition)
+        version = store.record_version(workflow_name, definition, source="restore", label=label)
+        store.supersede_open(workflow_name)
+        saved = get_workflow(workflow_name)
+        return {"version_no": version, "changed": True,
+                "workflow": saved.model_dump(mode="json") if saved else None}
+
+    return await asyncio.to_thread(_go)
+
+
 async def restore_version(workflow_name: str, version_no: int) -> dict:
     return await asyncio.to_thread(_restore_sync, workflow_name, version_no,
                                    f"Restored version {version_no}")

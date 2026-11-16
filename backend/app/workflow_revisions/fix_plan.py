@@ -110,12 +110,24 @@ async def diagnose(workflow_name: str, base: dict, execution_id: Optional[str]) 
             continue
         step = _step_for(entry.name, steps) or {}
         config = step.get("config") or {}
+        preview = entry.input_preview or ""
         row = {
             "step_id": step.get("id") or entry.name,
             "step_type": step.get("type"),
             "error": (entry.error or "")[:_PREVIEW_BUDGET],
-            "input_preview": (entry.input_preview or "")[:_PREVIEW_BUDGET],
+            # A preview is the start of the value. A repair once "fixed a
+            # truncated agent prompt" because the preview it was shown was cut.
+            "input_preview": (preview[:_PREVIEW_BUDGET]
+                              + ("" if len(preview) < min(_PREVIEW_BUDGET, 1000) else
+                                 " …[preview only — the real input was complete, not cut off]")),
         }
+        from app.services.workflow_engine import failures
+
+        row["failure_kind"] = failures.kind(entry.error, str(step.get("type") or ""))
+        if row["failure_kind"] == failures.TRANSIENT:
+            row["note"] = ("NOT a fault of the workflow: " + failures.describe(entry.error)
+                           + ". No edit to wiring, templates, conditions or activity code fixes "
+                             "this — propose no change for this step.")
         if step.get("type") == "tool" and config.get("tool_name"):
             row["tool_name"] = config["tool_name"]
             row["tool_version"] = config.get("tool_version")

@@ -52,8 +52,31 @@ def verification_state(ctx: PipelineContext) -> tuple[bool, str]:
     if settings.WORKFLOW_DRY_RUN and isinstance(dry, dict) and not dry.get("passed"):
         scenarios = dry.get("scenarios") or []
         good = sum(1 for o in scenarios if o.get("passed"))
-        return False, f"{good} of {len(scenarios)} test scenario(s) pass"
+        waiting = int(dry.get("inconclusive") or 0)
+        return False, (f"{good} of {len(scenarios)} test scenario(s) pass"
+                       + (f"; {waiting} could not be completed because the model service did not "
+                          "answer — not a fault of the workflow" if waiting else ""))
     return True, ""
+
+
+def retest_worthwhile(ctx: PipelineContext) -> bool:
+    """Whether testing again, unasked, could give a different answer.
+
+    Yes when the workflow was never dry-run, or when scenarios could not be
+    completed because the model service did not answer. No when the scenarios
+    ran, failed and were repaired as far as the repairs go: the same
+    verification would run again for as long (25 minutes, on the plan this
+    was measured on) and end the same way.
+    """
+    from app.config import settings
+    from app.layers.workflow.verify_layers import RESULT_KEY
+
+    if ctx.metadata.get(VALIDATION_FAILED_KEY):
+        return False
+    dry = ctx.metadata.get(RESULT_KEY)
+    if not settings.WORKFLOW_DRY_RUN:
+        return False
+    return not isinstance(dry, dict) or bool(dry.get("inconclusive"))
 #: The definition the review step last validated — changed by a revision or rebuild.
 _REVIEWED_HASH_KEY = "workflow_reviewed_hash"
 
@@ -609,7 +632,8 @@ class WorkflowReviewLayer(WorkflowStepLayer):
                 default, title = "accept", ("The workflow is built and verified — accept it, "
                                             "or test and refine it further")
             else:
-                more = auto_tests < max(0, int(_settings.WORKFLOW_REVIEW_AUTO_TESTS))
+                more = (auto_tests < max(0, int(_settings.WORKFLOW_REVIEW_AUTO_TESTS))
+                        and retest_worthwhile(ctx))
                 default = "test" if more else "draft"
                 title = f"The workflow is built but not verified ({why}) — test and fix it before accepting"
             choice = await plan_control.ask_user(ctx, "review_workflow", {

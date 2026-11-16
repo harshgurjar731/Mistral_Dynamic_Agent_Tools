@@ -14,11 +14,14 @@ around it:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Optional
 
 from app.core.specs import CodeRequirement
 from app.prompts_codegen import ACTIVITY_SPEC_SYSTEM, TOOL_SPEC_SYSTEM
+
+logger = logging.getLogger(__name__)
 
 _SNAKE = re.compile(r"[^a-z0-9]+")
 
@@ -164,6 +167,7 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
         return []
     normalise_example_nulls(req)
     issues = []
+    bad: set[int] = set()
     for i, example in enumerate(req.examples, 1):
         if not isinstance(example, dict):
             continue
@@ -177,8 +181,22 @@ def _hold_to_contract(need, req: CodeRequirement) -> list[str]:
                 where = "/".join(str(p) for p in e.absolute_path) or part
                 if part == "output" and e.validator == "required":
                     continue  # an example may leave out fields it cannot predict
+                bad.add(i)
                 issues.append(f"worked example {i} {part} does not match the data contract at "
                               f"{where}: {e.message}")
+    if bad:
+        # One example off the contract does not need the whole specification
+        # written again (50–70 s each time, and two of seven activities in one
+        # plan went round twice): when enough sound examples remain, the bad
+        # one is left out. An input the contract rejects never reaches the
+        # activity at run time anyway — the step's arguments are checked first.
+        sound = [e for i, e in enumerate(req.examples, 1) if i not in bad]
+        with_output = [e for e in sound if isinstance(e, dict) and e.get("output") is not None]
+        if len(with_output) >= (2 if req.kind == "pure" else 1):
+            logger.info("Activity '%s': left out %d worked example(s) that did not match the data "
+                        "contract (%s)", req.name, len(bad), "; ".join(issues)[:300])
+            req.examples = sound
+            return []
     return issues[:6]
 
 

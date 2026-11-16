@@ -69,8 +69,8 @@ def test_a_model_that_keeps_losing_is_skipped(monkeypatch):
     monkeypatch.setattr(settings, "DECISION_HEDGE_SECONDS", 0.02)
     calls = []
     client = _client({"mistral-large-4": 0.2}, calls)
-    for _ in range(model_speed.STRIKES):
-        asyncio.run(_complete(client, "mistral-large-4", "s", "u", 0.1, 5000, None, "mistral-medium-2604"))
+    # One lost race is decisive: the fallback answered while it was still silent.
+    asyncio.run(_complete(client, "mistral-large-4", "s", "u", 0.1, 5000, None, "mistral-medium-2604"))
     assert model_speed.skipped("mistral-large-4")
     calls.clear()
     asyncio.run(_complete(client, "mistral-large-4", "s", "u", 0.1, 5000, None, "mistral-medium-2604"))
@@ -240,7 +240,10 @@ def test_an_unverified_workflow_is_never_accepted_by_default(monkeypatch):
     ctx.metadata[verify_layers.RESULT_KEY] = dict(FAILING)  # what the Verify stage found
     asyncio.run(fl.WorkflowReviewLayer().process(ctx, _done))
 
-    assert [q["default"] for q in run.questions] == ["test", "draft"]
+    # Not accepted — and not tested again either: the scenarios ran, failed and
+    # were repaired as far as repairs go. On the deployment the automatic
+    # re-test repeated a 27-minute verification and ended the same way.
+    assert [q["default"] for q in run.questions] == ["draft"]
     assert all(q["verified"] is False for q in run.questions)
     assert not run.payloads("workflow_accepted")
     assert ctx.metadata[fl.DRAFT_KEY] == "0 of 1 test scenario(s) pass"
@@ -257,10 +260,12 @@ def test_the_automatic_retest_can_rescue_it_and_a_verified_workflow_is_accepted(
     from app.layers.workflow import verify_layers
 
     run = DefaultingRun()
-    ctx = _review_ctx(run, monkeypatch, [dict(PASSING)])  # the re-test's repair fixed it
-    ctx.metadata[verify_layers.RESULT_KEY] = dict(FAILING)
+    ctx = _review_ctx(run, monkeypatch, [dict(PASSING)])  # the model answers this time
+    # The Verify stage could not complete a scenario: the model service did not answer.
+    ctx.metadata[verify_layers.RESULT_KEY] = {**FAILING, "inconclusive": 1}
     asyncio.run(fl.WorkflowReviewLayer().process(ctx, _done))
     assert [q["default"] for q in run.questions] == ["test", "accept"]
+    assert "did not" in run.questions[0]["not_verified_reason"]
     assert run.payloads("workflow_accepted")[0]["verified"] is True
     assert fl.DRAFT_KEY not in ctx.metadata
 

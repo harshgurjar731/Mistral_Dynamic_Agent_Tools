@@ -66,6 +66,23 @@ async def _provision_library(cap, ctx) -> str | None:
 # polite to the API, not to pace a queue.
 
 
+async def _responsive_model(ctx: PipelineContext, model: str) -> tuple[str, str]:
+    """The model to create an agent on: the chosen one unless it is not answering (model_speed)."""
+    from app.config import map_model_name
+    from app.core import model_speed
+
+    if not getattr(settings, "AGENT_MODEL_HEALTH_CHECK", True):
+        return model, ""
+    candidates = [map_model_name(m) for m in (
+        getattr(settings, "AGENT_FALLBACK_MODEL", ""), settings.AGENT_MODEL_MEDIUM,
+        settings.AGENT_MODEL_SMALL) if m and str(m).lower() not in ("none", "off")]
+    try:
+        return await model_speed.responsive_model(ctx.client, map_model_name(model), candidates)
+    except Exception as e:  # noqa: BLE001 — a failed check never blocks creating the agent
+        logger.info("Model responsiveness check skipped: %s", e)
+        return model, ""
+
+
 class AgentProvisioningLayer(WorkflowStepLayer):
     """Create designed agents; collect reused ones into the same record list."""
 
@@ -140,6 +157,12 @@ class AgentProvisioningLayer(WorkflowStepLayer):
                         ) + [libraries[cap.id]]
                 config = agent_spec.to_config()
                 config["model"] = archetype.model_for(cap.archetype, config["model"])
+                # A model that is not answering right now would fail every run
+                # of this step: check before the agent is created on it.
+                config["model"], slow_note = await _responsive_model(ctx, config["model"])
+                if slow_note:
+                    logger.warning("Agent '%s': %s", config.get("agent_name") or cap.name, slow_note)
+                    ctx.emit("status", f"{cap.name}: {slow_note}")
 
                 # The same creation gate the chat pipeline uses, in pipeline
                 # mode — see app.rules.apply.

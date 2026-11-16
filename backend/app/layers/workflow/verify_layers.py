@@ -17,6 +17,20 @@ before the user reviews it:
 
 Every scenario run and every repair is streamed as a sublayer of its layer.
 The review's "Test" runs the same verification again (``run_verification``).
+
+Three rules keep the repair honest (each from a deployed plan that broke one):
+
+* **A failure has a kind** (``workflow_engine.failures``). A step the model
+  service did not answer is *transient*: the scenario is run again, and if it
+  still cannot complete it is reported as not completed — never repaired. All
+  17 failed dry runs of one plan were one agent timing out; the repairs rewrote
+  three working activities.
+* **An expectation must name a field that exists.** Paths are checked against
+  each step's declared output and corrected or dropped before anything runs;
+  expectations on steps a failed run never reached are not counted at all.
+* **A repair is kept only if it helps.** The best state seen is remembered; a
+  repair that leaves the workflow invalid, or does not make more scenarios
+  pass, is undone.
 """
 
 from __future__ import annotations
@@ -43,6 +57,8 @@ CONFIRM_REPAIR_KEY = "dry_run_confirm_repair"
 PROPOSE_ATTEMPTS = 2
 #: Scenarios run at once (each is a full run of the workflow).
 SCENARIO_CONCURRENCY = 3
+#: Seconds before a scenario the model service did not answer is run again (× the attempt).
+TRANSIENT_WAIT = 4.0
 
 SCENARIO_SYSTEM_PROMPT = """\
 You design the test scenarios a newly built workflow is run on before anyone
@@ -225,9 +241,80 @@ def _live_connectors(ctx: PipelineContext) -> dict[str, list]:
     return out
 
 
+def expectation_step(path: str) -> str:
+    """The step id an expectation path reads: ``step_<id>_output.…`` → ``<id>``."""
+    head = str(path or "").split(".")[0]
+    return head[5:-7] if head.startswith("step_") and head.endswith("_output") else ""
+
+
+def _words(name: str) -> set[str]:
+    import re
+
+    return {t for t in re.split(r"[^a-z0-9]+", str(name).lower()) if t}
+
+
+def check_expectation_paths(definition: dict, catalog: dict, scenarios: list[dict]) -> list[dict]:
+    """Make every expectation name a field its step really returns. Returns one note per change.
+
+    ``catalog``: activity name → ``{"input", "output", "version"}`` (argument_shapes).
+    A path is judged only where the step's output is declared (an activity's
+    output schema, an agent's typed output). A field the schema says does not
+    exist is corrected when exactly one field at that level is the same name
+    with more or fewer words (``outcome`` → ``outcome_code``), else the
+    expectation is dropped: it could never be met, and a repair once added a
+    step just to produce the name a test had invented.
+    """
+    from app.services.workflow_engine.argument_shapes import MISSING, _Context
+
+    shapes = _Context(definition, catalog or {})
+    notes: list[dict] = []
+    for scenario in scenarios:
+        kept = []
+        for expectation in scenario.get("expect") or []:
+            path = str(expectation.get("path") or "")
+            parts = [x for x in path.split(".") if x]
+            if len(parts) < 2 or shapes.reference(path) is not MISSING:
+                kept.append(expectation)
+                continue
+            # Walk to the first part the schema does not have.
+            fixed = None
+            for depth in range(2, len(parts) + 1):
+                if shapes.reference(".".join(parts[:depth])) is not MISSING:
+                    continue
+                parent = shapes.reference(".".join(parts[:depth - 1]))
+                siblings = list((parent or {}).get("properties") or {}) if isinstance(parent, dict) else []
+                want = _words(parts[depth - 1])
+                close = [f for f in siblings if want and (want <= _words(f) or _words(f) <= want)]
+                if len(close) == 1:
+                    trial = ".".join([*parts[:depth - 1], close[0], *parts[depth:]])
+                    if shapes.reference(trial) is not MISSING:
+                        fixed = trial
+                break
+            if fixed:
+                notes.append({"scenario": scenario.get("name"), "path": path, "now": fixed,
+                              "note": f"'{path}' does not exist — the step returns '{fixed}'; corrected"})
+                expectation["path"] = fixed
+                kept.append(expectation)
+            else:
+                notes.append({"scenario": scenario.get("name"), "path": path, "now": None,
+                              "note": f"'{path}' is not a field that step returns — expectation dropped"})
+        scenario["expect"] = kept
+    return notes
+
+
+async def _live_catalog() -> dict:
+    from app.services.workflow_engine.rule_validation import _activity_catalog
+
+    try:
+        return await _activity_catalog()
+    except Exception as e:  # noqa: BLE001 — unknown shapes are simply not judged
+        logger.debug("Activity catalog unavailable for the expectation check: %s", e)
+        return {}
+
+
 async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict) -> dict:
     """Run one scenario as a dry run and say whether it passed, and why not."""
-    from app.services.workflow_engine import dry_run, engine
+    from app.services.workflow_engine import dry_run, engine, failures
     from app.services.workflow_engine.step_runners import _lookup, blocked_categories
     from app.services.workflow_engine.structured_output import problems as schema_problems
 
@@ -244,7 +331,11 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
             run = await engine.execute_workflow(workflow_name, dict(scenario["input"]),
                                                 execution_id=execution_id, wait_for_result=True)
     except Exception as e:  # noqa: BLE001 — a crash is a failed scenario, not a failed plan
-        outcome["problems"].append(f"the run crashed: {e}")
+        text = f"the run crashed: {e}"
+        outcome["problems"].append(text)
+        if failures.is_transient(e):
+            outcome["transient_problems"] = [text]
+            outcome["inconclusive"] = True
         return outcome
 
     for result in run.step_results:
@@ -256,6 +347,16 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
                 "which run on Mistral and are not stubbed in a dry run")
         if result.status == "failed":
             outcome["failed_steps"].append(result.step_id)
+            step_type = str(getattr(getattr(step, "type", ""), "value", getattr(step, "type", "")) or "")
+            if failures.is_transient(result.error, step_type):
+                # The service did not answer. Nothing in the workflow caused it,
+                # so it is never handed to a repair (see run_verification).
+                text = (f"step '{result.step_id}' could not be completed — "
+                        f"{failures.describe(result.error)} ({(result.error or '')[:160]})")
+                outcome["problems"].append(text)
+                outcome.setdefault("transient_problems", []).append(text)
+                outcome.setdefault("transient_steps", []).append(result.step_id)
+                continue
             outcome["problems"].append(f"step '{result.step_id}' failed: {(result.error or '')[:400]}")
             blocked = blocked_categories(result.error or "")
             if blocked is not None and agent_id:
@@ -272,9 +373,17 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
         outcome["problems"].append(f"the run ended {status.lower()}" + (f": {reason}" if reason else ""))
     # Until here every problem is the run's own (a failed step, an output that
     # breaks its record). An unmet expectation may be the expectation's fault.
-    outcome["hard_problems"] = len(outcome["problems"])
+    outcome["hard_problems"] = len(outcome["problems"]) - len(outcome.get("transient_problems") or [])
+    outcome["inconclusive"] = bool(outcome.get("transient_problems"))
     outcome["expectation_misses"] = []
+    completed = {r.step_id for r in run.step_results if r.status == "completed"}
+    stopped_early = bool(outcome["failed_steps"]) or status != "COMPLETED"
     for index, expectation in enumerate(scenario.get("expect") or []):
+        # A run that stopped at a failed step never reached the later ones. Their
+        # expectations are not separate failures — the failed step is the failure.
+        if stopped_early and expectation_step(expectation["path"]) not in completed:
+            outcome["unreached"] = outcome.get("unreached", 0) + 1
+            continue
         actual = _lookup(str(expectation["path"]), run.variables or {})
         miss = _compare(actual, expectation)
         if miss:
@@ -286,6 +395,7 @@ async def run_scenario(ctx: PipelineContext, workflow_name: str, scenario: dict)
                 "actual": None if actual is _MISSING else actual})
     outcome["passed"] = not outcome["problems"]
     outcome["steps_run"] = len(run.step_results)
+    outcome["steps_completed"] = len(completed)
     return outcome
 
 
@@ -480,14 +590,23 @@ class _SubSink:
             self.ctx.emit("status", data)
 
 
+def design_problems(outcome: dict) -> list[str]:
+    """The problems of a scenario that a change to the workflow could fix."""
+    transient = set(outcome.get("transient_problems") or [])
+    return [p for p in outcome.get("problems") or [] if p not in transient]
+
+
 def _instruction(failed: list[dict]) -> str:
     lines = []
     for o in failed:
         lines.append(f"Scenario '{o['name']}':")
-        lines += [f"  - {p}" for p in o["problems"][:8]]
+        lines += [f"  - {p}" for p in design_problems(o)[:8]]
     return ("The workflow was dry-run on its test scenarios before review and these failed. Find "
             "the cause of each — wiring, a condition or transform, a template, or an activity's "
-            "code — and fix it so every scenario passes. Change only what causes these failures.\n"
+            "code — and fix it so every scenario passes. Change only what causes these failures. "
+            "Do not rename fields, add steps or change working activity code merely to make a "
+            "value appear where a test looks for it: if a listed expectation is itself wrong, "
+            "leave the workflow as it is and say so in the summary.\n"
             + "\n".join(lines))[:3900]
 
 
@@ -566,22 +685,82 @@ async def repair(ctx: PipelineContext, workflow_name: str, parent: str, round_no
             "code_fixes": [i for i in revision.get("plan") or [] if i.get("kind") == "code"]}
 
 
+def _score(outcomes: list[dict]) -> tuple[int, int, int, int]:
+    """Higher is better.
+
+    Scenarios passing; then fewer scenarios with a fault of the workflow's own;
+    then how far the runs got (a repair that fixes step 3 and so exposes a
+    fault in step 5 is progress, though no more scenarios pass yet); then fewer
+    such faults in all.
+    """
+    return (sum(1 for o in outcomes if o["passed"]),
+            -sum(1 for o in outcomes if not o["passed"] and design_problems(o)),
+            sum(int(o.get("steps_completed") or 0) for o in outcomes),
+            -sum(len(design_problems(o)) for o in outcomes))
+
+
+async def _blocking_issues(ctx: PipelineContext, definition) -> list[str]:
+    """Validation errors of ``definition`` (rules and argument shapes included)."""
+    from app.services.workflow_engine.rule_validation import validate_with_rules
+
+    try:
+        result = await validate_with_rules(definition, client=ctx.client)
+    except Exception as e:  # noqa: BLE001 — an unavailable check does not undo a repair
+        logger.warning("Validation after repair skipped: %s", e)
+        return []
+    return [i.message for i in result.issues if i.severity == "error"]
+
+
+async def _restore(ctx: PipelineContext, workflow_name: str, snapshot: dict, label: str) -> None:
+    from app.services import workflow_revision_service as revisions
+    from app.services.workflow_engine.engine import get_workflow
+
+    await revisions.restore_definition(workflow_name, snapshot, label)
+    ctx.workflow_spec.definition = await asyncio.to_thread(get_workflow, workflow_name)
+
+
 async def run_verification(ctx: PipelineContext, parent: str) -> dict:
-    """Run every scenario; repair and re-run what fails, up to the configured rounds."""
+    """Run every scenario; repair and re-run what fails, up to the configured rounds.
+
+    Transient failures are retried, never repaired. A repair is kept only when
+    the workflow still validates and more scenarios pass than before; otherwise
+    the best state seen is restored and the remaining failures are reported.
+    """
     from app.config import settings
+    from app.services.workflow_engine.engine import get_workflow
 
     spec = ctx.workflow_spec
     workflow_name = spec.workflow_name or getattr(spec.definition, "name", None)
     scenarios = ctx.metadata.get(SCENARIOS_KEY) or [
         {"name": "Designed example", "input": _example(spec.definition), "expect": []}]
     rounds = max(0, settings.WORKFLOW_DRY_RUN_REPAIRS)
+    retries = max(0, int(getattr(settings, "WORKFLOW_DRY_RUN_TRANSIENT_RETRIES", 2)))
     history: list[dict] = []
     outcomes: list[dict] = []
     gate = asyncio.Semaphore(SCENARIO_CONCURRENCY)
+    path_notes: list[dict] = []
+
+    async def _check_paths() -> None:
+        definition = await asyncio.to_thread(get_workflow, workflow_name)
+        if definition is None:
+            return
+        found = check_expectation_paths(definition.model_dump(mode="json"), await _live_catalog(), scenarios)
+        if found:
+            path_notes.extend(found)
+            emit_sublayer(ctx, parent, f"paths{len(path_notes)}", "completed",
+                          label="Check the expectations against the steps' outputs",
+                          summary="; ".join(n["note"] for n in found)[:600])
 
     def _report(round_no: int, i: int, scenario: dict, outcome: dict) -> None:
-        summary = ("Passed — every step completed and every expected outcome held."
-                   if outcome["passed"] else "; ".join(outcome["problems"][:3]))
+        if outcome["passed"]:
+            summary = "Passed — every step completed and every expected outcome held."
+        elif outcome.get("inconclusive") and not design_problems(outcome):
+            summary = ("Not completed — " + "; ".join(outcome["transient_problems"][:2])
+                       + ". This is not a fault of the workflow.")
+        else:
+            summary = "; ".join(outcome["problems"][:3])
+        if outcome.get("unreached"):
+            summary += f" ({outcome['unreached']} expectation(s) on later steps were not reached.)"
         if outcome.get("corrected_expectations"):
             summary += f" ({len(outcome['corrected_expectations'])} expectation(s) corrected after review.)"
         if outcome.get("warnings"):
@@ -589,13 +768,28 @@ async def run_verification(ctx: PipelineContext, parent: str) -> dict:
         emit_sublayer(ctx, parent, f"r{round_no}:s{i}", "completed" if outcome["passed"] else "failed",
                       label=f"{'Re-run' if round_no else 'Run'} '{scenario['name']}'", summary=summary)
 
+    best: Optional[dict] = None
+    rolled_back = False
     for round_no in range(rounds + 1):
+        await _check_paths()
+
         async def _one(i: int, scenario: dict, _round: int = round_no) -> dict:
             async with gate:
-                emit_sublayer(ctx, parent, f"r{_round}:s{i}", "active",
-                              label=f"{'Re-run' if _round else 'Run'} '{scenario['name']}'",
+                label = f"{'Re-run' if _round else 'Run'} '{scenario['name']}'"
+                emit_sublayer(ctx, parent, f"r{_round}:s{i}", "active", label=label,
                               detail=scenario.get("description", ""))
                 outcome = await run_scenario(ctx, workflow_name, scenario)
+                for attempt in range(1, retries + 1):
+                    if not outcome.get("inconclusive"):
+                        break
+                    # The model service did not answer: that says nothing about
+                    # the workflow. Wait a little and run the scenario again.
+                    emit_sublayer(ctx, parent, f"r{_round}:s{i}", "active", label=label,
+                                  summary=f"{outcome['transient_problems'][0]} — running it again "
+                                          f"({attempt}/{retries})")
+                    await asyncio.sleep(min(20.0, TRANSIENT_WAIT * attempt))
+                    outcome = await run_scenario(ctx, workflow_name, scenario)
+                    outcome["retries"] = attempt
                 _report(_round, i, scenario, outcome)
                 return outcome
 
@@ -608,21 +802,77 @@ async def run_verification(ctx: PipelineContext, parent: str) -> dict:
                 if outcome.get("corrected_expectations"):
                     _report(round_no, i, scenario, outcome)
         failed = [o for o in outcomes if not o["passed"]]
-        history.append({"round": round_no, "passed": len(outcomes) - len(failed), "failed": len(failed)})
+        to_fix = [o for o in failed if design_problems(o)]
+        entry = {"round": round_no, "passed": len(outcomes) - len(failed), "failed": len(failed),
+                 "not_completed": sum(1 for o in failed if o.get("inconclusive") and not design_problems(o))}
+        history.append(entry)
+
+        # Keep the best state seen; undo a repair that did not help.
+        score = _score(outcomes)
+        definition = await asyncio.to_thread(get_workflow, workflow_name)
+        snapshot = definition.model_dump(mode="json") if definition is not None else None
+        if best is None or score > best["score"]:
+            best = {"score": score, "snapshot": snapshot, "outcomes": outcomes, "round": round_no}
+        elif round_no > 0 and best["snapshot"] is not None:
+            was, now = best["score"][0], score[0]
+            label = f"Repair {round_no}: undone"
+            emit_sublayer(ctx, parent, f"undo{round_no}", "active", label=label)
+            try:
+                await _restore(ctx, workflow_name, best["snapshot"],
+                               f"Repair {round_no} undone — it did not improve the test results")
+                history[-1]["undone"] = True
+                history[-2].setdefault("repair", {})["undone"] = True
+                emit_sublayer(ctx, parent, f"undo{round_no}", "completed", label=label,
+                              summary=f"The repair did not help ({was} scenario(s) passed before it, "
+                                      f"{now} after) — the workflow is back as it was before the repair.")
+                outcomes, rolled_back = best["outcomes"], True
+            except Exception as e:  # noqa: BLE001 — reported; the repaired state then stands
+                emit_sublayer(ctx, parent, f"undo{round_no}", "failed", label=label,
+                              error=f"The repair could not be undone: {e}")
+            break
+
         if not failed or round_no == rounds:
             break
-        relaxed = await relax_blocking_guardrails(ctx, parent, round_no + 1, failed)
+        if not to_fix:
+            # Everything that failed is the model service not answering. There
+            # is nothing in the workflow to repair.
+            entry["note"] = ("Not repaired: the remaining scenario(s) could not be completed because "
+                             "the model service did not answer — not a fault of the workflow.")
+            break
+        relaxed = await relax_blocking_guardrails(ctx, parent, round_no + 1, to_fix)
         if relaxed:
             # The cause was an agent's own guardrail, not the workflow: run again.
             history[-1]["repair"] = {"applied": True, "guardrails": relaxed,
                                      "summary": "; ".join(r["summary"] for r in relaxed)}
             continue
-        fixed = await repair(ctx, workflow_name, parent, round_no + 1, failed)
+        errors_before = set(await _blocking_issues(ctx, definition)) if definition is not None else set()
+        fixed = await repair(ctx, workflow_name, parent, round_no + 1, to_fix)
         history[-1]["repair"] = fixed
         if not fixed.get("applied"):
             break
+        # A repair that adds validation errors is not a repair.
+        problems = [m for m in await _blocking_issues(ctx, ctx.workflow_spec.definition)
+                    if m not in errors_before]
+        if problems and snapshot is not None:
+            label = f"Repair {round_no + 1}: undone"
+            try:
+                await _restore(ctx, workflow_name, snapshot,
+                               f"Repair {round_no + 1} undone — it left validation errors")
+                fixed["undone"] = True
+                rolled_back = True
+                emit_sublayer(ctx, parent, f"undo{round_no + 1}", "completed", label=label,
+                              summary="The repair left the workflow with validation errors and was "
+                                      "undone: " + "; ".join(problems[:2])[:400])
+            except Exception as e:  # noqa: BLE001
+                emit_sublayer(ctx, parent, f"undo{round_no + 1}", "failed", label=label,
+                              error=f"The repair could not be undone: {e}")
+            break
     passed = bool(outcomes) and all(o["passed"] for o in outcomes)
-    result = {"passed": passed, "scenarios": outcomes, "rounds": history}
+    not_completed = [o for o in outcomes if not o["passed"] and o.get("inconclusive")
+                     and not design_problems(o)]
+    result = {"passed": passed, "scenarios": outcomes, "rounds": history,
+              "inconclusive": len(not_completed), "rolled_back": rolled_back,
+              "expectation_notes": path_notes}
     ctx.metadata[RESULT_KEY] = result
     ctx.emit("dry_run", json.dumps(result, default=str))
     return result
@@ -645,10 +895,15 @@ class WorkflowDryRunLayer(WorkflowStepLayer):
         ctx.emit("status", "Dry-running the workflow on its scenarios…")
         result = await run_verification(ctx, self.name)
         good = sum(1 for o in result["scenarios"] if o["passed"])
-        repairs = sum(1 for r in result["rounds"] if (r.get("repair") or {}).get("applied"))
+        repairs = sum(1 for r in result["rounds"]
+                      if (r.get("repair") or {}).get("applied") and not (r.get("repair") or {}).get("undone"))
+        undone = sum(1 for r in result["rounds"] if (r.get("repair") or {}).get("undone"))
         ctx.set_layer_summary(
             self.name,
             f"{good} of {len(result['scenarios'])} scenario(s) pass"
             + (f" after {repairs} repair(s)" if repairs else "")
+            + (f"; {undone} repair(s) did not help and were undone" if undone else "")
+            + (f"; {result['inconclusive']} could not be completed (the model service did not answer)"
+               if result.get("inconclusive") else "")
             + ("" if result["passed"] else " — the rest are listed for your review"))
         return await next(ctx)

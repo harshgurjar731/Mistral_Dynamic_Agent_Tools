@@ -486,6 +486,59 @@ def _lookup(path: str, variables: dict):
     return _unwrap(_as_data(value))
 
 
+def _filter_value(value, spec: str):
+    """One ``| filter`` of a reference. Unknown filters leave the value as it is."""
+    m = re.match(r"^\s*([a-zA-Z_]+)\s*(?:\(\s*(.*?)\s*\))?\s*$", spec or "")
+    if not m:
+        return value
+    name, arg = m.group(1).lower(), (m.group(2) or "").strip().strip("'\"")
+    try:
+        if name == "abs":
+            return abs(value) if isinstance(value, (int, float)) else abs(float(value))
+        if name == "round":
+            digits = int(arg) if arg else 0
+            out = round(float(value), digits)
+            return int(out) if digits == 0 else out
+        if name in ("int", "integer"):
+            return int(float(value))
+        if name in ("float", "number"):
+            return float(value)
+        if name == "upper":
+            return str(value).upper()
+        if name == "lower":
+            return str(value).lower()
+        if name in ("title", "capitalize"):
+            return getattr(str(value), name)()
+        if name == "trim":
+            return str(value).strip()
+        if name in ("length", "count"):
+            return len(value)
+        if name in ("json", "tojson"):
+            return json.dumps(value, default=str)
+        if name == "default":
+            return value if value not in (None, "") else arg
+    except (TypeError, ValueError):
+        return value
+    return value
+
+
+def lookup_filtered(expr: str, variables: dict):
+    """``_lookup`` for ``path | filter | filter(arg)`` — the form models write in templates.
+
+    A data-flow decision wrote ``{{step_x_output.bill.difference_gbp | abs}}``;
+    the whole expression was looked up as a path, nothing matched, and the
+    agent was told the figure "was not produced by an earlier step".
+    """
+    path, *filters = str(expr or "").split("|")
+    value = _lookup(path.strip(), variables)
+    if value is _MISSING:
+        default = next((f for f in filters if f.strip().lower().startswith("default")), None)
+        return _filter_value(None, default) if default else _MISSING
+    for spec in filters:
+        value = _filter_value(value, spec)
+    return value
+
+
 def substitute_double_brackets(
     text: str,
     variables: dict,
@@ -505,7 +558,7 @@ def substitute_double_brackets(
 
     def repl(match):
         key = match.group(1).strip()
-        val = _lookup(key, variables)
+        val = lookup_filtered(key, variables)
         if val is _MISSING or val is None:
             if missing is not None:
                 missing.append(key)
@@ -585,7 +638,7 @@ def _resolve_value(raw, variables: dict, missing: list):
             # Exactly one reference: pass the referenced data itself, not its
             # string form. This is the fix for every tool in a chain rejecting
             # its input with "must be a dictionary".
-            value = _lookup(whole.group(1), variables)
+            value = lookup_filtered(whole.group(1), variables)
             if value is _MISSING:
                 missing.append(whole.group(1).strip())
                 return raw
@@ -748,29 +801,47 @@ def _execute_tool_via_service(tool_name: str, arguments: dict) -> Any:
         return f"Error executing tool '{tool_name}': {str(e)}"
 
 
-async def _agent_complete_with_backoff(client, base_kwargs: dict, messages: list, step_id: str):
-    """Call the agent, retrying only on rate limits.
+async def _agent_complete_with_backoff(client, base_kwargs: dict, messages: list, step_id: str,
+                                       trace: Optional[dict] = None):
+    """Call the agent so that a rate limit, a dropped connection or a slow model does not fail the run.
 
-    Temporal's own activity retry spacing (~1s, ~2s) is shorter than a
-    rate-limit window, so without this a single 429 failed the whole run.
+    Rate limits are retried with backoff (Temporal's own activity retry spacing
+    is shorter than a rate-limit window); a model that does not answer is raced
+    against the fallback model running the same agent definition — see
+    ``agent_call``. ``trace`` receives which model answered.
     """
-    import random
+    from app.services.workflow_engine import agent_call
 
-    delay = 2.0
-    for attempt in range(5):
-        try:
-            return await asyncio.to_thread(client.agents.complete, **base_kwargs, messages=messages)
-        except Exception as e:
-            text = str(e).lower()
-            if ("429" not in text and "rate limit" not in text) or attempt == 4:
-                raise
-            wait = delay + random.uniform(0, delay / 2)
-            logger.warning(
-                "Step '%s' rate limited (attempt %d/5) — retrying in %.1fs",
-                step_id, attempt + 1, wait,
-            )
-            await asyncio.sleep(wait)
-            delay *= 2
+    return await agent_call.complete(client, base_kwargs["agent_id"], messages, step_id,
+                                     extra=base_kwargs, trace=trace)
+
+
+def input_records_block(records: Any, variables: dict, missing: Optional[list] = None) -> str:
+    """The records an agent step consumes, complete, as one JSON block for its prompt.
+
+    The step's prose template is written by a model and names the fields it
+    thought of; the agent's instructions were written against whole records.
+    One drafting agent was told to cite the bill id and period, was handed a
+    prompt without them, and answered "Insufficient data" on every run. The
+    records the data contract says a step reads (``config.input_records``) are
+    therefore always appended in full, whatever the template mentions.
+    """
+    if not isinstance(records, dict) or not records:
+        return ""
+    resolved: dict = {}
+    for name, ref in records.items():
+        expr = str(ref or "").strip()
+        whole = _WHOLE_TEMPLATE.match(expr)
+        value = lookup_filtered(whole.group(1), variables) if whole else _MISSING
+        if value is _MISSING or value is None:
+            if missing is not None:
+                missing.append(f"{name} ({expr})")
+            continue
+        resolved[str(name)] = value
+    if not resolved:
+        return ""
+    return ("\n\n## Input records (complete — as produced by the earlier steps; use these "
+            "values exactly)\n```json\n" + json.dumps(resolved, indent=2, default=str)[:60_000] + "\n```")
 
 
 
@@ -1060,6 +1131,12 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 "Step '%s' prompt references data no earlier step produced: %s",
                 step.id, sorted(set(_missing_refs)),
             )
+        # The records the data contract says this step reads, in full.
+        _missing_records: list = []
+        query += input_records_block(config.get("input_records"), variables, _missing_records)
+        if _missing_records:
+            logger.warning("Step '%s' — input record(s) not produced by an earlier step: %s",
+                           step.id, ", ".join(_missing_records))
         # Later steps read named fields from this agent's answer; say which —
         # as the full schema when the step has a typed output (data contract).
         output_schema = config.get("output_schema") if isinstance(config.get("output_schema"), dict) else None
@@ -1125,6 +1202,8 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                     wf_rules, int(archetype.get("max_tool_rounds") or 10))
             )
             hit_tool_limit = False
+            #: Which model answered (the agent's own, or the fallback — agent_call).
+            call_trace: dict = {}
             handoff_agents: list[str] = []
             # A multi-agent step (Mistral routes sub-tasks to its sub-agents), or
             # an agent whose built-in connectors only the Conversations API runs.
@@ -1141,7 +1220,7 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 # which is why execution status appeared to stop updating mid-run.
                 try:
                     response = await _agent_complete_with_backoff(
-                        client, base_kwargs, messages, step.id
+                        client, base_kwargs, messages, step.id, call_trace
                     )
                 except Exception as e:
                     if round_num != 0 or not needs_conversations(e):
@@ -1349,6 +1428,8 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                 "app.agent.type": archetype.get("primary_type"),
                 "app.agent.handoffs": handoff_agents or None,
                 "app.agent.reflection": reflection or None,
+                "app.agent.answered_by": call_trace.get("model") if call_trace.get("fallback") else None,
+                "app.agent.fallback_reason": call_trace.get("why") if call_trace.get("fallback") else None,
             })
 
             duration = (time.time() - start) * 1000
@@ -1755,7 +1836,7 @@ def substitute_for_eval(text: str, variables: dict) -> str:
 
     def repl(match):
         key = match.group(1).strip()
-        val = _lookup(key, variables)
+        val = lookup_filtered(key, variables)
         if val is _MISSING or val is None:
             return "None"
         if isinstance(val, bool):

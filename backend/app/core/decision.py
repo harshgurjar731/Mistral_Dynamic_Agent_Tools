@@ -371,7 +371,8 @@ async def _complete(client: Any, model: str, system: str, user: str, temperature
         for task in done:
             if task.exception() is None:
                 if task is second:
-                    model_speed.strike(model, time.monotonic() - started, "the fallback answered first")
+                    model_speed.strike(model, time.monotonic() - started,
+                                       "the fallback answered first", decisive=True)
                 for other in pending:
                     # Its thread runs on to its own timeout; its outcome is not needed.
                     other.add_done_callback(lambda t: t.cancelled() or t.exception())

@@ -140,6 +140,24 @@ DEFS: list[SettingDef] = [
                    "routes/workflows.py — builder catalog agents",
                    "frontend CreateAgentModal / CreateModals — form default",
                )),
+    SettingDef("AGENT_FALLBACK_MODEL", "models", "Agent fallback model",
+               "When an agent step's own model has not answered after the agent hedge delay, the "
+               "same agent — its instructions, function tools, guardrails and sampling settings — "
+               "is also run on this model and the first answer is used. A model that loses is "
+               "skipped for a while. Agents with built-in connectors (web search, document "
+               "library, code interpreter) always run on their own model. 'none' turns it off: a "
+               "slow model then fails the step when it times out.",
+               type="model", capability="function_calling", allow_none=True,
+               default="mistral-medium-latest",
+               impact=("Workflow runs — agent steps", "Dry runs while planning"),
+               used_in=("services/workflow_engine/agent_call.py — complete",)),
+    SettingDef("AGENT_MODEL_HEALTH_CHECK", "models", "Check a model answers before using it",
+               "Before an agent is created, its model is given a short test task (a three-sentence "
+               "reply from a record). A model that does not answer within 12 seconds is replaced "
+               "by the fallback or the next tier that does, and the plan says so.",
+               type="bool", impact=("Agents designed for workflows",),
+               used_in=("layers/workflow/provisioning_layer.py — _responsive_model",
+                        "core/model_speed.py — responsive")),
     SettingDef("AGENT_MODEL_LARGE", "models", "Large tier model",
                "When the agent designer decides a task needs the large tier (complex reasoning, "
                "structured output, coding, multi-step analysis), the agent is created on this "
@@ -246,6 +264,18 @@ DEFS: list[SettingDef] = [
                type="int", minimum=0, maximum=600, unit="seconds",
                impact=("Agent creation speed", "Workflow planning speed", "Refine with AI"),
                used_in=("core/decision.py — _complete", "core/model_speed.py")),
+    SettingDef("AGENT_HEDGE_SECONDS", "orchestration", "Agent step hedge",
+               "How long an agent step waits for the agent's own model before the fallback model "
+               "is asked as well (Agent fallback model). 0: never hedge — only a failed call "
+               "falls back.",
+               type="int", minimum=0, maximum=600, unit="seconds",
+               impact=("Workflow runs — agent steps", "Dry runs while planning"),
+               used_in=("services/workflow_engine/agent_call.py — complete",)),
+    SettingDef("AGENT_CALL_TIMEOUT_SECONDS", "orchestration", "Agent call time limit",
+               "The longest one agent completion may take before it counts as not answered.",
+               type="int", minimum=20, maximum=1800, unit="seconds",
+               impact=("Workflow runs — agent steps",),
+               used_in=("services/workflow_engine/agent_call.py — complete",)),
     SettingDef("DECISION_MAX_RETRIES", "orchestration", "Retries on rate limit",
                "Attempts per planning call when Mistral answers with a rate limit, before the "
                "step falls back to its default.",
@@ -309,6 +339,13 @@ DEFS: list[SettingDef] = [
                type="int", minimum=0, maximum=5, unit="rounds",
                impact=("Workflow planning — verification",),
                used_in=("layers/workflow/verify_layers.py — WorkflowDryRunLayer",)),
+    SettingDef("WORKFLOW_DRY_RUN_TRANSIENT_RETRIES", "orchestration", "Dry-run retries when the model does not answer",
+               "A scenario whose step failed because the model service did not answer (timeout, "
+               "rate limit, connection) is run again this many times. Such a failure is never "
+               "sent for repair — nothing in the workflow caused it.",
+               type="int", minimum=0, maximum=5, unit="retries",
+               impact=("Workflow planning — verification",),
+               used_in=("layers/workflow/verify_layers.py — run_verification",)),
     SettingDef("WORKFLOW_BUILD_AUTO_ATTEMPTS", "orchestration", "Automatic build attempts",
                "How many times an activity or agent that fails to build is built again before the "
                "planner stops recommending Retry. After that it recommends handing an activity's "
@@ -915,6 +952,15 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "DECISION_HEDGE_SECONDS": (
         "0 — never hedge: a slow model is waited on for its full timeout, every decision.",
         "10 minutes — in effect off; a slow model stalls each decision for that long."),
+    "AGENT_HEDGE_SECONDS": (
+        "0 — an agent step waits for its own model until the call times out.",
+        "10 minutes — in effect off; a slow model stalls the step for that long."),
+    "AGENT_CALL_TIMEOUT_SECONDS": (
+        "20 seconds — long answers on a busy model are cut off and fall back.",
+        "30 minutes — a model that never answers holds the step that long."),
+    "WORKFLOW_DRY_RUN_TRANSIENT_RETRIES": (
+        "0 — a scenario the model service did not answer is reported as not completed at once.",
+        "Five more runs of each such scenario before it is reported as not completed."),
     "DECISION_MAX_RETRIES": (
         "A rate-limited call is not retried; the step falls back to its default at once.",
         "Keeps retrying for a long time before giving up — builds stay slow under limits."),

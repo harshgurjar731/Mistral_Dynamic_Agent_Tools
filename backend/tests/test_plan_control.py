@@ -206,8 +206,9 @@ def test_review_test_fails_when_a_dry_run_scenario_fails(monkeypatch):
     assert payload["passed"] is False and payload["dry_run"]["scenarios"][0]["name"] == "Strong case"
     assert "0 of 1 scenario(s) pass" in payload["summary"]
     # The user may still accept it — their decision — but it is reported as not verified,
-    # and it is no longer what an unanswered question would do.
-    assert run.questions[1]["default"] == "test" and run.questions[1]["verified"] is False
+    # and it is no longer what an unanswered question would do. Nor is testing again:
+    # the scenarios ran and failed, and the same test would end the same way.
+    assert run.questions[1]["default"] == "draft" and run.questions[1]["verified"] is False
     assert "accept" != run.questions[1]["default"]
     assert run.payloads("workflow_accepted")[0] == {
         "workflow_name": "invoice_flow", "tested": True, "passed": False, "verified": False}

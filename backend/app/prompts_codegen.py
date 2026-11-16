@@ -117,7 +117,10 @@ Rules:
   lists. An input that is a record or list gets a full nested schema.
 - description states the exact rules: formulas, rounding (e.g. "rounded to 2
   decimals"), ordering, units, how edge cases (empty list, zero) behave.
-- At least 2 worked examples with EXACT outputs. Compute every output value
+- 3 worked examples with EXACT outputs (at least 2). Every example INPUT must
+  itself be valid against input_schema — every required field, enum values
+  exactly as listed, lists of the required length; an example of rejected or
+  malformed input is left out. Compute every output value
   carefully, step by step, before writing it — the code is rejected if it
   disagrees with your example, and a wrong example wastes the whole build.
   Put the calculation in "note". Example outputs state ONLY values the code

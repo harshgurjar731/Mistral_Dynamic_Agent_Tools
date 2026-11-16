@@ -31,7 +31,21 @@ class Settings(BaseSettings):
     # ── Models ──────────────────────────────────────────────────────────
     # Every one of these is editable on the Settings page, which also lists
     # where each is read (app/app_settings/registry.py).
-    DEFAULT_AGENT_MODEL: str = "mistral-large-latest"
+    #: Measured 2026-11-16 on a deployed agent's own prompt: mistral-large-latest
+    #: 148 s, mistral-medium-latest 1.7 s. The designer still picks the large
+    #: tier when the work needs it (AGENT_MODEL_LARGE).
+    DEFAULT_AGENT_MODEL: str = "mistral-medium-latest"
+    #: An agent step whose own model has not answered after AGENT_HEDGE_SECONDS
+    #: is also run — same instructions, function tools and guardrails — on this
+    #: model, and the first answer is used. "none": never (the step then waits
+    #: for its own model). Not used for agents with built-in connectors.
+    AGENT_FALLBACK_MODEL: str = "mistral-medium-latest"
+    AGENT_HEDGE_SECONDS: int = 40
+    #: Time limit of one agent completion (the HTTP client's own is 120 s).
+    AGENT_CALL_TIMEOUT_SECONDS: int = 180
+    #: Before an agent is created, check its model answers a short test task in time;
+    #: a model that does not is replaced by the next tier that does.
+    AGENT_MODEL_HEALTH_CHECK: bool = True
     #: For agents whose archetype prefers reasoning (goal agents, planners).
     AGENT_MODEL_REASONING: str = "magistral-medium-latest"
     CHAT_DEFAULT_MODEL: str = "mistral-large-latest"
@@ -93,7 +107,7 @@ class Settings(BaseSettings):
     WORKFLOW_DESIGN_CONCURRENCY: int = 4
     AGENT_CREATION_CONCURRENCY: int = 5
     RULE_SELECTION_CONCURRENCY: int = 4
-    TOOL_SYNTHESIS_CONCURRENCY: int = 3
+    TOOL_SYNTHESIS_CONCURRENCY: int = 6
     # Background runs (agent design, workflow planning, tool synthesis,
     # rebuilds) running at once per workspace; more wait in line, in order.
     RUN_CONCURRENCY: int = 4
@@ -116,6 +130,9 @@ class Settings(BaseSettings):
     WORKFLOW_DRY_RUN: bool = True
     WORKFLOW_DRY_RUN_SCENARIOS: int = 3
     WORKFLOW_DRY_RUN_REPAIRS: int = 2
+    #: Times a scenario is run again when a step failed because the model
+    #: service did not answer (timeout, rate limit) — never sent for repair.
+    WORKFLOW_DRY_RUN_TRANSIENT_RETRIES: int = 2
     #: A mandatory process control no step covers blocks the plan (else a warning).
     PROCESS_COVERAGE_BLOCKING: bool = True
     #: Test a newly created agent on designed prompts and revise it once if it fails.

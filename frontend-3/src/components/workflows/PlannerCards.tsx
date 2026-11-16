@@ -1762,18 +1762,45 @@ export function ScenariosCard({ data }: { data: ScenarioData[] }) {
 
 export interface DryRunData {
   passed?: boolean;
-  scenarios?: { name: string; passed: boolean; problems?: string[]; warnings?: string[] }[];
+  /** Scenarios that could not be completed because the model service did not answer. */
+  inconclusive?: number;
+  scenarios?: {
+    name: string;
+    passed: boolean;
+    problems?: string[];
+    warnings?: string[];
+    /** A step failed because the model service did not answer — not the workflow's fault. */
+    inconclusive?: boolean;
+    transient_problems?: string[];
+    unreached?: number;
+  }[];
   rounds?: {
     round: number;
     passed?: number;
     failed?: number;
-    repair?: { applied?: boolean; summary?: string };
+    note?: string;
+    repair?: { applied?: boolean; summary?: string; undone?: boolean };
   }[];
+  expectation_notes?: { note: string }[];
 }
 
 export function DryRunCard({ data }: { data: DryRunData }) {
   const scenarios = data.scenarios ?? [];
   const repairs = (data.rounds ?? []).filter((r) => r.repair?.applied);
+  const notes = (data.rounds ?? []).map((r) => r.note).filter(Boolean) as string[];
+  // Only the model service not answering: nothing in the workflow failed.
+  const onlyNotCompleted =
+    !data.passed &&
+    scenarios.every(
+      (s) =>
+        s.passed ||
+        (s.inconclusive && (s.problems ?? []).length === (s.transient_problems ?? []).length),
+    );
+  const verdict = data.passed
+    ? "passed"
+    : onlyNotCompleted
+      ? "could not be completed"
+      : "has failures";
   return (
     <CardShell
       icon={
@@ -1783,7 +1810,7 @@ export function DryRunCard({ data }: { data: DryRunData }) {
           <AlertCircle className="size-3 text-destructive" />
         )
       }
-      title={`Dry run ${data.passed ? "passed" : "has failures"} — ${scenarios.filter((s) => s.passed).length} of ${scenarios.length} scenario(s)`}
+      title={`Dry run ${verdict} — ${scenarios.filter((s) => s.passed).length} of ${scenarios.length} scenario(s)`}
       tone={data.passed ? "border-emerald/25 bg-emerald/5" : "border-amber/25 bg-amber/5"}
     >
       <ul className="space-y-1.5">
@@ -1797,6 +1824,11 @@ export function DryRunCard({ data }: { data: DryRunData }) {
                 {p}
               </p>
             ))}
+            {sc.unreached ? (
+              <p className="ml-4 break-words text-muted-foreground">
+                {sc.unreached} expectation(s) on later steps were not reached.
+              </p>
+            ) : null}
             {(sc.warnings ?? []).slice(0, 2).map((w) => (
               <p key={w} className="ml-4 break-words text-amber">
                 {w}
@@ -1810,11 +1842,24 @@ export function DryRunCard({ data }: { data: DryRunData }) {
           {repairs.map((r) => (
             <p key={r.round} className="flex gap-1.5 text-[11px] text-muted-foreground">
               <Wrench className="mt-0.5 size-3 shrink-0 text-primary" />
-              Repair after round {r.round + 1}: {r.repair?.summary ?? "applied"}
+              <span>
+                Repair after round {r.round + 1}: {r.repair?.summary ?? "applied"}
+                {r.repair?.undone ? (
+                  <span className="text-amber">
+                    {" "}
+                    — undone: it did not improve the results, so the workflow is as it was before.
+                  </span>
+                ) : null}
+              </span>
             </p>
           ))}
         </div>
       ) : null}
+      {[...notes, ...(data.expectation_notes ?? []).map((n) => n.note)].slice(0, 4).map((n) => (
+        <p key={n} className="mt-1 break-words text-[11px] text-muted-foreground">
+          {n}
+        </p>
+      ))}
     </CardShell>
   );
 }

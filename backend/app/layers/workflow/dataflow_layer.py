@@ -303,6 +303,14 @@ def _apply_contract(ctx: PipelineContext, steps: list[dict], input_schema: list)
             typed = output_schema_for(spec, step["id"])
             if typed:
                 config["output_schema"] = typed
+            # Every record the contract says this agent reads, handed over whole
+            # at run time (step_runners.input_records_block) — the agent's
+            # instructions were written against these records, and a prose
+            # template that names only some of their fields starved it.
+            records = {name: ref for name in binding.get("consumes") or []
+                       if (ref := record_ref(spec, name))}
+            if records:
+                config["input_records"] = records
     declared = {f.get("name"): f for f in input_schema if isinstance(f, dict)}
     for field in run_input_fields(spec):
         declared[field["name"]] = {**(declared.get(field["name"]) or {}), **field}
