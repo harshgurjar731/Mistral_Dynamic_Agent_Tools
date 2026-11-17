@@ -70,7 +70,7 @@ function explain(support: InputSupport | undefined): string {
       k === "text" || mode === "native" || !mode
         ? KIND_META[k].native
         : k === "audio"
-          ? "transcribed first"
+          ? "only Voxtral listens — this model gets the transcript (or, with no speech, a description of the sounds)"
           : k === "image"
             ? "this model cannot see — the text in the image is read and sent"
             : "converted to text first";

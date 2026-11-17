@@ -405,12 +405,9 @@ async def _upload_recording(definition, field_name: str, filename: str, content:
     from app.services import attachments
 
     try:
-        text = (await attachments.chunks_for(_client(), stored, None, "conversations"))[0]["text"]
+        transcript = await attachments.audio_as_text(_client(), stored["upload_id"], filename)
     except Exception as e:  # noqa: BLE001
-        raise DocumentInputError(f"Could not transcribe '{filename}': {e}", 502)
-    transcript = text.split("\n", 1)[1] if "\n" in text else text
-    if not transcript.strip() or transcript.strip() == "(no speech heard)":
-        raise DocumentInputError(f"No speech could be heard in '{filename}'.")
+        raise DocumentInputError(f"Could not read '{filename}': {e}", 502)
     document_id = f"upload:{stored['upload_id']}"
     _cache_text(document_id, transcript)
     await asyncio.to_thread(
@@ -475,10 +472,7 @@ async def _text_of(ref: dict) -> str:
         # A recording: its transcript.
         from app.services import attachments
 
-        chunk = (await attachments.chunks_for(
-            _client(), {"upload_id": ref["upload_id"], "filename": ref.get("name"), "mime": ref.get("mime")},
-            None, "conversations"))[0]["text"]
-        text = chunk.split("\n", 1)[1] if "\n" in chunk else chunk
+        text = await attachments.audio_as_text(_client(), ref["upload_id"], ref.get("name") or "recording")
         _cache_text(document_id, text)
         return text
     content = await asyncio.to_thread(partial(

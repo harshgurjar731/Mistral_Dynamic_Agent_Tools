@@ -8,9 +8,13 @@ Measured on 2026-11-17 against every chat model on the account:
   model, on the chat, agents and Conversations APIs — Mistral reads them.
 * **Images** as ``image_url``: exactly the models whose catalog entry has
   ``vision``; any other model refuses with "Image input is not enabled".
-* **Audio** as ``input_audio``: nearly every model on the chat and agents APIs
-  (Mistral transcribes it), though the catalog marks only Voxtral; two models
-  refuse. The Conversations API (agent chat) does not take audio at all.
+* **Audio** as ``input_audio``: only Voxtral (the catalog's ``audio`` models)
+  actually listens. Most other models accept the chunk, but Mistral hands them
+  only its transcript — a recording without speech (footsteps, music) reached
+  them as nothing at all, and they answered "I don't see any audio file". So
+  for every other model the audio goes as its transcript, made here, and when
+  there is no speech, as Voxtral's description of what it sounds like. The
+  Conversations API (agent chat) takes no audio at all.
 * **Text files** (txt, md, csv, json, yaml, html, xml): placed in the message.
 
 So the content is built per model and per API, and nothing is ever refused
@@ -68,6 +72,8 @@ _MIME_KIND = {mime: kind for kind, mime in FILE_TYPES.values()}
 MAX_TEXT_CHARS = 100_000
 OCR_MODEL = "mistral-ocr-latest"
 TRANSCRIBE_MODEL = "voxtral-mini-latest"
+#: Listens to a recording without speech and says what it sounds like.
+LISTEN_MODEL = "voxtral-small-latest"
 
 _ID = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]{8}\.[a-z0-9]{2,5}$")
 
@@ -168,7 +174,8 @@ def support(model: Optional[str], api: str = "chat") -> dict[str, str]:
         refused = set(_REFUSED.get(model or "", set()))
     known = bool(caps)
     image = "native" if (caps.get("vision") or not known) and IMAGE not in refused else "text"
-    audio = "native" if api != "conversations" and AUDIO not in refused else "text"
+    # Only a model that listens gets the recording; the rest get its words.
+    audio = "native" if caps.get("audio") and api != "conversations" and AUDIO not in refused else "text"
     return {IMAGE: image, AUDIO: audio, DOCUMENT: "native" if DOCUMENT not in refused else "text",
             TEXT: "native"}
 
@@ -220,6 +227,71 @@ async def _transcribe(client, upload_id: str, filename: str) -> str:
     return _converted[key]
 
 
+async def _listen(client, upload_id: str) -> str:
+    """What a recording sounds like, from a model that listens (for audio without speech)."""
+    key = f"listen:{upload_id}"
+    if key in _converted:
+        return _converted[key]
+    b64 = base64.b64encode(load(upload_id)).decode()
+    # Asked to name only what is heard: asked for "the setting", it described a
+    # recording of footsteps on gravel as "a bustling city street".
+    result = await asyncio.to_thread(partial(
+        client.chat.complete, model=LISTEN_MODEL, max_tokens=300, temperature=0.0, messages=[{
+            "role": "user", "content": [
+                {"type": "text", "text": "Listen to this recording and describe only what you actually "
+                                          "hear — the kinds of sound (footsteps, vehicles, voices, music, "
+                                          "animals, machines), how they change over time, and whether "
+                                          "anyone speaks. Do not guess a setting you cannot hear. Two or "
+                                          "three plain sentences."},
+                {"type": "input_audio", "input_audio": b64}]}]))
+    content = result.choices[0].message.content
+    text = content if isinstance(content, str) else "".join(
+        getattr(c, "text", "") or "" for c in content or [] if getattr(c, "type", "") != "thinking")
+    _converted[key] = text.strip()
+    return _converted[key]
+
+
+#: How a converted file is introduced: the model must know a file *was*
+#: attached and was processed for it — handed bare text, Mistral Large answered
+#: "no attachment came through, I only see the text you pasted".
+_INTRO = ("[Attached {what}: \"{name}\". {why}]\n{result}\n[End of \"{name}\". This is the content of the "
+          "attached file — use it to answer; do not say that no file was attached.]")
+
+
+async def audio_as_text(client, upload_id: str, filename: str) -> str:
+    """A recording for a model that cannot listen: its transcript, or, without speech, what it sounds like."""
+    transcript = await _transcribe(client, upload_id, filename)
+    why = "You cannot listen to audio, so it was processed for you before this message."
+    if transcript:
+        return _INTRO.format(what="audio file", name=filename, why=why, sense="heard",
+                             result=f"Transcript of the recording (speech-to-text):\n\"{transcript}\"")
+    try:
+        heard = await _listen(client, upload_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not describe recording %s: %s", upload_id, e)
+        heard = ""
+    result = "Speech-to-text found no speech in it, so there is nothing to transcribe." + (
+        f" A model that listens to audio describes it as: \"{heard}\"" if heard else "")
+    return _INTRO.format(what="audio file", name=filename, why=why, sense="heard", result=result)
+
+
+async def audio_note(client, upload_id: str, filename: str) -> str:
+    """The label sent with a recording to a model that listens — saying so when there is no speech.
+
+    Asked for a transcript of a recording without speech, Voxtral answered "I'm
+    unable to access or process audio files"; told there is none, it describes
+    what it hears instead.
+    """
+    try:
+        transcript = await _transcribe(client, upload_id, filename)
+    except Exception:  # noqa: BLE001 — the label is a help, never a blocker
+        return f"[Attached audio file: \"{filename}\"]"
+    if transcript:
+        return f"[Attached audio file: \"{filename}\"]"
+    return (f"[Attached audio file: \"{filename}\". A speech-to-text pass found no speech in it. "
+            "If asked for a transcript, say there is no speech and describe what you hear instead.]")
+
+
 def _text_file(upload_id: str, filename: str) -> str:
     raw = load(upload_id)
     for encoding in ("utf-8", "utf-16", "latin-1"):
@@ -252,22 +324,30 @@ async def chunks_for(client, attachment: dict, model: Optional[str], api: str = 
         how = {**how, kind: "text"}
     try:
         if kind == TEXT:
-            return [{"type": "text", "text": f"[File: {filename}]\n{_text_file(upload_id, filename)}"}]
+            return [{"type": "text", "text": f"[Attached file: \"{filename}\"]\n{_text_file(upload_id, filename)}"}]
         b64 = base64.b64encode(load(upload_id)).decode()
         if kind == IMAGE and how[IMAGE] == "native":
             return [{"type": "image_url", "image_url": f"data:{mime};base64,{b64}"}]
         if kind == AUDIO and how[AUDIO] == "native":
-            return [{"type": "input_audio", "input_audio": b64}]
+            # Named, so the model knows a recording is attached and what it is called.
+            return [{"type": "text", "text": await audio_note(client, upload_id, filename)},
+                    {"type": "input_audio", "input_audio": b64}]
         if kind == DOCUMENT and how[DOCUMENT] == "native":
             return [{"type": "document_url", "document_url": f"data:{mime};base64,{b64}",
                      "document_name": filename}]
         if kind == AUDIO:
-            text = await _transcribe(client, upload_id, filename)
-            return [{"type": "text", "text": f"[Audio: {filename} — transcript]\n{text or '(no speech heard)'}"}]
+            return [{"type": "text", "text": await audio_as_text(client, upload_id, filename)}]
         if kind in (IMAGE, DOCUMENT):
             text = await _ocr(client, upload_id, mime, kind)
-            label = "text read from the image" if kind == IMAGE else "text"
-            return [{"type": "text", "text": f"[{kind.capitalize()}: {filename} — {label}]\n{text or '(no text found)'}"}]
+            if kind == IMAGE:
+                why = "You cannot see images, so the text in it was read for you (OCR) before this message."
+                result = (f"Text found in the image:\n{text}" if text
+                          else "No text was found in it; what it shows cannot be described to you.")
+                return [{"type": "text", "text": _INTRO.format(
+                    what="image", name=filename, why=why, result=result, sense="seen")}]
+            return [{"type": "text", "text": _INTRO.format(
+                what="document", name=filename, why="Its text was read for you before this message.",
+                result=f"Text of the document:\n{text or '(no text found)'}", sense="read")}]
     except AttachmentError as e:
         return [{"type": "text", "text": f"[{filename}: {e}]"}]
     except Exception as e:  # noqa: BLE001 — a failed conversion is said, not raised
