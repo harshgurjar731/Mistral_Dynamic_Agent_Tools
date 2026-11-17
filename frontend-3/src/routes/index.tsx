@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Bot,
+  CalendarClock,
   Clock,
   FileText,
   History,
@@ -12,7 +13,6 @@ import {
   RotateCcw,
   Search,
   Sparkles,
-  Trash2,
   Users,
   Zap,
 } from "lucide-react";
@@ -46,14 +46,14 @@ import {
   ProcessKnowledgeControl,
   useProcessKnowledge,
 } from "@/components/processes/ProcessKnowledgeControl";
-import { formatElapsed } from "@/components/runs/runMeta";
+import { formatElapsed, RUN_STATUS_META } from "@/components/runs/runMeta";
+import { PlanningHistory, type OlderEntry } from "@/components/runs/PlanningHistory";
+import { PlanningReport } from "@/components/runs/PlanningReport";
 import { stopRun, trackStartedRun } from "@/lib/runs/connections";
 import { useElapsed, useRunReducer, useRunView, useTrackedRun } from "@/lib/runs/useRun";
 import { useRunsStore } from "@/stores/runs";
 import { PlanDecisionDialog } from "@/components/workflows/PlanDecisionPanel";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { useHostRunQuestions } from "@/lib/runs/questionHosts";
 
@@ -233,6 +233,8 @@ function OrchestratorChat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<OrchestratorRunEntry[]>([]);
+  /** The pipeline card's view: the layer chain, or the run's timings and details. */
+  const [tab, setTab] = useState<"pipeline" | "details">("pipeline");
   /** A saved history entry being shown, instead of a live run. */
   const [replay, setReplay] = useState<OrchestratorRunEntry | null>(null);
 
@@ -397,6 +399,27 @@ function OrchestratorChat() {
     void navigate({ search: {} });
   };
 
+  const openServerRun = (id: string) => {
+    setHistoryOpen(false);
+    setPendingQuery(null);
+    setReplay(null);
+    void navigate({ search: { run: id } });
+  };
+
+  // This browser's records of runs the server no longer has.
+  const olderEntries = useMemo<OlderEntry[]>(
+    () =>
+      history.map((h) => ({
+        id: h.id,
+        runId: h.runId ?? undefined,
+        title: h.prompt || h.title || "Agent run",
+        status: h.failed ? "failed" : "completed",
+        createdAt: h.timestamp,
+        output: h.title ?? null,
+      })),
+    [history],
+  );
+
   const resetChat = () => {
     setReplay(null);
     setPendingQuery(null);
@@ -411,6 +434,21 @@ function OrchestratorChat() {
   const raw = useMemo(() => agentLayerRaw(decisions), [decisions]);
 
   const empty = !submittedQuery && !run.started && !answer;
+  const runStatus: RunStatus = replay
+    ? replay.failed
+      ? "failed"
+      : "completed"
+    : running
+      ? "running"
+      : (view.end?.status ?? tracked?.status ?? "running");
+  const statusMeta = RUN_STATUS_META[runStatus] ?? RUN_STATUS_META.running;
+  const StatusIcon = statusMeta.icon;
+  const startedAt = tracked?.created_at
+    ? new Date(tracked.created_at)
+    : replay
+      ? new Date(replay.timestamp)
+      : null;
+  const layerProgress = tracked?.progress;
 
   return (
     <div className="relative mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-4xl flex-col px-5 pb-8">
@@ -432,7 +470,7 @@ function OrchestratorChat() {
           className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:border-border hover:bg-surface-hover hover:text-foreground"
         >
           <History className="size-3.5" />
-          History{history.length > 0 ? ` (${history.length})` : ""}
+          History
         </button>
       </div>
 
@@ -493,11 +531,52 @@ function OrchestratorChat() {
           {/* Pipeline — the chain of decisions, each with its evidence */}
           {run.started || isProcessing ? (
             <div className="rounded-2xl border border-border/50 bg-surface/40 p-5 backdrop-blur-sm">
-              <div className="mb-4 flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Zap className="size-3.5 text-primary" />
-                <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  Orchestration Pipeline
-                </span>
+                {runId && !replay ? (
+                  <div
+                    role="tablist"
+                    className="flex rounded-lg border border-border bg-background-elevated/60 p-0.5"
+                  >
+                    {(
+                      [
+                        ["pipeline", "Pipeline"],
+                        ["details", "Details & timing"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === value}
+                        onClick={() => setTab(value)}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-[11px] font-medium transition",
+                          tab === value
+                            ? "bg-surface text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                    Orchestration Pipeline
+                  </span>
+                )}
+                {!isProcessing ? (
+                  <span
+                    className={cn(
+                      "ml-auto flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                      statusMeta.chip,
+                    )}
+                  >
+                    <StatusIcon className="size-2.5" />
+                    {statusMeta.label}
+                  </span>
+                ) : null}
                 {isProcessing ? (
                   <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                     <span className="size-1.5 animate-pulse rounded-full bg-primary" />
@@ -510,14 +589,44 @@ function OrchestratorChat() {
                   </span>
                 ) : null}
               </div>
-              {running ? (
+              <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                {startedAt ? (
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <CalendarClock className="size-3" />
+                    Started{" "}
+                    {startedAt.toLocaleString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>
+                ) : null}
+                {elapsed != null ? (
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Clock className="size-3" />
+                    {formatElapsed(elapsed)}
+                    {running ? " so far" : " total"}
+                  </span>
+                ) : null}
+                {layerProgress?.total ? (
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <Layers className="size-3" />
+                    {layerProgress.done}/{layerProgress.total} layers
+                  </span>
+                ) : null}
+              </div>
+              {running && tab === "pipeline" ? (
                 <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                   <Layers className="mt-0.5 size-3 shrink-0 text-primary" />
                   This runs in the background. You can leave this page — the agent keeps being
                   built, and this timeline picks up where it is when you come back.
                 </p>
               ) : null}
-              {run.started ? (
+              {tab === "details" && runId && !replay ? (
+                <PlanningReport runId={runId} live={running} />
+              ) : run.started ? (
                 <PipelineTimeline
                   manifest={run.manifest}
                   runtime={run.runtime}
@@ -632,98 +741,21 @@ function OrchestratorChat() {
         </div>
       </div>
 
-      {/* ── History Dialog ── */}
-      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="flex max-h-[80vh] flex-col overflow-hidden sm:max-w-lg">
-          <DialogHeader className="flex flex-row items-center justify-between pr-6">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <History className="size-4 text-primary" />
-              Run History
-            </DialogTitle>
-            {history.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearHistory}
-                className="h-7 text-xs text-muted-foreground hover:text-red"
-              >
-                <Trash2 className="mr-1 size-3" />
-                Clear All
-              </Button>
-            )}
-          </DialogHeader>
-
-          <div className="custom-scrollbar flex-1 space-y-1.5 overflow-y-auto py-2">
-            {history.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="grid size-12 place-items-center rounded-2xl border border-border/60 bg-surface/40">
-                  <Clock className="size-5 text-muted-foreground" />
-                </div>
-                <p className="mt-3 text-sm font-medium text-muted-foreground">No runs yet</p>
-                <p className="mt-1 text-xs text-muted-foreground/70">
-                  Agents you generate are kept here with the decisions that produced them.
-                </p>
-              </div>
-            ) : (
-              history.map((entry) => {
-                const layerCount = entry.manifest?.filter((l) => !l.hidden).length ?? 0;
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    onClick={() => loadHistoryEntry(entry)}
-                    className={cn(
-                      "w-full rounded-xl border p-3.5 text-left transition-all duration-150 hover:border-border hover:bg-surface-hover",
-                      entry.id === activeHistoryId
-                        ? "border-primary/30 bg-primary/5"
-                        : "border-transparent",
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-xs font-semibold text-foreground">
-                            {entry.title || "Orchestration Run"}
-                          </span>
-                          {entry.decisions?.process_knowledge?.enabled ? (
-                            <span
-                              title="Built with process knowledge"
-                              className="shrink-0 rounded-md border border-indigo/25 bg-indigo/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-indigo uppercase"
-                            >
-                              Process
-                            </span>
-                          ) : null}
-                          {entry.failed ? (
-                            <span className="shrink-0 rounded-md border border-red/25 bg-red/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-red uppercase">
-                              Failed
-                            </span>
-                          ) : entry.agentId ? (
-                            <span className="shrink-0 rounded-md border border-emerald/25 bg-emerald/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-emerald uppercase">
-                              Agent
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                          {entry.prompt}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-[10px] text-muted-foreground/70 tabular-nums">
-                        {formatRelative(new Date(entry.timestamp).toISOString())}
-                      </span>
-                    </div>
-                    {layerCount > 0 ? (
-                      <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground/60">
-                        <Zap className="size-2.5" />
-                        {layerCount} decisions
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PlanningHistory
+        kind="agent"
+        title="Agent run history"
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        activeRunId={runId ?? null}
+        onOpenRun={openServerRun}
+        older={olderEntries}
+        activeOlderId={activeHistoryId}
+        onOpenOlder={(id) => {
+          const entry = history.find((h) => h.id === id);
+          if (entry) loadHistoryEntry(entry);
+        }}
+        onClearOlder={clearHistory}
+      />
     </div>
   );
 }

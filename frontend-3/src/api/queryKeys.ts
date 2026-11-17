@@ -49,6 +49,8 @@ export const QK = {
   publicConfig: () => ["settings", "public"] as const,
   modelCatalog: () => ["settings", "catalog"] as const,
   runs: () => ["runs"] as const,
+  runHistory: (kind: string) => ["runs", "history", kind] as const,
+  runReport: (id: string) => ["runs", "report", id] as const,
   libraries: () => ["libraries"] as const,
   // Process knowledge. A process is an ontology concept, so writes here also
   // invalidate QK.ontology().

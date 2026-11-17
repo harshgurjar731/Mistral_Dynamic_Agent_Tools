@@ -56,5 +56,7 @@ class PipelineRunEvent(Base):
     seq = Column(Integer, nullable=False)
     event = Column(String, nullable=False)
     data = Column(Text, nullable=False, default="")       # the SSE ``data`` payload, as sent
+    #: When it was emitted, Unix ms. Null on events recorded before it was kept.
+    at = Column(Integer, nullable=True)
 
     __table_args__ = (Index("ix_pipeline_run_events_run_seq", "run_id", "seq"),)

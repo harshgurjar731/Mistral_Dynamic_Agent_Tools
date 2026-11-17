@@ -69,6 +69,9 @@ export type {
   RunDecision,
   RunKind,
   RunProgress,
+  RunReport,
+  ReportDecision,
+  ReportLayer,
   RunStatus,
 } from "./runs";
 

@@ -7,7 +7,10 @@ import { z } from "zod";
 import {
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
   ChevronDown,
+  Clock,
+  Pencil,
   GitBranch,
   History,
   Layers,
@@ -35,10 +38,10 @@ import {
   type PlannerStep,
   type PlannerStepType,
 } from "@/components/workflows/PlannerCards";
-import {
-  PlannerHistorySheet,
-  type PlannerHistoryEntry,
-} from "@/components/workflows/PlannerHistorySheet";
+import { type PlannerHistoryEntry } from "@/components/workflows/PlannerHistorySheet";
+import { PlanningHistory, type OlderEntry } from "@/components/runs/PlanningHistory";
+import { PlanningReport } from "@/components/runs/PlanningReport";
+import { RUN_STATUS_META } from "@/components/runs/runMeta";
 import {
   ProcessKnowledgeControl,
   useProcessKnowledge,
@@ -293,6 +296,10 @@ function AiPlannerPage() {
   const [starting, setStarting] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
+  /** The timeline card's view: the layer chain, or the run's timings and details. */
+  const [tab, setTab] = useState<"pipeline" | "details">("pipeline");
+  /** Editing the goal of a run on screen, to plan it again. */
+  const [editing, setEditing] = useState(false);
   /** A locally saved history entry being replayed, instead of a live run. */
   const [replay, setReplay] = useState<PlannerHistoryEntry | null>(null);
 
@@ -330,7 +337,7 @@ function AiPlannerPage() {
   }, [runId, tracked?.title]);
 
   // Saved workflows fill in history for plans this browser never watched.
-  const { data: savedWorkflows, isLoading: loadingWorkflows } = useQuery({
+  const { data: savedWorkflows } = useQuery({
     queryKey: QK.workflows(),
     queryFn: workflowsApi.list,
     enabled: historyOpen,
@@ -343,6 +350,23 @@ function AiPlannerPage() {
       .map(historyFromWorkflow);
     return [...runs, ...synthetic];
   }, [runs, savedWorkflows]);
+
+  // What the server's history cannot show: this browser's records of runs the
+  // server has dropped, and saved workflows with no planning record.
+  const olderEntries = useMemo<OlderEntry[]>(
+    () =>
+      history.map((h) => ({
+        id: h.id,
+        runId: h.runId,
+        title: h.goal,
+        status: h.status,
+        createdAt: h.createdAt,
+        output: h.workflowName,
+        detail: h.detail,
+        note: h.fromBackend ? "Saved workflow — no planning record" : undefined,
+      })),
+    [history],
+  );
 
   const steps = useMemo(() => (replay ? (replay.steps ?? []) : view.steps), [replay, view.steps]);
   const pipeline = useMemo<PipelineRun>(
@@ -433,6 +457,8 @@ function AiPlannerPage() {
         const run = await runsApi.startWorkflowPlan(value, process.request);
         trackStartedRun(run);
         setReplay(null);
+        setEditing(false);
+        setTab("pipeline");
         setGoal(value);
         void navigate({ search: { run: run.id } });
       } catch (err) {
@@ -446,13 +472,23 @@ function AiPlannerPage() {
 
   const newPlan = () => {
     setReplay(null);
+    setEditing(false);
+    setTab("pipeline");
     setGoal("");
     void navigate({ search: {} });
     textareaRef.current?.focus();
   };
 
+  const openServerRun = (id: string) => {
+    setHistoryOpen(false);
+    setReplay(null);
+    setEditing(false);
+    void navigate({ search: { run: id } });
+  };
+
   const openHistoryEntry = (entry: PlannerHistoryEntry) => {
     setHistoryOpen(false);
+    setEditing(false);
     setGoal(entry.goal);
     if (entry.runId && useRunsStore.getState().runs[entry.runId]) {
       // Still tracked: reopen the run itself, which replays from the server.
@@ -469,6 +505,19 @@ function AiPlannerPage() {
   const started = Boolean(runId) || replay !== null || starting;
   const bareReplay = replay !== null && !pipeline.started && steps.length === 0;
   const busy = running || starting;
+  // A run on screen gets a compact header instead of the goal form.
+  const compact = (Boolean(runId) || replay !== null) && !editing && !starting;
+  const headerStatus: RunStatus =
+    (replay?.status as RunStatus | undefined) ??
+    (running ? "running" : (view.end?.status ?? tracked?.status ?? "running"));
+  const statusMeta = RUN_STATUS_META[headerStatus] ?? RUN_STATUS_META.running;
+  const StatusIcon = statusMeta.icon;
+  const startedAt = tracked?.created_at
+    ? new Date(tracked.created_at)
+    : replay?.createdAt
+      ? new Date(replay.createdAt)
+      : null;
+  const layerProgress = tracked?.progress;
 
   return (
     <div
@@ -482,7 +531,7 @@ function AiPlannerPage() {
         layout
         className={cn(
           "mx-auto w-full max-w-3xl transition-all duration-500",
-          started ? "mb-10" : "mt-[10vh]",
+          compact ? "mb-6" : started ? "mb-10" : "mt-[10vh]",
         )}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -513,78 +562,184 @@ function AiPlannerPage() {
           </div>
         </div>
 
-        <div className="mb-8 text-center">
-          <div className="relative mx-auto mb-6 w-fit">
-            <div
-              className="absolute -inset-10 rounded-full opacity-20 blur-3xl"
-              style={{ background: "var(--gradient-brand)" }}
-            />
-            <div className="relative grid size-16 place-items-center rounded-2xl border border-border/60 glass">
-              <GitBranch className="size-7 text-primary" />
+        {compact ? (
+          <div className="rounded-2xl border border-border/60 p-4 glass">
+            <div className="flex items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+                <GitBranch className="size-4.5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  {replay ? "Past plan" : "Planning goal"}
+                </p>
+                <p className="mt-0.5 line-clamp-3 text-sm leading-relaxed text-foreground">
+                  {tracked?.title ?? replay?.goal ?? goal}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                  statusMeta.chip,
+                )}
+              >
+                <StatusIcon
+                  className={cn("size-2.5", headerStatus === "running" && "animate-spin")}
+                />
+                {statusMeta.label}
+              </span>
             </div>
-          </div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            What <span className="text-gradient-brand">workflow</span> do you want to build?
-          </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Describe your goal — agents, tools, and the entire pipeline will be assembled
-            automatically.
-          </p>
-        </div>
 
-        <div className="rounded-2xl border border-border/60 p-2 shadow-2xl glass transition focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20">
-          <textarea
-            ref={textareaRef}
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder="e.g. Build a multi-step insurance claim processing pipeline that validates claims, queries the database, checks weather, and generates a report…"
-            rows={6}
-            disabled={busy}
-            className="custom-scrollbar min-h-[180px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
-          />
-          <ProcessKnowledgeControl
-            state={process}
-            goal={goal}
-            disabled={busy}
-            className="mx-2 mt-1"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 p-2">
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Sparkles className="size-3.5 text-primary" />
-              <span className="hidden sm:inline">Enter to plan · Shift + Enter for a new line</span>
-            </span>
-            <div className="flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 pl-[3.25rem] text-[11px] text-muted-foreground">
+              {startedAt ? (
+                <span className="flex items-center gap-1 tabular-nums">
+                  <CalendarClock className="size-3" />
+                  {startedAt.toLocaleString(undefined, {
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
+                </span>
+              ) : null}
+              {elapsed != null ? (
+                <span className="flex items-center gap-1 tabular-nums">
+                  <Clock className="size-3" />
+                  {formatElapsed(elapsed)}
+                  {running ? " so far" : ""}
+                </span>
+              ) : null}
+              {layerProgress?.total ? (
+                <span className="flex items-center gap-1 tabular-nums">
+                  <Layers className="size-3" />
+                  {layerProgress.done}/{layerProgress.total} layers
+                </span>
+              ) : null}
+              {running && (layerProgress?.note || layerProgress?.label) ? (
+                <span className="min-w-0 truncate text-primary">
+                  {layerProgress.note || layerProgress.label}
+                </span>
+              ) : null}
+            </div>
+            {layerProgress?.total ? (
+              <div className="mt-2.5 ml-[3.25rem] h-1 overflow-hidden rounded-full bg-border/60">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-[width] duration-500",
+                    statusMeta.bar,
+                  )}
+                  style={{
+                    width: `${Math.round(
+                      (layerProgress.fraction ?? layerProgress.done / layerProgress.total) * 100,
+                    )}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+
+            <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-border/60 pt-3">
               {running && runId ? (
-                <Button variant="outline" onClick={() => void stopRun(runId)}>
+                <Button variant="outline" size="sm" onClick={() => void stopRun(runId)}>
                   <Square className="size-3.5" /> Stop
                 </Button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => void submit()}
-                disabled={!goal.trim() || busy}
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-brand px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 disabled:opacity-50"
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={running}
+                title={running ? "Stop the run to plan again" : undefined}
+                onClick={() => {
+                  setGoal(tracked?.title ?? replay?.goal ?? goal);
+                  setEditing(true);
+                }}
               >
-                {busy ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />{" "}
-                    {starting ? "Starting…" : "Planning…"}
-                  </>
-                ) : (
-                  <>
-                    Plan Workflow <ArrowRight className="size-4" />
-                  </>
-                )}
-              </button>
+                <Pencil className="size-3.5" /> Edit goal and plan again
+              </Button>
             </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="mb-8 text-center">
+              <div className="relative mx-auto mb-6 w-fit">
+                <div
+                  className="absolute -inset-10 rounded-full opacity-20 blur-3xl"
+                  style={{ background: "var(--gradient-brand)" }}
+                />
+                <div className="relative grid size-16 place-items-center rounded-2xl border border-border/60 glass">
+                  <GitBranch className="size-7 text-primary" />
+                </div>
+              </div>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                What <span className="text-gradient-brand">workflow</span> do you want to build?
+              </h1>
+              <p className="mt-3 text-sm text-muted-foreground">
+                Describe your goal — agents, tools, and the entire pipeline will be assembled
+                automatically.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-border/60 p-2 shadow-2xl glass transition focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20">
+              <textarea
+                ref={textareaRef}
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void submit();
+                  }
+                }}
+                placeholder="e.g. Build a multi-step insurance claim processing pipeline that validates claims, queries the database, checks weather, and generates a report…"
+                rows={6}
+                disabled={busy}
+                className="custom-scrollbar min-h-[180px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+              />
+              <ProcessKnowledgeControl
+                state={process}
+                goal={goal}
+                disabled={busy}
+                className="mx-2 mt-1"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 p-2">
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span className="hidden sm:inline">
+                    Enter to plan · Shift + Enter for a new line
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  {editing ? (
+                    <Button variant="ghost" onClick={() => setEditing(false)}>
+                      Cancel
+                    </Button>
+                  ) : null}
+                  {running && runId ? (
+                    <Button variant="outline" onClick={() => void stopRun(runId)}>
+                      <Square className="size-3.5" /> Stop
+                    </Button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void submit()}
+                    disabled={!goal.trim() || busy}
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-brand px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-lg transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />{" "}
+                        {starting ? "Starting…" : "Planning…"}
+                      </>
+                    ) : (
+                      <>
+                        Plan Workflow <ArrowRight className="size-4" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
 
         {!started ? (
           <div className="mt-6 grid gap-2 sm:grid-cols-3">
@@ -609,9 +764,42 @@ function AiPlannerPage() {
             <div className="rounded-2xl border border-border/50 bg-surface/40 p-5 backdrop-blur-sm">
               <div className={cn("flex items-center gap-2", timelineOpen && "mb-4")}>
                 <Zap className="size-3.5 text-primary" />
-                <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  {replay ? "Planning Timeline" : "Planning Pipeline"}
-                </span>
+                {runId && !replay ? (
+                  <div
+                    role="tablist"
+                    className="flex rounded-lg border border-border bg-background-elevated/60 p-0.5"
+                  >
+                    {(
+                      [
+                        ["pipeline", "Pipeline"],
+                        ["details", "Details & timing"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={tab === value}
+                        onClick={() => {
+                          setTab(value);
+                          setTimelineOpen(true);
+                        }}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-[11px] font-medium transition",
+                          tab === value
+                            ? "bg-surface text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                    {replay ? "Planning Timeline" : "Planning Pipeline"}
+                  </span>
+                )}
                 {showRefine ? (
                   <button
                     type="button"
@@ -638,7 +826,9 @@ function AiPlannerPage() {
                 ) : null}
               </div>
 
-              {timelineOpen ? (
+              {timelineOpen && tab === "details" && runId && !replay ? (
+                <PlanningReport runId={runId} live={running} />
+              ) : timelineOpen ? (
                 <>
                   {running ? (
                     <p className="mb-4 flex items-start gap-2 rounded-lg border border-border/50 bg-background-elevated/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -787,14 +977,20 @@ function AiPlannerPage() {
         </div>
       ) : null}
 
-      <PlannerHistorySheet
+      <PlanningHistory
+        kind="workflow_plan"
+        title="Planning history"
         open={historyOpen}
         onOpenChange={setHistoryOpen}
-        history={history}
-        activeId={activeHistoryId}
-        isLoading={loadingWorkflows && historyOpen}
-        onSelect={openHistoryEntry}
-        onClear={clearRuns}
+        activeRunId={runId ?? null}
+        onOpenRun={openServerRun}
+        older={olderEntries}
+        activeOlderId={activeHistoryId}
+        onOpenOlder={(id) => {
+          const entry = history.find((h) => h.id === id);
+          if (entry) openHistoryEntry(entry);
+        }}
+        onClearOlder={clearRuns}
       />
     </div>
   );

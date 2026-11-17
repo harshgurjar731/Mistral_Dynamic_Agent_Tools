@@ -80,14 +80,19 @@ def create_run(run_id: str, kind: str, title: str, request: dict) -> None:
         db.close()
 
 
-def write_batch(run_id: str, events: list[tuple[int, str, str]], fields: dict) -> None:
-    """Append events and update the run row in one transaction."""
+def write_batch(run_id: str, events: list[tuple], fields: dict) -> None:
+    """Append events and update the run row in one transaction.
+
+    Each event is ``(seq, event, data)`` or ``(seq, event, data, at_ms)``.
+    """
     if SessionLocal is None:
         return
     db = SessionLocal()
     try:
-        for seq, event, data in events:
-            db.add(PipelineRunEvent(run_id=run_id, seq=seq, event=event, data=data))
+        for item in events:
+            seq, event, data = item[0], item[1], item[2]
+            at = item[3] if len(item) > 3 else None
+            db.add(PipelineRunEvent(run_id=run_id, seq=seq, event=event, data=data, at=at))
         if fields:
             row = db.get(PipelineRunRecord, run_id)
             if row is not None:
@@ -143,6 +148,44 @@ def events_after(run_id: str, after: int = 0) -> list[tuple[int, str, str]]:
             .all()
         )
         return [(r[0], r[1], r[2]) for r in rows]
+    finally:
+        db.close()
+
+
+def events_with_times(run_id: str) -> list[tuple[int, str, str, Optional[int]]]:
+    """The whole event log with when each event was emitted (None where not kept)."""
+    if SessionLocal is None:
+        return []
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(PipelineRunEvent.seq, PipelineRunEvent.event, PipelineRunEvent.data,
+                     PipelineRunEvent.at)
+            .filter(PipelineRunEvent.run_id == run_id)
+            .order_by(PipelineRunEvent.seq.asc(), PipelineRunEvent.id.asc())
+            .all()
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+    finally:
+        db.close()
+
+
+def ensure_schema() -> None:
+    """Additive migration: ``pipeline_run_events.at`` on databases made before it."""
+    if SessionLocal is None:
+        return
+    from sqlalchemy import inspect, text
+
+    db = SessionLocal()
+    try:
+        columns = {c["name"] for c in inspect(db.get_bind()).get_columns("pipeline_run_events")}
+        if columns and "at" not in columns:
+            db.execute(text("ALTER TABLE pipeline_run_events ADD COLUMN at BIGINT"))
+            db.commit()
+            logger.info("pipeline_run_events: added the at column")
+    except Exception as e:
+        db.rollback()
+        logger.warning("Could not add pipeline_run_events.at: %s", e)
     finally:
         db.close()
 

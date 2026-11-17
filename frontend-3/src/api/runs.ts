@@ -68,10 +68,85 @@ export interface StepPlacement {
   before_step_ids?: string[];
 }
 
+/** One layer of a run's planning report. Times are Unix ms; null when not recorded. */
+export interface ReportLayer {
+  name: string;
+  label: string;
+  detail: string;
+  /** A stage groups the layers after it (``parent`` names it). */
+  stage: boolean;
+  parent: string | null;
+  depth: number;
+  state: "pending" | "active" | "completed" | "failed" | "skipped" | string;
+  started_at: number | null;
+  ended_at: number | null;
+  ms: number | null;
+  /** Running layers: time so far. */
+  elapsed_ms?: number | null;
+  /** From the start of the run. */
+  offset_ms: number | null;
+  summary: string | null;
+  error: string | null;
+  /** How many times it ran — more than one after a rewind. */
+  runs: number;
+  subs: Array<{
+    id: string;
+    label: string;
+    state: string;
+    ms: number | null;
+    summary: string | null;
+    error: string | null;
+  }>;
+}
+
+export interface ReportDecision {
+  id: string;
+  kind: string | null;
+  title: string | null;
+  options: string[];
+  recommended: string | null;
+  asked_at: number | null;
+  answered_at: number | null;
+  waited_ms: number | null;
+  offset_ms: number | null;
+  choice: string | null;
+  /** "user", or "timeout" when the deadline took the recommended choice. */
+  by: string | null;
+  extended: number;
+}
+
+/** What happened in a planning (or agent) run, with timings — GET /runs/{id}/report. */
+export interface RunReport {
+  run: BackgroundRun;
+  /** False for runs recorded before event times were kept: durations only. */
+  timed: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  waiting_ms: number;
+  working_ms: number | null;
+  layers: ReportLayer[];
+  layer_counts: { total: number; completed: number; failed: number; skipped: number };
+  decisions: ReportDecision[];
+  rewinds: Array<{
+    round: number | null;
+    to: string | null;
+    from: string | null;
+    reason: string | null;
+    at: number | null;
+  }>;
+  calls: Array<{ kind: string; count: number; ms: number; failed: number }>;
+  models: Array<{ name: string; count: number; ms: number; failed: number }>;
+  errors: Array<{ at: number | null; message: string }>;
+  event_counts: Record<string, number>;
+}
+
 export const runsApi = {
   list: (params: { status?: string; kind?: string; limit?: number } = {}) =>
     get<{ runs: BackgroundRun[] }>("/api/runs", params),
   get: (id: string) => get<BackgroundRun>(`/api/runs/${id}`),
+  /** Timings, questions, calls and rewinds of one run. */
+  report: (id: string) => get<RunReport>(`/api/runs/${id}/report`),
   cancel: (id: string) => post<{ cancelled: boolean; status: string }>(`/api/runs/${id}/cancel`),
   startWorkflowPlan: (goal: string, processKnowledge?: ProcessKnowledgeRequest) =>
     post<BackgroundRun>("/api/runs/workflow-plan", {

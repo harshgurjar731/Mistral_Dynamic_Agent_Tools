@@ -114,6 +114,8 @@ class LiveRun:
     finished_at: Optional[str] = None
 
     events: list[tuple[int, str, str]] = field(default_factory=list)
+    #: When each event was emitted (seq → Unix ms) — for the planning report.
+    times: dict[int, int] = field(default_factory=dict)
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     task: Optional[asyncio.Task] = None
     finished: bool = False
@@ -156,6 +158,7 @@ class LiveRun:
         seq = len(self.events) + 1
         item = (seq, event, payload)
         self.events.append(item)
+        self.times[seq] = int(time.time() * 1000)
         self._pending.append(item)
         self.last_payloads[event] = payload
         self._track(event, payload)
@@ -328,7 +331,8 @@ class LiveRun:
                 )
             elif not batch:
                 return
-            await asyncio.to_thread(store.write_batch, self.id, _coalesce(batch), fields)
+            rows = [(seq, event, data, self.times.get(seq)) for seq, event, data in _coalesce(batch)]
+            await asyncio.to_thread(store.write_batch, self.id, rows, fields)
 
     async def _flush_loop(self) -> None:
         while True:
@@ -522,6 +526,20 @@ class RunManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     # ── Reads ───────────────────────────────────────────────────────────
+
+    async def report(self, run_id: str) -> Optional[dict]:
+        """What happened in a run, with timings — see ``app.runs.report``."""
+        from app.runs.report import build_report
+
+        run = self._runs.get(run_id)
+        if run is not None:
+            events = [(seq, event, data, run.times.get(seq)) for seq, event, data in list(run.events)]
+            return build_report(run.snapshot(), events)
+        summary = await asyncio.to_thread(store.get_run, run_id)
+        if summary is None:
+            return None
+        events = await asyncio.to_thread(store.events_with_times, run_id)
+        return build_report(summary, events)
 
     def live(self, run_id: str) -> Optional[LiveRun]:
         return self._runs.get(run_id)

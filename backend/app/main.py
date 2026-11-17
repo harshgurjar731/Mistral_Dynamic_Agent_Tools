@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.runs import store as runs_store
 
+        runs_store.ensure_schema()
         interrupted = runs_store.mark_interrupted()
         pruned_runs = runs_store.prune()
         from app.services.workflow_engine import run_history

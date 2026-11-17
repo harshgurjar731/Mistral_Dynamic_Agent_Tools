@@ -209,6 +209,16 @@ async def stream_run_events(
     )
 
 
+@router.get("/runs/{run_id}/report")
+async def run_report(run_id: str):
+    """The run's planning report: when each layer ran and for how long, every
+    question asked and how long it waited, rewinds, model and tool calls."""
+    report = await manager.report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+    return report
+
+
 @router.post("/runs/{run_id}/cancel")
 async def cancel_run(run_id: str):
     if not await manager.cancel(run_id):
