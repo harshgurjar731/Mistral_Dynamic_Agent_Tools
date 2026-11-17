@@ -30,6 +30,7 @@ import { PushToolPanel } from "@/components/remote-servers/detail/ServerPanels";
 import { SERVER_TABS, tabsFor, type ServerTab } from "@/components/remote-servers/detail/tabs";
 import type { ServerState } from "@/components/remote-servers/status";
 import { useCanCall } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const searchSchema = z.object({
   tab: z.enum(SERVER_TABS).optional(),
@@ -69,6 +70,7 @@ function RemoteServerDetailPage() {
     queryKey: QK.remoteServer(id),
     queryFn: () => remoteServersApi.get(id),
   });
+  usePageCrumbs([query.data?.name]);
   const catalog = useQuery({
     queryKey: QK.remoteServerProviders(),
     queryFn: remoteServersApi.providers,

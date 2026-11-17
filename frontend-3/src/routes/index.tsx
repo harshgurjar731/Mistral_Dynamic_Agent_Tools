@@ -47,6 +47,7 @@ import {
   useProcessKnowledge,
 } from "@/components/processes/ProcessKnowledgeControl";
 import { formatElapsed, RUN_STATUS_META } from "@/components/runs/runMeta";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 import { PlanningHistory, type OlderEntry } from "@/components/runs/PlanningHistory";
 import { PlanningReport } from "@/components/runs/PlanningReport";
 import { stopRun, trackStartedRun } from "@/lib/runs/connections";
@@ -434,6 +435,8 @@ function OrchestratorChat() {
   const raw = useMemo(() => agentLayerRaw(decisions), [decisions]);
 
   const empty = !submittedQuery && !run.started && !answer;
+  // The agent this run is designing, by name, in the header.
+  usePageCrumbs([decisions.agent_config?.agent_name ?? (submittedQuery ? "New agent" : null)]);
   const runStatus: RunStatus = replay
     ? replay.failed
       ? "failed"

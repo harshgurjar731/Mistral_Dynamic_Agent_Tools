@@ -38,6 +38,7 @@ def _build_context(
     image_mime: Optional[str] = None,
     stream: bool = False,
     process_knowledge: Optional[dict] = None,
+    attachments: Optional[list] = None,
 ) -> PipelineContext:
     """Translate route parameters into a PipelineContext."""
     image = None
@@ -51,6 +52,7 @@ def _build_context(
         cleanup_agent=cleanup_agent,
         tier=tier,
         image=image,
+        attachments=[a for a in attachments or [] if isinstance(a, dict) and a.get("upload_id")],
         stream=stream,
         client=client,
         process_request=process_knowledge,
@@ -69,6 +71,7 @@ async def orchestrate(
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
     process_knowledge: Optional[dict] = None,
+    attachments: Optional[list] = None,
 ) -> dict:
     """Main orchestration flow — returns a JSON dict."""
     ctx = _build_context(
@@ -81,6 +84,7 @@ async def orchestrate(
         image_mime=image_mime,
         stream=False,
         process_knowledge=process_knowledge,
+        attachments=attachments,
     )
 
     try:
@@ -109,6 +113,7 @@ async def orchestrate_stream(
     image_base64: Optional[str] = None,
     image_mime: Optional[str] = None,
     process_knowledge: Optional[dict] = None,
+    attachments: Optional[list] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming orchestration — yields SSE-formatted strings in real-time.
 
@@ -126,6 +131,7 @@ async def orchestrate_stream(
         image_mime=image_mime,
         stream=True,
         process_knowledge=process_knowledge,
+        attachments=attachments,
     )
 
     # Attach a queue so ctx.emit() pushes events in real-time

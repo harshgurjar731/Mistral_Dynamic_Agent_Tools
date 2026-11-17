@@ -10,6 +10,8 @@ export function Composer({
   isProcessing,
   placeholder = "Describe what you want to accomplish…",
   leading,
+  above,
+  allowEmpty = false,
   className,
 }: {
   value: string;
@@ -19,8 +21,13 @@ export function Composer({
   isProcessing?: boolean;
   placeholder?: string;
   leading?: ReactNode;
+  /** Shown above the text box (e.g. the files about to be sent). */
+  above?: ReactNode;
+  /** Sendable without text (files are attached). */
+  allowEmpty?: boolean;
   className?: string;
 }) {
+  const ready = Boolean(value.trim()) || allowEmpty;
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -37,6 +44,7 @@ export function Composer({
         className,
       )}
     >
+      {above}
       <textarea
         ref={ref}
         rows={1}
@@ -46,7 +54,7 @@ export function Composer({
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            if (!isProcessing && value.trim()) onSubmit();
+            if (!isProcessing && ready) onSubmit();
           }
         }}
         className="custom-scrollbar max-h-[120px] w-full resize-none bg-transparent px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
@@ -69,7 +77,7 @@ export function Composer({
           <button
             type="button"
             onClick={onSubmit}
-            disabled={isProcessing || !value.trim()}
+            disabled={isProcessing || !ready}
             aria-label="Send"
             className="inline-flex size-8 items-center justify-center rounded-xl bg-gradient-brand text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >

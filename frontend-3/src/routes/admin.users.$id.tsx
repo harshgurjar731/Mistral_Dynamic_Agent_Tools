@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { initials } from "@/lib/auth";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/admin/users/$id")({
   head: () => ({ meta: [{ title: "User — Admin console" }] }),
@@ -40,6 +41,7 @@ function UserDetailPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const q = useQuery({ queryKey: authKeys.admin.user(id), queryFn: () => adminApi.user(id) });
+  usePageCrumbs([q.data?.name || q.data?.email]);
   const [link, setLink] = useState<IssuedLink | null>(null);
 
   const saved = (u?: PlatformUser) => {

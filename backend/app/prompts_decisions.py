@@ -1202,7 +1202,8 @@ transform steps — `transform_code`:
   and the reference resolves to the document's text — so reference the file
   input directly in the template of each agent step that must read it, and
   only in those. Give:
-  - `accept`: the kinds of file, from pdf, docx, pptx, xlsx, csv, text, image.
+  - `accept`: the kinds of file, from pdf, docx, pptx, xlsx, csv, text, image, audio
+    (a recording such as a call or voice note — read as its transcript).
   - `multiple`: true only when several documents of the same kind are handed
     over together (e.g. three payslips); then `max_files`.
   - `max_size_mb`: optional; 20 when omitted.
@@ -1237,7 +1238,7 @@ transform steps — `transform_code`:
       "min": 0,
       "max": 0,
       "items": "string|number|object",
-      "accept": ["pdf|docx|pptx|xlsx|csv|text|image — file inputs only"],
+      "accept": ["pdf|docx|pptx|xlsx|csv|text|image|audio — file inputs only"],
       "multiple": false
     }
   ],
@@ -1312,7 +1313,7 @@ every input precise and the example payload believable and consistent.
 - `schema` (object/array inputs that are NOT bound): a JSON Schema of the value
   with "properties" and "required" for records, "items" for lists — the fields
   the steps actually read, with the right types.
-- File inputs: `accept` (pdf, docx, pptx, xlsx, csv, text, image), `multiple`.
+- File inputs: `accept` (pdf, docx, pptx, xlsx, csv, text, image, audio), `multiple`.
 
 ## The example payload
 `example_payload` is ONE coherent scenario — the same customer, case, dates

@@ -6,7 +6,13 @@ export interface SSEEvent {
 }
 
 /** Plain-string payload events — never JSON.parse these. */
-export const STRING_EVENTS = new Set(["status", "text_chunk", "conversation_id", "error"]);
+export const STRING_EVENTS = new Set([
+  "status",
+  "text_chunk",
+  "thinking_chunk",
+  "conversation_id",
+  "error",
+]);
 
 export function parseEventData<T>(e: SSEEvent): T | string {
   if (STRING_EVENTS.has(e.type)) return e.data;

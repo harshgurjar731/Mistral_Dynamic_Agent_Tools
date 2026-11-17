@@ -851,7 +851,7 @@ SOURCE 1 — User inputs
   {{{{variable_name}}}}
   Example: if input_schema has name "city", use {{{{city}}}}
   A document the user hands over each run (claim form, invoice, contract to
-  review) is an input of type "file" with "accept" (pdf, docx, pptx, xlsx, csv,
+  review) is an input of type "file" with "accept" (pdf, docx, pptx, xlsx, csv, audio,
   text, image): the run form asks for an upload, the document goes into a
   library attached to the agent steps that reference it, and {{{{name}}}}
   resolves to the document's text. Reference it only in the agent steps that

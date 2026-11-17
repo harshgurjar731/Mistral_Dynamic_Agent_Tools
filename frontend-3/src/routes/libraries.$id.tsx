@@ -11,6 +11,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
 import { formatRelative } from "@/lib/status";
 import { useCanCall } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/libraries/$id")({
   head: () => ({
@@ -33,6 +34,7 @@ function LibraryDetailPage() {
 
   const libs = useQuery({ queryKey: QK.libraries(), queryFn: librariesApi.list });
   const library = (libs.data ?? []).find((l) => l.id === id) ?? null;
+  usePageCrumbs([library?.name]);
 
   const remove = useMutation({
     mutationFn: () => librariesApi.remove(id),

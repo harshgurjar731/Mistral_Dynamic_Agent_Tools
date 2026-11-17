@@ -303,6 +303,19 @@ export const ACCEPT_GROUPS: Record<string, { label: string; ext: string[]; mime:
     ext: [".png", ".jpg", ".jpeg", ".webp"],
     mime: ["image/png", "image/jpeg", "image/webp"],
   },
+  audio: {
+    label: "Audio",
+    ext: [".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"],
+    mime: [
+      "audio/mpeg",
+      "audio/wav",
+      "audio/x-wav",
+      "audio/mp4",
+      "audio/ogg",
+      "audio/flac",
+      "audio/webm",
+    ],
+  },
 };
 const DEFAULT_ACCEPT = ["pdf", "docx", "text"];
 

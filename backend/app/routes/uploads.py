@@ -2,6 +2,7 @@
 Upload Routes — Handle file uploads (images) for workflow inputs.
 """
 
+import asyncio
 import os
 import uuid
 import base64
@@ -72,3 +73,44 @@ async def upload_image(file: UploadFile = File(...)):
         "image_url": f"/uploads/{unique_name}",
         "image_mime": content_type,
     }
+
+
+@router.post("/uploads/file")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload an image, audio, document (PDF, Word, PowerPoint, Excel) or text file to attach to a message.
+
+    Returns a reference (``upload_id``) the message carries; the file is turned
+    into what the chosen model accepts when the message is sent
+    (``app.services.attachments``).
+    """
+    from app.services import attachments
+
+    content = await file.read()
+    try:
+        saved = attachments.save(file.filename or "file", content, file.content_type,
+                                 max_mb=settings.UPLOAD_MAX_MB)
+    except attachments.AttachmentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Attachment uploaded: %s (%s, %d bytes)", saved["upload_id"], saved["kind"], saved["size"])
+    if saved["kind"] == attachments.IMAGE:
+        # Older clients read these.
+        saved.update(image_url=saved["url"], image_mime=saved["mime"])
+    return saved
+
+
+@router.get("/uploads/support")
+async def input_support(model: str | None = None, agent_id: str | None = None, api: str = "chat"):
+    """What a model takes: per kind, sent as-is ("native") or converted to text ("text").
+
+    With ``agent_id`` the agent's own model is used (agent chat runs on the
+    Conversations API, which converts audio).
+    """
+    from app.services import attachments
+
+    if agent_id:
+        from app.services.workflow_engine import agent_call
+
+        profile = await asyncio.to_thread(agent_call.profile, agent_id)
+        model = (profile or {}).get("model") or model
+        api = "conversations"
+    return {"model": model, "api": api, "kinds": attachments.describe_support(model, api)}

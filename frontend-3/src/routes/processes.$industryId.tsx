@@ -13,6 +13,7 @@ import { ProcessPanel } from "@/components/processes/ProcessPanel";
 import { ProcessTreeNav, type AddRequest } from "@/components/processes/ProcessTreeNav";
 import { DocumentStatusBadge, TemplateDownloadMenu } from "@/components/processes/shared";
 import { useCanCall } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const searchSchema = z.object({
   /** The node on screen, so a refresh or a shared link lands on it. */
@@ -51,6 +52,7 @@ function IndustryPage() {
     queryFn: () => processesApi.node(selected),
   });
 
+  usePageCrumbs([tree.data?.domains.find((d) => d.id === industryId)?.label]);
   const [adding, setAdding] = useState<AddRequest | null>(null);
   const [editing, setEditing] = useState<TreeConcept | null>(null);
 

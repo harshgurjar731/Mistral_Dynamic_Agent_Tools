@@ -40,20 +40,3 @@ export function useNavSections() {
 
   return { sections, active, pathname };
 }
-
-/** What follows the page's own route in the address, as words: /workflows/loan_flow/edit → ["loan flow", "edit"]. */
-export function trailingCrumbs(pathname: string, base: string): string[] {
-  if (base === "/" || !pathname.startsWith(`${base}/`)) return [];
-  return pathname
-    .slice(base.length + 1)
-    .split("/")
-    .filter(Boolean)
-    .map((part) => {
-      try {
-        return decodeURIComponent(part);
-      } catch {
-        return part;
-      }
-    })
-    .map((part) => part.replace(/[_-]+/g, " "));
-}

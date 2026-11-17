@@ -56,6 +56,7 @@ import { takeRebuildHandoff } from "@/lib/rebuildHandoff";
 import { isRebuildOf, useRunningRebuild, useRunOpenRequest } from "@/lib/runs/synthesis";
 import { LivePercent } from "@/components/activity/LiveProgress";
 import { useAllowed } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 /** Which section the detail page belongs to — drives the back link and wording. */
 export type ToolDetailVariant = "tool" | "activity";
@@ -106,6 +107,7 @@ export function ToolDetail({ id, variant }: { id: string; variant: ToolDetailVar
   });
 
   const tool = toolQuery.data;
+  usePageCrumbs([tool?.name]);
   const src = tool ? toolSource(tool.id) : "dynamic";
   const editable = src === "dynamic";
   const isActivity = (tool?.purpose ?? "tool") === "activity";

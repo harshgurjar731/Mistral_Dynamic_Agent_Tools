@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections import OrderedDict
 from contextlib import contextmanager
 from functools import partial
@@ -331,6 +332,18 @@ async def upload(definition, field_name: str, filename: str, content: bytes,
         raise DocumentInputError(
             f"'{filename}' is {len(content) / 1048576:.1f} MB; this input accepts up to {limit} MB.")
 
+    # The file as uploaded, so an agent step whose model sees images or hears
+    # audio can be handed it as it is (app.services.attachments).
+    from app.services import attachments
+
+    try:
+        stored = attachments.save(filename, content, content_type, max_mb=limit)
+    except attachments.AttachmentError:
+        stored = None
+    upload_id = stored["upload_id"] if stored else None
+    if stored and stored["kind"] == attachments.AUDIO:
+        return await _upload_recording(definition, field_name, filename, content, content_type, stored)
+
     library = await ensure_library(definition, field_name)
     library_id = library["library_id"]
     try:
@@ -371,7 +384,7 @@ async def upload(definition, field_name: str, filename: str, content: bytes,
     logger.info("Uploaded run input %s.%s: %s (%d chars)",
                 definition.name, field_name, filename, len(text))
     return {
-        "ref": schema.make_ref(library_id, document_id, filename, content_type, len(content)),
+        "ref": schema.make_ref(library_id, document_id, filename, content_type, len(content), upload_id),
         "name": filename,
         "mime": content_type or "",
         "size": len(content),
@@ -382,6 +395,37 @@ async def upload(definition, field_name: str, filename: str, content: bytes,
     }
 
 
+async def _upload_recording(definition, field_name: str, filename: str, content: bytes,
+                            content_type: Optional[str], stored: dict) -> dict:
+    """A recording: transcribed (Voxtral) for its text; kept as it is for models that hear.
+
+    Mistral libraries do not read audio, so a recording has no library
+    document — its reference points at the upload, and its text is the transcript.
+    """
+    from app.services import attachments
+
+    try:
+        text = (await attachments.chunks_for(_client(), stored, None, "conversations"))[0]["text"]
+    except Exception as e:  # noqa: BLE001
+        raise DocumentInputError(f"Could not transcribe '{filename}': {e}", 502)
+    transcript = text.split("\n", 1)[1] if "\n" in text else text
+    if not transcript.strip() or transcript.strip() == "(no speech heard)":
+        raise DocumentInputError(f"No speech could be heard in '{filename}'.")
+    document_id = f"upload:{stored['upload_id']}"
+    _cache_text(document_id, transcript)
+    await asyncio.to_thread(
+        _record_document, workflow_name=definition.name, field=field_name,
+        library_id="", document_id=document_id, filename=filename,
+        mime=content_type, size=len(content), chars=len(transcript))
+    logger.info("Uploaded recording %s.%s: %s (%d chars of transcript)",
+                definition.name, field_name, filename, len(transcript))
+    return {
+        "ref": schema.make_ref("", document_id, filename, stored["mime"], len(content), stored["upload_id"]),
+        "name": filename, "mime": stored["mime"], "size": len(content), "chars": len(transcript),
+        "preview": transcript[:PREVIEW_CHARS], "library_id": "", "agent_ids": [],
+    }
+
+
 async def remove_upload(workflow_name: str, field_name: str, document_id: str) -> dict:
     """Take back a document uploaded on the run form (before or instead of running)."""
     from app.services import library_service
@@ -389,10 +433,11 @@ async def remove_upload(workflow_name: str, field_name: str, document_id: str) -
     row = await asyncio.to_thread(_document_row, document_id)
     if row is None or row["workflow_name"] != workflow_name or row["field"] != field_name:
         raise DocumentInputError("That document was not uploaded for this input.", 404)
-    try:
-        await library_service.delete_document(row["library_id"], document_id)
-    except Exception as e:
-        logger.warning("Could not delete input document %s: %s", document_id, e)
+    if row["library_id"]:
+        try:
+            await library_service.delete_document(row["library_id"], document_id)
+        except Exception as e:
+            logger.warning("Could not delete input document %s: %s", document_id, e)
     await asyncio.to_thread(_forget_documents, document_id=document_id)
     _TEXT_CACHE.pop(document_id, None)
     return {"deleted": True, "document_id": document_id}
@@ -426,6 +471,16 @@ async def _text_of(ref: dict) -> str:
     if document_id in _TEXT_CACHE:
         _TEXT_CACHE.move_to_end(document_id)
         return _TEXT_CACHE[document_id]
+    if not ref.get("library_id") and ref.get("upload_id"):
+        # A recording: its transcript.
+        from app.services import attachments
+
+        chunk = (await attachments.chunks_for(
+            _client(), {"upload_id": ref["upload_id"], "filename": ref.get("name"), "mime": ref.get("mime")},
+            None, "conversations"))[0]["text"]
+        text = chunk.split("\n", 1)[1] if "\n" in chunk else chunk
+        _cache_text(document_id, text)
+        return text
     content = await asyncio.to_thread(partial(
         _client().beta.libraries.documents.text_content,
         library_id=ref.get("library_id"), document_id=document_id))
@@ -453,6 +508,33 @@ async def _render(refs: list[dict]) -> str:
                     + "\n\n[… document truncated here. The full document is in your document "
                       "library — search it for anything beyond this point.]")
     return rendered
+
+
+def native_attachments(step, variables: dict) -> list[dict]:
+    """The images and recordings among the run inputs this agent step reads.
+
+    Handed to the agent as they are when its model takes them (the step's
+    prompt carries their text either way). A step reads an input when its
+    prompt or its input records reference it.
+    """
+    from app.services import attachments
+
+    config = getattr(step, "config", None) or {}
+    text = " ".join([str(config.get("query_template") or config.get("query") or ""),
+                     json.dumps(config.get("input_records") or {})])
+    out = []
+    for key, value in (variables or {}).items():
+        if not schema.holds_documents(value) or "{{" not in text:
+            continue
+        if not re.search(r"\{\{\s*" + re.escape(key) + r"\s*(?:[.|}])", text):
+            continue
+        for ref in schema.document_refs(value):
+            upload_id = ref.get("upload_id")
+            kind = attachments.kind_of(str(ref.get("name") or ""), ref.get("mime"))
+            if upload_id and kind in schema.NATIVE_GROUPS and attachments.exists(upload_id):
+                out.append({"upload_id": upload_id, "filename": ref.get("name"), "kind": kind,
+                            "mime": ref.get("mime")})
+    return out
 
 
 async def materialise(variables: dict) -> dict:

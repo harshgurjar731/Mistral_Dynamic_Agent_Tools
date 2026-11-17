@@ -207,6 +207,9 @@ RULES: list[Rule] = [
     _r("POST", r"/chat/(completions|stream)", "perm", "chat.use", "orchestrator.use"),
     _r("GET|DELETE", r"/conversations(/.*)?", "perm", "chat.use", "orchestrator.use"),
     _r("POST", r"/uploads/image", "perm", "chat.use", "orchestrator.use"),
+    # Files attached to a chat message, and what the chosen model takes.
+    _r("POST", r"/uploads/file", "perm", "chat.use", "orchestrator.use"),
+    _r("GET", r"/uploads/support", "perm", "chat.use", "orchestrator.use"),
 
     # Background runs
     _r("POST", r"/runs/agent-evaluate", "perm", "agents.manage"),

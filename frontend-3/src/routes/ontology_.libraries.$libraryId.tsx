@@ -7,6 +7,7 @@ import { LibraryWorkspace } from "@/components/ontology/LibraryDetail";
 import type { LibraryPane } from "@/components/ontology/libraryMeta";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { DetailSkeleton } from "@/components/ui/Skeletons";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const searchSchema = z.object({
   /** Which half of the workspace is open, so a refresh lands in the same place. */
@@ -40,6 +41,7 @@ function OntologyLibraryPage() {
     refetchInterval: 15_000,
   });
   const library = data?.libraries.find((l) => l.id === libraryId);
+  usePageCrumbs(["Libraries", library?.name]);
 
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] min-h-[36rem] flex-col gap-3 p-3 sm:p-4">

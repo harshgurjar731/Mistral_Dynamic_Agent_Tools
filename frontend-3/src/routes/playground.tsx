@@ -7,7 +7,11 @@ import { toast } from "sonner";
 import { createSSEStream, parseEventData } from "@/api/sse";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
-import { AttachmentControl } from "@/components/chat/AttachmentChip";
+import {
+  AttachmentButton,
+  PendingAttachments,
+  useInputSupport,
+} from "@/components/chat/AttachmentChip";
 import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -21,9 +25,10 @@ import { useModelConfig } from "@/lib/models";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessions";
 import type { ChatMessagePayload } from "@/api";
-import type { Message, UploadResult } from "@/types";
+import type { Attachment, Message } from "@/types";
 import { ModelPicker } from "@/components/shared/ModelPicker";
 import { ResizeHandle, useResizablePanel } from "@/components/shared/ResizeHandle";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const SETTINGS_WIDTH = 288;
 
@@ -71,6 +76,7 @@ function PlaygroundPage() {
     () => generalSessions.find((s) => s.id === sessionId) ?? null,
     [generalSessions, sessionId],
   );
+  usePageCrumbs([activeSession?.title]);
 
   const [input, setInput] = useState("");
   const {
@@ -103,7 +109,9 @@ function PlaygroundPage() {
   const settingsWidth = settingsPanel.width ?? SETTINGS_WIDTH;
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [attachment, setAttachment] = useState<UploadResult | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // What the chosen model takes, per kind of file.
+  const support = useInputSupport({ model }).data;
   const [uploading, setUploading] = useState(false);
 
   const stopRef = useRef<(() => void) | null>(null);
@@ -135,7 +143,7 @@ function PlaygroundPage() {
 
   const submit = () => {
     const text = input.trim();
-    if ((!text && !attachment) || isProcessing) return;
+    if ((!text && !attachments.length) || isProcessing) return;
 
     let id = sessionId;
     if (!id || !activeSession) {
@@ -149,35 +157,45 @@ function PlaygroundPage() {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
-      imageUrl: attachment?.image_url,
-      imageBase64: attachment?.image_base64,
-      imageMime: attachment?.image_mime,
+      attachments: attachments.length ? attachments : undefined,
     };
     appendMessage(sid, userMessage);
 
     const assistantId = newMessageId();
     appendMessage(sid, { id: assistantId, role: "assistant", content: "", streaming: true });
 
-    const history = [...(activeSession?.messages ?? []), userMessage];
-    const messages: ChatMessagePayload[] = history.map((m) => ({
-      role: m.role,
-      content:
-        m.imageBase64 && m.imageMime
-          ? [
-              { type: "text", text: m.content },
-              {
-                type: "image_url",
-                image_url: { url: `data:${m.imageMime};base64,${m.imageBase64}` },
-              },
-            ]
+    // A reply that failed or was stopped before its first word has no text;
+    // Mistral refuses an empty assistant message in the history, so it is
+    // left out (sessions saved before this check included).
+    const history = [...(activeSession?.messages ?? []), userMessage].filter(
+      (m) => m.role !== "assistant" || (m.content.trim() && !m.error),
+    );
+    // Attachments travel as references; the backend turns each into what the
+    // model takes (image, audio, document — or its text when it cannot).
+    const messages: ChatMessagePayload[] = history.map((m) => {
+      const parts: unknown[] = [];
+      if (m.imageBase64 && m.imageMime) {
+        // Sessions saved before attachments (an inline image).
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${m.imageMime};base64,${m.imageBase64}` },
+        });
+      }
+      for (const a of m.attachments ?? []) parts.push({ type: "attachment", ...a });
+      return {
+        role: m.role,
+        content: parts.length
+          ? [...(m.content ? [{ type: "text", text: m.content }] : []), ...parts]
           : m.content,
-    }));
+      };
+    });
 
     setInput("");
-    setAttachment(null);
+    setAttachments([]);
     setIsProcessing(true);
 
     let accumulated = "";
+    let thinking = "";
     stopRef.current = createSSEStream("/api/chat/stream", {
       method: "POST",
       body: { model, messages, stream: true, safe_prompt: safePrompt, temperature, top_p: topP },
@@ -187,13 +205,20 @@ function PlaygroundPage() {
             accumulated += String(parseEventData<string>(event));
             updateMessage(sid, assistantId, { content: accumulated });
             break;
+          case "thinking_chunk":
+            thinking += String(parseEventData<string>(event));
+            updateMessage(sid, assistantId, { thinking });
+            break;
           case "done":
             setIsProcessing(false);
             break;
-          case "error":
-            toast.error(String(parseEventData<string>(event)));
+          case "error": {
+            const message = String(parseEventData<string>(event));
+            toast.error(message);
+            updateMessage(sid, assistantId, { error: message, streaming: false });
             setIsProcessing(false);
             break;
+          }
           default:
             break;
         }
@@ -203,8 +228,9 @@ function PlaygroundPage() {
         setIsProcessing(false);
       },
       onError: (err) => {
-        toast.error(err instanceof Error ? err.message : "Stream failed");
-        updateMessage(sid, assistantId, { streaming: false });
+        const message = err instanceof Error ? err.message : "Stream failed";
+        toast.error(message);
+        updateMessage(sid, assistantId, { streaming: false, error: message });
         setIsProcessing(false);
       },
     });
@@ -346,13 +372,21 @@ function PlaygroundPage() {
                 }}
                 isProcessing={isProcessing}
                 placeholder="Send a message…"
+                allowEmpty={attachments.length > 0}
+                above={
+                  <PendingAttachments
+                    attachments={attachments}
+                    support={support}
+                    onRemove={(id) => setAttachments((a) => a.filter((x) => x.upload_id !== id))}
+                  />
+                }
                 leading={
-                  <AttachmentControl
-                    attachment={attachment}
-                    onAttach={setAttachment}
-                    onClear={() => setAttachment(null)}
+                  <AttachmentButton
+                    attachments={attachments}
+                    onAdd={(a) => setAttachments((list) => [...list, a])}
                     uploading={uploading}
                     setUploading={setUploading}
+                    support={support}
                     disabled={isProcessing}
                   />
                 }

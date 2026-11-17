@@ -36,6 +36,9 @@ class PipelineContext:
     agent_id: Optional[str] = None
     conversation_id: Optional[str] = None
     image: Optional[ImageData] = None
+    #: Files attached to the message: ``[{"upload_id", "filename", "kind", "mime"}]``
+    #: (app.services.attachments) — built for the agent's model when sent.
+    attachments: list = field(default_factory=list)
     tier: Optional[str] = None
     cleanup_agent: bool = False
     stream: bool = False            # True when invoked via the /stream route

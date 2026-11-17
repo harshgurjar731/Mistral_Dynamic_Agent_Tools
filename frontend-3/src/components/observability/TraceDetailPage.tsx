@@ -11,6 +11,7 @@ import { formatTimestamp } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { KindPill } from "./logMeta";
 import { OpenInMistral, TraceView } from "./TraceView";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const notYetOnMistral = (err: unknown) => (err as AxiosError)?.response?.status === 404;
 
@@ -44,6 +45,7 @@ export function TraceDetailPage<T extends TraceDetail = TraceDetail>({
   });
   const detail = query.data;
   const t = detail?.trace;
+  usePageCrumbs([t?.name]);
   const running =
     t?.kind === "workflow" && detail?.root?.attributes["app.execution.status"] === "RUNNING";
 

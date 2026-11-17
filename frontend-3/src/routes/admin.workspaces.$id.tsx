@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatRelative } from "@/lib/status";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/admin/workspaces/$id")({
   head: () => ({ meta: [{ title: "Workspace — Admin console" }] }),
@@ -40,6 +41,7 @@ function WorkspaceDetailPage() {
     queryKey: authKeys.admin.workspace(id),
     queryFn: () => adminApi.workspace(id),
   });
+  usePageCrumbs([q.data?.name]);
   const members = useQuery({
     queryKey: authKeys.admin.members(id),
     queryFn: () => adminApi.workspaceMembers(id),

@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { LivePercent } from "@/components/activity/LiveProgress";
 import { EditGuard, useAllowed } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/connectors/$id")({
   head: () => ({
@@ -521,6 +522,7 @@ function ConnectorsIdPage() {
   const { id } = Route.useParams();
   const canManage = useAllowed()("PATCH", `/api/connectors/${encodeURIComponent(id)}`);
   const query = useQuery({ queryKey: QK.connector(id), queryFn: () => connectorsApi.get(id) });
+  usePageCrumbs([query.data?.title ?? query.data?.name]);
 
   return (
     <div className="px-6 py-8">

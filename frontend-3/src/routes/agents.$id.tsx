@@ -22,7 +22,11 @@ import type { AgentPatch } from "@/api/agents";
 import { createSSEStream, parseEventData } from "@/api/sse";
 import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
-import { AttachmentControl } from "@/components/chat/AttachmentChip";
+import {
+  AttachmentButton,
+  PendingAttachments,
+  useInputSupport,
+} from "@/components/chat/AttachmentChip";
 import { ChatSessionSidebar } from "@/components/chat/ChatSessionSidebar";
 import { TierSelector } from "@/components/chat/TierSelector";
 import { GlassPanel, GlassPanelHeader } from "@/components/glass/GlassPanel";
@@ -52,9 +56,11 @@ import type {
   RuleOutcome,
   RuleRef,
   UploadResult,
+  Attachment,
 } from "@/types";
 import { ToolCredentialsCheck } from "@/components/vault/ToolCredentialsCheck";
 import { EditGuard, ViewOnlyNote, useAllowed } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 const searchSchema = z.object({
   session: z.string().optional(),
@@ -115,6 +121,8 @@ function AgentsIdPage() {
     queryFn: () => agentsApi.get(id),
     retry: 1,
   });
+  // The agent's name in the header — this is its chat and settings page.
+  usePageCrumbs([agentQuery.data?.name ?? "Agent"]);
 
   const toolsQuery = useQuery({ queryKey: QK.tools(), queryFn: toolsApi.list });
   const connectorsQuery = useQuery({
@@ -341,7 +349,9 @@ function AgentsIdPage() {
 
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [attachment, setAttachment] = useState<UploadResult | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // What this agent's model takes, per kind of file (agent chat converts audio).
+  const support = useInputSupport({ agentId: id }).data;
   const [uploading, setUploading] = useState(false);
   const stopRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -369,7 +379,7 @@ function AgentsIdPage() {
 
   const submit = () => {
     const text = input.trim();
-    if ((!text && !attachment) || isProcessing) return;
+    if ((!text && !attachments.length) || isProcessing) return;
 
     let sid = sessionId;
     if (!sid || !activeSession) {
@@ -383,16 +393,15 @@ function AgentsIdPage() {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
-      imageUrl: attachment?.image_url,
-      imageBase64: attachment?.image_base64,
-      imageMime: attachment?.image_mime,
+      attachments: attachments.length ? attachments : undefined,
     };
     appendMessage(activeSid, userMessage);
     const assistantId = newMessageId();
     appendMessage(activeSid, { id: assistantId, role: "assistant", content: "", streaming: true });
 
+    const sent = attachments;
     setInput("");
-    setAttachment(null);
+    setAttachments([]);
     setIsProcessing(true);
 
     const conversationId = activeSession?.conversationId ?? null;
@@ -404,9 +413,7 @@ function AgentsIdPage() {
         query: text,
         agent_id: id,
         ...(conversationId ? { conversation_id: conversationId } : {}),
-        ...(attachment
-          ? { image_base64: attachment.image_base64, image_mime: attachment.image_mime }
-          : {}),
+        ...(sent.length ? { attachments: sent } : {}),
       },
       onEvent: (event) => {
         switch (event.type) {
@@ -670,20 +677,31 @@ function AgentsIdPage() {
                     }}
                     isProcessing={isProcessing}
                     placeholder={`Message ${agent.name}…`}
+                    allowEmpty={attachments.length > 0}
+                    above={
+                      <PendingAttachments
+                        attachments={attachments}
+                        support={support}
+                        onRemove={(fid) =>
+                          setAttachments((a) => a.filter((x) => x.upload_id !== fid))
+                        }
+                      />
+                    }
                     leading={
-                      <AttachmentControl
-                        attachment={attachment}
-                        onAttach={setAttachment}
-                        onClear={() => setAttachment(null)}
+                      <AttachmentButton
+                        attachments={attachments}
+                        onAdd={(a) => setAttachments((list) => [...list, a])}
                         uploading={uploading}
                         setUploading={setUploading}
-                        disabled={isProcessing || !savedModelHasVision}
+                        support={support}
+                        disabled={isProcessing}
                       />
                     }
                   />
                   {!savedModelHasVision ? (
                     <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">
-                      Image attachments are off — {agent.model} has no vision.
+                      {agent.model} cannot see images — an attached image is sent as the text read
+                      from it.
                     </p>
                   ) : null}
                 </>

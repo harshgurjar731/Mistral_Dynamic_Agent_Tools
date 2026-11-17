@@ -183,6 +183,29 @@ def _build_multimodal_messages(query: str, variables: dict) -> list[dict[str, An
         return [{"role": "user", "content": query}]
 
 
+#: Run-input images and recordings an agent step reads (documents.native_attachments).
+NATIVE_ATTACHMENTS_KEY = "__native_attachments__"
+
+
+async def _with_native_attachments(client: Any, messages: list, variables: dict, agent_id: str,
+                                   force_text=()) -> list:
+    """The step's message with the images and recordings it reads, as its agent's model takes them."""
+    native = (variables or {}).get(NATIVE_ATTACHMENTS_KEY) or []
+    if not native or not messages:
+        return messages
+    from app.services import attachments
+    from app.services.workflow_engine import agent_call
+
+    profile = await asyncio.to_thread(agent_call.profile, agent_id)
+    model = (profile or {}).get("model")
+    content = messages[0]["content"]
+    chunks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    chunks += [{"type": "attachment", **a} for a in native]
+    first = {**messages[0], "content": await attachments.resolve_content(
+        client, chunks, model, "agents", force_text)}
+    return [first, *messages[1:]]
+
+
 def _first_choice_message(response: Any) -> Any:
     """Pull the assistant message out of a completion response, or None.
 
@@ -1169,6 +1192,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
 
             # Build messages — supports multimodal (text + image) if image data in variables
             messages: list[dict[str, Any]] = _build_multimodal_messages(query, variables)
+            # Images and recordings from the run's inputs, as this agent's model takes them.
+            plain_messages = messages
+            messages = await _with_native_attachments(client, messages, variables, resolved_id)
 
             # Use conversation_id from config or create a new conversation
             conv_id = config.get("conversation_id")
@@ -1223,7 +1249,18 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
                         client, base_kwargs, messages, step.id, call_trace
                     )
                 except Exception as e:
-                    if round_num != 0 or not needs_conversations(e):
+                    from app.services import attachments as _att
+
+                    refused = _att.refused_kinds(e) if round_num == 0 else set()
+                    if refused and variables.get(NATIVE_ATTACHMENTS_KEY):
+                        # The agent's model does not take that kind of input:
+                        # hand it over as text (transcript / text read from it).
+                        _att.remember_refusal(resolved_id, refused)
+                        messages = await _with_native_attachments(
+                            client, plain_messages, variables, resolved_id, refused)
+                        response = await _agent_complete_with_backoff(
+                            client, base_kwargs, messages, step.id, call_trace)
+                    elif round_num != 0 or not needs_conversations(e):
                         raise
                     # The agent carries a built-in connector (code interpreter,
                     # image generation…) that the agents completion endpoint
@@ -2115,7 +2152,12 @@ async def run_step(step: WorkflowStep, variables: dict) -> StepResult:
             # so traces carry the reference rather than the document.
             from app.workflow_inputs import documents as input_documents
 
-            result = await runner(step, await input_documents.materialise(variables))
+            step_variables = await input_documents.materialise(variables)
+            if step.type == StepType.AGENT:
+                native = input_documents.native_attachments(step, variables)
+                if native:
+                    step_variables = {**step_variables, NATIVE_ATTACHMENTS_KEY: native}
+            result = await runner(step, step_variables)
 
         tracing.set_attrs(span, {
             "app.step.status": result.status,

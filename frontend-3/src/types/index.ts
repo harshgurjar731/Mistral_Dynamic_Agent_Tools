@@ -1062,6 +1062,23 @@ export interface SearchResult {
 }
 
 /* ── Uploads ────────────────────────────────────────────────────────── */
+/** A file attached to a message (POST /api/uploads/file). */
+export type AttachmentKind = "image" | "audio" | "document" | "text";
+export interface Attachment {
+  upload_id: string;
+  filename: string;
+  kind: AttachmentKind;
+  mime: string;
+  size: number;
+  url: string;
+}
+/** How each kind reaches a model: as it is ("native") or converted to text ("text"). */
+export interface InputSupport {
+  model: string | null;
+  api: string;
+  kinds: Record<AttachmentKind, { mode: "native" | "text"; extensions: string[] }>;
+}
+
 export interface UploadResult {
   filename: string;
   content_type: string;
@@ -1083,6 +1100,12 @@ export interface Message {
   imageMime?: string | undefined;
   /** What each agent rule decided on this turn (assistant messages only). */
   ruleOutcomes?: RuleOutcome[] | undefined;
+  /** Files attached to this (user) message. */
+  attachments?: Attachment[] | undefined;
+  /** A reasoning model's thinking before its answer — shown, never sent back as history. */
+  thinking?: string | undefined;
+  /** Why this reply has no answer (the model or the request failed). */
+  error?: string | undefined;
 }
 export interface ChatSession {
   id: string;

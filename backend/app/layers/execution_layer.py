@@ -38,6 +38,29 @@ def _build_user_inputs(
     return [{"role": "user", "content": query}]
 
 
+async def _user_inputs(ctx: PipelineContext, client, agent_id: Optional[str]) -> list[dict]:
+    """The user turn with its attachments, as the agent's model accepts them.
+
+    Agent chat runs on the Conversations API: documents and (for a model that
+    sees) images go as they are; audio, which that API does not take, goes as
+    its transcript; an image for a model that cannot see goes as its text.
+    """
+    inputs = _build_user_inputs(ctx.query, ctx.image)
+    if not ctx.attachments:
+        return inputs
+    from app.services import attachments
+    from app.services.workflow_engine import agent_call
+
+    profile = await asyncio.to_thread(agent_call.profile, agent_id or ctx.agent_id or "") \
+        if (agent_id or ctx.agent_id) else None
+    model = (profile or {}).get("model")
+    content = inputs[0]["content"]
+    chunks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    chunks += [{"type": "attachment", **a} for a in ctx.attachments]
+    inputs[0]["content"] = await attachments.resolve_content(client, chunks, model, "conversations")
+    return inputs
+
+
 def _extract_response(conv_result) -> str:
     """Extract the assistant's text response from a conversation result."""
     outputs = (
@@ -418,7 +441,7 @@ class ExecutionLayer(Layer):
         max_rounds = self._max_rounds(ctx)
         stats = ctx.metadata.setdefault(_TOOL_STATS_KEY, {})
 
-        inputs = _build_user_inputs(ctx.query, ctx.image)
+        inputs = await _user_inputs(ctx, client, agent_id)
 
         if ctx.conversation_id:
             # Follow-up
@@ -549,7 +572,7 @@ class ExecutionLayer(Layer):
     async def _stream(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
         if ctx.conversation_id:
             # Follow-up stream
-            inputs = _build_user_inputs(ctx.query, ctx.image)
+            inputs = await _user_inputs(ctx, client, agent_id)
             ctx.emit("status", "Continuing conversation…")
 
             async for evt_type, data in _consume_stream_and_tools(
@@ -567,7 +590,7 @@ class ExecutionLayer(Layer):
 
         if ctx.agent_id and not ctx.created_agent_id:
             # Pre-selected agent stream (no analysis needed)
-            inputs = _build_user_inputs(ctx.query, ctx.image)
+            inputs = await _user_inputs(ctx, client, ctx.agent_id)
             ctx.emit("status", "Processing with selected agent…")
 
             conversation_id_out = None
@@ -594,7 +617,7 @@ class ExecutionLayer(Layer):
 
         # New query stream (agent was created by AgentAssemblyLayer)
         ctx.emit("status", "Processing your query…")
-        inputs = _build_user_inputs(ctx.query, ctx.image)
+        inputs = await _user_inputs(ctx, client, agent_id)
 
         conversation_id_out = None
         async for evt_type, data in _consume_stream_and_tools(

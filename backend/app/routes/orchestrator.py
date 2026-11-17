@@ -36,6 +36,8 @@ class OrchestrateRequest(BaseModel):
     tier: Optional[str] = None
     image_base64: Optional[str] = None
     image_mime: Optional[str] = None
+    #: Files attached to the message (POST /api/uploads/file results).
+    attachments: Optional[list[dict]] = None
     #: {"enabled": bool, "document_ids": [int]} — see ProcessKnowledgeLayer.
     process_knowledge: Optional[dict] = None
 
@@ -53,6 +55,7 @@ async def orchestrate_endpoint(request: OrchestrateRequest, client=Depends(get_m
         tier=request.tier,
         image_base64=request.image_base64,
         image_mime=request.image_mime,
+        attachments=request.attachments,
         process_knowledge=request.process_knowledge,
     )
     return result
@@ -72,6 +75,7 @@ async def orchestrate_stream_endpoint(request: OrchestrateRequest, client=Depend
             tier=request.tier,
             image_base64=request.image_base64,
             image_mime=request.image_mime,
+            attachments=request.attachments,
             process_knowledge=request.process_knowledge,
         ),
         media_type="text/event-stream",

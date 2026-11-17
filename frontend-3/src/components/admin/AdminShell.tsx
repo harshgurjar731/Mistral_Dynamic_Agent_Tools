@@ -24,6 +24,7 @@ import { adminApi, authKeys, type SessionAdmin } from "@/api/auth";
 import { PasswordCard } from "@/components/auth/AccountCards";
 import { BrandMark } from "@/components/auth/AuthParts";
 import { Breadcrumb, HeaderBar } from "@/components/layout/AppHeader";
+import { usePageSetCrumbs } from "@/components/layout/pageCrumbs";
 import { NavLink, NavSection, headerIconButton } from "@/components/layout/NavSection";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import {
@@ -73,6 +74,7 @@ const NAV: { label: string; items: AdminLink[] }[] = [
 
 export function AdminShell({ admin, children }: { admin: SessionAdmin; children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const adminCrumbs = usePageSetCrumbs(pathname);
   const [open, setOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   usePageTransition(mainRef, pathname);
@@ -161,6 +163,7 @@ export function AdminShell({ admin, children }: { admin: SessionAdmin; children:
                   section={current.section.label}
                   page={current.item.label}
                   pageTo={current.item.to}
+                  trail={adminCrumbs ?? []}
                 />
               ) : (
                 <span className="truncate text-sm font-semibold text-foreground">

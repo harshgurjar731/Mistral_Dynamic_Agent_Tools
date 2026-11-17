@@ -16,6 +16,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelative } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/admin/audit_/$eventId")({
   head: () => ({ meta: [{ title: "Audit event — Admin console" }] }),
@@ -39,6 +40,7 @@ function AuditEventPage() {
     enabled: Number.isFinite(id),
   });
   const e = q.data;
+  usePageCrumbs([e ? `${e.action} #${id}` : `#${eventId}`]);
   const open = (to: number) =>
     navigate({ to: "/admin/audit/$eventId", params: { eventId: String(to) } });
 

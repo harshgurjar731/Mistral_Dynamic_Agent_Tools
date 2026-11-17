@@ -39,6 +39,8 @@ import type {
   ToolTestResult,
   TraceSummary,
   UploadResult,
+  Attachment,
+  InputSupport,
   ValidationResult,
   WorkflowDefinition,
   WorkflowMetrics,
@@ -130,6 +132,18 @@ export const orchestratorApi = {
 };
 
 /* ── Uploads ────────────────────────────────────────────────────────── */
+/** Attach any supported file (image, audio, PDF/Office document, text file) to a message. */
+export async function uploadAttachment(file: File): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  return postForm<Attachment>("/api/uploads/file", form);
+}
+/** What a model (or an agent's model) takes, per kind of file. */
+export const inputSupportApi = {
+  get: (params: { model?: string; agent_id?: string }) =>
+    get<InputSupport>("/api/uploads/support", params),
+};
+
 export async function uploadImage(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);

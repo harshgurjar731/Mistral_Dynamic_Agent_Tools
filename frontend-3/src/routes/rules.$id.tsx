@@ -37,6 +37,7 @@ import {
 import { appliesOf, appliesToFields, useRuleCategories } from "@/components/rules/ruleScoping";
 import { LivePercent } from "@/components/activity/LiveProgress";
 import { EditGuard, useCanCall } from "@/lib/policy";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/rules/$id")({
   head: () => ({
@@ -66,6 +67,7 @@ function RuleDetailPage() {
 
   const rule = rulesQuery.data?.rules.find((r) => r.id === id) ?? null;
   const type = typesQuery.data?.types.find((t) => t.key === rule?.type) ?? null;
+  usePageCrumbs([rule?.name]);
 
   if (rulesQuery.isError) {
     return (

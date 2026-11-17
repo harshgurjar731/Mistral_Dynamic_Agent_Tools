@@ -23,6 +23,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 
 export const Route = createFileRoute("/admin/roles/$id")({
   validateSearch: z.object({ from: z.string().optional() }),
@@ -45,6 +46,7 @@ function RoleEditorPage() {
     queryFn: () => adminApi.role(sourceId!),
     enabled: !!sourceId,
   });
+  usePageCrumbs([isNew ? "New role" : role.data?.name]);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

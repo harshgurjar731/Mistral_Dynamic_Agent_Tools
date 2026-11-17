@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
 import { HealthIndicator } from "./HealthIndicator";
 import { headerIconButton } from "./NavSection";
 import { ThemeToggle } from "./ThemeToggle";
-import { trailingCrumbs, useNavSections } from "./useNav";
+import { routeCrumbs, usePageSetCrumbs, type Crumb } from "./pageCrumbs";
+import { useNavSections } from "./useNav";
 
 export function AppHeader({
   collapsed,
@@ -28,7 +29,9 @@ export function AppHeader({
 }) {
   const ui = useUiConfig();
   const { active, pathname } = useNavSections();
-  const trail = active ? trailingCrumbs(pathname, active.item.to) : [];
+  // What the page says it shows wins; the route names the rest.
+  const pageCrumbs = usePageSetCrumbs(pathname);
+  const trail = active ? (pageCrumbs ?? routeCrumbs(pathname, active.item.to)) : [];
 
   return (
     <HeaderBar
@@ -107,18 +110,19 @@ export function HeaderBar({ left, right }: { left: ReactNode; right: ReactNode }
   );
 }
 
-/** Section › Page › what follows in the address (a workflow's name, "edit"…). */
+/** Section › Page › what the page shows (an agent's name, a workflow and "Run"…). */
 export function Breadcrumb({
   section,
   page,
   pageTo,
-  trail = [],
+  trail: rawTrail = [],
 }: {
   section: string;
   page: string;
   pageTo: string;
-  trail?: string[];
+  trail?: Array<string | Crumb>;
 }) {
+  const trail = rawTrail.map((c) => (typeof c === "string" ? { label: c } : c));
   const sep = <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground/50" />;
   return (
     <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
@@ -136,22 +140,31 @@ export function Breadcrumb({
           {page}
         </span>
       )}
-      {trail.map((crumb, i) => (
-        <span key={`${i}-${crumb}`} className="flex min-w-0 items-center gap-1.5">
-          {sep}
-          <span
-            aria-current={i === trail.length - 1 ? "page" : undefined}
-            title={crumb}
-            className={cn(
-              "truncate first-letter:uppercase",
-              i === trail.length - 1 ? "font-semibold text-foreground" : "text-muted-foreground",
-              i < trail.length - 1 && "max-w-[12rem]",
+      {trail.map((crumb, i) => {
+        const last = i === trail.length - 1;
+        const cls = cn(
+          "truncate",
+          last ? "font-semibold text-foreground" : "max-w-[12rem] text-muted-foreground",
+        );
+        return (
+          <span key={`${i}-${crumb.label}`} className="flex min-w-0 items-center gap-1.5">
+            {sep}
+            {crumb.to && !last ? (
+              <Link
+                to={crumb.to}
+                title={crumb.label}
+                className={cn(cls, "transition hover:text-foreground")}
+              >
+                {crumb.label}
+              </Link>
+            ) : (
+              <span aria-current={last ? "page" : undefined} title={crumb.label} className={cls}>
+                {crumb.label}
+              </span>
             )}
-          >
-            {crumb}
           </span>
-        </span>
-      ))}
+        );
+      })}
     </nav>
   );
 }

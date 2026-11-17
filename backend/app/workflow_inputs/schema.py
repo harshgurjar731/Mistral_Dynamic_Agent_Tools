@@ -62,7 +62,18 @@ ACCEPT_GROUPS: dict[str, dict[str, tuple[str, ...]]] = {
         "ext": (".png", ".jpg", ".jpeg", ".webp"),
         "mime": ("image/png", "image/jpeg", "image/webp"),
     },
+    # A recording (a call, a voice note). Read as its transcript; an agent
+    # whose model hears audio also gets the recording itself.
+    "audio": {
+        "ext": (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"),
+        "mime": ("audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg",
+                 "audio/flac", "audio/webm"),
+    },
 }
+
+#: Groups whose files an agent step can also be handed as they are (an image to
+#: a model that sees, a recording to one that hears), besides their text.
+NATIVE_GROUPS = ("image", "audio")
 
 DEFAULT_ACCEPT = ["pdf", "docx", "text"]
 DEFAULT_MAX_SIZE_MB = 20
@@ -288,8 +299,12 @@ def holds_documents(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and all(is_document_ref(v) for v in value)
 
 
-def make_ref(library_id: str, document_id: str, name: str, mime: str | None, size: int | None) -> dict:
-    return {"$document": {
-        "library_id": library_id, "document_id": document_id,
-        "name": name, "mime": mime or "", "size": size or 0,
-    }}
+def make_ref(library_id: str, document_id: str, name: str, mime: str | None, size: int | None,
+             upload_id: str | None = None) -> dict:
+    ref = {"library_id": library_id, "document_id": document_id,
+           "name": name, "mime": mime or "", "size": size or 0}
+    if upload_id:
+        # The file as uploaded (app.services.attachments): handed to an agent
+        # step as an image or recording when its model takes one.
+        ref["upload_id"] = upload_id
+    return {"$document": ref}

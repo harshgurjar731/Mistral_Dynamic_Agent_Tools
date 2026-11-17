@@ -42,6 +42,7 @@ import { type PlannerHistoryEntry } from "@/components/workflows/PlannerHistoryS
 import { PlanningHistory, type OlderEntry } from "@/components/runs/PlanningHistory";
 import { PlanningReport } from "@/components/runs/PlanningReport";
 import { RUN_STATUS_META } from "@/components/runs/runMeta";
+import { usePageCrumbs } from "@/components/layout/pageCrumbs";
 import {
   ProcessKnowledgeControl,
   useProcessKnowledge,
@@ -399,6 +400,10 @@ function AiPlannerPage() {
     return step ? ((step.content as { workflow_name?: string }).workflow_name ?? null) : null;
   }, [steps]);
   const hasFailure = useMemo(() => steps.some(isErrorStep), [steps]);
+  // Once the plan has a name, the header shows it.
+  usePageCrumbs(
+    workflowName ? [{ label: "Plan with AI", to: "/workflows/new/ai" }, workflowName] : [],
+  );
   const decision = replay ? null : pendingDecision(view);
   // Once the workflow is saved: while it is reviewed, and after planning ends.
   const showPrereqs =
