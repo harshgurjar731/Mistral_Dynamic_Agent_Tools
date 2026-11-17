@@ -1,0 +1,459 @@
+{
+ "goal": "Build a workflow that approves supplier invoices for payment, with a mandatory human review before any payment over a threshold or with a mismatch.\n\nThe run input is one invoice record:\n- supplier: supplier_id, name, bank_account_last4, on_approved_list (true/false)\n- invoice: invoice_id, invoice_date, due_date, currency (\"GBP\"), net_amount_gbp, vat_rate_percent, gross_amount_gbp, po_number (optional)\n- purchase_order (optional, absent when there is no PO): po_number, approved_amount_gbp, remaining_amount_gbp\n- line_items: 1 to 20 lines, each with description, quantity, unit_price_gbp and line_total_gbp\n- submitted_by: employee_id, name, department\n\nSteps:\n1. Check the input is safe and valid: amounts are not negative, due_date is not before invoice_date, and there is at least one line item.\n2. Recalculate with code, rounded to 2 decimals: each line total = quantity x unit price; net = sum of the line totals; VAT = net x VAT rate; gross = net + VAT. Report the difference between the recalculated gross and the invoiced gross.\n3. Match against the purchase order with code: po_status is \"no_po\" when there is no purchase order, \"over_po\" when the gross is more than the remaining PO amount, otherwise \"within_po\".\n4. Decide the route with code:\n   - \"reject\" when the supplier is not on the approved list, or the gross difference is more than \u00a31.00\n   - \"human_review\" when the gross is over \u00a35,000, or po_status is \"no_po\" or \"over_po\"\n   - \"auto_approve\" otherwise\n5. An agent writes a short review summary for the approver: the supplier, invoice ID, the amounts, the PO status, and why it was routed this way. Facts only, no recommendation.\n6. Human review, required whenever the route is \"human_review\": a finance approver sees the summary and approves or rejects, with a comment. The workflow waits for their decision. If nobody decides within 24 hours, escalate to the finance manager; never approve automatically.\n7. Decide the final status with code: \"approved_for_payment\" when the route was \"auto_approve\" or the reviewer approved; \"rejected\" when the route was \"reject\" or the reviewer rejected.\n8. An agent drafts a notification to the person who submitted the invoice: the invoice ID, the final status, and the reviewer's comment when there is one.\n9. Check the notification with code: it contains the invoice ID and the final status, and does not contain the bank account digits.",
+ "duration_ms": 1604724,
+ "waiting_ms": 0,
+ "layer_counts": {
+  "total": 26,
+  "completed": 26,
+  "failed": 0,
+  "skipped": 0
+ },
+ "rewinds": 0,
+ "calls": [
+  {
+   "kind": "step",
+   "count": 57,
+   "ms": 11710,
+   "failed": 0
+  },
+  {
+   "kind": "model",
+   "count": 41,
+   "ms": 1315938,
+   "failed": 1
+  },
+  {
+   "kind": "tool",
+   "count": 40,
+   "ms": 2629,
+   "failed": 0
+  }
+ ],
+ "models": [
+  {
+   "name": "chat_completion_v1_chat_completions_post",
+   "count": 30,
+   "ms": 1306179,
+   "failed": 1
+  },
+  {
+   "name": "agents_completion_v1_agents_completions_post",
+   "count": 6,
+   "ms": 7479,
+   "failed": 0
+  },
+  {
+   "name": "embeddings_v1_embeddings_post",
+   "count": 2,
+   "ms": 1375,
+   "failed": 0
+  },
+  {
+   "name": "agents_api_v1_agents_create",
+   "count": 2,
+   "ms": 679,
+   "failed": 0
+  },
+  {
+   "name": "get_workflow_execution_v1_workflows_executions__execution_id__get",
+   "count": 1,
+   "ms": 226,
+   "failed": 0
+  }
+ ],
+ "decisions": [
+  {
+   "kind": "prerequisites",
+   "title": "Supplier_invoice_approval needs 3 thing(s) from you before it is built",
+   "choice": "continue",
+   "by": "user",
+   "waited_ms": null
+  },
+  {
+   "kind": "prerequisites",
+   "title": "'conduct_human_review' needs 1 credential(s) the first check did not find",
+   "choice": "continue",
+   "by": "user",
+   "waited_ms": null
+  },
+  {
+   "kind": "review_workflow",
+   "title": "The workflow is built and verified \u2014 accept it, or test and refine it further",
+   "choice": "accept",
+   "by": "timeout",
+   "waited_ms": null
+  }
+ ],
+ "started": "2026-11-16T17:22:54.701225Z",
+ "finished": "2026-11-16T17:49:39.425876Z",
+ "stages": [
+  {
+   "name": "understand",
+   "label": "Understand the goal",
+   "detail": "What exists, what the business knows, the work to do and how each part runs.",
+   "ms": 117673,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "resource_inventory",
+     "label": "Take inventory",
+     "detail": "Gathers the agents, activities, integrations and documents already available.",
+     "ms": 1826,
+     "summary": null,
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    },
+    {
+     "name": "knowledge_context",
+     "label": "Knowledge context",
+     "detail": "Finds the business process this request belongs to and the build guidance in scope, and gives each later layer the part it needs.",
+     "ms": 1133,
+     "summary": "No process is defined for Procurement, Banking, Software engineering \u2014 continuing without process knowledge. 8 guidance item(s) in scope (6 must/avoid).",
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    },
+    {
+     "name": "goal_decomposition",
+     "label": "Decompose the goal",
+     "detail": "Decides what work the goal requires, before deciding who does it.",
+     "ms": 66791,
+     "summary": "Decomposed into 10 capabilities covering the full workflow: foundation-tier input/output safety, and domain-tier procurement logic (validation, recalculation, PO matching, routing, human review management, status determination, and notification drafting). Each capability has clear data dependencies and outputs, ordered by execution sequence.",
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    },
+    {
+     "name": "execution_mode",
+     "label": "Choose how each step runs",
+     "detail": "Decides agent vs activity vs integration for each unit of work, and removes what is redundant.",
+     "ms": 47922,
+     "summary": "All deterministic computations, validations, and routing use activities; only human-readable prose generation (review summary and notification) requires agents. No capabilities are redundant as each performs distinct, non-overlapping work with clear separation of concerns, and foundation-tier steps cannot be merged.",
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "contract",
+   "label": "Define the data",
+   "detail": "Every record passed between steps \u2014 fields, types, units \u2014 decided once.",
+   "ms": 128869,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "data_contract",
+     "label": "Define the data contract",
+     "detail": "Decides every record passed between steps \u2014 fields, types, units \u2014 once, for every activity, agent and input to be built to.",
+     "ms": 128869,
+     "summary": "Fixed all missing descriptions for nested object properties (supplier, invoice, purchase_order, line_items, submitted_by) in invoice_application, safe_invoice_record, and validated_invoice_record. Added all intermediate records (recalculation_result, po_match_result, approval_route, review_summary, human_review_result, final_status_result, notification_content, safe_notification) with precise schemas. Each capability now produces exactly one record, and all dependencies are correctly ordered. All fields have descriptions, units, and required status clearly defined.",
+     "state": "completed",
+     "parent": "contract",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "plan",
+   "label": "Plan the agents",
+   "detail": "Agent types, what the build needs from you, what is reused, what is expanded.",
+   "ms": 59524,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "agent_archetype",
+     "label": "Choose agent types",
+     "detail": "Decides task, goal or conversational for each agent, the patterns it needs, and its oversight \u2014 from the process, the build guidance and the execution profile first.",
+     "ms": 36441,
+     "summary": "Generate Review Summary: task + tool_using_react, reflective, Draft Notification: task + tool_using_react, reflective. Decided 2 by llm. Both tasks are bounded, deterministic jobs with clear inputs/outputs, fitting the 'task' primary type; tool usage and reflection are required for data extraction and validation.",
+     "state": "completed",
+     "parent": "plan",
+     "depth": 1
+    },
+    {
+     "name": "workflow_prerequisites",
+     "label": "Check what the build needs from you",
+     "detail": "Works out which credentials, service URLs and facts this needs, uses what the vault already holds, and asks you for the rest \u2014 before anything is built.",
+     "ms": 19278,
+     "summary": "3 prerequisite(s): 3 skipped.",
+     "state": "completed",
+     "parent": "plan",
+     "depth": 1
+    },
+    {
+     "name": "capability_reuse",
+     "label": "Reuse or create",
+     "detail": "Decides, per capability, whether an existing agent already covers it.",
+     "ms": 3805,
+     "summary": "The required capabilities are domain-specific (invoice approval workflow) and no existing domain or use-case agents match their purpose. The existing domain agents (Ontology Architect, Query Optimizer) are unrelated to invoice processing or notification drafting. Both capabilities must be created as new domain agents.",
+     "state": "completed",
+     "parent": "plan",
+     "depth": 1
+    },
+    {
+     "name": "pattern_expansion",
+     "label": "Expand multi-agent patterns",
+     "detail": "Adds the sub-agents a multi-agent capability delegates to, as handoff targets.",
+     "ms": 0,
+     "summary": "No multi-agent capability to expand.",
+     "state": "completed",
+     "parent": "plan",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "build",
+   "label": "Build activities and agents",
+   "detail": "Activities written and tested to the data contract; agents designed, governed and created.",
+   "ms": 629168,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "activity_gap",
+     "label": "Resolve activities",
+     "detail": "Reuses or builds the activities \u2014 deterministic code that runs as its own step in the workflow graph, with no LLM.",
+     "ms": 572984,
+     "summary": null,
+     "state": "completed",
+     "parent": "build",
+     "depth": 1
+    },
+    {
+     "name": "agent_design",
+     "label": "Design each new agent",
+     "detail": "Gives every new agent its own focused design pass, against its contract with its neighbours, and chooses the agent tools it may call.",
+     "ms": 29411,
+     "summary": null,
+     "state": "completed",
+     "parent": "build",
+     "depth": 1
+    },
+    {
+     "name": "agent_rule_selection",
+     "label": "Choose rules for each agent",
+     "detail": "Decides which of your optional agent rules each new agent must follow.",
+     "ms": 14363,
+     "summary": "1 optional rule(s) across 2 agent(s).",
+     "state": "completed",
+     "parent": "build",
+     "depth": 1
+    },
+    {
+     "name": "agent_provisioning",
+     "label": "Provision the agents",
+     "detail": "Creates the designed agents and collects the reused ones.",
+     "ms": 12409,
+     "summary": null,
+     "state": "completed",
+     "parent": "build",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "assemble",
+   "label": "Assemble the workflow",
+   "detail": "The graph, human oversight, the wiring between steps and the run inputs.",
+   "ms": 207821,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "step_topology",
+     "label": "Shape the graph",
+     "detail": "Decides which steps exist, how they connect, and which run concurrently.",
+     "ms": 34978,
+     "summary": "The workflow follows a linear validation and calculation chain, then branches conditionally based on the approval route. The condition step ensures human review is only invoked when required (high value, PO mismatch, or calculation discrepancy), with all paths converging at final status determination before notification.",
+     "state": "completed",
+     "parent": "assemble",
+     "depth": 1
+    },
+    {
+     "name": "oversight_placement",
+     "label": "Place human oversight",
+     "detail": "Adds human review where the governance requires it, gates connector actions that need approval, and tells each agent step how its type runs.",
+     "ms": 0,
+     "summary": null,
+     "state": "completed",
+     "parent": "assemble",
+     "depth": 1
+    },
+    {
+     "name": "data_flow",
+     "label": "Wire the data",
+     "detail": "Decides what each step is handed and what it passes on.",
+     "ms": 143914,
+     "summary": "The data flow strictly adheres to the fixed topology and DATA CONTRACT: each tool step passes its required inputs via arguments, the condition branches on the approval route, and agent steps are given templates that produce the exact output structure (review_summary and notification_content) with all necessary upstream variables. No variables are referenced that are not produced by immediate predecessors.",
+     "state": "completed",
+     "parent": "assemble",
+     "depth": 1
+    },
+    {
+     "name": "input_schema",
+     "label": "Design the run inputs",
+     "detail": "Decides exactly what a run needs from you, and fills in a realistic example.",
+     "ms": 28876,
+     "summary": "The single input 'invoice_application' is bound to a strict schema that must be enforced exactly. The example payload uses consistent, realistic values that exercise the workflow's validation (positive amounts, valid dates, line items), recalculation (line totals sum to net, VAT and gross match), PO matching (gross exceeds remaining PO amount), and routing (triggers human review due to gross > \u00a35,000 and over PO remaining amount).",
+     "state": "completed",
+     "parent": "assemble",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "govern",
+   "label": "Govern",
+   "detail": "Exposure and gates traced; the workflow rules chosen.",
+   "ms": 106820,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "workflow_guardrail",
+     "label": "Review the whole path",
+     "detail": "Decides what the assembled workflow exposes, which no single step reveals.",
+     "ms": 72049,
+     "summary": "The workflow has proper input and output gates. A validation step is missing after review summary generation to prevent potential sensitive data leakage to human reviewers. Data exposure is controlled as sensitive fields (bank_account_last4) are excluded from human-facing outputs. Step policies enforce non-disclosure of sensitive data in generated outputs. PII is allowed since it is handled safely within the workflow without external exposure.",
+     "state": "completed",
+     "parent": "govern",
+     "depth": 1
+    },
+    {
+     "name": "workflow_rule_selection",
+     "label": "Choose workflow rules",
+     "detail": "Decides which of your optional workflow rules this workflow must follow.",
+     "ms": 34750,
+     "summary": "The workflow's safety review explicitly flags a missing gate for sensitive data in the review summary, and it processes external text fields (supplier/submitter names) that could contain prompt injection attempts in a financial context.",
+     "state": "completed",
+     "parent": "govern",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "check",
+   "label": "Check and save",
+   "detail": "Validated (going back to the layer at fault when it is not), saved and compiled.",
+   "ms": 171,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "workflow_validation",
+     "label": "Validate",
+     "detail": "Checks the workflow is runnable before anything is published.",
+     "ms": 17,
+     "summary": null,
+     "state": "completed",
+     "parent": "check",
+     "depth": 1
+    },
+    {
+     "name": "workflow_persistence",
+     "label": "Save",
+     "detail": "Stores the definition and files it in the ontology.",
+     "ms": 139,
+     "summary": null,
+     "state": "completed",
+     "parent": "check",
+     "depth": 1
+    },
+    {
+     "name": "workflow_compilation",
+     "label": "Compile",
+     "detail": "Generates the Mistral Workflows SDK module.",
+     "ms": 14,
+     "summary": null,
+     "state": "completed",
+     "parent": "check",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "verify",
+   "label": "Verify by running",
+   "detail": "Test scenarios run end to end; what fails is repaired \u2014 edits and code \u2014 and run again.",
+   "ms": 233889,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "scenario_design",
+     "label": "Design test scenarios",
+     "detail": "The typical case plus one scenario per outcome and threshold the process rules define.",
+     "ms": 66601,
+     "summary": "3 scenario(s): Typical invoice requiring human review, approved by reviewer, Small invoice with valid PO, auto-approved, Invoice from unapproved supplier, rejected",
+     "state": "completed",
+     "parent": "verify",
+     "depth": 1
+    },
+    {
+     "name": "workflow_dry_run",
+     "label": "Dry-run and repair",
+     "detail": "Runs every scenario with connectors and reviews stubbed, checks each step and outcome, and fixes what fails \u2014 workflow edits and activity code \u2014 before your review.",
+     "ms": 167288,
+     "summary": "3 of 3 scenario(s) pass after 1 repair(s)",
+     "state": "completed",
+     "parent": "verify",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "deliver",
+   "label": "Review and register",
+   "detail": "You test, refine and accept it; then it is registered on Mistral.",
+   "ms": 120699,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "workflow_review",
+     "label": "Review",
+     "detail": "You test and refine the built workflow, then accept it or roll back everything the plan created.",
+     "ms": 120019,
+     "summary": null,
+     "state": "completed",
+     "parent": "deliver",
+     "depth": 1
+    },
+    {
+     "name": "workflow_registration",
+     "label": "Register",
+     "detail": "Publishes the workflow so the Mistral server can run it.",
+     "ms": 679,
+     "summary": null,
+     "state": "completed",
+     "parent": "deliver",
+     "depth": 1
+    }
+   ]
+  }
+ ]
+}

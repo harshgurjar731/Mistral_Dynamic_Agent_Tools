@@ -1,0 +1,102 @@
+{
+ "name": "supplier_invoice_approval",
+ "description": "Approves supplier invoices for payment with mandatory human review for high-value or mismatched invoices.",
+ "entry": "input_safety_validation",
+ "steps": [
+  {
+   "id": "input_safety_validation",
+   "type": "tool",
+   "description": "Validate the input invoice record for safety and data integrity."
+  },
+  {
+   "id": "validate_invoice_business_rules",
+   "type": "tool",
+   "description": "Check that amounts are non-negative, due date is not before invoice date, and at least one line item exists."
+  },
+  {
+   "id": "recalculate_invoice_amounts",
+   "type": "tool",
+   "description": "Recalculate line totals, net amount, VAT, and gross amount from line items, and report difference from invoiced gross."
+  },
+  {
+   "id": "match_invoice_to_po",
+   "type": "tool",
+   "description": "Determine PO status: 'no_po', 'over_po', or 'within_po' based on recalculated gross and remaining PO amount."
+  },
+  {
+   "id": "determine_approval_route",
+   "type": "tool",
+   "description": "Decide whether to reject, require human review, or auto-approve based on supplier status, gross difference, gross amount, and PO status."
+  },
+  {
+   "id": "condition_human_review",
+   "type": "condition",
+   "description": "Branch based on whether the approval route requires human review."
+  },
+  {
+   "id": "generate_review_summary",
+   "type": "agent",
+   "description": "Create a facts-only summary for the approver including supplier, invoice ID, amounts, PO status, and routing reason."
+  },
+  {
+   "id": "conduct_human_review",
+   "type": "tool",
+   "description": "Manage the human review process: send summary to approver, wait for decision, escalate if no response within 24 hours."
+  },
+  {
+   "id": "determine_final_status",
+   "type": "tool",
+   "description": "Decide final status as 'approved_for_payment' or 'rejected' based on approval route and human review decision."
+  },
+  {
+   "id": "draft_notification",
+   "type": "agent",
+   "description": "Create a notification to the submitter with invoice ID, final status, and reviewer comment if applicable."
+  },
+  {
+   "id": "output_safety_validation",
+   "type": "tool",
+   "description": "Validate the notification contains invoice ID and final status, and does not contain bank account digits."
+  },
+  {
+   "id": "select_human_review_result",
+   "type": "transform",
+   "description": "Select human review result from human review branch or create default for auto-approve/reject paths"
+  }
+ ],
+ "step_keys": [
+  "config",
+  "description",
+  "id",
+  "next_steps",
+  "parallel_group",
+  "tier",
+  "type"
+ ],
+ "metrics": {
+  "execution_count": 2,
+  "success_count": 2,
+  "error_count": 0,
+  "average_latency_ms": 18797.0,
+  "latency_over_time": [
+   [
+    1794851443827,
+    20263
+   ],
+   [
+    1794854095729,
+    17331
+   ]
+  ],
+  "retry_rate": -1.0,
+  "available": true
+ },
+ "revision": {
+  "status": "applied",
+  "origin": "planner",
+  "summary": "Fix the missing human_review_result in non-human-review paths by adding a merge transform that provides a default when human review was not performed.",
+  "reasoning": "The dry-run failed because determine_final_status always referenced {{step_conduct_human_review_output.human_review_result}}, which does not exist in the auto-approve and reject branches (where human review is skipped). The added transform step select_human_review_result provides human_review_result from either the real human review step or a safe default, ensuring the variable is always available for determine_final_status.",
+  "applied_version": 2,
+  "created_at": "2026-11-16T17:47:34.212523Z"
+ }
+}

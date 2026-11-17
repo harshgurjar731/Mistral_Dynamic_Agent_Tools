@@ -1,0 +1,471 @@
+{
+ "goal": "Draft an onboarding checklist for a new data engineer",
+ "duration_ms": 370700,
+ "waiting_ms": 24026,
+ "layer_counts": {
+  "total": 21,
+  "completed": 20,
+  "failed": 0,
+  "skipped": 1
+ },
+ "rewinds": 0,
+ "calls": [
+  {
+   "kind": "model",
+   "count": 26,
+   "ms": 404473,
+   "failed": 0
+  }
+ ],
+ "models": [
+  {
+   "name": "chat_completion_v1_chat_completions_post",
+   "count": 21,
+   "ms": 320963,
+   "failed": 0
+  },
+  {
+   "name": "embeddings_v1_embeddings_post",
+   "count": 1,
+   "ms": 288,
+   "failed": 0
+  },
+  {
+   "name": "agents_api_v1_agents_create",
+   "count": 1,
+   "ms": 957,
+   "failed": 0
+  },
+  {
+   "name": "agents_api_v1_agents_get",
+   "count": 1,
+   "ms": 259,
+   "failed": 0
+  },
+  {
+   "name": "agents_api_v1_agents_update",
+   "count": 1,
+   "ms": 1002,
+   "failed": 0
+  },
+  {
+   "name": "agents_api_v1_conversations_start_stream",
+   "count": 1,
+   "ms": 81004,
+   "failed": 0
+  }
+ ],
+ "decisions": [
+  {
+   "kind": "prerequisites",
+   "title": "This agent needs 4 thing(s) from you before it is built",
+   "choice": "continue",
+   "by": "user",
+   "waited_ms": 24026
+  }
+ ],
+ "started": "2026-11-17T06:13:42.763024Z",
+ "finished": "2026-11-17T06:19:53.463129Z",
+ "stages": [
+  {
+   "name": "understand",
+   "label": "Understand the request",
+   "detail": "What is asked, and what the build needs from you first.",
+   "ms": 57735,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "requirement_analysis",
+     "label": "Understand the request",
+     "detail": "Decides what you actually need, as a structured brief every later layer reads.",
+     "ms": 30252,
+     "summary": "The verb 'draft' signals content generation from scratch rather than retrieval or analysis. While the output is a single artifact, it requires internal structure (timeline phases, categories, role-specific technical items) that must remain consistent, placing it at moderate complexity. No real-time data, uploaded documents, external systems, relationship graphs, or computation are implied by the request.",
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    },
+    {
+     "name": "agent_prerequisites",
+     "label": "Check what the build needs from you",
+     "detail": "Works out which credentials, service URLs and facts this needs, uses what the vault already holds, and asks you for the rest \u2014 before anything is built.",
+     "ms": 27483,
+     "summary": "4 prerequisite(s): 4 skipped.",
+     "state": "completed",
+     "parent": "understand",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "equip",
+   "label": "Build missing tools",
+   "detail": "Writes and tests any tool the agent needs that does not exist yet.",
+   "ms": 5864,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "capability_gap",
+     "label": "Check for a missing capability",
+     "detail": "Decides whether the platform lacks a tool this request needs, and builds it.",
+     "ms": 5864,
+     "summary": null,
+     "state": "completed",
+     "parent": "equip",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "ground",
+   "label": "Gather what it can use",
+   "detail": "The tools, connectors and libraries available, the process knowledge and guidance in scope, and the kind of agent this is.",
+   "ms": 44916,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "agent_inventory",
+     "label": "Take inventory",
+     "detail": "Gathers the tools, integrations and documents this agent could be given.",
+     "ms": 3596,
+     "summary": null,
+     "state": "completed",
+     "parent": "ground",
+     "depth": 1
+    },
+    {
+     "name": "knowledge_context",
+     "label": "Knowledge context",
+     "detail": "Finds the business process this request belongs to and the build guidance in scope, and gives each later layer the part it needs.",
+     "ms": 392,
+     "summary": "Off \u2014 building without process knowledge. 7 guidance item(s) in scope (5 must/avoid).",
+     "state": "completed",
+     "parent": "ground",
+     "depth": 1
+    },
+    {
+     "name": "agent_archetype",
+     "label": "Choose agent types",
+     "detail": "Decides task, goal or conversational for each agent, the patterns it needs, and its oversight \u2014 from the process, the build guidance and the execution profile first.",
+     "ms": 40927,
+     "summary": "The requested agent: conversational + tool_using_react, reflective. Decided 1 by llm. The work involves dialogue-driven customization (guidance:40) rather than open-ended goal pursuit (guidance:42), and layers tool-using ReAct with reflective checks because the output feeds concrete provisioning and staffing decisions.",
+     "state": "completed",
+     "parent": "ground",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "design",
+   "label": "Design the agent",
+   "detail": "Five independent decisions made at once, then checked against each other.",
+   "ms": 46460,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "agent_facets",
+     "label": "Decide tools, connectors, libraries, model and identity",
+     "detail": "Five independent decisions, made at the same time.",
+     "ms": 46459,
+     "summary": null,
+     "state": "completed",
+     "parent": "design",
+     "depth": 1
+    },
+    {
+     "name": "tool_selection",
+     "label": "Choose tools",
+     "detail": "Decides which platform capabilities this agent needs.",
+     "ms": 21514,
+     "summary": "The requirement is a pure text-generation task (all needs_* flags are false) asking for a generic, time-phased data engineering onboarding checklist. The agent can produce the entire deliverable from its own knowledge of data engineering practices without retrieving real-time data, querying documents, accessing external systems, or performing computations.",
+     "state": "completed",
+     "parent": "agent_facets",
+     "depth": 2
+    },
+    {
+     "name": "connector_selection",
+     "label": "Choose integrations",
+     "detail": "Decides which external services this agent must reach.",
+     "ms": 7413,
+     "summary": "The requirement is to generate a text-based onboarding checklist for a data engineer, which is a pure content generation task with needs_external_system explicitly set to false. No specific third-party product is named in the request, and the workspace has no registered connectors available to attach.",
+     "state": "completed",
+     "parent": "agent_facets",
+     "depth": 2
+    },
+    {
+     "name": "library_selection",
+     "label": "Choose knowledge",
+     "detail": "Decides what documents this agent reads, and whether it reasons over the graph.",
+     "ms": 8503,
+     "summary": "The requirement explicitly sets needs_documents to false and requests a general data engineering onboarding checklist that can be generated from standard industry practices (pipelines, warehouses, orchestration). No user-specific documents exist or are needed, so no library should be attached or created.",
+     "state": "completed",
+     "parent": "agent_facets",
+     "depth": 2
+    },
+    {
+     "name": "model_selection",
+     "label": "Choose a model",
+     "detail": "Decides the model and how deterministic its answers should be.",
+     "ms": 19989,
+     "summary": "This requires structured generation of a multi-dimensional checklist (time phases \u00d7 categories) with data-engineering domain specificity, demanding the organizational and reasoning capabilities of mistral-large-latest. Temperature 0.2 ensures consistent, well-structured output at the low end of the structured generation range (0.2\u20130.4), minimizing hallucination of specific tool names that would require customization per the stated risk factors.",
+     "state": "completed",
+     "parent": "agent_facets",
+     "depth": 2
+    },
+    {
+     "name": "identity",
+     "label": "Define the agent",
+     "detail": "Decides the tier, and therefore the name and remit.",
+     "ms": 46449,
+     "summary": "The capability is specific to a single product type (data engineering onboarding) with unique deliverables (pipelines, warehouses, orchestration) that cannot be generalized to other domains or roles without fundamentally changing the agent's behavior. This aligns with Tier 3 (use-case) criteria.",
+     "state": "completed",
+     "parent": "agent_facets",
+     "depth": 2
+    },
+    {
+     "name": "facet_consistency",
+     "label": "Check the decisions fit together",
+     "detail": "The model supports the tools and connectors chosen, is current, and document needs have a library.",
+     "ms": 1,
+     "summary": "The decisions fit together.",
+     "state": "completed",
+     "parent": "design",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "govern",
+   "label": "Provision and govern",
+   "detail": "Creates the library it was designed around, then its guardrails and rules.",
+   "ms": 4283,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "library_provisioning",
+     "label": "Provision documents",
+     "detail": "Creates the document library this agent needs, if it does not exist yet.",
+     "ms": null,
+     "summary": null,
+     "state": "skipped",
+     "parent": "govern",
+     "depth": 1
+    },
+    {
+     "name": "guardrail_config",
+     "label": "Configure guardrails",
+     "detail": "Decides the moderation categories and thresholds Mistral enforces on this agent.",
+     "ms": 3086,
+     "summary": "Agent holds no tools, integrations, or documents, and its subject (data engineering onboarding) is not a moderation topic category. Disabling moderation avoids unnecessary latency and false positives.",
+     "state": "completed",
+     "parent": "govern",
+     "depth": 1
+    },
+    {
+     "name": "rule_selection",
+     "label": "Choose rules",
+     "detail": "Decides which of your optional agent rules this agent must follow.",
+     "ms": 1197,
+     "summary": "The agent generates structured onboarding checklists for data engineering roles and does not handle personal data, external systems, or real-time data. No optional rules are necessary to mitigate risks for this use case.",
+     "state": "completed",
+     "parent": "govern",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "author",
+   "label": "Write and create",
+   "detail": "Instructions that express every decision, then the agent on Mistral.",
+   "ms": 19843,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "instruction_authoring",
+     "label": "Write the instructions",
+     "detail": "Decides how this agent thinks, expressing every prior decision to the model.",
+     "ms": 18606,
+     "summary": "Applied conversational patterns (guidance:41, 40, 50) to ensure the agent clarifies inputs before generating the structured checklist, with explicit defaults for unknowns to always produce an actionable, domain-specific draft.",
+     "state": "completed",
+     "parent": "author",
+     "depth": 1
+    },
+    {
+     "name": "agent_assembly",
+     "label": "Assemble the agent",
+     "detail": "Validates the decisions together and creates the agent.",
+     "ms": 1237,
+     "summary": null,
+     "state": "completed",
+     "parent": "author",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "verify",
+   "label": "Test the agent",
+   "detail": "Runs it on designed prompts and repairs its tools and instructions if it falls short.",
+   "ms": 110470,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "agent_evaluation",
+     "label": "Test the agent",
+     "detail": "Designs test prompts, runs the new agent on them, judges the answers, and rebuilds failing tools and revises the instructions when needed.",
+     "ms": 110469,
+     "summary": "2 of 3 test(s) pass; instructions revised",
+     "state": "completed",
+     "parent": "verify",
+     "depth": 1
+    }
+   ]
+  },
+  {
+   "name": "answer",
+   "label": "Answer",
+   "detail": "The agent answers your request.",
+   "ms": 81016,
+   "summary": null,
+   "state": "completed",
+   "parent": null,
+   "depth": 0,
+   "layers": [
+    {
+     "name": "execution",
+     "label": "Run the agent",
+     "detail": "Holds the conversation and executes any tools the agent calls.",
+     "ms": 81016,
+     "summary": null,
+     "state": "completed",
+     "parent": "answer",
+     "depth": 1
+    }
+   ]
+  }
+ ],
+ "events": {
+  "requirements": {
+   "intent": "Create a structured, actionable onboarding plan to systematically integrate new data engineering hires into the team, covering technical setup, access provisioning, domain knowledge transfer, and early deliverables.",
+   "task_type": "generation",
+   "domain": "data engineering onboarding",
+   "deliverable": "A time-phased onboarding checklist (e.g., pre-start, day 1, week 1, first month) organized by category\u2014access & security, tooling & environment setup, documentation & architecture review, team introductions, and initial hands-on tasks\u2014specific to data engineering workflows (pipelines, warehouses, orchestration).",
+   "complexity": "moderate",
+   "success_criteria": [
+    "Organized by clear timeline phases (e.g., before day 1, day 1, week 1, month 1)",
+    "Includes data-engineering-specific items such as warehouse access, pipeline documentation, orchestration tools, and data modeling standards",
+    "Balances technical provisioning with team integration and business/domain context",
+    "Each item is actionable and assignable (owner + task, not vague aspirations)"
+   ],
+   "risk_factors": [
+    "Without organization-specific details, the checklist may reference tools or access patterns that do not match the actual tech stack, requiring customization before use"
+   ],
+   "reasoning": "The verb 'draft' signals content generation from scratch rather than retrieval or analysis. While the output is a single artifact, it requires internal structure (timeline phases, categories, role-specific technical items) that must remain consistent, placing it at moderate complexity. No real-time data, uploaded documents, external systems, relationship graphs, or computation are implied by the request."
+  },
+  "archetype": {
+   "decisions": [
+    {
+     "id": "agent",
+     "name": "The requested agent",
+     "primary_type": "conversational",
+     "patterns": [
+      "tool_using_react",
+      "reflective"
+     ],
+     "sub_agents": [],
+     "action_authority": "draft",
+     "reversibility": "reversible",
+     "oversight": {
+      "model": "human_in_the_loop",
+      "applies_to": "every_transaction",
+      "threshold": "",
+      "sample_rate": 0.0,
+      "reviewer_role": "",
+      "approval_sla": ""
+     },
+     "reflection_criteria": [],
+     "model_preference": "platform_default",
+     "max_tool_rounds": null,
+     "source": "llm",
+     "confidence": "high",
+     "rationale": "Tailoring an onboarding plan requires dialogue to gather specific context about the new hire and team, tool use to access HR/access/documentation systems, and reflective validation since the plan drives access provisioning and resource decisions.",
+     "guidance_ids": [
+      43
+     ],
+     "conflicts": []
+    }
+   ],
+   "conflicts": []
+  },
+  "agent_config": {
+   "agent_name": "data_engineering_onboarding_plan_generator",
+   "description": "Generates a structured, time-phased onboarding checklist tailored to data engineering roles, covering technical setup, access provisioning, domain knowledge transfer, and early deliverables.",
+   "model": "mistral-large-latest",
+   "temperature": 0.2,
+   "tier": "use_case",
+   "tools": [],
+   "connectors": []
+  },
+  "rules_applied": {
+   "scope": "agent",
+   "agent_id": "ag_01a1e82686f776e6a47371114b5cd4b1",
+   "outcomes": [
+    {
+     "rule_id": "agent.prompt_injection_screen",
+     "name": "Prompt-injection screen",
+     "outcome": "applied",
+     "message": "In force \u2014 checked on every user message, on every answer.",
+     "checkpoint": "creation"
+    },
+    {
+     "rule_id": "agent.read_only_database",
+     "name": "Read-only database",
+     "outcome": "applied",
+     "message": "In force \u2014 checked before every tool call.",
+     "checkpoint": "creation"
+    },
+    {
+     "rule_id": "agent.approved_models",
+     "name": "Approved models",
+     "outcome": "passed",
+     "message": "mistral-large-latest is approved.",
+     "checkpoint": "creation"
+    },
+    {
+     "rule_id": "agent.instruction_quality",
+     "name": "Instruction quality",
+     "outcome": "passed",
+     "message": "Instructions are 2842 characters.",
+     "checkpoint": "creation"
+    }
+   ]
+  },
+  "agent_evaluation": {
+   "tests": 3,
+   "passed_first": 2,
+   "tools_rebuilt": [],
+   "instructions_revised": true,
+   "passed_after": 2
+  }
+ }
+}
