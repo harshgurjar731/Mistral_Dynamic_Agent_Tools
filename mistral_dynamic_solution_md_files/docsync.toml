@@ -1,0 +1,44 @@
+# docsync configuration — which files get a description, and how strict the checks are.
+# Paths are repo-relative, forward slashes. `**` = any number of folders, `*` = within one folder.
+# Only files git can see are considered (tracked, or untracked but not .gitignored),
+# so anything in .gitignore (secrets, databases, node_modules) is already out.
+
+docs_root = "mistral_dynamic_solution_md_files"
+
+include = ["**"]
+
+exclude = [
+  # generated / vendored
+  "**/node_modules/**", "**/__pycache__/**", "**/.pytest_cache/**", "**/dist/**", "**/build/**",
+  "**/package-lock.json", "**/bun.lock", "**/*.lock", "**/*.min.js",
+  # binary media and office files (describe them in a section doc instead)
+  "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.webp", "**/*.gif", "**/*.ico", "**/*.svg",
+  "**/*.mp3", "**/*.mp4", "**/*.wav", "**/*.webm", "**/*.pdf", "**/*.docx", "**/*.pptx", "**/*.xlsx", "**/*.zip",
+  # never document secrets or live data, even if someone commits them
+  "**/*.secret", "**/.env", "**/.env.local", "**/*.db", "**/*.db-*", "**/*.sqlite*",
+  # project-specific bulk folders (screenshots, recordings, uploaded samples, archives)
+  "client_explainer/screenshots/**", "client_explainer/screenshots_hd/**",
+  "demo_video_recordings/**", "backend/uploads/**", "frontend/**", "client_explainer/**", "backend/_archived_workflows/**",
+]
+
+# Files larger than this are listed but not analysed.
+max_bytes = 1_000_000
+
+# Which per-file template a file gets. First match wins; anything unmatched is decided by
+# extension (code / doc / config). Templates live in _templates/file.<kind>.md.
+[kinds]
+test = ["**/tests/**", "**/test_*.py", "**/*_test.py", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/evals/**"]
+config = ["**/Dockerfile", "**/docker-compose*.yml", "**/*.toml", "**/*.yaml", "**/*.yml", "**/*.json", "**/.env.example",
+          "**/.gitignore", "**/.dockerignore", "**/.gitattributes", "**/requirements*.txt", "**/vite.config.ts",
+          "**/eslint.config.js", "**/tsconfig*.json", "**/.prettierrc", "**/.prettierignore"]
+
+[hook]
+# What the Claude Code hook does when an edited file has never been described:
+#   "prompt" — ask Claude to write the description now (recommended)
+#   "quiet"  — only refresh the facts block
+on_todo = "prompt"
+
+[check]
+# What `docsync check` (git pre-commit / CI) does for each problem: "block" fails, "warn" prints.
+stale = "block"   # a reviewed description whose source has changed since
+todo = "warn"     # a file that has never been described
