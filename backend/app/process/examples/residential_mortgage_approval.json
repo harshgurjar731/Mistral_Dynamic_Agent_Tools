@@ -1,0 +1,770 @@
+{
+  "template_version": "3.0",
+  "process": {
+    "id": "residential_mortgage_approval",
+    "name": "Residential mortgage approval",
+    "level": "process",
+    "version": "2.0",
+    "owner": "Mortgage underwriting"
+  },
+  "classification": {
+    "industry": "BFSI",
+    "domain": "Lending",
+    "subdomain": "Mortgage",
+    "process": "Residential mortgage approval"
+  },
+  "objective": "Decide whether to lend on a residential property, at what terms, with a recorded rationale for every outcome.",
+  "scope": {
+    "in_scope": [
+      "First-time buyers",
+      "Remortgage"
+    ],
+    "out_of_scope": [
+      "Buy-to-let",
+      "Commercial property"
+    ]
+  },
+  "triggers": [
+    "A mortgage application is submitted through the application portal"
+  ],
+  "actors": [
+    {
+      "id": "applicant",
+      "name": "Applicant",
+      "type": "external"
+    },
+    {
+      "id": "underwriter",
+      "name": "Underwriter",
+      "type": "human",
+      "responsibilities": [
+        "Decide cases referred by the identity check or the credit decision"
+      ]
+    },
+    {
+      "id": "credit_bureau",
+      "name": "Credit bureau",
+      "type": "system"
+    },
+    {
+      "id": "origination_system",
+      "name": "Mortgage origination system",
+      "type": "system"
+    }
+  ],
+  "stages": [
+    {
+      "id": "intake",
+      "name": "Application intake",
+      "actor_type": "agent",
+      "execution": "agent",
+      "purpose": "Extract applicant, property, loan and income details from the form and evidence, check scope and completeness.",
+      "inputs": [
+        "application_form",
+        "income_evidence"
+      ],
+      "outputs": [
+        "application_record"
+      ],
+      "decision": {
+        "question": "Can the application be assessed? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "out_of_scope",
+            "condition": "application_record.purpose is buy_to_let or commercial",
+            "next_stage": "return_to_applicant"
+          },
+          {
+            "label": "incomplete",
+            "condition": "application_record.missing_documents is not empty",
+            "next_stage": "return_to_applicant"
+          },
+          {
+            "label": "complete",
+            "condition": "Otherwise",
+            "next_stage": "identity_check"
+          }
+        ]
+      },
+      "controls": [
+        "verified_income_only",
+        "structured_agent_output",
+        "pii_masked_in_logs"
+      ]
+    },
+    {
+      "id": "return_to_applicant",
+      "name": "Return to applicant",
+      "actor_type": "agent",
+      "execution": "agent",
+      "actor": "applicant",
+      "purpose": "Tell the applicant why the application cannot be assessed: list the missing documents, or point an out-of-scope application to the right channel. Ends this run.",
+      "inputs": [
+        "application_record"
+      ],
+      "outputs": [
+        "applicant_notice"
+      ],
+      "uses": [
+        "notification_connector"
+      ],
+      "notes": "Reached only from intake. A resubmitted application starts a new run; this stage never loops back.",
+      "controls": [
+        "pii_masked_in_logs"
+      ]
+    },
+    {
+      "id": "identity_check",
+      "name": "Identity, fraud and credit check",
+      "actor_type": "system",
+      "actor": "credit_bureau",
+      "execution": "connector",
+      "purpose": "Verify identity, screen sanctions and fraud signals, and fetch the credit score.",
+      "inputs": [
+        "application_record"
+      ],
+      "outputs": [
+        "bureau_result"
+      ],
+      "depends_on": [
+        "intake"
+      ],
+      "uses": [
+        "bureau_connector"
+      ],
+      "decision": {
+        "question": "Is the applicant cleared to be assessed? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "refer",
+            "condition": "bureau_result.sanctions_hit is true, or bureau_result.identity_verified is false, or bureau_result.fraud_score >= 40",
+            "next_stage": "manual_review"
+          },
+          {
+            "label": "clear",
+            "condition": "Otherwise",
+            "next_stage": "affordability"
+          }
+        ]
+      },
+      "controls": [
+        "kyc_before_decision",
+        "bureau_timeout_retry"
+      ]
+    },
+    {
+      "id": "affordability",
+      "name": "Affordability assessment",
+      "actor_type": "system",
+      "execution": "activity",
+      "purpose": "Calculate loan to value, debt to income and the monthly surplus at the stressed rate, from verified income only. A calculation, no model.",
+      "inputs": [
+        "application_record",
+        "bureau_result"
+      ],
+      "outputs": [
+        "affordability_result"
+      ],
+      "depends_on": [
+        "identity_check"
+      ],
+      "controls": [
+        "stress_test",
+        "verified_income_only"
+      ]
+    },
+    {
+      "id": "decision",
+      "name": "Credit decision",
+      "actor_type": "system",
+      "execution": "activity",
+      "purpose": "Apply the lending policy rules to the affordability and bureau results and record which rules passed or failed.",
+      "inputs": [
+        "affordability_result",
+        "bureau_result"
+      ],
+      "outputs": [
+        "decision_record"
+      ],
+      "depends_on": [
+        "affordability"
+      ],
+      "decision": {
+        "question": "Does the case meet lending policy? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "decline",
+            "condition": "affordability_result.ltv_pct > 95, or affordability_result.stressed_surplus < 0, or bureau_result.credit_score < 560",
+            "next_stage": "send_decline_notice"
+          },
+          {
+            "label": "refer",
+            "condition": "affordability_result.ltv_pct > 85, or affordability_result.dti_pct > 45, or affordability_result.surplus_ratio_pct < 10, or bureau_result.credit_score < 640",
+            "next_stage": "manual_review"
+          },
+          {
+            "label": "approve",
+            "condition": "Otherwise (LTV <= 85, DTI <= 45, surplus ratio >= 10, credit score >= 640)",
+            "next_stage": "issue_offer"
+          }
+        ]
+      },
+      "controls": [
+        "max_ltv",
+        "decision_rationale"
+      ]
+    },
+    {
+      "id": "manual_review",
+      "name": "Underwriter review",
+      "actor_type": "human",
+      "actor": "underwriter",
+      "execution": "human_task",
+      "is_oversight_point": true,
+      "purpose": "Decide cases referred by the identity check or the credit decision, and record the reasons.",
+      "inputs": [
+        "application_record",
+        "bureau_result",
+        "affordability_result",
+        "decision_record"
+      ],
+      "outputs": [
+        "decision_record"
+      ],
+      "notes": "Reached from identity_check (refer) or decision (refer). affordability_result and the automated decision_record exist only on the decision path. The underwriter's decision replaces decision_record with decided_by = underwriter.",
+      "decision": {
+        "question": "What did the underwriter decide?",
+        "outcomes": [
+          {
+            "label": "approve",
+            "condition": "decision_record.outcome is approve",
+            "next_stage": "issue_offer"
+          },
+          {
+            "label": "decline",
+            "condition": "decision_record.outcome is decline",
+            "next_stage": "send_decline_notice"
+          }
+        ]
+      },
+      "controls": [
+        "underwriter_decides_referrals",
+        "decision_rationale"
+      ]
+    },
+    {
+      "id": "issue_offer",
+      "name": "Issue mortgage offer",
+      "actor_type": "system",
+      "actor": "origination_system",
+      "execution": "connector",
+      "purpose": "Create the mortgage offer in the origination system, which sends it to the applicant. Ends the run.",
+      "inputs": [
+        "application_record",
+        "decision_record"
+      ],
+      "outputs": [
+        "mortgage_offer"
+      ],
+      "uses": [
+        "origination_connector"
+      ],
+      "controls": [
+        "single_offer_per_application"
+      ]
+    },
+    {
+      "id": "send_decline_notice",
+      "name": "Send decline notice",
+      "actor_type": "agent",
+      "execution": "agent",
+      "purpose": "Write and send the decline letter, stating every reason recorded in the decision record. Ends the run.",
+      "inputs": [
+        "application_record",
+        "decision_record"
+      ],
+      "outputs": [
+        "decline_notice"
+      ],
+      "uses": [
+        "notification_connector"
+      ],
+      "controls": [
+        "decision_rationale",
+        "structured_agent_output",
+        "pii_masked_in_logs"
+      ]
+    }
+  ],
+  "controls": {
+    "business": [
+      {
+        "id": "kyc_before_decision",
+        "description": "Identity is verified and sanctions screened before any credit decision; a sanctions hit is never decided automatically.",
+        "applies_to": [
+          "identity_check"
+        ],
+        "regulation": "aml"
+      },
+      {
+        "id": "stress_test",
+        "description": "Affordability is tested at the higher of the product rate plus 3 percentage points, or 7%.",
+        "applies_to": [
+          "affordability"
+        ],
+        "regulation": "responsible_lending"
+      },
+      {
+        "id": "verified_income_only",
+        "description": "Affordability uses income read from the evidence, never the income the applicant declared on the form.",
+        "applies_to": [
+          "intake",
+          "affordability"
+        ],
+        "regulation": "responsible_lending"
+      },
+      {
+        "id": "max_ltv",
+        "description": "No lending above 95% loan to value.",
+        "applies_to": [
+          "decision"
+        ]
+      },
+      {
+        "id": "decision_rationale",
+        "description": "Every approve, refer and decline records the rules that produced it, and every decline notice states them.",
+        "applies_to": [
+          "decision",
+          "manual_review",
+          "send_decline_notice"
+        ]
+      },
+      {
+        "id": "underwriter_decides_referrals",
+        "description": "A referred case is decided by an underwriter, never by the workflow.",
+        "applies_to": [
+          "manual_review"
+        ]
+      }
+    ],
+    "technical": [
+      {
+        "id": "bureau_timeout_retry",
+        "description": "Credit bureau calls time out after 30 seconds and retry twice; after that the case is referred, never passed.",
+        "applies_to": [
+          "identity_check"
+        ]
+      },
+      {
+        "id": "structured_agent_output",
+        "description": "Every agent stage returns JSON matching its data entity; an output that does not match fails the step.",
+        "applies_to": [
+          "intake",
+          "send_decline_notice"
+        ]
+      },
+      {
+        "id": "pii_masked_in_logs",
+        "description": "Applicant names, addresses and account numbers are masked in logs and run traces.",
+        "applies_to": [
+          "intake",
+          "return_to_applicant",
+          "send_decline_notice"
+        ],
+        "regulation": "data_protection"
+      },
+      {
+        "id": "single_offer_per_application",
+        "description": "Offer creation uses the application id as an idempotency key, so a retry cannot issue a second offer.",
+        "applies_to": [
+          "issue_offer"
+        ]
+      }
+    ]
+  },
+  "exceptions": [
+    {
+      "id": "missing_documents",
+      "condition": "Income evidence, proof of identity or the property valuation is missing or unreadable",
+      "handling": "List what is missing in application_record.missing_documents and route to return_to_applicant; do not assess.",
+      "applies_to": [
+        "intake"
+      ],
+      "escalate_to": "return_to_applicant"
+    },
+    {
+      "id": "out_of_scope_application",
+      "condition": "The application is for buy-to-let or commercial property",
+      "handling": "Route to return_to_applicant with the channel that handles it; do not assess.",
+      "applies_to": [
+        "intake"
+      ],
+      "escalate_to": "return_to_applicant"
+    },
+    {
+      "id": "bureau_unavailable",
+      "condition": "The credit bureau does not answer after the retries in bureau_timeout_retry",
+      "handling": "Refer to an underwriter with the reason; never treat a missing bureau result as clear.",
+      "applies_to": [
+        "identity_check"
+      ],
+      "escalate_to": "manual_review"
+    }
+  ],
+  "risks": [
+    {
+      "id": "unexplained_decline",
+      "description": "An applicant is declined without being told why.",
+      "severity": "high",
+      "mitigation": "decision_rationale on every outcome; the decline notice is written from decision_record.reasons.",
+      "applies_to": [
+        "decision",
+        "manual_review",
+        "send_decline_notice"
+      ]
+    },
+    {
+      "id": "overstated_income",
+      "description": "Declared income is higher than the evidence supports, so an unaffordable loan is approved.",
+      "severity": "high",
+      "mitigation": "verified_income_only; a gap above 10% between declared and verified income is flagged in the application record.",
+      "applies_to": [
+        "intake",
+        "affordability"
+      ]
+    },
+    {
+      "id": "personal_data_exposure",
+      "description": "Applicant personal data appears in logs or in a notice sent to the wrong address.",
+      "severity": "medium",
+      "mitigation": "pii_masked_in_logs; notices go only to the contact address on the application record.",
+      "applies_to": [
+        "intake",
+        "return_to_applicant",
+        "send_decline_notice"
+      ]
+    }
+  ],
+  "regulations": [
+    {
+      "id": "aml",
+      "name": "Anti-money laundering",
+      "requirement": "Verify identity and screen sanctions before lending."
+    },
+    {
+      "id": "responsible_lending",
+      "name": "Responsible lending",
+      "requirement": "Assess affordability from verified income, including under higher interest rates."
+    },
+    {
+      "id": "data_protection",
+      "name": "Data protection",
+      "requirement": "Process applicant personal data only for the application and protect it in storage and logs."
+    }
+  ],
+  "data_entities": [
+    {
+      "name": "application_record",
+      "produced_by": "intake",
+      "classification": "pii",
+      "fields": [
+        "application_id (string)",
+        "applicant_name (string)",
+        "contact_email (string)",
+        "purpose (one of: purchase, remortgage, buy_to_let, commercial)",
+        "first_time_buyer (boolean)",
+        "property_value (number, GBP)",
+        "loan_amount (number, GBP)",
+        "term_years (integer)",
+        "product_rate_pct (number, %)",
+        "declared_annual_income (number, GBP)",
+        "verified_annual_income (number, GBP, read from income_evidence)",
+        "monthly_commitments (number, GBP)",
+        "income_gap_flag (boolean, verified income more than 10% below declared)",
+        "missing_documents (list of strings, empty when complete)"
+      ]
+    },
+    {
+      "name": "bureau_result",
+      "produced_by": "identity_check",
+      "classification": "pii",
+      "fields": [
+        "identity_verified (boolean)",
+        "sanctions_hit (boolean)",
+        "fraud_score (integer, 0-100, higher is riskier)",
+        "credit_score (integer, 300-850, higher is better)",
+        "bureau_reference (string)"
+      ]
+    },
+    {
+      "name": "affordability_result",
+      "produced_by": "affordability",
+      "classification": "financial",
+      "fields": [
+        "stressed_rate_pct (number, %)",
+        "stressed_monthly_payment (number, GBP)",
+        "monthly_net_income (number, GBP)",
+        "stressed_surplus (number, GBP per month, negative means unaffordable)",
+        "surplus_ratio_pct (number, % of monthly net income left after the stressed payment and commitments)",
+        "ltv_pct (number, %)",
+        "dti_pct (number, %)"
+      ]
+    },
+    {
+      "name": "decision_record",
+      "produced_by": "decision, manual_review",
+      "classification": "financial",
+      "fields": [
+        "outcome (one of: approve, refer, decline)",
+        "decided_by (one of: policy_rules, underwriter)",
+        "rules_failed (list of rule ids)",
+        "reasons (list of strings, one per failed rule or underwriter reason)",
+        "approved_amount (number, GBP, approve only)",
+        "decided_at (ISO 8601 timestamp)"
+      ]
+    },
+    {
+      "name": "mortgage_offer",
+      "produced_by": "issue_offer",
+      "classification": "financial",
+      "fields": [
+        "offer_id (string)",
+        "loan_amount (number, GBP)",
+        "rate_pct (number, %)",
+        "term_years (integer)",
+        "valid_until (date)"
+      ]
+    },
+    {
+      "name": "decline_notice",
+      "produced_by": "send_decline_notice",
+      "classification": "pii",
+      "fields": [
+        "application_id (string)",
+        "reasons (list of strings, from decision_record.reasons)",
+        "sent_to (string)",
+        "sent_at (ISO 8601 timestamp)"
+      ]
+    },
+    {
+      "name": "applicant_notice",
+      "produced_by": "return_to_applicant",
+      "classification": "pii",
+      "fields": [
+        "application_id (string)",
+        "reason (one of: missing_documents, out_of_scope)",
+        "missing_documents (list of strings)",
+        "redirect_channel (string, out of scope only)",
+        "sent_at (ISO 8601 timestamp)"
+      ]
+    }
+  ],
+  "kpis": {
+    "business": [
+      {
+        "name": "Time to decision",
+        "target": "< 2 working days from submission",
+        "applies_to": [
+          "intake",
+          "manual_review"
+        ]
+      },
+      {
+        "name": "Referral rate",
+        "target": "15-25% of assessed applications",
+        "description": "Far outside this range means the refer thresholds need recalibrating.",
+        "applies_to": [
+          "decision"
+        ]
+      },
+      {
+        "name": "Declines with stated reasons",
+        "target": "100%",
+        "applies_to": [
+          "send_decline_notice"
+        ]
+      },
+      {
+        "name": "Underwriter review time",
+        "target": "< 1 working day per referred case",
+        "applies_to": [
+          "manual_review"
+        ]
+      }
+    ],
+    "technical": [
+      {
+        "name": "Automated path duration",
+        "target": "p95 < 5 minutes from submission to decision, excluding manual review",
+        "applies_to": [
+          "intake",
+          "identity_check",
+          "affordability",
+          "decision"
+        ]
+      },
+      {
+        "name": "Credit bureau call success",
+        "target": ">= 99.5% within the retry budget",
+        "applies_to": [
+          "identity_check"
+        ]
+      },
+      {
+        "name": "Valid structured outputs",
+        "target": ">= 99% of agent outputs match their data entity on the first attempt",
+        "applies_to": [
+          "intake",
+          "send_decline_notice"
+        ]
+      }
+    ]
+  },
+  "execution_profile": {
+    "workflow_determinism": "fixed_steps",
+    "interaction_mode": "event_triggered",
+    "trigger": {
+      "type": "system_event",
+      "source": "Mortgage application portal"
+    },
+    "task_horizon": "long_running",
+    "input_variability": "mixed_formats",
+    "memory_need": "none",
+    "volume": {
+      "per_day": 400,
+      "peak_per_hour": 60
+    },
+    "latency": {
+      "mode": "asynchronous",
+      "target": "< 2 working days end to end"
+    }
+  },
+  "integrations": {
+    "systems": [
+      {
+        "id": "credit_bureau_api",
+        "name": "Credit bureau API",
+        "category": "credit_reference",
+        "access": "read",
+        "operations": [
+          "verify_identity",
+          "screen_sanctions",
+          "get_credit_report"
+        ],
+        "auth_method": "api_key",
+        "api_available": true
+      },
+      {
+        "id": "origination_system",
+        "name": "Mortgage origination system",
+        "category": "core_lending",
+        "access": "transact",
+        "operations": [
+          "create_offer"
+        ],
+        "auth_method": "oauth2",
+        "api_available": true
+      },
+      {
+        "id": "notification_service",
+        "name": "Customer notification service",
+        "category": "communications",
+        "access": "write",
+        "operations": [
+          "send_email"
+        ],
+        "auth_method": "api_key",
+        "api_available": true
+      }
+    ],
+    "connectors": [
+      {
+        "id": "bureau_connector",
+        "name": "Credit bureau connector",
+        "kind": "generated_tool",
+        "target": "credit_bureau_api",
+        "status": "to_build",
+        "operations": [
+          {
+            "name": "verify_identity",
+            "direction": "read",
+            "side_effect": "none"
+          },
+          {
+            "name": "screen_sanctions",
+            "direction": "read",
+            "side_effect": "none"
+          },
+          {
+            "name": "get_credit_report",
+            "direction": "read",
+            "side_effect": "none"
+          }
+        ]
+      },
+      {
+        "id": "origination_connector",
+        "name": "Origination system connector",
+        "kind": "generated_tool",
+        "target": "origination_system",
+        "status": "to_build",
+        "operations": [
+          {
+            "name": "create_offer",
+            "direction": "write",
+            "side_effect": "financial_impact",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "notification_connector",
+        "name": "Notification connector",
+        "kind": "generated_tool",
+        "target": "notification_service",
+        "status": "to_build",
+        "operations": [
+          {
+            "name": "send_email",
+            "direction": "write",
+            "side_effect": "irreversible",
+            "requires_approval": false
+          }
+        ]
+      }
+    ]
+  },
+  "knowledge": {
+    "sources": [
+      {
+        "name": "Residential lending policy",
+        "type": "policy",
+        "use": "validation_reference"
+      }
+    ]
+  },
+  "governance": {
+    "risk": {
+      "rating": "high",
+      "reason": "Binding credit decisions on personal data."
+    },
+    "action_authority": "transact",
+    "reversibility": "financial_impact",
+    "human_oversight": {
+      "model": "human_in_the_loop",
+      "applies_to": "threshold_based",
+      "threshold": "Every refer outcome from identity_check or decision",
+      "reviewer_role": "Underwriter",
+      "approval_sla": "1 working day"
+    },
+    "segregation_of_duties": [
+      "The underwriter who decides a referral cannot have submitted or edited the application."
+    ]
+  },
+  "glossary": {
+    "LTV": "Loan to value: loan_amount divided by property_value, as a percentage.",
+    "DTI": "Debt to income: monthly commitments plus the stressed monthly payment, divided by monthly net income, as a percentage.",
+    "Stressed rate": "The higher of the product rate plus 3 percentage points, or 7%.",
+    "Surplus ratio": "Monthly net income left after the stressed payment and commitments, as a percentage of monthly net income."
+  }
+}

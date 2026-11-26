@@ -25,6 +25,8 @@ import json
 import re
 from typing import Any, Optional
 
+from app.process import levels
+
 _MAX_ISSUES = 200
 
 
@@ -277,15 +279,19 @@ def _semantic_issues(doc: dict) -> list[dict]:
     stages = doc.get("stages") if isinstance(doc.get("stages"), list) else []
     stage_ids = _ids(stages)
     stage_set = set(stage_ids)
-    control_ids = set(_ids(doc.get("controls")))
+    # Controls in either shape: one list (v1/v2) or business / technical (v3).
+    controls = levels.leveled_with_paths(doc.get("controls"), "controls")
+    control_ids = {str(c.get("id")) for _, c in controls if c.get("id")}
     actor_ids = set(_ids(doc.get("actors")))
 
     for section in ("stages", "controls", "exceptions", "risks", "regulations", "actors"):
         seen: set[str] = set()
-        for i, item_id in enumerate(_ids(doc.get(section))):
+        entries = ([(p, str(c["id"])) for p, c in controls if c.get("id")] if section == "controls"
+                   else [(f"{section}[{i}]", item_id) for i, item_id in enumerate(_ids(doc.get(section)))])
+        for where, item_id in entries:
             if item_id in seen:
                 out.append(_issue(
-                    "error", "duplicate_id", f"{section}[{i}].id",
+                    "error", "duplicate_id", f"{where}.id",
                     f"The id '{item_id}' is used twice in {section}.",
                     expected="unique ids", found=item_id,
                     fix="Give each entry its own id; references resolve by id.",
@@ -352,15 +358,21 @@ def _semantic_issues(doc: dict) -> list[dict]:
             fix="Break the loop — a stage cannot (indirectly) wait for itself.",
         ))
 
-    for section in ("controls", "exceptions"):
-        for i, item in enumerate(doc.get(section) or []):
+    def listed(section: str) -> list[tuple[str, Any]]:
+        value = doc.get(section)
+        return [(f"{section}[{i}]", e) for i, e in enumerate(value)] if isinstance(value, list) else []
+
+    for section, entries in (("controls", controls), ("exceptions", listed("exceptions")),
+                             ("risks", listed("risks")),
+                             ("kpis", levels.leveled_with_paths(doc.get("kpis"), "kpis"))):
+        for where, item in entries:
             if not isinstance(item, dict):
                 continue
             for ref in item.get("applies_to") or []:
                 if ref not in stage_set:
                     out.append(_issue(
-                        "error", "unknown_reference", f"{section}[{i}].applies_to",
-                        f"'{item.get('id')}' applies to '{ref}', which is not a stage.",
+                        "error", "unknown_reference", f"{where}.applies_to",
+                        f"'{item.get('id') or item.get('name')}' applies to '{ref}', which is not a stage.",
                         expected=", ".join(stage_ids), found=ref,
                         fix="Use stage ids from `stages`.",
                     ))
@@ -370,7 +382,7 @@ def _semantic_issues(doc: dict) -> list[dict]:
                 )
                 if not applied:
                     out.append(_issue(
-                        "warning", "control_unapplied", f"controls[{i}]",
+                        "warning", "control_unapplied", where,
                         f"Mandatory control '{item.get('id')}' does not apply to any stage, so "
                         f"coverage cannot be checked.",
                         fix="List the stages it applies to in `applies_to`.",
@@ -610,16 +622,22 @@ def _stats(doc: dict) -> dict:
         value = doc.get(key)
         return len(value) if isinstance(value, list) else 0
 
+    controls = levels.leveled(doc.get("controls"), "controls")
+    kpis = levels.leveled(doc.get("kpis"), "kpis")
     return {
         "stages": count("stages"),
-        "controls": count("controls"),
-        "mandatory_controls": sum(1 for c in doc.get("controls") or []
-                                  if isinstance(c, dict) and c.get("mandatory") is True),
+        "controls": len(controls),
+        # v3: every business control; v1/v2: those flagged mandatory.
+        "mandatory_controls": sum(1 for c in controls if c.get("mandatory") is True),
+        "business_controls": sum(1 for c in controls if c.get("level") == levels.BUSINESS),
+        "technical_controls": sum(1 for c in controls if c.get("level") == levels.TECHNICAL),
         "risks": count("risks"),
         "regulations": count("regulations"),
         "exceptions": count("exceptions"),
         "actors": count("actors"),
-        "kpis": count("kpis"),
+        "kpis": len(kpis),
+        "business_kpis": sum(1 for k in kpis if k.get("level") == levels.BUSINESS),
+        "technical_kpis": sum(1 for k in kpis if k.get("level") == levels.TECHNICAL),
     }
 
 

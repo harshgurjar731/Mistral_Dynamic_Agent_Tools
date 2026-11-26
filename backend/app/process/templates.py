@@ -132,20 +132,8 @@ DEFAULT_SCHEMA: dict = {
                 },
             },
         },
-        "controls": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["id", "description", "mandatory"],
-                "properties": {
-                    "id": _ID,
-                    "description": {"type": "string", "minLength": 5},
-                    "mandatory": {"type": "boolean"},
-                    "applies_to": {**_STR_LIST, "description": "Stage ids"},
-                    "regulation": {"type": "string", "description": "Regulation id or name"},
-                },
-            },
-        },
+        # Filled in below: two levels (v3) or one list (v1/v2) — see _leveled_section.
+        "controls": {},
         "exceptions": {
             "type": "array",
             "items": {
@@ -169,6 +157,7 @@ DEFAULT_SCHEMA: dict = {
                     "description": {"type": "string", "minLength": 5},
                     "severity": {"type": "string", "enum": ["low", "medium", "high"]},
                     "mitigation": {"type": "string"},
+                    "applies_to": {**_STR_LIST, "description": "Stage ids the risk concerns"},
                 },
             },
         },
@@ -191,24 +180,15 @@ DEFAULT_SCHEMA: dict = {
                 "required": ["name"],
                 "properties": {
                     "name": {"type": "string", "minLength": 1},
-                    "fields": _STR_LIST,
+                    "fields": {**_STR_LIST,
+                               "description": 'One per field: "name (type, unit or allowed values)"'},
                     "classification": {"type": "string",
                                        "enum": ["public", "internal", "financial", "pii"]},
+                    "produced_by": {"type": "string", "description": "Stage id(s) that produce it"},
                 },
             },
         },
-        "kpis": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["name"],
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "target": {"type": "string"},
-                    "description": {"type": "string"},
-                },
-            },
-        },
+        "kpis": {},
         "subprocesses": {
             "type": "array",
             "items": {
@@ -395,7 +375,120 @@ DEFAULT_SCHEMA["description"] += (" Optionally: how the work runs, what it integ
                                   "it is governed — which decides the agent type and oversight.")
 
 
-DEFAULT_EXAMPLE: dict = {
+# ── Template v3: controls and KPIs at two levels ───────────────────────────
+#
+# v3 splits controls and KPIs into a business list (required, filled by the
+# process owner; every business control is mandatory) and a technical list
+# (optional, filled by the delivery team; advisory). v1/v2 documents keep one
+# list, so each section accepts either shape: ``items`` constrains the list
+# form and ``properties``/``required`` the object form. A document whose
+# template_version is 3.x must use the object form, fill both business lists,
+# and give every decision outcome a condition and a next stage.
+# Readers flatten both shapes with app.process.levels.leveled.
+
+_LEGACY_CONTROL = {
+    "type": "object",
+    "required": ["id", "description", "mandatory"],
+    "properties": {
+        "id": _ID,
+        "description": {"type": "string", "minLength": 5},
+        "mandatory": {"type": "boolean"},
+        "applies_to": {**_STR_LIST, "description": "Stage ids"},
+        "regulation": {"type": "string", "description": "Regulation id or name"},
+    },
+}
+_LEVELED_CONTROL = {
+    "type": "object",
+    "required": ["id", "description", "applies_to"],
+    "properties": {
+        "id": _ID,
+        "description": {"type": "string", "minLength": 5},
+        "applies_to": {**_STR_LIST, "minItems": 1, "description": "Stage ids where it is carried out"},
+        "regulation": {"type": "string", "description": "Regulation id from `regulations`"},
+    },
+}
+_LEGACY_KPI = {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "target": {"type": "string"},
+        "description": {"type": "string"},
+    },
+}
+_LEVELED_KPI = {
+    "type": "object",
+    "required": ["name", "target"],
+    "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "applies_to": {**_STR_LIST, "description": "Stage ids it measures"},
+    },
+}
+
+
+def _leveled_section(legacy_item: dict, item: dict, *, description: str,
+                     business: str, technical: str) -> dict:
+    return {
+        "type": ["object", "array"],
+        "description": description,
+        "items": legacy_item,
+        "required": ["business"],
+        "additionalProperties": False,
+        "properties": {
+            "business": {"type": "array", "minItems": 1, "items": item, "description": business},
+            "technical": {"type": "array", "items": item, "description": technical},
+        },
+    }
+
+
+DEFAULT_SCHEMA["properties"]["controls"] = _leveled_section(
+    _LEGACY_CONTROL, _LEVELED_CONTROL,
+    description="What must hold while the process runs, as two lists filled separately: business "
+                "(required) and technical (optional). A v1/v2 document may give one list instead.",
+    business="Required. Policy and regulatory rules set by the business. Every business control is "
+             "mandatory: a workflow with no step covering it is flagged.",
+    technical="Optional. How the build must behave — retries, timeouts, logging, idempotency, output "
+              "validation. Advisory: shown to the planner, not enforced.",
+)
+DEFAULT_SCHEMA["properties"]["kpis"] = _leveled_section(
+    _LEGACY_KPI, _LEVELED_KPI,
+    description="How success is measured, as two lists filled separately: business (required) and "
+                "technical (optional). A v1/v2 document may give one list instead.",
+    business="Required. Outcomes the business tracks: time to decision, rates, quality.",
+    technical="Optional. How the system performs: latency, reliability, output validity, cost.",
+)
+DEFAULT_SCHEMA["properties"]["template_version"]["description"] = (
+    'Template version: "3.0" for business/technical controls and KPIs; "1.0"/"2.0" for one list')
+DEFAULT_SCHEMA["if"] = {"required": ["template_version"],
+                        "properties": {"template_version": {"pattern": "^3"}}}
+DEFAULT_SCHEMA["then"] = {
+    "required": ["controls", "kpis"],
+    "properties": {
+        "controls": {"type": "object", "description": "Business and technical controls (v3)"},
+        "kpis": {"type": "object", "description": "Business and technical KPIs (v3)"},
+        "stages": {"items": {"properties": {"decision": {"properties": {"outcomes": {"items": {
+            "required": ["label", "condition", "next_stage"]}}}}}}},
+    },
+}
+DEFAULT_SCHEMA["description"] += (" Controls and KPIs are split into business (required) and technical "
+                                  "(optional) lists.")
+
+
+def _load_example(name: str) -> dict:
+    from pathlib import Path
+
+    return json.loads((Path(__file__).parent / "examples" / name).read_text(encoding="utf-8"))
+
+
+#: Worked v3 examples, in ``examples/``. The mortgage one is the built-in example.
+DEFAULT_EXAMPLE: dict = _load_example("residential_mortgage_approval.json")
+KYC_ONBOARDING_EXAMPLE: dict = _load_example("kyc_customer_onboarding.json")
+
+#: The original v1 example: one control list with a mandatory flag on each.
+#: Kept to prove v1 documents stay valid.
+DEFAULT_EXAMPLE_V1: dict = {
     "template_version": "1.0",
     "process": {"id": "residential_mortgage_approval", "name": "Residential mortgage approval",
                 "level": "process", "version": "1.0", "owner": "Mortgage underwriting"},
@@ -697,14 +790,19 @@ def ensure_builtin() -> None:
         builtin_row = db.query(ProcessTemplate).filter(ProcessTemplate.builtin.is_(True)).first()
         if builtin_row is not None and json.loads(builtin_row.schema or "{}") != DEFAULT_SCHEMA:
             # The built-in template is owned by code. Its changes are additive
-            # (v2 adds optional sections), so a document valid before stays valid.
+            # (v2 adds optional sections, v3 a second shape for controls and
+            # KPIs), so a document valid before stays valid.
             builtin_row.schema = json.dumps(DEFAULT_SCHEMA)
+            db.flush()
+        if builtin_row is not None and json.loads(builtin_row.example or "null") != DEFAULT_EXAMPLE:
+            builtin_row.example = json.dumps(DEFAULT_EXAMPLE)
             db.flush()
         if not builtin_row:
             db.add(ProcessTemplate(
                 name="Standard process template", version=1,
-                description="The built-in format: identity, classification, stages, controls, "
-                            "exceptions, risks, regulations, data entities and KPIs.",
+                description="The built-in format: identity, classification, stages, business and "
+                            "technical controls, exceptions, risks, regulations, data entities and "
+                            "business and technical KPIs.",
                 schema=json.dumps(DEFAULT_SCHEMA), example=json.dumps(DEFAULT_EXAMPLE),
                 kind="schema", is_default=False, builtin=True, concept_id=None,
             ))

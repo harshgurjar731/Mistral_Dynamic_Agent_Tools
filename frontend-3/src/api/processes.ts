@@ -21,11 +21,16 @@ export interface DocumentStats {
   stages?: number;
   controls?: number;
   mandatory_controls?: number;
+  /** Template v3 only: controls and KPIs split into business / technical. */
+  business_controls?: number;
+  technical_controls?: number;
   risks?: number;
   regulations?: number;
   exceptions?: number;
   actors?: number;
   kpis?: number;
+  business_kpis?: number;
+  technical_kpis?: number;
 }
 
 export interface ValidationReport {

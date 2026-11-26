@@ -51,7 +51,10 @@ interface PControl {
   id?: string;
   description?: string;
   mandatory?: boolean;
+  /** Set when the document splits controls into business / technical (template v3). */
+  level?: "business" | "technical";
 }
+type PControls = PControl[] | { business?: PControl[]; technical?: PControl[] };
 interface PRisk {
   id?: string;
   description?: string;
@@ -65,17 +68,27 @@ interface PException {
 interface PContent {
   objective?: string;
   stages?: PStage[];
-  controls?: PControl[];
+  controls?: PControls;
   risks?: PRisk[];
   exceptions?: PException[];
 }
 
 const arr = <T,>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : []);
 
+/** Controls in either shape as one list; business controls are mandatory. */
+function controlList(v: PControls | undefined): PControl[] {
+  if (Array.isArray(v)) return v;
+  if (!v || typeof v !== "object") return [];
+  return [
+    ...arr(v.business).map((c) => ({ ...c, level: "business" as const, mandatory: true })),
+    ...arr(v.technical).map((c) => ({ ...c, level: "technical" as const, mandatory: false })),
+  ];
+}
+
 function DocumentSummary({ content: raw }: { content: Record<string, unknown> }) {
   const content = raw as PContent;
   const stages = arr(content.stages);
-  const controls = arr(content.controls);
+  const controls = controlList(content.controls);
   const risks = arr(content.risks);
   const exceptions = arr(content.exceptions);
   return (
@@ -123,7 +136,13 @@ function DocumentSummary({ content: raw }: { content: Record<string, unknown> })
               <li key={c.id ?? i} className="flex gap-2">
                 <RefChip refId={`control:${c.id ?? i}`} label={c.id ?? String(i)} />
                 <span className="text-muted-foreground">
-                  {c.mandatory === true ? <span className="text-amber">Mandatory · </span> : null}
+                  {c.level === "business" ? (
+                    <span className="text-amber">Business · mandatory · </span>
+                  ) : c.level === "technical" ? (
+                    <span>Technical · </span>
+                  ) : c.mandatory === true ? (
+                    <span className="text-amber">Mandatory · </span>
+                  ) : null}
                   {c.description}
                 </span>
               </li>

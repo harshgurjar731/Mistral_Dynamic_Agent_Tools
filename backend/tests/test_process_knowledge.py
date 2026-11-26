@@ -11,7 +11,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.ontology.vocab import Scheme
 from app.process_knowledge import templates, validation
-from app.process_knowledge.templates import DEFAULT_EXAMPLE
+# The v1 example: these tests pin its shape (one control list with mandatory
+# flags), which is how they prove v1 documents keep working. Template v3
+# (business / technical levels) is covered in test_process_levels.py.
+from app.process_knowledge.templates import DEFAULT_EXAMPLE_V1 as DEFAULT_EXAMPLE
 
 
 @pytest.fixture

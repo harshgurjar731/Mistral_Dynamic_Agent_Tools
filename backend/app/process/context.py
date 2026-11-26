@@ -7,9 +7,14 @@ references they actually used, and only references in this index are recorded,
 so the "where was process knowledge used" display reports what a layer did, not
 what it was shown.
 
-Each view is a compact rendering for one decision and is capped in size: a
-topology decision needs stage order and decision outcomes, not the glossary,
-and every character here is paid for on every call that reads it.
+Each view is a compact rendering for one decision and is capped in size
+(PROCESS_VIEW_CHARS): a topology decision needs stage order and decision
+outcomes, not the glossary, and every character here is paid for on every call
+that reads it. Over the cap, a view sheds detail before content (see render).
+
+Controls and KPIs may be split into business and technical lists (template
+v3); build() flattens them with app.process.levels, so every business control
+is mandatory and every technical one advisory.
 """
 
 from __future__ import annotations
@@ -17,8 +22,20 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-#: Upper bound on one rendered view. Roughly 2k tokens.
-_VIEW_CHARS = 7000
+from app.process import levels
+
+#: Upper bound on one rendered view when settings are unavailable. Roughly 2.5k tokens.
+_VIEW_CHARS = 10000
+
+
+def _view_chars() -> int:
+    """The view budget, from the PROCESS_VIEW_CHARS setting."""
+    try:
+        from app.config import settings
+
+        return max(2000, int(getattr(settings, "PROCESS_VIEW_CHARS", _VIEW_CHARS) or _VIEW_CHARS))
+    except Exception:
+        return _VIEW_CHARS
 
 _SECTIONS = ("stages", "controls", "exceptions", "risks", "regulations", "actors",
              "kpis", "data_entities")
@@ -50,7 +67,10 @@ def build(documents: list[dict], *, mode: str, message: str = "",
         body = doc.get("content") or {}
         is_primary = doc is primary
         for section in _SECTIONS:
-            for i, item in enumerate(body.get(section) or []):
+            # Controls and KPIs may be split into business / technical (v3).
+            items = levels.leveled(body.get(section), section) if section in levels.SECTIONS \
+                else body.get(section) or []
+            for i, item in enumerate(items):
                 if not isinstance(item, dict):
                     continue
                 ref = f"{_PREFIX[section]}:{_item_id(item, i)}"
@@ -145,8 +165,10 @@ def _simple(items: list[dict], *fields: str) -> list[str]:
     for item in items:
         bits = [str(item.get(f)) for f in fields if item.get(f) not in (None, "", [])]
         flag = ""
-        if item.get("mandatory") is True:
-            flag = " (MANDATORY)"
+        if item.get("level") == levels.TECHNICAL:
+            flag = " (technical, advisory)"
+        elif item.get("mandatory") is True:
+            flag = " (business, MANDATORY)" if item.get("level") == levels.BUSINESS else " (MANDATORY)"
         if item.get("severity"):
             flag = f" ({item['severity']})"
         applies = item.get("applies_to")
@@ -174,11 +196,61 @@ def _related_to(items: list[dict], stage_ids: set[str], stage_controls: set[str]
     ]
 
 
+def _fit(parts: list[str], budget: int) -> list[str]:
+    """Cut the longest section's last lines until the parts fit ``budget``.
+
+    Short sections, such as the mandatory controls, stay whole, and every
+    section keeps its heading. Cutting the end of the joined text instead would
+    lose whatever came last, usually the controls.
+    """
+    parts = [p.split("\n") for p in parts]
+    cut = [0] * len(parts)
+
+    def size() -> int:
+        return sum(len("\n".join(lines)) for lines in parts) + 2 * (len(parts) - 1) + 40 * sum(map(bool, cut))
+
+    while size() > budget:
+        i = max(range(len(parts)), key=lambda k: len("\n".join(parts[k])))
+        if len(parts[i]) <= 2:
+            break
+        parts[i].pop()
+        cut[i] += 1
+    return ["\n".join(lines) + (f"\n… ({n} more lines cut to fit)" if n else "")
+            for lines, n in zip(parts, cut)]
+
+
 def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
-    """The text block for one layer. Empty string when there is nothing useful."""
+    """The text block for one layer. Empty string when there is nothing useful.
+
+    Over budget, stage lines first drop their inputs and outputs (not in the
+    data-flow view, where they are the point), then the longest section is cut.
+    """
     head = ctx.get("process") or {}
     name = head.get("name") or (ctx["documents"][0].get("title") if ctx.get("documents") else "")
+    budget = _view_chars()
+    parts = _view_parts(ctx, view, focus, compact=False)
+    if len("\n\n".join(parts)) > budget and view != "data_flow":
+        parts = _view_parts(ctx, view, focus, compact=True)
+    if len("\n\n".join(parts)) > budget:
+        parts = _fit(parts, budget)
+    body = "\n\n".join(parts)
+    if not body:
+        return ""
+    source = ctx["documents"][0] if ctx.get("documents") else {}
+    origin = {"uploaded": "uploaded with this request", "inventory": "matched from the process inventory",
+              "workflow": "the process this workflow was built for"}.get(ctx.get("mode"), "")
+    return (
+        f"── PROCESS KNOWLEDGE: \"{name}\" v{source.get('version') or 1}"
+        + (f" ({origin})" if origin else "") + " ──\n"
+        "A reference process for this request. Follow it where it fits; the user's request "
+        "wins on any conflict. Ids in [brackets] are reference ids.\n\n" + body
+    )
+
+
+def _view_parts(ctx: dict, view: str, focus: Optional[str], *, compact: bool) -> list[str]:
+    """The sections of one view, in order. ``compact`` leaves stage inputs and outputs out."""
     stages, controls = ctx["stages"], ctx["controls"]
+    io = not compact
     parts: list[str] = []
 
     def add(text: str) -> None:
@@ -196,7 +268,7 @@ def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
             add("Triggers: " + "; ".join(map(str, ctx["triggers"])))
 
     if view in ("decomposition", "topology", "revision"):
-        add(_section("Stages, in order", [_stage_line(s) for s in stages]))
+        add(_section("Stages, in order", [_stage_line(s, io=io) for s in stages]))
         add(_section("Mandatory controls", _simple(
             [c for c in controls if c.get("mandatory") is True], "description")))
         if view != "decomposition":
@@ -247,17 +319,18 @@ def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
                          _simple(_related_to(ctx["exceptions"], ids, set()), "condition", "handling")))
         else:
             add(_section("Process stages (find the one this agent performs)",
-                         [_stage_line(s, decision=False) for s in stages]))
+                         [_stage_line(s, io=io, decision=False) for s in stages]))
             add(_section("Mandatory controls",
                          _simple([c for c in controls if c.get("mandatory") is True], "description")))
         add(_section("Risks", _simple(ctx["risks"], "description", "mitigation")))
         add(_section("Regulations", _simple(ctx["regulations"], "name", "requirement")))
     elif view == "agent_instructions":
-        add(_section("Stages", [_stage_line(s) for s in stages]))
+        add(_section("Stages", [_stage_line(s, io=io, decision=io) for s in stages]))
         add(_section("Controls", _simple(controls, "description")))
         add(_section("Exceptions", _simple(ctx["exceptions"], "condition", "handling")))
         add(_section("Risks", _simple(ctx["risks"], "description", "mitigation")))
-        add(_section("KPIs", [f"- [{k['_ref']}] {k.get('name')}"
+        add(_section("KPIs", [f"- [{k['_ref']}]" + (f" ({k['level']})" if k.get("level") else "")
+                              + f" {k.get('name')}"
                               + (f": {k['target']}" if k.get("target") else "")
                               for k in ctx["kpis"]]))
         if ctx.get("glossary"):
@@ -265,21 +338,7 @@ def render(ctx: dict, view: str, *, focus: Optional[str] = None) -> str:
 
     for text in _v2_view(ctx, view, stages):
         add(text)
-
-    body = "\n\n".join(p for p in parts if p)
-    if not body:
-        return ""
-    if len(body) > _VIEW_CHARS:
-        body = body[: _VIEW_CHARS - 40].rstrip() + "\n… (truncated to fit)"
-    source = ctx["documents"][0] if ctx.get("documents") else {}
-    origin = {"uploaded": "uploaded with this request", "inventory": "matched from the process inventory",
-              "workflow": "the process this workflow was built for"}.get(ctx.get("mode"), "")
-    return (
-        f"── PROCESS KNOWLEDGE: \"{name}\" v{source.get('version') or 1}"
-        + (f" ({origin})" if origin else "") + " ──\n"
-        "A reference process for this request. Follow it where it fits; the user's request "
-        "wins on any conflict. Ids in [brackets] are reference ids.\n\n" + body
-    )
+    return [p for p in parts if p]
 
 
 def _kv(title: str, data: Any, keys: tuple[str, ...]) -> str:

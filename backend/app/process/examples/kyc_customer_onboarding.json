@@ -1,0 +1,1544 @@
+{
+  "template_version": "3.0",
+  "process": {
+    "id": "kyc_customer_onboarding",
+    "name": "KYC and customer onboarding",
+    "level": "process",
+    "version": "1.0",
+    "owner": "Retail onboarding and Financial Crime Compliance"
+  },
+  "classification": {
+    "industry": "BFSI",
+    "domain": "Retail banking",
+    "subdomain": "Customer onboarding",
+    "process": "KYC and customer onboarding"
+  },
+  "objective": "Open accounts for eligible individual customers within minutes, after verifying identity, screening for sanctions and PEP exposure and rating financial-crime risk, with a recorded rationale for every outcome.",
+  "scope": {
+    "in_scope": [
+      "Individual customers aged 18 or over, resident in the bank's home country",
+      "Current and savings accounts",
+      "Applications through the mobile app, the website or a branch"
+    ],
+    "out_of_scope": [
+      "Business, charity and trust accounts",
+      "Non-resident customers",
+      "Customers under 18",
+      "Periodic KYC refresh of existing customers"
+    ]
+  },
+  "triggers": [
+    "An applicant submits an account opening application in the mobile app, on the website or in a branch"
+  ],
+  "actors": [
+    {
+      "id": "applicant",
+      "name": "Applicant",
+      "type": "external",
+      "responsibilities": [
+        "Provide the application, an identity document, proof of address and a selfie video",
+        "Provide source-of-funds evidence when asked"
+      ]
+    },
+    {
+      "id": "onboarding_agent",
+      "name": "Onboarding agent",
+      "type": "agent",
+      "responsibilities": [
+        "Extract and check application data",
+        "Assemble enhanced due diligence evidence",
+        "Write customer communications"
+      ]
+    },
+    {
+      "id": "kyc_analyst",
+      "name": "KYC analyst",
+      "type": "human",
+      "responsibilities": [
+        "Decide referred applications",
+        "Clear or confirm screening alerts",
+        "Obtain senior approval for PEP and high-risk customers"
+      ]
+    },
+    {
+      "id": "mlro",
+      "name": "Money Laundering Reporting Officer",
+      "type": "human",
+      "responsibilities": [
+        "Decide whether to file a suspicious activity report",
+        "Decide whether the relationship can proceed after a suspicion"
+      ]
+    },
+    {
+      "id": "idv_provider",
+      "name": "Identity verification provider",
+      "type": "system",
+      "responsibilities": [
+        "Check document authenticity, liveness and face match",
+        "Verify the address"
+      ]
+    },
+    {
+      "id": "screening_provider",
+      "name": "Sanctions, PEP and adverse media screening provider",
+      "type": "system",
+      "responsibilities": [
+        "Screen the applicant against sanctions, PEP and adverse media lists"
+      ]
+    },
+    {
+      "id": "risk_engine",
+      "name": "Customer risk rating engine",
+      "type": "system",
+      "responsibilities": [
+        "Score customer risk from the risk factors in the KYC policy"
+      ]
+    },
+    {
+      "id": "core_banking",
+      "name": "Core banking system",
+      "type": "system",
+      "responsibilities": [
+        "Create the customer and the account"
+      ]
+    }
+  ],
+  "stages": [
+    {
+      "id": "application_capture",
+      "name": "Application capture",
+      "purpose": "Extract applicant details from the application and documents, check eligibility and completeness, record biometric consent and check for an existing customer record.",
+      "actor_type": "agent",
+      "actor": "onboarding_agent",
+      "execution": "agent",
+      "inputs": [
+        "onboarding_application",
+        "identity_document",
+        "proof_of_address",
+        "selfie_video"
+      ],
+      "outputs": [
+        "customer_profile"
+      ],
+      "decision": {
+        "question": "Can the application be processed? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "out_of_scope",
+            "condition": "customer_profile.customer_type is not individual, or customer_profile.country_of_residence is not the home country, or customer_profile.age < 18",
+            "next_stage": "notify_applicant"
+          },
+          {
+            "label": "incomplete",
+            "condition": "customer_profile.missing_documents is not empty, or customer_profile.consent_biometrics is false",
+            "next_stage": "notify_applicant"
+          },
+          {
+            "label": "complete",
+            "condition": "Otherwise",
+            "next_stage": "document_verification"
+          }
+        ]
+      },
+      "controls": [
+        "biometric_consent",
+        "structured_agent_output",
+        "pii_masked_in_logs"
+      ],
+      "uses": [
+        "crm_connector"
+      ],
+      "sla": "< 2 minutes",
+      "notes": "An existing customer found in the CRM is linked, not duplicated; their existing risk rating is passed on in customer_profile.existing_risk_band.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "document_verification",
+      "name": "Identity document verification",
+      "purpose": "Check that the identity document is genuine and in date, that the selfie is live and matches the document photo, and that the address is verified.",
+      "actor_type": "system",
+      "actor": "idv_provider",
+      "execution": "connector",
+      "inputs": [
+        "customer_profile",
+        "identity_document",
+        "proof_of_address",
+        "selfie_video"
+      ],
+      "outputs": [
+        "idv_result"
+      ],
+      "depends_on": [
+        "application_capture"
+      ],
+      "decision": {
+        "question": "Is the identity verified? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "refer",
+            "condition": "idv_result.document_authentic is false, or idv_result.liveness_passed is false, or idv_result.face_match_score < 0.90, or idv_result.address_verified is false, or idv_result.document_expired is true",
+            "next_stage": "kyc_review"
+          },
+          {
+            "label": "verified",
+            "condition": "Otherwise",
+            "next_stage": "screening"
+          }
+        ]
+      },
+      "controls": [
+        "cdd_before_account",
+        "vendor_timeout_fallback",
+        "biometric_data_deletion",
+        "pii_masked_in_logs"
+      ],
+      "uses": [
+        "idv_connector"
+      ],
+      "sla": "< 60 seconds",
+      "notes": "A failed check is never auto-rejected: a person decides, because a forged document may be a fraud case the applicant must not be told about.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "screening",
+      "name": "Sanctions, PEP and adverse media screening",
+      "purpose": "Screen the verified applicant against sanctions, politically exposed person and adverse media lists.",
+      "actor_type": "system",
+      "actor": "screening_provider",
+      "execution": "connector",
+      "inputs": [
+        "customer_profile",
+        "idv_result"
+      ],
+      "outputs": [
+        "screening_result"
+      ],
+      "depends_on": [
+        "document_verification"
+      ],
+      "decision": {
+        "question": "Is the applicant clear of screening alerts? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "alert",
+            "condition": "screening_result.sanctions_match_score >= 85, or screening_result.adverse_media_hits > 0",
+            "next_stage": "kyc_review"
+          },
+          {
+            "label": "clear",
+            "condition": "Otherwise (PEP matches continue to risk rating, which routes them to enhanced due diligence)",
+            "next_stage": "risk_rating"
+          }
+        ]
+      },
+      "controls": [
+        "cdd_before_account",
+        "sanctions_no_auto_clear",
+        "vendor_timeout_fallback",
+        "screening_list_freshness"
+      ],
+      "uses": [
+        "screening_connector"
+      ],
+      "sla": "< 30 seconds",
+      "notes": "Matches scoring 60-84 are recorded in screening_result.possible_matches for the analyst but do not stop the application on their own.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "risk_rating",
+      "name": "Customer risk rating",
+      "purpose": "Score financial-crime risk from country, occupation, product, channel, expected activity and PEP status, and decide whether straight-through approval is allowed. A calculation, no model.",
+      "actor_type": "system",
+      "actor": "risk_engine",
+      "execution": "activity",
+      "inputs": [
+        "customer_profile",
+        "screening_result"
+      ],
+      "outputs": [
+        "risk_assessment",
+        "kyc_decision"
+      ],
+      "depends_on": [
+        "screening"
+      ],
+      "decision": {
+        "question": "Which due diligence does the customer need? Evaluated in order; the first matching outcome wins.",
+        "outcomes": [
+          {
+            "label": "high_risk",
+            "condition": "risk_assessment.risk_score >= 70, or screening_result.pep_match is true, or risk_assessment.country_risk is high",
+            "next_stage": "enhanced_due_diligence"
+          },
+          {
+            "label": "standard",
+            "condition": "Otherwise (kyc_decision.outcome = approve, decided_by = policy_rules)",
+            "next_stage": "account_opening"
+          }
+        ]
+      },
+      "controls": [
+        "risk_based_approach",
+        "decision_rationale"
+      ],
+      "uses": [
+        "crm_connector"
+      ],
+      "sla": "< 5 seconds",
+      "notes": "Risk bands: low < 40, medium 40-69, high >= 70. The country risk list comes from the knowledge source 'Country risk list'.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "enhanced_due_diligence",
+      "name": "Enhanced due diligence",
+      "purpose": "For PEP and high-risk customers, collect and summarise source-of-funds and source-of-wealth evidence for the analyst.",
+      "actor_type": "agent",
+      "actor": "onboarding_agent",
+      "execution": "agent",
+      "inputs": [
+        "customer_profile",
+        "screening_result",
+        "risk_assessment"
+      ],
+      "outputs": [
+        "edd_report"
+      ],
+      "decision": {
+        "question": "Is the evidence enough for a review?",
+        "outcomes": [
+          {
+            "label": "evidence_complete",
+            "condition": "edd_report.evidence_gaps is empty",
+            "next_stage": "kyc_review"
+          },
+          {
+            "label": "evidence_missing",
+            "condition": "edd_report.evidence_gaps is not empty",
+            "next_stage": "notify_applicant"
+          }
+        ]
+      },
+      "controls": [
+        "pep_senior_approval",
+        "structured_agent_output"
+      ],
+      "uses": [
+        "case_connector"
+      ],
+      "sla": "< 1 working day, excluding time waiting for the applicant",
+      "notes": "Reached only from risk_rating (high_risk). The agent summarises evidence; it never decides.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "kyc_review",
+      "name": "KYC analyst review",
+      "purpose": "Decide applications referred by verification, screening or enhanced due diligence, with senior approval for PEP and high-risk customers, and record the reasons.",
+      "actor_type": "human",
+      "actor": "kyc_analyst",
+      "execution": "human_task",
+      "inputs": [
+        "customer_profile",
+        "idv_result",
+        "screening_result",
+        "risk_assessment",
+        "edd_report"
+      ],
+      "outputs": [
+        "kyc_decision"
+      ],
+      "decision": {
+        "question": "What did the analyst decide?",
+        "outcomes": [
+          {
+            "label": "approve",
+            "condition": "kyc_decision.outcome is approve",
+            "next_stage": "account_opening"
+          },
+          {
+            "label": "reject",
+            "condition": "kyc_decision.outcome is reject",
+            "next_stage": "notify_applicant"
+          },
+          {
+            "label": "report_suspicion",
+            "condition": "kyc_decision.outcome is report_suspicion",
+            "next_stage": "mlro_referral"
+          }
+        ]
+      },
+      "controls": [
+        "sanctions_no_auto_clear",
+        "pep_senior_approval",
+        "decision_rationale",
+        "record_retention"
+      ],
+      "uses": [
+        "case_connector"
+      ],
+      "sla": "< 1 working day",
+      "notes": "Reached from document_verification (refer), screening (alert) or enhanced_due_diligence (evidence_complete). risk_assessment and edd_report exist only on the later paths.",
+      "is_oversight_point": true
+    },
+    {
+      "id": "mlro_referral",
+      "name": "MLRO referral",
+      "purpose": "Decide whether to file a suspicious activity report and whether the relationship may proceed.",
+      "actor_type": "human",
+      "actor": "mlro",
+      "execution": "human_task",
+      "inputs": [
+        "customer_profile",
+        "kyc_decision"
+      ],
+      "outputs": [
+        "sar_record",
+        "kyc_decision"
+      ],
+      "decision": {
+        "question": "May the relationship proceed?",
+        "outcomes": [
+          {
+            "label": "proceed",
+            "condition": "kyc_decision.outcome is approve",
+            "next_stage": "account_opening"
+          },
+          {
+            "label": "exit_relationship",
+            "condition": "kyc_decision.outcome is exit",
+            "next_stage": "notify_applicant"
+          }
+        ]
+      },
+      "controls": [
+        "no_tipping_off",
+        "decision_rationale"
+      ],
+      "uses": [
+        "case_connector"
+      ],
+      "sla": "< 2 working days",
+      "notes": "Reached only from kyc_review (report_suspicion). SAR filing itself happens in the bank's reporting system, outside this workflow; only the decision and reference are recorded.",
+      "is_oversight_point": true
+    },
+    {
+      "id": "account_opening",
+      "name": "Account opening",
+      "purpose": "Create the customer and the account in core banking, with the transaction-monitoring tier set from the risk rating.",
+      "actor_type": "system",
+      "actor": "core_banking",
+      "execution": "connector",
+      "inputs": [
+        "customer_profile",
+        "risk_assessment",
+        "kyc_decision"
+      ],
+      "outputs": [
+        "account_record"
+      ],
+      "controls": [
+        "cdd_before_account",
+        "record_retention",
+        "idempotent_account_creation"
+      ],
+      "uses": [
+        "core_banking_connector"
+      ],
+      "sla": "< 30 seconds",
+      "notes": "Reached from risk_rating (standard), kyc_review (approve) or mlro_referral (proceed). Refuses to run unless kyc_decision.outcome is approve.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "welcome_communication",
+      "name": "Welcome communication",
+      "purpose": "Send the welcome message with account details, card delivery and next steps. Ends the run.",
+      "actor_type": "agent",
+      "actor": "onboarding_agent",
+      "execution": "agent",
+      "inputs": [
+        "customer_profile",
+        "account_record"
+      ],
+      "outputs": [
+        "welcome_message"
+      ],
+      "depends_on": [
+        "account_opening"
+      ],
+      "controls": [
+        "structured_agent_output",
+        "pii_masked_in_logs"
+      ],
+      "uses": [
+        "notification_connector"
+      ],
+      "sla": "< 5 minutes after the account is opened",
+      "notes": "Sent on the channel the applicant used, plus email.",
+      "is_oversight_point": false
+    },
+    {
+      "id": "notify_applicant",
+      "name": "Notify applicant",
+      "purpose": "Tell the applicant what happens next: the documents or evidence still needed, why the application is out of scope, or that it cannot proceed. Ends the run.",
+      "actor_type": "agent",
+      "actor": "onboarding_agent",
+      "execution": "agent",
+      "inputs": [
+        "customer_profile",
+        "kyc_decision",
+        "edd_report"
+      ],
+      "outputs": [
+        "applicant_notice"
+      ],
+      "controls": [
+        "no_tipping_off",
+        "structured_agent_output",
+        "pii_masked_in_logs"
+      ],
+      "uses": [
+        "notification_connector"
+      ],
+      "sla": "< 5 minutes",
+      "notes": "Reached from application_capture, enhanced_due_diligence, kyc_review (reject) and mlro_referral (exit_relationship). After an MLRO exit the notice uses neutral wording and gives no reason. A resubmission starts a new run.",
+      "is_oversight_point": false
+    }
+  ],
+  "controls": {
+    "business": [
+      {
+        "id": "cdd_before_account",
+        "description": "No account is opened until identity is verified and the applicant has been screened.",
+        "applies_to": [
+          "document_verification",
+          "screening",
+          "account_opening"
+        ],
+        "regulation": "aml_cft"
+      },
+      {
+        "id": "sanctions_no_auto_clear",
+        "description": "A possible sanctions match scoring 85 or more is never cleared automatically; a KYC analyst decides it.",
+        "applies_to": [
+          "screening",
+          "kyc_review"
+        ],
+        "regulation": "sanctions"
+      },
+      {
+        "id": "pep_senior_approval",
+        "description": "PEP and high-risk customers get enhanced due diligence and senior management approval before an account is opened.",
+        "applies_to": [
+          "enhanced_due_diligence",
+          "kyc_review"
+        ],
+        "regulation": "aml_cft"
+      },
+      {
+        "id": "risk_based_approach",
+        "description": "Every customer gets a recorded risk rating with the factors that produced it, and the monitoring tier follows the rating.",
+        "applies_to": [
+          "risk_rating"
+        ],
+        "regulation": "aml_cft"
+      },
+      {
+        "id": "no_tipping_off",
+        "description": "When a suspicion is reported, the applicant is not told: notices after an MLRO exit use neutral wording and give no reason.",
+        "applies_to": [
+          "mlro_referral",
+          "notify_applicant"
+        ],
+        "regulation": "aml_cft"
+      },
+      {
+        "id": "decision_rationale",
+        "description": "Every approve, refer, reject and exit records who decided and the reasons.",
+        "applies_to": [
+          "risk_rating",
+          "kyc_review",
+          "mlro_referral"
+        ]
+      },
+      {
+        "id": "record_retention",
+        "description": "Customer due diligence records are kept for at least five years after the relationship ends.",
+        "applies_to": [
+          "kyc_review",
+          "account_opening"
+        ],
+        "regulation": "aml_cft"
+      },
+      {
+        "id": "biometric_consent",
+        "description": "The applicant gives explicit consent to biometric processing before the selfie video is used.",
+        "applies_to": [
+          "application_capture"
+        ],
+        "regulation": "data_protection"
+      }
+    ],
+    "technical": [
+      {
+        "id": "vendor_timeout_fallback",
+        "description": "Identity verification and screening calls time out after 20 seconds and retry twice; after that the application is referred, never passed.",
+        "applies_to": [
+          "document_verification",
+          "screening"
+        ]
+      },
+      {
+        "id": "screening_list_freshness",
+        "description": "Screening runs against lists updated within the last 24 hours; the list version date is stored with each result.",
+        "applies_to": [
+          "screening"
+        ]
+      },
+      {
+        "id": "structured_agent_output",
+        "description": "Every agent stage returns JSON matching its data entity; an output that does not match fails the step.",
+        "applies_to": [
+          "application_capture",
+          "enhanced_due_diligence",
+          "welcome_communication",
+          "notify_applicant"
+        ]
+      },
+      {
+        "id": "pii_masked_in_logs",
+        "description": "Names, dates of birth, document numbers and addresses are masked in logs and run traces.",
+        "applies_to": [
+          "application_capture",
+          "document_verification",
+          "welcome_communication",
+          "notify_applicant"
+        ],
+        "regulation": "data_protection"
+      },
+      {
+        "id": "biometric_data_deletion",
+        "description": "Selfie video and document images are deleted from platform storage within 30 days of the decision; only the verification result is kept.",
+        "applies_to": [
+          "document_verification"
+        ],
+        "regulation": "data_protection"
+      },
+      {
+        "id": "idempotent_account_creation",
+        "description": "Account creation uses the application id as an idempotency key, so a retry cannot open a second account.",
+        "applies_to": [
+          "account_opening"
+        ]
+      }
+    ]
+  },
+  "exceptions": [
+    {
+      "id": "missing_documents",
+      "condition": "The identity document, proof of address or selfie video is missing, or biometric consent was not given",
+      "handling": "List what is missing in customer_profile.missing_documents and route to notify_applicant; do not verify.",
+      "applies_to": [
+        "application_capture"
+      ],
+      "escalate_to": "notify_applicant"
+    },
+    {
+      "id": "unreadable_document",
+      "condition": "The identity provider cannot read the document image",
+      "handling": "Refer to a KYC analyst, who can ask the applicant to upload it again; never treat it as verified.",
+      "applies_to": [
+        "document_verification"
+      ],
+      "escalate_to": "kyc_review"
+    },
+    {
+      "id": "vendor_unavailable",
+      "condition": "The identity or screening provider does not answer after the retries in vendor_timeout_fallback",
+      "handling": "Refer to a KYC analyst with the reason; never treat a missing result as clear.",
+      "applies_to": [
+        "document_verification",
+        "screening"
+      ],
+      "escalate_to": "kyc_review"
+    },
+    {
+      "id": "suspected_fraud",
+      "condition": "The document looks forged, the selfie fails liveness, or the identity is already linked to fraud",
+      "handling": "Refer to a KYC analyst; tell the applicant nothing about the reason.",
+      "applies_to": [
+        "document_verification"
+      ],
+      "escalate_to": "kyc_review"
+    },
+    {
+      "id": "edd_evidence_missing",
+      "condition": "Source-of-funds or source-of-wealth evidence is missing for a PEP or high-risk customer",
+      "handling": "Ask the applicant for the listed evidence through notify_applicant; do not review or open the account.",
+      "applies_to": [
+        "enhanced_due_diligence"
+      ],
+      "escalate_to": "notify_applicant"
+    }
+  ],
+  "risks": [
+    {
+      "id": "sanctioned_person_onboarded",
+      "description": "A sanctioned person is given an account.",
+      "severity": "high",
+      "mitigation": "sanctions_no_auto_clear and screening_list_freshness; no account opens before screening (cdd_before_account).",
+      "applies_to": [
+        "screening",
+        "kyc_review"
+      ]
+    },
+    {
+      "id": "synthetic_identity",
+      "description": "An account is opened with a forged or synthetic identity.",
+      "severity": "high",
+      "mitigation": "Document authenticity, liveness and face match must all pass; any failure goes to an analyst.",
+      "applies_to": [
+        "document_verification"
+      ]
+    },
+    {
+      "id": "tipping_off",
+      "description": "A notice reveals to the applicant that a suspicion was reported.",
+      "severity": "high",
+      "mitigation": "no_tipping_off; the notice reviewer checks the wording of every notice after an MLRO exit.",
+      "applies_to": [
+        "mlro_referral",
+        "notify_applicant"
+      ]
+    },
+    {
+      "id": "biometric_data_breach",
+      "description": "Selfie videos or document images leak from platform storage.",
+      "severity": "high",
+      "mitigation": "biometric_data_deletion and pii_masked_in_logs; images are stored encrypted in the bank's region only.",
+      "applies_to": [
+        "document_verification"
+      ]
+    },
+    {
+      "id": "applicant_drop_off",
+      "description": "Applicants abandon onboarding because it takes too long or asks for documents repeatedly.",
+      "severity": "medium",
+      "mitigation": "Ask for every missing item in one notice; track the drop-off KPI.",
+      "applies_to": [
+        "application_capture",
+        "notify_applicant"
+      ]
+    }
+  ],
+  "regulations": [
+    {
+      "id": "aml_cft",
+      "name": "Anti-money laundering and counter-terrorist financing",
+      "requirement": "Identify and verify customers, apply a risk-based approach with enhanced due diligence for PEPs and high-risk customers, keep records, report suspicions and do not tip off (FATF Recommendations 10, 11, 12, 20 and 21)."
+    },
+    {
+      "id": "sanctions",
+      "name": "Financial sanctions",
+      "requirement": "Do not provide services to designated persons; screen before onboarding and resolve possible matches before opening an account."
+    },
+    {
+      "id": "data_protection",
+      "name": "Data protection",
+      "requirement": "Process personal and biometric data only with a lawful basis and explicit consent for biometrics, minimise what is kept and protect it in storage and logs."
+    }
+  ],
+  "data_entities": [
+    {
+      "name": "customer_profile",
+      "produced_by": "application_capture",
+      "classification": "pii",
+      "fields": [
+        "application_id (string)",
+        "customer_type (one of: individual, business, charity, trust)",
+        "full_name (string)",
+        "date_of_birth (date)",
+        "age (integer, years)",
+        "nationality (ISO 3166 country code)",
+        "residential_address (string)",
+        "country_of_residence (ISO 3166 country code)",
+        "occupation (string)",
+        "expected_monthly_deposits (number, GBP)",
+        "source_of_funds_declared (string)",
+        "product_requested (one of: current_account, savings_account)",
+        "channel (one of: mobile_app, web, branch)",
+        "contact_email (string)",
+        "phone (string, E.164)",
+        "consent_biometrics (boolean)",
+        "consent_timestamp (ISO 8601 timestamp)",
+        "existing_customer_id (string, empty when new)",
+        "existing_risk_band (one of: low, medium, high, none)",
+        "missing_documents (list of strings, empty when complete)"
+      ]
+    },
+    {
+      "name": "idv_result",
+      "produced_by": "document_verification",
+      "classification": "pii",
+      "fields": [
+        "document_type (one of: passport, driving_licence, national_id)",
+        "document_number_masked (string, last 4 characters)",
+        "issuing_country (ISO 3166 country code)",
+        "document_expired (boolean)",
+        "document_authentic (boolean)",
+        "liveness_passed (boolean)",
+        "face_match_score (number, 0-1, higher is a closer match)",
+        "address_verified (boolean)",
+        "vendor_reference (string)"
+      ]
+    },
+    {
+      "name": "screening_result",
+      "produced_by": "screening",
+      "classification": "pii",
+      "fields": [
+        "sanctions_match_score (integer, 0-100, highest match)",
+        "sanctions_list_matched (string, empty when none)",
+        "possible_matches (list of {name, list, score})",
+        "pep_match (boolean)",
+        "pep_category (one of: none, domestic, foreign, international_organisation, family_or_associate)",
+        "adverse_media_hits (integer, count)",
+        "lists_version_date (date)",
+        "screening_reference (string)"
+      ]
+    },
+    {
+      "name": "risk_assessment",
+      "produced_by": "risk_rating",
+      "classification": "internal",
+      "fields": [
+        "risk_score (integer, 0-100, higher is riskier)",
+        "risk_band (one of: low, medium, high)",
+        "risk_factors (list of {factor, value, points})",
+        "country_risk (one of: low, medium, high)",
+        "product_risk (one of: low, medium, high)",
+        "channel_risk (one of: low, medium, high)",
+        "monitoring_tier (one of: standard, enhanced)"
+      ]
+    },
+    {
+      "name": "edd_report",
+      "produced_by": "enhanced_due_diligence",
+      "classification": "pii",
+      "fields": [
+        "source_of_funds_evidence (list of document references)",
+        "source_of_wealth_summary (string)",
+        "evidence_gaps (list of strings, empty when complete)",
+        "pep_details (string, empty when not a PEP)",
+        "summary_for_analyst (string)"
+      ]
+    },
+    {
+      "name": "kyc_decision",
+      "produced_by": "risk_rating, kyc_review, mlro_referral",
+      "classification": "internal",
+      "fields": [
+        "outcome (one of: approve, refer, reject, report_suspicion, exit)",
+        "decided_by (one of: policy_rules, kyc_analyst, mlro)",
+        "reasons (list of strings)",
+        "senior_approval_by (string, required for PEP and high-risk approvals)",
+        "notice_wording (one of: standard, neutral)",
+        "decided_at (ISO 8601 timestamp)"
+      ]
+    },
+    {
+      "name": "sar_record",
+      "produced_by": "mlro_referral",
+      "classification": "internal",
+      "fields": [
+        "sar_filed (boolean)",
+        "sar_reference (string, empty when not filed)",
+        "filed_at (ISO 8601 timestamp)",
+        "mlro_rationale (string)"
+      ]
+    },
+    {
+      "name": "account_record",
+      "produced_by": "account_opening",
+      "classification": "financial",
+      "fields": [
+        "customer_id (string)",
+        "account_id (string)",
+        "account_number_masked (string, last 4 digits)",
+        "product (one of: current_account, savings_account)",
+        "monitoring_tier (one of: standard, enhanced)",
+        "opened_at (ISO 8601 timestamp)"
+      ]
+    },
+    {
+      "name": "welcome_message",
+      "produced_by": "welcome_communication",
+      "classification": "pii",
+      "fields": [
+        "channel (one of: push, email, sms)",
+        "sent_to (string)",
+        "content_summary (string)",
+        "sent_at (ISO 8601 timestamp)"
+      ]
+    },
+    {
+      "name": "applicant_notice",
+      "produced_by": "notify_applicant",
+      "classification": "pii",
+      "fields": [
+        "reason (one of: missing_documents, out_of_scope, edd_evidence_missing, rejected, relationship_declined)",
+        "requested_items (list of strings)",
+        "wording (one of: standard, neutral)",
+        "sent_to (string)",
+        "sent_at (ISO 8601 timestamp)"
+      ]
+    }
+  ],
+  "kpis": {
+    "business": [
+      {
+        "name": "Straight-through onboarding rate",
+        "target": ">= 70% of complete applications opened with no human review",
+        "description": "Share of applications approved by policy rules alone.",
+        "applies_to": [
+          "risk_rating"
+        ]
+      },
+      {
+        "name": "Time to open an account",
+        "target": "< 10 minutes for straight-through applications; < 2 working days for reviewed ones",
+        "description": "From submission to account_record.opened_at.",
+        "applies_to": [
+          "application_capture",
+          "account_opening"
+        ]
+      },
+      {
+        "name": "Application drop-off",
+        "target": "< 20% of started applications",
+        "description": "Applicants who never complete after a notice asking for documents or evidence.",
+        "applies_to": [
+          "application_capture",
+          "notify_applicant"
+        ]
+      },
+      {
+        "name": "Analyst review within SLA",
+        "target": ">= 95% of referrals decided within 1 working day",
+        "description": "Measures the human-in-the-loop queue.",
+        "applies_to": [
+          "kyc_review"
+        ]
+      },
+      {
+        "name": "Screening false-positive rate",
+        "target": "< 5% of screened applications raise an alert that is cleared",
+        "description": "Far above target means the match threshold needs tuning.",
+        "applies_to": [
+          "screening"
+        ]
+      }
+    ],
+    "technical": [
+      {
+        "name": "Automated path duration",
+        "target": "p95 < 3 minutes from submission to the risk rating",
+        "description": "Excludes time waiting for people or the applicant.",
+        "applies_to": [
+          "application_capture",
+          "document_verification",
+          "screening",
+          "risk_rating"
+        ]
+      },
+      {
+        "name": "Vendor call success",
+        "target": ">= 99.5% within the retry budget",
+        "description": "Identity verification and screening calls together.",
+        "applies_to": [
+          "document_verification",
+          "screening"
+        ]
+      },
+      {
+        "name": "Valid structured outputs",
+        "target": ">= 99% of agent outputs match their data entity on the first attempt",
+        "description": "Failures are retried once, then the step fails.",
+        "applies_to": [
+          "application_capture",
+          "enhanced_due_diligence",
+          "welcome_communication",
+          "notify_applicant"
+        ]
+      },
+      {
+        "name": "Model cost per application",
+        "target": "< GBP 0.40",
+        "description": "Model calls only; vendor fees are tracked separately.",
+        "applies_to": [
+          "application_capture",
+          "enhanced_due_diligence",
+          "welcome_communication",
+          "notify_applicant"
+        ]
+      }
+    ]
+  },
+  "subprocesses": [
+    {
+      "id": "sanctions_alert_handling",
+      "name": "Sanctions alert handling",
+      "stage": "screening"
+    },
+    {
+      "id": "enhanced_due_diligence_review",
+      "name": "Enhanced due diligence review",
+      "stage": "enhanced_due_diligence"
+    }
+  ],
+  "recommendation": {
+    "id": "rec_kyc_onboarding_01",
+    "title": "Straight-through KYC onboarding with analyst review for exceptions",
+    "phase": "phase_1",
+    "priority": 1,
+    "depends_on": [
+      "rec_document_capture_01"
+    ],
+    "related_to": [
+      "rec_transaction_monitoring_02"
+    ],
+    "pain_point": "Every application is checked by hand, which takes 3-5 days, and about a third of applicants abandon before their account is opened."
+  },
+  "intervention": {
+    "category": "artificial_intelligence",
+    "implementation_type": "hybrid",
+    "mode": "automate",
+    "type": "Agentic onboarding with rules-based decisions",
+    "description": "Agents extract data, assemble due diligence evidence and write communications; vendors verify and screen; rules rate risk and approve standard cases; people decide every exception."
+  },
+  "evidence": {
+    "source": "Interviews with the onboarding team and six months of application data",
+    "origin": "client_data",
+    "type": "explicit",
+    "confidence": "medium"
+  },
+  "value": {
+    "metrics_impacted": [
+      "Time to open an account",
+      "Application drop-off",
+      "Analyst hours per application"
+    ],
+    "expected_benefits": "Most applications opened in minutes instead of days, lower drop-off, and analysts focused on the referred minority.",
+    "benefit_basis": "estimate"
+  },
+  "feasibility": {
+    "rating": "medium",
+    "drivers": [
+      "Identity verification and screening vendors with APIs are already contracted",
+      "The KYC policy already defines risk factors and thresholds"
+    ],
+    "assumptions": [
+      "About 70% of applications are low or medium risk with no screening alert",
+      "Core banking exposes an account-creation API"
+    ],
+    "constraints": [
+      "Biometric data must stay in the bank's region",
+      "Model risk approval is needed before go-live"
+    ],
+    "effort_estimate": "12-16 weeks"
+  },
+  "execution_profile": {
+    "workflow_determinism": "fixed_steps",
+    "interaction_mode": "event_triggered",
+    "trigger": {
+      "type": "user_request",
+      "source": "Mobile app, website or branch tablet",
+      "schedule": "Continuous; no batch schedule"
+    },
+    "task_horizon": "long_running",
+    "input_variability": "mixed_formats",
+    "memory_need": "none",
+    "volume": {
+      "per_day": 1500,
+      "peak_per_hour": 250
+    },
+    "latency": {
+      "mode": "asynchronous",
+      "target": "< 10 minutes for straight-through applications"
+    },
+    "channels": [
+      "mobile_app",
+      "web",
+      "branch"
+    ]
+  },
+  "integrations": {
+    "systems": [
+      {
+        "id": "core_banking_system",
+        "name": "Core banking system",
+        "category": "core_banking",
+        "vendor": "In-house",
+        "access": "transact",
+        "operations": [
+          "create_customer",
+          "create_account"
+        ],
+        "integration_method": "REST API",
+        "auth_method": "oauth2",
+        "api_available": true
+      },
+      {
+        "id": "crm_system",
+        "name": "Customer relationship management",
+        "category": "crm",
+        "vendor": "In-house",
+        "access": "read",
+        "operations": [
+          "find_customer",
+          "get_risk_band"
+        ],
+        "integration_method": "REST API",
+        "auth_method": "oauth2",
+        "api_available": true
+      },
+      {
+        "id": "case_management_system",
+        "name": "Financial crime case management",
+        "category": "case_management",
+        "vendor": "In-house",
+        "access": "read_write",
+        "operations": [
+          "create_review_task",
+          "get_review_outcome",
+          "attach_evidence"
+        ],
+        "integration_method": "REST API",
+        "auth_method": "service_account",
+        "api_available": true
+      },
+      {
+        "id": "notification_service",
+        "name": "Customer notification service",
+        "category": "communications",
+        "vendor": "In-house",
+        "access": "write",
+        "operations": [
+          "send_email",
+          "send_push",
+          "send_sms"
+        ],
+        "integration_method": "REST API",
+        "auth_method": "api_key",
+        "api_available": true
+      }
+    ],
+    "connectors": [
+      {
+        "id": "idv_connector",
+        "name": "Identity verification connector",
+        "kind": "generated_tool",
+        "target": "idv_service",
+        "status": "to_build",
+        "endpoint": "https://idv.vendor.example/v2",
+        "auth": {
+          "method": "api_key",
+          "secret_ref": "vault:onboarding/idv_api_key",
+          "scopes": [
+            "verifications:create",
+            "verifications:read"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "verify_document_and_selfie",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          },
+          {
+            "name": "verify_address",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "screening_connector",
+        "name": "Screening connector",
+        "kind": "remote_mcp_server",
+        "target": "screening_service",
+        "status": "available",
+        "endpoint": "https://screening.vendor.example/mcp",
+        "auth": {
+          "method": "oauth2",
+          "secret_ref": "vault:onboarding/screening_client",
+          "scopes": [
+            "screening:run"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "screen_person",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "crm_connector",
+        "name": "CRM connector",
+        "kind": "workflow_activity",
+        "target": "crm_system",
+        "status": "needs_auth",
+        "endpoint": "https://crm.bank.internal/api",
+        "auth": {
+          "method": "oauth2",
+          "secret_ref": "vault:onboarding/crm_client",
+          "scopes": [
+            "customers:read"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "find_customer",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          },
+          {
+            "name": "get_risk_band",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "case_connector",
+        "name": "Case management connector",
+        "kind": "generated_tool",
+        "target": "case_management_system",
+        "status": "to_build",
+        "endpoint": "https://cases.bank.internal/api",
+        "auth": {
+          "method": "service_account",
+          "secret_ref": "vault:onboarding/case_service_account",
+          "scopes": [
+            "cases:write",
+            "cases:read"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "create_review_task",
+            "direction": "write",
+            "side_effect": "reversible",
+            "requires_approval": false
+          },
+          {
+            "name": "get_review_outcome",
+            "direction": "read",
+            "side_effect": "none",
+            "requires_approval": false
+          },
+          {
+            "name": "attach_evidence",
+            "direction": "write",
+            "side_effect": "reversible",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "core_banking_connector",
+        "name": "Core banking connector",
+        "kind": "workflow_activity",
+        "target": "core_banking_system",
+        "status": "needs_auth",
+        "endpoint": "https://core.bank.internal/api",
+        "auth": {
+          "method": "oauth2",
+          "secret_ref": "vault:onboarding/core_banking_client",
+          "scopes": [
+            "customers:create",
+            "accounts:create"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "create_customer",
+            "direction": "write",
+            "side_effect": "reversible",
+            "requires_approval": false
+          },
+          {
+            "name": "create_account",
+            "direction": "write",
+            "side_effect": "reversible",
+            "requires_approval": false
+          }
+        ]
+      },
+      {
+        "id": "notification_connector",
+        "name": "Notification connector",
+        "kind": "generated_tool",
+        "target": "notification_service",
+        "status": "to_build",
+        "endpoint": "https://notify.bank.internal/api",
+        "auth": {
+          "method": "api_key",
+          "secret_ref": "vault:onboarding/notify_api_key",
+          "scopes": [
+            "messages:send"
+          ],
+          "run_as": "service_account"
+        },
+        "operations": [
+          {
+            "name": "send_email",
+            "direction": "write",
+            "side_effect": "irreversible",
+            "requires_approval": false
+          },
+          {
+            "name": "send_push",
+            "direction": "write",
+            "side_effect": "irreversible",
+            "requires_approval": false
+          }
+        ]
+      }
+    ],
+    "third_party_services": [
+      {
+        "id": "idv_service",
+        "name": "Identity verification service",
+        "provider": "Contracted IDV vendor",
+        "service_type": "identity_verification",
+        "purpose": "Document authenticity, liveness, face match and address verification",
+        "endpoint": "https://idv.vendor.example/v2",
+        "auth_method": "api_key",
+        "data_shared": [
+          "pii",
+          "special_category"
+        ],
+        "dpa_in_place": true,
+        "fallback": "Refer to a KYC analyst for manual document checks",
+        "procurement_status": "contracted"
+      },
+      {
+        "id": "screening_service",
+        "name": "Sanctions, PEP and adverse media screening",
+        "provider": "Contracted screening vendor",
+        "service_type": "aml_screening",
+        "purpose": "Screen applicants against sanctions, PEP and adverse media lists",
+        "endpoint": "https://screening.vendor.example/mcp",
+        "auth_method": "oauth2",
+        "data_shared": [
+          "pii"
+        ],
+        "dpa_in_place": true,
+        "fallback": "Refer to a KYC analyst, who screens in the vendor's web portal",
+        "procurement_status": "contracted"
+      }
+    ]
+  },
+  "knowledge": {
+    "sources": [
+      {
+        "name": "KYC and customer due diligence policy",
+        "type": "policy",
+        "use": "validation_reference",
+        "location": "Policy library / Financial crime / KYC policy v7"
+      },
+      {
+        "name": "Country risk list",
+        "type": "master_data",
+        "use": "lookup",
+        "location": "Financial crime data mart, table country_risk"
+      },
+      {
+        "name": "Onboarding operating procedure",
+        "type": "sop",
+        "use": "rag_library",
+        "location": "Operations wiki / Retail onboarding SOP"
+      },
+      {
+        "name": "FATF Recommendations",
+        "type": "regulation",
+        "use": "grounding",
+        "location": "https://www.fatf-gafi.org/en/publications/Fatfrecommendations/Fatf-recommendations.html"
+      }
+    ]
+  },
+  "data": {
+    "input_artifacts": [
+      {
+        "name": "onboarding_application",
+        "formats": [
+          "json"
+        ],
+        "source": "Mobile app, website or branch tablet",
+        "standardised": true,
+        "sample_available": true
+      },
+      {
+        "name": "identity_document",
+        "formats": [
+          "jpg",
+          "png",
+          "pdf"
+        ],
+        "source": "Applicant upload or in-app camera",
+        "standardised": false,
+        "sample_available": true
+      },
+      {
+        "name": "proof_of_address",
+        "formats": [
+          "pdf",
+          "jpg",
+          "png"
+        ],
+        "source": "Applicant upload",
+        "standardised": false,
+        "sample_available": true
+      },
+      {
+        "name": "selfie_video",
+        "formats": [
+          "mp4",
+          "webm"
+        ],
+        "source": "In-app camera",
+        "standardised": true,
+        "sample_available": false
+      }
+    ],
+    "output_artifacts": [
+      {
+        "name": "account_record",
+        "format": "json",
+        "destination": "Core banking system"
+      },
+      {
+        "name": "kyc_file",
+        "format": "pdf",
+        "destination": "Financial crime case management, retained for 5 years after the relationship ends"
+      },
+      {
+        "name": "applicant_notice",
+        "format": "email",
+        "destination": "Applicant's contact email"
+      }
+    ],
+    "residency": "All personal and biometric data stays in the bank's home region",
+    "redaction_required": true
+  },
+  "agent_design": {
+    "primary_type": "task",
+    "patterns": [
+      "tool_using_react",
+      "reflective"
+    ],
+    "sub_agents": [
+      {
+        "name": "Application capture agent",
+        "role": "Extract and check application and document data",
+        "type": "task",
+        "stages": [
+          "application_capture"
+        ]
+      },
+      {
+        "name": "EDD research agent",
+        "role": "Assemble and summarise source-of-funds and source-of-wealth evidence",
+        "type": "goal",
+        "stages": [
+          "enhanced_due_diligence"
+        ]
+      },
+      {
+        "name": "Customer communications agent",
+        "role": "Write welcome messages and applicant notices",
+        "type": "task",
+        "stages": [
+          "welcome_communication",
+          "notify_applicant"
+        ]
+      },
+      {
+        "name": "Notice reviewer",
+        "role": "Check every notice against no_tipping_off before it is sent",
+        "type": "critic",
+        "stages": [
+          "notify_applicant"
+        ]
+      }
+    ],
+    "model_preference": "medium",
+    "max_tool_rounds": 6,
+    "mapping_rationale": "Steps are fixed and decisions are rules or people, so agents only extract, summarise and write. Notices need a reflective check because a wrong word can tip off a suspect."
+  },
+  "governance": {
+    "risk": {
+      "rating": "high",
+      "reason": "Financial-crime controls on personal and biometric data; a miss can onboard a sanctioned person.",
+      "categories": [
+        "financial_crime",
+        "privacy",
+        "customer_harm"
+      ]
+    },
+    "action_authority": "write",
+    "reversibility": "reversible",
+    "human_oversight": {
+      "model": "human_in_the_loop",
+      "applies_to": "threshold_based",
+      "threshold": "Every verification referral, screening alert and PEP or high-risk customer; plus a QA sample of straight-through approvals",
+      "sample_rate": 0.05,
+      "reviewer_role": "KYC analyst; MLRO for suspicions",
+      "approval_sla": "1 working day"
+    },
+    "validation": {
+      "criteria": [
+        "Every account has a verified identity, a screening result and a risk rating",
+        "Every decision records who decided and why",
+        "No notice after an MLRO exit contains a reason"
+      ],
+      "accuracy_threshold": ">= 98% agreement between straight-through approvals and analyst decisions on the QA sample"
+    },
+    "segregation_of_duties": [
+      "The analyst who decides a referral cannot be the one who gives senior approval for it.",
+      "Only the MLRO decides whether a suspicious activity report is filed."
+    ],
+    "governance_controls": [
+      "Monthly review of risk-rating thresholds by Financial Crime Compliance",
+      "Quarterly QA sample report to the MLRO",
+      "Model risk approval before go-live and after any model change"
+    ]
+  },
+  "operations": {
+    "business_owner": "Head of Retail Onboarding",
+    "fallback_mode": "Route every application to manual KYC review in case management",
+    "rollout": "phased"
+  },
+  "glossary": {
+    "KYC": "Know your customer: verifying who a customer is and understanding their financial-crime risk.",
+    "CDD": "Customer due diligence: identifying and verifying the customer and understanding the purpose of the relationship.",
+    "EDD": "Enhanced due diligence: extra checks, including source of funds and wealth, for PEPs and high-risk customers.",
+    "PEP": "Politically exposed person: someone with a prominent public function, or their family or close associates.",
+    "MLRO": "Money Laundering Reporting Officer: the person who decides on suspicious activity reports.",
+    "SAR": "Suspicious activity report, filed with the financial intelligence unit.",
+    "Tipping off": "Telling someone that a suspicion about them has been reported or is being investigated.",
+    "Liveness": "A check that the selfie is a live person, not a photo, mask or replay.",
+    "Straight-through": "Opened by policy rules with no human review."
+  }
+}

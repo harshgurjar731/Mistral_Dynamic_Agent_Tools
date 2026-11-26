@@ -115,6 +115,7 @@ def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> l
                    if control.get("id") in (st.get("controls") or [])}
         steps = sorted({step for st in stages for step in stage_steps.get(st, [])})
         trace.append({"control": control.get("id"), "description": control.get("description"),
+                      "level": control.get("level"),
                       "stages": sorted(stages), "steps": steps, "covered": bool(steps)})
         if steps:
             used.append({"ref": control["_ref"],
@@ -124,7 +125,8 @@ def _process_coverage(ctx: PipelineContext, layer: str, step_ids: set[str]) -> l
                                                        + ("blocked" if blocking else "warned")})
             issues.append({
                 "severity": "error" if blocking else "warning", "code": "process_control_uncovered",
-                "message": (f"Mandatory process control '{control.get('id')}' "
+                "message": (("Business control" if control.get("level") == "business"
+                             else "Mandatory process control") + f" '{control.get('id')}' "
                             f"({control.get('description') or ''}) applies to stage(s) "
                             f"{', '.join(sorted(stages)) or '—'}, but no step performs them."),
                 "step_id": None,

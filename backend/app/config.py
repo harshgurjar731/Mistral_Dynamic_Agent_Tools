@@ -147,6 +147,8 @@ class Settings(BaseSettings):
     PROCESS_KNOWLEDGE_DEFAULT: bool = False
     PROCESS_DOC_MAX_KB: int = 512
     PROCESS_MATCH_MIN_SCORE: float = 3.0
+    #: Largest process-knowledge block one planning decision is shown (characters).
+    PROCESS_VIEW_CHARS: int = 10000
 
     # Knowledge (Knowledge page): build guidance and reference items.
     # GUIDANCE_DEFAULT_MODE: auto — used whenever active guidance is in scope;

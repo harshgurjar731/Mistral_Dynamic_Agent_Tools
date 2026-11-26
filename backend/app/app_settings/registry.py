@@ -541,6 +541,12 @@ DEFS: list[SettingDef] = [
                "it is used. Higher: fewer, surer matches. The Ontology → Scope tab shows the "
                "scores for any goal.", type="float", minimum=0, maximum=50,
                impact=("Process matching",), used_in=("process_knowledge/resolver.py",)),
+    SettingDef("PROCESS_VIEW_CHARS", "process_knowledge", "Process text per decision",
+               "The most process-document text one planning decision is shown. A larger document "
+               "first loses stage inputs and outputs, then the end of its longest section; short "
+               "sections such as mandatory controls stay whole.", type="int", minimum=2000,
+               maximum=40000, unit="characters",
+               impact=("Workflow planner", "Agent creation"), used_in=("process/context.py — render",)),
 
     # ── Build guidance ─────────────────────────────────────────────────
     SettingDef("GUIDANCE_DEFAULT_MODE", "guidance", "Use guidance",
@@ -1125,6 +1131,9 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "PROCESS_MATCH_MIN_SCORE": (
         "Any process that matches a single word may be used — wrong processes can be picked.",
         "Only near-exact matches are used — process knowledge is rarely found automatically."),
+    "PROCESS_VIEW_CHARS": (
+        "Decisions see only a short slice of the process — stages and controls get cut.",
+        "Decisions see the whole of even large processes — every planning call costs more tokens."),
     "GUIDANCE_PACK_SIZE": (
         "Only the single best guidance item is considered per build.",
         "Up to 200 items considered — most decisions see more, weaker guidance."),
