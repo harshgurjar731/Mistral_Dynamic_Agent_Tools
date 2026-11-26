@@ -12,7 +12,9 @@ Order of checks for a protected path:
    origin). Cookies are also ``SameSite=Lax``.
 2. The route policy (``permissions.match``) decides who may call it; an
    unmatched ``/api`` path is denied.
-3. The session cookie for that kind of caller is resolved to a principal.
+3. The session cookie for that kind of caller is resolved to a principal. An
+   admin cookie is ignored while a *different* person is signed in as a user
+   on the same browser (``admin_for``).
 4. The principal's permissions are checked.
 """
 
@@ -109,6 +111,35 @@ async def resolve(kind: str, token: Optional[str]) -> Optional[Principal]:
     return await anyio.to_thread.run_sync(store.resolve_session, kind, token)
 
 
+def same_person(a: Principal, b: Principal) -> bool:
+    return (a.email or "").strip().lower() == (b.email or "").strip().lower()
+
+
+def admin_for(user: Optional[Principal], admin: Optional[Principal]) -> Optional[Principal]:
+    """The admin session, but only for the person using this browser.
+
+    A browser can hold a user cookie and an admin cookie at once (an admin
+    signed in to the console, then someone else signed in to the app). The
+    admin cookie then belongs to somebody else, so it grants nothing: admin
+    rights apply only when no user is signed in, or the user is the admin.
+    """
+    if admin is None:
+        return None
+    if user is not None and not same_person(user, admin):
+        return None
+    return admin
+
+
+async def _resolve_admin(jar: dict, user: Optional[Principal] = None, *,
+                         user_known: bool = False) -> Optional[Principal]:
+    admin = await resolve("admin", jar.get(cfg.ADMIN_COOKIE))
+    if admin is None:
+        return None
+    if not user_known:
+        user = await resolve("user", jar.get(cfg.USER_COOKIE))
+    return admin_for(user, admin)
+
+
 def _api_path(path: str) -> Optional[str]:
     from app.config import settings
 
@@ -143,7 +174,7 @@ class AuthMiddleware:
 
         if protected_static:
             principal = await resolve("user", jar.get(cfg.USER_COOKIE)) \
-                or await resolve("admin", jar.get(cfg.ADMIN_COOKIE))
+                or await _resolve_admin(jar, None, user_known=True)
             if principal is None:
                 return await _send_json(send, 401, {"detail": "Sign in to continue.",
                                                     "code": "unauthenticated"})
@@ -160,15 +191,16 @@ class AuthMiddleware:
             return await self.app(scope, receive, send)
 
         principal: Optional[Principal] = None
+        # An admin cookie counts only for the person signed in here (admin_for).
         if rule.access == policy.ADMIN:
-            principal = await resolve("admin", jar.get(cfg.ADMIN_COOKIE))
+            principal = await _resolve_admin(jar)
         elif rule.access == policy.ANY:
             principal = await resolve("user", jar.get(cfg.USER_COOKIE)) \
-                or await resolve("admin", jar.get(cfg.ADMIN_COOKIE))
+                or await _resolve_admin(jar, None, user_known=True)
         else:
             principal = await resolve("user", jar.get(cfg.USER_COOKIE))
             if principal is None and rule.admin_ok:
-                principal = await resolve("admin", jar.get(cfg.ADMIN_COOKIE))
+                principal = await _resolve_admin(jar, None, user_known=True)
 
         if principal is None:
             what = "an admin" if rule.access == policy.ADMIN else "your account"

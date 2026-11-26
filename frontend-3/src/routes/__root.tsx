@@ -261,8 +261,8 @@ function GuardedOutlet({ user, canEditSettings }: { user: SessionUser; canEditSe
     <>
       {settings && !canEditSettings ? (
         <div className="border-b border-amber/30 bg-amber/10 px-4 py-2 text-center text-xs text-amber">
-          Read-only: changing platform settings needs a platform admin signed in to the admin
-          console.
+          Platform settings are read-only here: changing them needs a platform admin signed in to
+          the admin console. Document templates, Tool safety and Vault follow your workspace role.
         </div>
       ) : null}
       <Outlet />

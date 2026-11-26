@@ -261,7 +261,8 @@ function IndustryKnowledgePage() {
         </div>
       ) : (
         <div className="mt-6 grid gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
-          <GlassPanel className="h-fit p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-6rem)]">
+          {/* A bounded flex column, so the tree scrolls inside it however much is expanded. */}
+          <GlassPanel className="flex max-h-[70vh] min-w-0 flex-col self-start overflow-hidden p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-6rem)]">
             {tree.isLoading ? (
               <TableSkeleton rows={8} />
             ) : index.roots.length ? (

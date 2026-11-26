@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.auth import config as cfg
 from app.auth import store
 from app.auth.context import Principal
-from app.auth.middleware import client_ip, cookies, is_https
+from app.auth.middleware import admin_for, client_ip, cookies, is_https, same_person
 from app.auth.store import AuthError
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -40,6 +40,25 @@ def set_session_cookie(response: Response, request: Request, kind: str, token: s
 def clear_session_cookie(response: Response, request: Request, kind: str) -> None:
     name = cfg.ADMIN_COOKIE if kind == "admin" else cfg.USER_COOKIE
     response.delete_cookie(name, path="/", httponly=True, secure=_secure(request), samesite="lax")
+
+
+def end_other_person(request: Request, response: Response, kind: str, token: str) -> None:
+    """One person per browser: signing in as ``kind`` ends the *other* kind of
+    session on this browser when it belongs to someone else, so an admin
+    session left open can't lend its rights to the next person who signs in
+    (and the reverse). The same person keeps both sessions."""
+    other = "user" if kind == "admin" else "admin"
+    other_cookie = cfg.USER_COOKIE if other == "user" else cfg.ADMIN_COOKIE
+    other_token = cookies(request.scope).get(other_cookie)
+    if not other_token:
+        return
+    me = store.resolve_session(kind, token)
+    them = store.resolve_session(other, other_token)
+    if them is not None and me is not None and same_person(me, them):
+        return
+    if them is not None:
+        store.logout(other_token, actor=them, ip=client_ip(request.scope))
+    clear_session_cookie(response, request, other)
 
 
 def _meta(request: Request) -> dict:
@@ -103,8 +122,12 @@ class AcceptBody(BaseModel):
 
 @router.get("/session")
 def session(request: Request):
-    """Who is signed in on this browser, as a user and/or as an admin."""
-    user, admin = _user(request), _admin(request)
+    """Who is signed in on this browser, as a user and/or as an admin.
+
+    An admin session is reported only when it belongs to the signed-in user
+    (or no user is signed in), the same rule the middleware applies."""
+    user = _user(request)
+    admin = admin_for(user, _admin(request))
     return {"user": principal_payload(user) if user else None,
             "admin": principal_payload(admin) if admin else None}
 
@@ -131,6 +154,7 @@ def check(request: Request):
 def login(body: LoginBody, request: Request, response: Response):
     result = store.login("user", body.email, body.password, **_meta(request))
     set_session_cookie(response, request, "user", result["token"])
+    end_other_person(request, response, "user", result["token"])
     return {"ok": True, "must_change_password": result["must_change_password"]}
 
 
@@ -190,4 +214,5 @@ def link_info(token: str):
 def accept_link(token: str, body: AcceptBody, request: Request, response: Response):
     result = store.accept_link(token, password=body.password, name=body.name, **_meta(request))
     set_session_cookie(response, request, result["account"], result["token"])
+    end_other_person(request, response, result["account"], result["token"])
     return {"ok": True, "account": result["account"]}

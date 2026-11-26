@@ -114,7 +114,7 @@ export function IndustryTree({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="relative mb-2">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -136,7 +136,7 @@ export function IndustryTree({
       >
         <Layers className="size-3.5" /> All industries
       </button>
-      <ul className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
+      <ul className="custom-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
         {index.roots.map((r) => row(r, 0))}
       </ul>
       <p className="mt-2 border-t border-border/40 pt-2 text-[10px] leading-relaxed text-muted-foreground">

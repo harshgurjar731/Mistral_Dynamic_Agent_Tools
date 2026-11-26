@@ -1,0 +1,46 @@
+{
+  "about": "Run inputs for the mortgage affordability workflow (test_assets/industry_knowledge/README.md). Every value the workflow needs is here: no credit bureau, property valuation, email or any other third-party service is involved. age and postcode are deliberately present: the industry knowledge prohibits using them, so they must not change or explain any decision.",
+  "applications": [
+    {
+      "application_id": "APP-1001",
+      "gross_annual_income": 96000,
+      "existing_monthly_debt": 250,
+      "property_value": 400000,
+      "loan_amount": 300000,
+      "contract_rate_pct": 4.25,
+      "term_years": 30,
+      "age": 34,
+      "postcode": "M1 4BT"
+    },
+    {
+      "application_id": "APP-1002",
+      "gross_annual_income": 72000,
+      "existing_monthly_debt": 400,
+      "property_value": 320000,
+      "loan_amount": 288000,
+      "contract_rate_pct": 3.5,
+      "term_years": 35,
+      "age": 61,
+      "postcode": "LS6 2AB"
+    },
+    {
+      "application_id": "APP-1003",
+      "gross_annual_income": 48000,
+      "existing_monthly_debt": 650,
+      "property_value": 250000,
+      "loan_amount": 240000,
+      "contract_rate_pct": 4.75,
+      "term_years": 25,
+      "age": 23,
+      "postcode": "B12 9QQ"
+    }
+  ],
+  "expected": {
+    "APP-1001": {"stressed_rate_pct": 7.25, "monthly_payment_gbp": 2046.53, "ltv_pct": 75.0, "dti_pct": 28.7,
+                 "decision": "approve", "reason_codes": []},
+    "APP-1002": {"stressed_rate_pct": 7.0, "monthly_payment_gbp": 1839.91, "ltv_pct": 90.0, "dti_pct": 37.3,
+                 "decision": "refer", "reason_codes": ["LTV_REFER_85_95"]},
+    "APP-1003": {"stressed_rate_pct": 7.75, "monthly_payment_gbp": 1812.79, "ltv_pct": 96.0, "dti_pct": 61.6,
+                 "decision": "decline", "reason_codes": ["LTV_ABOVE_95", "DTI_ABOVE_45"]}
+  }
+}

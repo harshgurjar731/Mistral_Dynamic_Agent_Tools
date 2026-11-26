@@ -480,20 +480,12 @@ class WorkflowRegistrationLayer(WorkflowStepLayer):
                 "Content-Type": "application/json",
             }
 
-            existing_id = None
-            try:
-                r = httpx.get(
-                    "https://api.mistral.ai/v1/workflows",
-                    headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
-                    timeout=8.0,
-                )
-                if r.status_code == 200:
-                    for wf in r.json().get("workflows", []):
-                        if wf.get("name") == workflow_name:
-                            existing_id = wf.get("id")
-                            break
-            except Exception as e:
-                logger.warning("Failed to list existing workflows: %s", e)
+            # By name, then across every page of the listing — the first page
+            # alone holds only the 50 oldest workflows.
+            from app.services.remote_workflows import find_remote_workflow
+
+            existing = find_remote_workflow(workflow_name, api_key=current_mistral_api_key())
+            existing_id = existing.get("id") if existing else None
 
             # worker_deployment is what makes the Mistral server route execution
             # tasks to our worker's queue.

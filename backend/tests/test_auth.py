@@ -589,3 +589,96 @@ def test_successful_sign_ins_do_not_use_up_the_address_limit(auth_db, monkeypatc
     _new_active_user()
     for _ in range(12):
         assert store.login("user", "dev@example.com", "correct horse battery", ip="10.9.9.9")
+
+
+# ── One person per browser ──────────────────────────────────────────────────
+
+def _ready_admin(auth_db, email="root@example.com"):
+    """An admin who can sign in and act at once (no forced password change)."""
+    from app.auth.models import Admin
+
+    store.create_admin_with_password(email=email, name="Root", password="a long admin passphrase")
+    with auth_db() as db:
+        row = db.query(Admin).filter(Admin.email == email).one()
+        row.must_change_password = False
+        db.commit()
+
+
+def _sign_in(client, kind, email, password):
+    path = "/api/admin/auth/login" if kind == "admin" else "/api/auth/login"
+    r = client.post(path, json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    from app.auth import config as cfg
+
+    return client.cookies.get(cfg.ADMIN_COOKIE if kind == "admin" else cfg.USER_COOKIE)
+
+
+@pytest.mark.real_auth
+def test_user_sign_in_ends_another_persons_admin_session(http, auth_db):
+    """An admin left signed in must not lend admin rights to the next person."""
+    from app.auth import config as cfg
+
+    _ready_admin(auth_db)
+    _new_active_user(role="viewer")
+    admin_token = _sign_in(http, "admin", "root@example.com", "a long admin passphrase")
+    assert http.get("/api/admin/overview").status_code == 200
+
+    _sign_in(http, "user", "dev@example.com", "correct horse battery")
+    assert cfg.ADMIN_COOKIE not in http.cookies
+    assert http.get("/api/auth/session").json()["admin"] is None
+    r = http.put("/api/settings", json={"backend": {}}, headers={"Origin": "http://testserver"})
+    assert r.status_code == 401
+    # Revoked on the server too, not only dropped from the browser.
+    assert store.resolve_session("admin", admin_token) is None
+
+
+@pytest.mark.real_auth
+def test_admin_sign_in_ends_another_persons_user_session(http, auth_db):
+    from app.auth import config as cfg
+
+    _ready_admin(auth_db)
+    _new_active_user(role="viewer")
+    user_token = _sign_in(http, "user", "dev@example.com", "correct horse battery")
+    _sign_in(http, "admin", "root@example.com", "a long admin passphrase")
+    assert cfg.USER_COOKIE not in http.cookies
+    assert store.resolve_session("user", user_token) is None
+    assert http.get("/api/admin/overview").status_code == 200
+
+
+@pytest.mark.real_auth
+def test_another_persons_admin_cookie_grants_nothing(http, auth_db):
+    """Cookies already mixed (e.g. from before sign-in ended the other session):
+    the admin cookie is ignored everywhere while a different user is signed in."""
+    import app.main
+    from fastapi.testclient import TestClient
+    from app.auth import config as cfg
+
+    _ready_admin(auth_db)
+    _new_active_user(role="viewer")
+    admin_token = _sign_in(TestClient(app.main.app, base_url="http://testserver"),
+                           "admin", "root@example.com", "a long admin passphrase")
+    user_token = _sign_in(http, "user", "dev@example.com", "correct horse battery")
+    http.cookies.set(cfg.ADMIN_COOKIE, admin_token)
+
+    o = {"Origin": "http://testserver"}
+    assert http.put("/api/settings", json={"backend": {}}, headers=o).status_code == 401
+    assert http.post("/api/settings/reset", json={}, headers=o).status_code == 401
+    assert http.get("/api/admin/overview").status_code == 401
+    session = http.get("/api/auth/session").json()
+    assert session["admin"] is None and session["user"]["email"] == "dev@example.com"
+    # The user stays signed in under their own role.
+    assert store.resolve_session("user", user_token) is not None
+
+
+@pytest.mark.real_auth
+def test_same_person_keeps_both_sessions(http, auth_db):
+    from app.auth import config as cfg
+
+    _ready_admin(auth_db, email="dev@example.com")
+    _new_active_user(role="viewer")
+    _sign_in(http, "admin", "dev@example.com", "a long admin passphrase")
+    _sign_in(http, "user", "dev@example.com", "correct horse battery")
+    assert cfg.ADMIN_COOKIE in http.cookies and cfg.USER_COOKIE in http.cookies
+    session = http.get("/api/auth/session").json()
+    assert session["admin"]["email"] == "dev@example.com"
+    assert http.get("/api/admin/overview").status_code == 200

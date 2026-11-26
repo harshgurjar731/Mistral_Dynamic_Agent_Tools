@@ -22,7 +22,12 @@ from app.auth.context import current_principal
 from app.auth.middleware import client_ip, cookies
 from app.auth.permissions import PERMISSIONS, SYSTEM_ROLES
 from app.auth.store import AuthError
-from app.routes.auth import clear_session_cookie, principal_payload, set_session_cookie
+from app.routes.auth import (
+    clear_session_cookie,
+    end_other_person,
+    principal_payload,
+    set_session_cookie,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,7 @@ def admin_login(body: LoginBody, request: Request, response: Response):
     result = store.login("admin", body.email, body.password, ip=client_ip(request.scope),
                          user_agent=request.headers.get("user-agent"))
     set_session_cookie(response, request, "admin", result["token"])
+    end_other_person(request, response, "admin", result["token"])
     return {"ok": True, "must_change_password": result["must_change_password"]}
 
 

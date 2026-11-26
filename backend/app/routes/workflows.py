@@ -32,7 +32,7 @@ from app.services.workflow_engine.engine import (
     save_workflow, get_workflow, list_workflows, execute_workflow,
 )
 from app.services.workflow_engine.validation import validate_workflow, format_errors
-from app.services import workflow_planner
+from app.services import remote_workflows, workflow_planner
 from app.services.mistral_workflows_compiler import (
     WorkflowCompileError,
     compile_workflow_to_python,
@@ -101,12 +101,8 @@ def _get_mistral_workflow_id(workflow_name: str) -> str | None:
     if local and local.id and local.is_deployed:
         return local.id  # fast-path from local cache
 
-    resp = _mistral_get("/v1/workflows")
-    if resp and resp.status_code == 200:
-        for wf in resp.json().get("workflows", []):
-            if wf.get("name") == workflow_name:
-                return wf.get("id")
-    return None
+    remote = remote_workflows.find_remote_workflow(workflow_name)
+    return remote.get("id") if remote else None
 
 
 # ── Plan ──────────────────────────────────────────────────────────────────────
@@ -651,35 +647,34 @@ async def list_all_workflows():
     deleted = deleted_workflow_names()
 
     try:
-        resp = _mistral_get("/v1/workflows")
-        if resp and resp.status_code == 200:
-            for rw in resp.json().get("workflows", []):
-                name = rw.get("name")
-                if not name:
-                    continue
-                if name in local_dict:
-                    local_dict[name].is_deployed = True
-                    local_dict[name].id = rw.get("id")
-                    # Archived here or there counts as archived: the remote
-                    # archive runs in the background and can lag or fail, and
-                    # it used to overwrite a local archive back to active.
-                    local_dict[name].archived = bool(
-                        local_dict[name].archived or rw.get("archived", False)
-                    )
-                elif name in deleted:
-                    continue
-                else:
-                    local_dict[name] = WorkflowDefinition(
-                        id=rw.get("id"),
-                        name=name,
-                        description=rw.get("description", ""),
-                        steps=[],
-                        entry_step="",
-                        is_deployed=True,
-                        archived=rw.get("archived", False),
-                        created_at=rw.get("created_at"),
-                        updated_at=rw.get("updated_at"),
-                    )
+        # Every page: the first one holds only the 50 oldest workflows.
+        for rw in await asyncio.to_thread(remote_workflows.list_remote_workflows):
+            name = rw.get("name")
+            if not name:
+                continue
+            if name in local_dict:
+                local_dict[name].is_deployed = True
+                local_dict[name].id = rw.get("id")
+                # Archived here or there counts as archived: the remote
+                # archive runs in the background and can lag or fail, and
+                # it used to overwrite a local archive back to active.
+                local_dict[name].archived = bool(
+                    local_dict[name].archived or rw.get("archived", False)
+                )
+            elif name in deleted:
+                continue
+            else:
+                local_dict[name] = WorkflowDefinition(
+                    id=rw.get("id"),
+                    name=name,
+                    description=rw.get("description", ""),
+                    steps=[],
+                    entry_step="",
+                    is_deployed=True,
+                    archived=rw.get("archived", False),
+                    created_at=rw.get("created_at"),
+                    updated_at=rw.get("updated_at"),
+                )
     except Exception as e:
         logger.warning("Failed to fetch remote workflows: %s", e)
 
@@ -693,27 +688,24 @@ async def get_workflow_detail(workflow_name: str):
     workflow = get_workflow(workflow_name)
 
     # Also fetch remote info
-    resp = _mistral_get("/v1/workflows")
-    if resp and resp.status_code == 200:
-        for rw in resp.json().get("workflows", []):
-            if rw.get("name") == workflow_name:
-                if workflow:
-                    workflow.is_deployed = True
-                    workflow.id = rw.get("id")
-                    workflow.archived = rw.get("archived", False)
-                else:
-                    workflow = WorkflowDefinition(
-                        id=rw.get("id"),
-                        name=workflow_name,
-                        description=rw.get("description", ""),
-                        steps=[],
-                        entry_step="",
-                        is_deployed=True,
-                        archived=rw.get("archived", False),
-                        created_at=rw.get("created_at"),
-                        updated_at=rw.get("updated_at"),
-                    )
-                break
+    rw = await asyncio.to_thread(remote_workflows.find_remote_workflow, workflow_name)
+    if rw:
+        if workflow:
+            workflow.is_deployed = True
+            workflow.id = rw.get("id")
+            workflow.archived = rw.get("archived", False)
+        else:
+            workflow = WorkflowDefinition(
+                id=rw.get("id"),
+                name=workflow_name,
+                description=rw.get("description", ""),
+                steps=[],
+                entry_step="",
+                is_deployed=True,
+                archived=rw.get("archived", False),
+                created_at=rw.get("created_at"),
+                updated_at=rw.get("updated_at"),
+            )
 
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow '{workflow_name}' not found")
@@ -1153,16 +1145,14 @@ REGISTRATION_POLL_SECONDS = 1.5
 
 
 def _find_remote_workflow(workflow_name: str) -> dict | None:
-    """Look a workflow up on Mistral by name. Returns the record or None."""
-    resp = _mistral_get("/v1/workflows")
-    if resp and resp.status_code == 200:
-        try:
-            for wf in resp.json().get("workflows", []):
-                if wf.get("name") == workflow_name:
-                    return wf
-        except Exception as e:
-            logger.warning("Could not parse /v1/workflows response: %s", e)
-    return None
+    """Look a workflow up on Mistral by name. Returns the record or None.
+
+    Asks for it by name and falls back to the full, all-pages listing. Reading
+    only the first page of ``/v1/workflows`` (50 workflows, oldest first) missed
+    newly registered workflows, so publishing kept waiting for the worker even
+    though the workflow was registered and ran.
+    """
+    return remote_workflows.find_remote_workflow(workflow_name)
 
 
 def _sync_remote_metadata(remote_id: str, workflow: WorkflowDefinition) -> None:

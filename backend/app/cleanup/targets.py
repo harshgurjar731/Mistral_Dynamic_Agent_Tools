@@ -292,10 +292,12 @@ def _compiled_workflows() -> list[Path]:
 
 
 async def _remote_workflows() -> list[dict]:
-    async with _mistral() as http:
-        resp = await http.get("/v1/workflows")
-    resp.raise_for_status()
-    return [w for w in resp.json().get("workflows", []) if isinstance(w, dict)]
+    """Every workflow on Mistral: the listing is cursor-paged, 50 at a time."""
+    from app.services.remote_workflows import list_remote_workflows
+
+    return await asyncio.to_thread(
+        list_remote_workflows, api_key=settings.MISTRAL_API_KEY, timeout=_TIMEOUT
+    )
 
 
 async def _count_workflows() -> Counts:

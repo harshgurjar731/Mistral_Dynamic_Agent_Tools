@@ -11,6 +11,8 @@ oversight placed, reviews decided.
 | `recommendations/p2p_recommendations_enriched.json` | 5 recommendations in the structured format, each exercising a different path (below) |
 | `process_documents/invoice_extraction_v2.json` | A template-v2 process document with integrations, a connector that needs approval, and exceptions-only review |
 | `run_inputs/invoice_inputs.json` | A clean invoice and an exception invoice to run the built workflow on |
+| `industry_knowledge/` | Industry knowledge in planning and code: a mortgage affordability pack, workflow and agent prompts, no third-party services — see its `README.md` |
+| `run_inputs/mortgage_affordability_inputs.json` | Three mortgage applications (approve, refer, decline) with exact expected outputs |
 | `scripts/smoke_test.py` | Automated API checks against a running backend |
 
 All files were checked against the backend: the guidance loads, the process document is

@@ -1,0 +1,95 @@
+{
+  "format": "industry-knowledge-pack/v1",
+  "node": "domain.lending",
+  "jurisdiction": "UK",
+  "source": "Test pack: UK residential mortgage affordability rules (for testing the Industry knowledge feature, not legal advice)",
+  "entries": [
+    {
+      "node": "domain.lending.mortgage",
+      "category": "regulation",
+      "force": "mandatory",
+      "title": "Affordability is assessed at a stressed interest rate",
+      "body": "Affordability must be assessed at the stressed rate, never the contract rate. Stressed rate = the higher of (contract rate + 3.00 percentage points) and 7.00%. Example: a 3.50% contract rate is assessed at 7.00%, a 4.25% rate at 7.25%.",
+      "as_of": "2026-01",
+      "tags": ["stress test", "stressed rate", "affordability", "interest rate"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "metric",
+      "force": "informational",
+      "title": "Loan-to-value (LTV)",
+      "body": "LTV % = loan amount / property value x 100, rounded half-up to 1 decimal place.",
+      "tags": ["ltv", "loan to value"]
+    },
+    {
+      "category": "metric",
+      "force": "informational",
+      "title": "Stressed debt-to-income (DTI)",
+      "body": "DTI % = (existing monthly debt payments + the new monthly mortgage payment at the stressed rate) / (gross annual income / 12) x 100, rounded half-up to 1 decimal place.",
+      "tags": ["dti", "debt to income", "affordability"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "definition",
+      "force": "informational",
+      "title": "Monthly repayment (annuity) formula",
+      "body": "Monthly payment = L x r / (1 - (1 + r)^-n), where L is the loan amount, r = stressed annual rate / 12 / 100 and n = term in months. Round to 2 decimal places (GBP).",
+      "tags": ["monthly payment", "repayment", "annuity", "mortgage payment"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "business_rule",
+      "force": "mandatory",
+      "title": "Decline above 95% LTV or 45% stressed DTI",
+      "body": "An application is declined when LTV is above 95.0% or stressed DTI is above 45.0%. A decline is final for the automated assessment and carries every reason code that applies.",
+      "tags": ["decline", "ltv", "dti", "threshold"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "business_rule",
+      "force": "recommended",
+      "title": "Refer between 85% and 95% LTV, or 40% to 45% DTI",
+      "body": "An application that is not declined is referred to a senior underwriter when LTV is above 85.0% and at most 95.0%, or stressed DTI is from 40.0% to 45.0% inclusive. Otherwise it is approved.",
+      "tags": ["refer", "referral", "senior underwriter", "ltv", "dti"]
+    },
+    {
+      "category": "regulation",
+      "force": "mandatory",
+      "title": "Every decline or referral records fixed reason codes",
+      "body": "Each decline or referral must record its reasons using only these codes: LTV_ABOVE_95, DTI_ABOVE_45, LTV_REFER_85_95, DTI_REFER_40_45. An approval has no reason codes.",
+      "tags": ["reason codes", "explainability", "audit"]
+    },
+    {
+      "category": "regulation",
+      "force": "prohibited",
+      "title": "Protected characteristics are never decision factors",
+      "body": "Age, gender, marital status, nationality, ethnicity and postcode must never be used in, or mentioned as a reason for, a lending decision, even when they are present in the application data.",
+      "tags": ["fair lending", "discrimination", "protected characteristics", "age", "postcode"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "standard",
+      "force": "recommended",
+      "title": "Amounts in GBP to 2 decimals, percentages to 1 decimal",
+      "body": "Monetary amounts are GBP with 2 decimal places; LTV and DTI are percentages with 1 decimal place; rates are percentages with 2 decimal places.",
+      "tags": ["format", "gbp", "rounding", "decimals"]
+    },
+    {
+      "node": "domain.lending.mortgage",
+      "category": "regulation",
+      "force": "mandatory",
+      "jurisdiction": "US",
+      "title": "Qualified Mortgage DTI cap of 43%",
+      "body": "DECOY FOR THE JURISDICTION FILTER: a US-only rule capping DTI at 43%. With 'Jurisdictions in scope' set to UK it must not reach the plan.",
+      "tags": ["qm", "dti", "us"]
+    },
+    {
+      "node": "domain.lending.vehicle_finance",
+      "category": "definition",
+      "force": "informational",
+      "title": "Balloon payment",
+      "body": "DECOY FOR SCOPING: a large final payment at the end of a vehicle finance agreement (PCP). A mortgage plan must not receive it.",
+      "tags": ["balloon", "pcp", "vehicle"]
+    }
+  ]
+}

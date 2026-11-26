@@ -13,7 +13,6 @@ Everything here lands on ``ctx.workflow_spec.inventory`` for the layers after.
 import asyncio
 import logging
 
-import httpx
 
 from app.core.context import PipelineContext
 from app.dependencies import current_mistral_api_key
@@ -76,17 +75,18 @@ class ResourceInventoryLayer(Layer):
         ctx.emit("status", "Taking inventory of available resources…")
 
         async def _fetch_workflows():
+            # Every page of the listing, not just the 50 oldest workflows.
+            from app.services.remote_workflows import list_remote_workflows
+
             try:
-                resp = httpx.get(
-                    "https://api.mistral.ai/v1/workflows",
-                    headers={"Authorization": f"Bearer {current_mistral_api_key()}"},
-                    timeout=5.0,
-                )
-                if resp.status_code == 200:
-                    return [w.get("name") for w in resp.json().get("workflows", [])]
+                return [
+                    w.get("name")
+                    for w in await asyncio.to_thread(
+                        list_remote_workflows, api_key=current_mistral_api_key(), timeout=5.0
+                    )
+                ]
             except Exception:
-                pass
-            return []
+                return []
 
         # Resolved before the fetch so the connector and library inventories can
         # be narrowed in the same round trip as everything else.
