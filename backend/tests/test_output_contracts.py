@@ -87,3 +87,14 @@ def test_checking_activity_rules_reach_the_agent_whose_output_it_checks():
     assert steps[0].config["output_requirements"] == [c["requirement"] for c in checks]
     text = requirements_instruction(steps[0].config["output_requirements"])
     assert "APR as a percentage" in text and "rejects it" in text
+
+
+def test_lookup_keeps_a_value_and_type_record_whole():
+    # A run input such as {"value": "MJ987654A", "type": "national_id"} is data,
+    # not a tool echoing its schema: unwrapping it to the bare string failed the
+    # activity that needed the object.
+    ident = {"value": "MJ987654A", "type": "national_id"}
+    assert _lookup("applicant_identifier", {"applicant_identifier": ident}) == ident
+    # A real schema echo still gives its value.
+    echo = {"type": "string", "description": "safe text", "value": "hello"}
+    assert _lookup("step_x_output", {"step_x_output": echo}) == "hello"

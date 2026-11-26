@@ -95,6 +95,97 @@ def test_fetch_execution_uses_events_while_running(monkeypatch):
     assert detail.steps[0].attributes["app.step.id"] == "extract"
 
 
+def _hist(event_id, kind, ts, **attrs):
+    key = "".join(p.capitalize() for p in kind.lower().split("_"))
+    key = key[0].lower() + key[1:] + "EventAttributes"
+    return {"eventId": str(event_id), "eventType": f"EVENT_TYPE_{kind}",
+            "eventTime": f"2026-11-25T10:39:{ts:02d}.052196082Z", key: attrs}
+
+
+_SCHEMA_MISMATCH = ("credit: the arguments do not match the activity's input schema "
+                    "— id: 'MJ9' is not of type 'object'")
+# The em dash as it came back from a real run: decoded as Latin-1, then cp1252.
+_GARBLED = _SCHEMA_MISMATCH.encode("utf-8").decode("latin-1").encode("utf-8").decode("cp1252")
+
+
+def _failed_history():
+    act = "run_claims_flow_credit"
+    return {"events": [
+        _hist(1, "WORKFLOW_EXECUTION_STARTED", 1),
+        _hist(5, "ACTIVITY_TASK_SCHEDULED", 2, activityType={"name": "run_claims_flow_extract"},
+              input={"payloads": [{"claim": 1}]}),
+        _hist(6, "ACTIVITY_TASK_STARTED", 3, scheduledEventId="5", attempt=1),
+        _hist(7, "ACTIVITY_TASK_COMPLETED", 4, scheduledEventId="5", result={"payloads": [{"amount": 5}]}),
+        _hist(8, "ACTIVITY_TASK_SCHEDULED", 5, activityType={"name": act}),
+        _hist(9, "ACTIVITY_TASK_STARTED", 8, scheduledEventId="8", attempt=3,
+              lastFailure={"message": _GARBLED}),
+        _hist(10, "ACTIVITY_TASK_FAILED", 9, scheduledEventId="8", failure={"message": _GARBLED}),
+        _hist(11, "WORKFLOW_EXECUTION_FAILED", 10,
+              failure={"message": "Activity task failed", "cause": {"message": _GARBLED}}),
+    ]}
+
+
+def test_history_gives_the_steps_and_the_real_error():
+    steps, failure = ex.steps_from_history(_failed_history(), WF)
+    assert [(s.attributes["app.step.id"], s.status) for s in steps] == [
+        ("extract", "COMPLETED"), ("credit", "FAILED")]
+    assert '"amount": 5' in steps[0].output_preview
+    assert '"claim": 1' in steps[0].input_preview
+    assert steps[0].duration_ms == 1000
+    assert steps[1].attributes["attempt"] == 3
+    assert steps[1].error == _SCHEMA_MISMATCH          # dash repaired
+    assert failure == _SCHEMA_MISMATCH                 # the cause, not "Activity task failed"
+
+
+def test_fetch_execution_falls_back_to_history(monkeypatch):
+    async def mistral(_id):
+        return ex.ExecutionDetail(execution_id="e1", workflow_name=WF, status="FAILED")
+
+    async def events(_id):  # only the workflow's own, generic, failure
+        return [{"event_type": "WORKFLOW_EXECUTION_FAILED", "event_timestamp": T0 * NS,
+                 "attributes": {"failure": {"message": "Activity task failed"}}}]
+
+    async def trace(_id, include_internal=False):
+        return []
+
+    async def history(_id, decode_payloads=True):
+        return _failed_history()
+
+    monkeypatch.setattr(ex, "_mistral_execution", mistral)
+    monkeypatch.setattr(ex, "fetch_workflow_events", events)
+    monkeypatch.setattr(ex, "fetch_progress_steps", trace)
+    monkeypatch.setattr(ex, "fetch_history", history)
+    detail = asyncio.run(ex.fetch_execution("e1"))
+    assert [s.status for s in detail.steps] == ["COMPLETED", "FAILED"]
+    assert detail.error == _SCHEMA_MISMATCH
+
+
+def test_generic_failure_gives_way_to_the_step_error(monkeypatch):
+    async def mistral(_id):
+        return ex.ExecutionDetail(execution_id="e1", workflow_name=WF, status="FAILED")
+
+    async def events(_id):
+        return [_ev("ACTIVITY_TASK_FAILED", 1000, "1", "run_claims_flow_pay",
+                    failure={"message": "account closed"}),
+                {"event_type": "EVENT_TYPE_WORKFLOW_EXECUTION_FAILED", "event_timestamp": T0 * NS,
+                 "attributes": {"failure": {"message": "Activity task failed"}}}]
+
+    async def trace(_id, include_internal=False):
+        return []
+
+    monkeypatch.setattr(ex, "_mistral_execution", mistral)
+    monkeypatch.setattr(ex, "fetch_workflow_events", events)
+    monkeypatch.setattr(ex, "fetch_progress_steps", trace)
+    detail = asyncio.run(ex.fetch_execution("e1"))
+    assert detail.error == "account closed"
+
+
+def test_repair_text_leaves_clean_text_alone():
+    assert ex.repair_text("plain — text, café") == "plain — text, café"
+    assert ex.repair_text(_GARBLED) == _SCHEMA_MISMATCH
+    assert ex.repair_text(None) is None
+
+
 def test_event_timestamps_in_any_unit():
     assert ex._event_ms(1_700_000_000_000_000_000) == 1_700_000_000_000
     assert ex._event_ms(1_700_000_000_000) == 1_700_000_000_000

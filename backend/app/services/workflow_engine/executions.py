@@ -471,11 +471,72 @@ def _payload_preview(payload: Any) -> Optional[str]:
     return text[:_PREVIEW_LIMIT] + ("…" if len(text) > _PREVIEW_LIMIT else "")
 
 
+_MOJIBAKE = re.compile("[ÂÃâ][\u0080-¿Œ-™]")
+
+
+def repair_text(text: Optional[str]) -> Optional[str]:
+    """Undo UTF-8 text that was decoded as Latin-1/cp1252 on the way through.
+
+    A failure message crosses the worker, Temporal and Mistral before it comes
+    back, and a non-ASCII character such as an em dash can arrive as
+    ``Ã¢Â€Â”`` — encoded once or twice too often. Each round re-reads the
+    characters as the bytes they came from; it stops as soon as that is not
+    valid UTF-8, so text that was never garbled is left as it is.
+    """
+    if not text:
+        return text
+    for _ in range(3):
+        if not _MOJIBAKE.search(text):
+            break
+        raw = bytearray()
+        for ch in text:
+            if ord(ch) < 256:
+                raw.append(ord(ch))
+            else:
+                try:
+                    raw += ch.encode("cp1252")
+                except UnicodeEncodeError:
+                    return text
+        try:
+            fixed = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            break
+        if fixed == text:
+            break
+        text = fixed
+    return text
+
+
+def _innermost_message(failure: Any) -> Optional[str]:
+    """The most specific message of a Temporal failure.
+
+    A workflow that failed because an activity did reports "Activity task
+    failed" and nests the activity's own error under ``cause`` — that is the
+    one worth showing.
+    """
+    message: Optional[str] = None
+    for _ in range(10):
+        if not isinstance(failure, dict):
+            break
+        message = str(failure.get("message") or "") or message
+        failure = failure.get("cause")
+    return repair_text(message)
+
+
 def _failure_message(attrs: dict) -> Optional[str]:
     failure = attrs.get("failure")
     if isinstance(failure, dict):
-        return str(failure.get("message") or "") or None
-    return str(failure) if failure else None
+        return _innermost_message(failure)
+    return repair_text(str(failure)) if failure else None
+
+
+# What Temporal says when the real error is somewhere further down.
+_GENERIC_FAILURES = ("activity task failed", "child workflow execution failed",
+                     "workflow execution failed")
+
+
+def is_generic_failure(message: Optional[str]) -> bool:
+    return (message or "").strip().rstrip(".").lower() in _GENERIC_FAILURES
 
 
 def step_id_for_activity(activity_name: str, workflow_name: str) -> Optional[str]:
@@ -516,7 +577,7 @@ def steps_from_workflow_events(events: list[dict], workflow_name: str = "") -> t
     workflow_failure: Optional[str] = None
 
     for event in events:
-        kind = str(event.get("event_type") or "").upper()
+        kind = str(event.get("event_type") or "").upper().removeprefix("EVENT_TYPE_")
         attrs = event.get("attributes") if isinstance(event.get("attributes"), dict) else {}
         at = _event_ms(event.get("event_timestamp"))
 
@@ -569,6 +630,121 @@ def steps_from_workflow_events(events: list[dict], workflow_name: str = "") -> t
     return ordered, workflow_failure
 
 
+# ── Step progress from the run's history ──────────────────────────────────────
+#
+# The events API and the trace can both come back without a single activity for
+# a run (seen on a run that failed at its fourth step: the events held only the
+# workflow's own failure, the trace nothing). Temporal's history always has
+# every activity — scheduled, started (with the attempt and the previous
+# attempt's failure), completed or failed — so it is the last source of steps.
+
+def _history_ms(raw: Any) -> Optional[int]:
+    """``2026-11-25T10:39:05.052196082Z`` (nanosecond ISO) or a number, as epoch ms."""
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, (int, float)) or (isinstance(raw, str) and raw.strip().isdigit()):
+        return _event_ms(raw)
+    text = str(raw).strip().replace("Z", "+00:00")
+    m = re.match(r"^(.*T\d\d:\d\d:\d\d)(\.\d+)?(.*)$", text)
+    if m:  # Python takes at most six fractional digits
+        text = m.group(1) + (m.group(2) or "")[:7] + m.group(3)
+    try:
+        return int(datetime.fromisoformat(text).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _history_attributes(event: dict) -> dict:
+    for key, value in event.items():
+        if key.lower().endswith("attributes") and isinstance(value, dict):
+            return value
+    return {}
+
+
+def _payloads_value(raw: Any) -> Any:
+    """``{"payloads": [X]}`` (decoded history payloads) as ``X``."""
+    if isinstance(raw, dict) and isinstance(raw.get("payloads"), list):
+        items = raw["payloads"]
+        return items[0] if len(items) == 1 else items
+    return raw
+
+
+def steps_from_history(history: Any, workflow_name: str = "") -> tuple[list[ExecutionStep], Optional[str]]:
+    """One step per scheduled activity in a Temporal history, and the workflow's failure."""
+    events = history.get("events") if isinstance(history, dict) else history
+    steps: dict[str, ExecutionStep] = {}
+    workflow_failure: Optional[str] = None
+
+    for event in events if isinstance(events, list) else []:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("eventType") or event.get("event_type") or "").upper()
+        kind = kind.removeprefix("EVENT_TYPE_")
+        attrs = _history_attributes(event)
+        at = _history_ms(event.get("eventTime") or event.get("event_time"))
+        event_id = str(event.get("eventId") or event.get("event_id") or "")
+
+        if kind == "WORKFLOW_EXECUTION_FAILED":
+            workflow_failure = _failure_message(attrs) or workflow_failure
+            continue
+        if kind == "WORKFLOW_EXECUTION_TIMED_OUT":
+            workflow_failure = workflow_failure or "The run timed out."
+            continue
+        if kind == "ACTIVITY_TASK_SCHEDULED":
+            activity = str((attrs.get("activityType") or attrs.get("activity_type") or {}).get("name")
+                           or "activity")
+            step_id = step_id_for_activity(activity, workflow_name)
+            steps[event_id] = ExecutionStep(
+                id=f"history:{event_id}",
+                name=activity,
+                status="RUNNING",
+                start_time_ms=at,
+                input_preview=_payload_preview(_payloads_value(attrs.get("input"))),
+                attributes={"activity_name": activity, "source": "history",
+                            **({"app.step.id": step_id} if step_id else {})},
+            )
+            continue
+
+        step = steps.get(str(attrs.get("scheduledEventId") or attrs.get("scheduled_event_id") or ""))
+        if step is None:
+            continue
+        if kind == "ACTIVITY_TASK_STARTED":
+            step.start_time_ms = at or step.start_time_ms
+            attempt = attrs.get("attempt")
+            if attempt:
+                step.attributes["attempt"] = attempt
+            last = attrs.get("lastFailure") or attrs.get("last_failure")
+            if last:  # a retry: the previous attempt's error stays visible
+                step.error = _innermost_message(last)
+        elif kind == "ACTIVITY_TASK_COMPLETED":
+            step.status = "COMPLETED"
+            step.error = None
+            step.end_time_ms = at
+            step.output_preview = _payload_preview(_payloads_value(attrs.get("result")))
+        elif kind in ("ACTIVITY_TASK_FAILED", "ACTIVITY_TASK_TIMED_OUT", "ACTIVITY_TASK_CANCELED"):
+            step.status = "FAILED"
+            step.end_time_ms = at
+            fallback = {"ACTIVITY_TASK_TIMED_OUT": "The activity timed out.",
+                        "ACTIVITY_TASK_CANCELED": "The activity was cancelled."}.get(kind)
+            step.error = _failure_message(attrs) or step.error or fallback or "The activity failed."
+        else:
+            continue
+        if step.start_time_ms and step.end_time_ms:
+            step.duration_ms = float(max(0, step.end_time_ms - step.start_time_ms))
+
+    ordered = sorted(steps.values(), key=lambda s: (s.start_time_ms or 0, s.name))
+    return ordered, workflow_failure
+
+
+async def _history_steps(execution_id: str, workflow_name: str) -> tuple[list[ExecutionStep], Optional[str]]:
+    """Steps from the history. Best effort: nothing on failure."""
+    try:
+        return steps_from_history(await fetch_history(execution_id), workflow_name)
+    except Exception as e:
+        logger.debug("History unavailable for %s: %s", execution_id, e)
+        return [], None
+
+
 def _merge_trace_detail(live: list[ExecutionStep], trace: list[ExecutionStep]) -> list[ExecutionStep]:
     """Live steps, with what the trace knows filled in where it matches.
 
@@ -618,6 +794,11 @@ async def fetch_execution(
             fetch_workflow_events(execution_id), fetch_progress_steps(execution_id))
         live, workflow_failure = steps_from_workflow_events(events, detail.workflow_name)
         detail.steps = _merge_trace_detail(live, trace)
+        if not detail.steps:
+            # Neither source knows a single step: read them off the history.
+            detail.steps, history_failure = await _history_steps(execution_id, detail.workflow_name)
+            if history_failure and (not workflow_failure or is_generic_failure(workflow_failure)):
+                workflow_failure = history_failure
         if detail.status in ("FAILED", "TIMED_OUT") and not detail.error and workflow_failure:
             detail.error = workflow_failure
 
@@ -628,10 +809,16 @@ async def fetch_execution(
     if detail.result in (None, "", {}) and detail.status == "COMPLETED":
         detail.result = await _query_last_result(execution_id)
 
-    if detail.status in ("FAILED", "TIMED_OUT") and not detail.error:
+    if detail.status in ("FAILED", "TIMED_OUT") and (not detail.error or is_generic_failure(detail.error)):
+        # "Activity task failed" says nothing; the failed step's own error does.
         failed = [s for s in detail.steps if s.status == "FAILED" and s.error]
         if failed:
             detail.error = failed[-1].error
+    if detail.error:
+        detail.error = repair_text(detail.error)
+    for step in detail.steps:
+        if step.error:
+            step.error = repair_text(step.error)
 
     return detail
 

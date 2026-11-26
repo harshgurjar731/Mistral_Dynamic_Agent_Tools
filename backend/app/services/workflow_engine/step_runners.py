@@ -457,6 +457,7 @@ def _as_data(value, lenient: bool = False):
 
 
 _SCHEMA_ECHO_KEYS = {"type", "description", "value"}
+_JSON_SCHEMA_TYPES = {"string", "number", "integer", "boolean", "object", "array", "null"}
 
 
 def _unwrap(value):
@@ -466,13 +467,15 @@ def _unwrap(value):
     ``{"type": "string", "description": ..., "value": ...}`` is a synthesized
     tool echoing its output *schema* around the value — validate_input_safety
     returns its pass-through text that way — so the data is the ``value``.
+    Only a JSON Schema type name makes it an echo: a record such as
+    ``{"value": "MJ987654A", "type": "national_id"}`` is data and stays whole.
     """
     if isinstance(value, dict) and value.get("status") == "success" and "data" in value:
         return value["data"]
     if (
         isinstance(value, dict)
         and "value" in value
-        and isinstance(value.get("type"), str)
+        and str(value.get("type") or "").lower() in _JSON_SCHEMA_TYPES
         and set(value) <= _SCHEMA_ECHO_KEYS
     ):
         return value["value"]

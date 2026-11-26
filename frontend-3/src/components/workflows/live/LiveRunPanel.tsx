@@ -28,7 +28,7 @@ import type { HumanReview } from "@/api/knowledge";
 import type { LiveState } from "@/api/sse";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/StatusPill";
-import { fixStepActions } from "@/components/workflows/FixStepButton";
+import { FixWithAiButton, fixStepActions } from "@/components/workflows/FixStepButton";
 import { BLOCK, blockForMode } from "@/lib/terminology";
 import { executionStatusIdentity, formatDuration, parseServerTime } from "@/lib/status";
 import { useCanCall } from "@/lib/policy";
@@ -600,6 +600,12 @@ export function LiveRunPanel({
                 <div className="mt-2.5">
                   <ErrorBox error={run.failure} />
                 </div>
+                {/* On the run as a whole, so a failure no step reported can be fixed too. */}
+                {definition && (run.status === "FAILED" || run.status === "TIMED_OUT") ? (
+                  <div className="mt-2.5">
+                    <FixWithAiButton workflowName={definition.name} executionId={executionId} />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
