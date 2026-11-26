@@ -56,6 +56,15 @@ SECTIONS = [
             "process as well as the request, re-ranked for each workflow agent's own stage, and "
             "checked against what the process says about the work. The weights say how much "
             "each signal counts; the request should stay the strongest.", "gauge", "process"),
+    # ── Industry knowledge ─────────────────────────────────────────────
+    Section("industry_planning", "Industry knowledge in planning",
+            "Whether plans use the reviewed facts about their industry, which ones they reach "
+            "(narrower nodes, jurisdictions), how many each build and each decision gets, and "
+            "whether tool and activity code follows them.", "network", "industry"),
+    Section("industry_sources", "Industry documents",
+            "How uploaded industry documents and packs are read: the largest file, how much of "
+            "a document is read, the model that extracts facts, and whether they wait for review.",
+            "box", "industry"),
     # ── Vault & build prerequisites ────────────────────────────────────
     Section("vault", "Vault behaviour",
             "How stored credentials are protected, shown, kept and handed to the code that "
@@ -443,7 +452,7 @@ DEFS: list[SettingDef] = [
     SettingDef("NEO4J_URI", "rag", "Neo4j URI",
                "Bolt URI of the knowledge graph. Applied immediately: the driver reconnects on "
                "save.", type="string",
-               impact=("Knowledge graph", "Domain knowledge search", "Ontology page"),
+               impact=("Knowledge graph", "Document graph search", "Ontology page"),
                used_in=("rag/graph_store.py — _get_driver (reset on change)",)),
     SettingDef("NEO4J_USER", "rag", "Neo4j user",
                "User the backend signs in to Neo4j as. Applied immediately.", type="string",
@@ -569,11 +578,11 @@ DEFS: list[SettingDef] = [
                "On: high-confidence items go live at once.", type="bool",
                impact=("Knowledge sources",), used_in=("knowledge/ingest.py",)),
     SettingDef("KNOWLEDGE_SOURCE_MAX_MB", "guidance", "Max guidance source size",
-               "Largest file accepted as a guidance or reference source on the Knowledge page.",
+               "Largest file accepted as a guidance source on the Knowledge page. Industry documents have their own limit (Industry knowledge).",
                type="int", minimum=1, maximum=500, unit="MB",
                impact=("Knowledge sources",), used_in=("routes/knowledge.py — add_source",)),
     SettingDef("KNOWLEDGE_DISTILL_MODEL", "guidance", "Distillation model",
-               "The model that turns a source document into guidance and reference items.",
+               "The model that turns a guidance source document into guidance items.",
                type="model", capability="chat", impact=("Knowledge sources",),
                used_in=("knowledge/distill.py",)),
     SettingDef("KNOWLEDGE_OCR_MODEL", "guidance", "Document reading (OCR) model",
@@ -644,6 +653,80 @@ DEFS: list[SettingDef] = [
                "checked against the build and hold — it is clearly about this build.",
                type="float", minimum=0, maximum=50, impact=("Guidance ranking",),
                used_in=("knowledge/retrieval.py — select",)),
+
+    # ── Industry knowledge in planning ─────────────────────────────────
+    SettingDef("INDUSTRY_KNOWLEDGE_MODE", "industry_planning", "Use industry knowledge",
+               "Auto: every agent and workflow plan whose request matches an industry, domain or "
+               "subdomain uses the approved facts filed there and above it — regulations become "
+               "steps, controls and rules; metrics and standards shape the data and the code. "
+               "Off: plans are made without it, unless a build asks for it.",
+               type="enum", options=("auto", "off"),
+               option_labels=(("auto", "Auto — whenever the request's industry has knowledge"),
+                              ("off", "Off — only when a build asks")),
+               impact=("Agent creation", "Workflow planning", "Refine with AI", "Tool & activity code"),
+               used_in=("layers/industry_knowledge_layer.py — process",
+                        "knowledge/industry.py — resolve",
+                        "routes/industry_knowledge.py — config")),
+    SettingDef("INDUSTRY_PACK_SIZE", "industry_planning", "Industry items per build",
+               "How many of the best-ranked items one build takes into account. Each decision then "
+               "sees only the categories that can change it.",
+               type="int", minimum=1, maximum=200, unit="items",
+               impact=("Agent creation", "Workflow planning"),
+               used_in=("knowledge/industry.py — select",)),
+    SettingDef("INDUSTRY_VIEW_SIZE", "industry_planning", "Industry items per decision",
+               "The most items shown to any one decision (decomposition, agent design, guardrails, "
+               "rules, data flow…). More is more context per call, and more to follow.",
+               type="int", minimum=1, maximum=30, unit="items",
+               impact=("Agent creation", "Workflow planning"),
+               used_in=("knowledge/industry.py — view_items",)),
+    SettingDef("INDUSTRY_BODY_CHARS", "industry_planning", "Text per item",
+               "The longest item text a decision or the code author is shown; longer items are "
+               "cut with an ellipsis.", type="int", minimum=200, maximum=4000, unit="characters",
+               impact=("Agent creation", "Workflow planning", "Tool & activity code"),
+               used_in=("knowledge/industry.py — render, code_items",)),
+    SettingDef("INDUSTRY_INCLUDE_NARROWER", "industry_planning", "Use narrower nodes too",
+               "On: a request matched to Lending can also use items filed on Mortgage when they "
+               "clearly match the request. Off: only the matched node and the nodes above it.",
+               type="bool", impact=("Agent creation", "Workflow planning"),
+               used_in=("knowledge/industry.py — scope, select",)),
+    SettingDef("INDUSTRY_JURISDICTIONS", "industry_planning", "Jurisdictions in scope",
+               "Comma-separated regions or countries plans may use, e.g. EU, UK. Items marked "
+               "global always count, and US includes US-CA. Empty: every jurisdiction.",
+               type="string", impact=("Agent creation", "Workflow planning", "Tool & activity code"),
+               used_in=("knowledge/industry.py — allowed_jurisdictions",)),
+    SettingDef("INDUSTRY_IN_CODEGEN", "industry_planning", "Use in tool and activity code",
+               "On: every tool and activity built during a plan is specified and generated against "
+               "the industry's rules, thresholds, formulas and standards, and its tests exercise "
+               "them. Off: code is written from the request alone.", type="bool",
+               impact=("Tool & activity code",),
+               used_in=("knowledge/industry_pipeline.py — code_items",
+                        "layers/workflow/tool_gap_layer.py", "layers/agent/capability_gap_layer.py")),
+    SettingDef("INDUSTRY_CODE_ITEMS", "industry_planning", "Industry items per tool or activity",
+               "The most items one tool or activity specification is given, ranked for what it does. "
+               "Definitions are only included when they share words with it.",
+               type="int", minimum=0, maximum=12, unit="items", impact=("Tool & activity code",),
+               used_in=("knowledge/industry.py — code_items",)),
+
+    # ── Industry documents ─────────────────────────────────────────────
+    SettingDef("INDUSTRY_AUTO_APPROVE", "industry_sources", "Auto-approve extracted facts",
+               "Off: facts extracted from an uploaded document wait for review on the Industry "
+               "knowledge page before plans use them. On: high-confidence facts go live at once. "
+               "Structured packs are always imported as approved.", type="bool",
+               impact=("Industry documents",), used_in=("knowledge/industry_ingest.py — distil_source",)),
+    SettingDef("INDUSTRY_SOURCE_MAX_MB", "industry_sources", "Max document size",
+               "Largest file accepted on the Industry knowledge page.",
+               type="int", minimum=1, maximum=500, unit="MB", impact=("Industry documents",),
+               used_in=("routes/industry_knowledge.py — add_source",)),
+    SettingDef("INDUSTRY_MAX_EXCERPTS", "industry_sources", "Excerpts read per document",
+               "A document is read in excerpts of about 12,000 characters; this many are read. The "
+               "rest is skipped and the source says so.", type="int", minimum=1, maximum=200,
+               unit="excerpts", impact=("Industry documents",),
+               used_in=("knowledge/industry_ingest.py — distil",)),
+    SettingDef("INDUSTRY_DISTILL_MODEL", "industry_sources", "Extraction model",
+               "The model that reads an industry document and extracts its regulations, rules, "
+               "metrics, standards, risks and definitions.",
+               type="model", capability="chat", impact=("Industry documents",),
+               used_in=("knowledge/industry_ingest.py — distil",)),
 
     # ── Vault ──────────────────────────────────────────────────────────
     SettingDef("VAULT_ENABLED", "vault", "Vault on",
@@ -1078,6 +1161,24 @@ EFFECTS: dict[str, tuple[str, str]] = {
     "GUIDANCE_CONDITION_BOOST": (
         "0: confirmed conditions give no extra rank.",
         "Items whose conditions hold always come first, however unrelated otherwise."),
+    "INDUSTRY_PACK_SIZE": (
+        "One item per build — only the single best fact is used.",
+        "Up to 200 items considered per build; each decision still sees its own few."),
+    "INDUSTRY_VIEW_SIZE": (
+        "Each decision sees one industry item.",
+        "Up to 30 items per decision — long prompts, more to follow."),
+    "INDUSTRY_BODY_CHARS": (
+        "200 characters per item — long rules are cut short.",
+        "Items shown whole up to 4,000 characters."),
+    "INDUSTRY_CODE_ITEMS": (
+        "0: tool and activity code gets no industry knowledge.",
+        "Up to 12 items per specification."),
+    "INDUSTRY_SOURCE_MAX_MB": (
+        "Files over 1 MB are refused — most PDFs of regulations will not fit.",
+        "Files up to 500 MB are accepted; very large ones take minutes to read."),
+    "INDUSTRY_MAX_EXCERPTS": (
+        "Only the first ~12,000 characters of a document are read.",
+        "Documents up to ~2.4 million characters are read whole."),
     "VAULT_AUDIT_RETENTION_DAYS": (
         "0 keeps audit events forever — the audit table only grows.",
         "Events are kept for up to 10 years."),

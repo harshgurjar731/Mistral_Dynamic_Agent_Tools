@@ -129,6 +129,10 @@ class AgentDesignLayer(WorkflowStepLayer):
                                       "agent_instructions.",
                 )
                 guidance_text = guidance.block(ctx, "design", focus=cap.process_stage) + archetype_block(cap)
+                # The industry facts for this agent's own part of the plan.
+                from app.knowledge import industry_pipeline
+
+                industry_text = industry_pipeline.block(ctx, "design", focus=f"{cap.name} {cap.purpose}")
                 raw = await decide(
                     ctx.client,
                     model=settings.MISTRAL_ORCHESTRATOR_MODEL,
@@ -151,7 +155,7 @@ class AgentDesignLayer(WorkflowStepLayer):
                         connector_ids=json.dumps(inv.get("connector_ids", [])),
                         library_descriptions=inv.get("library_descriptions", ""),
                         library_ids=json.dumps(inv.get("library_ids", [])),
-                    ) + process_block + guidance_text + prerequisites.block(ctx, cap.id)
+                    ) + process_block + guidance_text + industry_text + prerequisites.block(ctx, cap.id)
                     + design_block(spec, cap),
                     phase=f"agent design ({cap.id})",
                     timeout_ms=LONG_TIMEOUT_MS,
@@ -162,6 +166,8 @@ class AgentDesignLayer(WorkflowStepLayer):
                     process_knowledge.record_refs(ctx, self.name, data, target=cap.id)
                 if guidance_text:
                     guidance.record_refs(ctx, self.name, data, target=cap.id)
+                if industry_text:
+                    industry_pipeline.record_refs(ctx, self.name, data, target=cap.id)
                 return cap, data
 
         results = await asyncio.gather(

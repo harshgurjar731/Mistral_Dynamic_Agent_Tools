@@ -80,7 +80,7 @@ class CreateAgentRequest(BaseModel):
     random_seed: Optional[int] = None
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
-    # Opt-in access to the knowledge graph and curated industry knowledge.
+    # Opt-in access to the knowledge graph of the agent's documents.
     # Off by default: an agent that holds a library to quote one clause does not
     # need a second retrieval tool competing for every turn.
     knowledge_graph: bool = False

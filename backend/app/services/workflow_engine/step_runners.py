@@ -1205,9 +1205,9 @@ async def run_agent_step(step: WorkflowStep, variables: dict) -> StepResult:
             result_text = ""
             content = ""
 
-            # Tells the industry-knowledge tool whose domain to search. Scoped
+            # Tells the document-graph tool whose libraries to search. Scoped
             # to the tool loop and reset immediately after, so a later step can
-            # never inherit this agent's industry.
+            # never inherit this agent's libraries.
             from app.services import tool_registry
 
             agent_token = tool_registry.CURRENT_AGENT.set(resolved_id)

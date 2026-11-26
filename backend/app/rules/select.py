@@ -129,8 +129,8 @@ async def select_rules(client, scope: str, subject: str, *, phase: str = "rule s
     """Ask the model which optional rules fit. Never raises.
 
     Returns ``{"selected": [...], "reasoning": str, "decided": bool}``, plus
-    ``process_refs`` when ``extra`` (a process-knowledge block, appended to the
-    user prompt) asked for them.
+    ``process_refs``, ``guidance_refs`` and ``industry_refs`` when ``extra``
+    (knowledge blocks appended to the user prompt) asked for them.
     """
     from app.config import settings
     from app.core.decision import decide, parse_json
@@ -148,7 +148,9 @@ async def select_rules(client, scope: str, subject: str, *, phase: str = "rule s
         selected, reasoning = parse_selection(data, scope)
         result = {"selected": selected, "reasoning": reasoning, "decided": True}
         if extra:
-            result["process_refs"] = data.get("process_refs") or []
+            # Whatever knowledge blocks ``extra`` carried asked for these.
+            for key in ("process_refs", "guidance_refs", "industry_refs"):
+                result[key] = data.get(key) or []
         return result
     except Exception as e:
         logger.warning("Rule selection (%s) failed: %s", scope, e)

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Crosshair,
   FlaskConical,
   Layers,
@@ -22,7 +21,6 @@ import { ontologyApi, QK } from "@/api";
 import { OverviewTab } from "@/components/ontology/OverviewTab";
 import { VocabularyTab } from "@/components/ontology/VocabularyTab";
 import { AnnotationsTab } from "@/components/ontology/AnnotationsTab";
-import { KnowledgeTab } from "@/components/ontology/KnowledgeTab";
 import { ScopeTab } from "@/components/ontology/ScopeTab";
 import { RagTab } from "@/components/ontology/RagTab";
 import { RetrievalTab } from "@/components/ontology/RetrievalTab";
@@ -47,13 +45,13 @@ export const Route = createFileRoute("/ontology")({
       {
         name: "description",
         content:
-          "The SKOS-lite vocabulary that scopes planning: schemes, concepts, annotations and the knowledge the tool retrieves.",
+          "The SKOS-lite vocabulary that scopes planning: schemes, concepts and annotations.",
       },
       { property: "og:title", content: "Catalog — Agentic AI Design Patterns" },
       {
         property: "og:description",
         content:
-          "The SKOS-lite vocabulary that scopes planning: schemes, concepts, annotations and the knowledge the tool retrieves.",
+          "The SKOS-lite vocabulary that scopes planning: schemes, concepts and annotations.",
       },
     ],
   }),
@@ -123,12 +121,6 @@ const SECTIONS: SectionDef[] = [
         icon: Library,
         label: "Libraries",
         hint: "Document extraction and review — the Graph RAG store behind retrieval.",
-      },
-      {
-        value: "industry",
-        icon: BookOpen,
-        label: "Industry knowledge",
-        hint: "What the knowledge tool returns to agents, scoped by their domain annotation.",
       },
     ],
   },
@@ -300,7 +292,7 @@ function OntologyHub({
             <FeatureDescription route="/ontology">
               Where everything belongs: one tree of industries, domains and processes, and the tags
               that file agents, tools, connectors, workflows and libraries under it. Build guidance
-              lives on the Knowledge page.
+              lives on the Knowledge page, and the facts about each industry on Industry knowledge.
             </FeatureDescription>
           </p>
         </div>
@@ -476,8 +468,6 @@ function ActiveView({ view, overview }: { view: string; overview: OntologyOvervi
       return <AnnotationsTab overview={overview} />;
     case "libraries":
       return <RagTab />;
-    case "industry":
-      return <KnowledgeTab />;
     case "scoping":
       return <ScopeTab />;
     case "retrieval":

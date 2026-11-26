@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, FileStack, Lightbulb, LineChart, Search } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Building2, FileStack, Lightbulb, LineChart, Search } from "lucide-react";
 import { z } from "zod";
 import { knowledgeApi, QK } from "@/api";
 import { FeatureDescription, FeatureTitle } from "@/components/layout/FeatureText";
 import { GuidancePanel } from "@/components/knowledge/GuidancePanel";
 import { FeedbackPanel, TryRetrievalPanel } from "@/components/knowledge/RetrievalPanels";
 import { SourcesPanel } from "@/components/knowledge/SourcesPanel";
-import { KnowledgeTab } from "@/components/ontology/KnowledgeTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const searchSchema = z.object({ tab: z.string().optional() });
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/knowledge")({
       { title: "Knowledge — Agentic AI Design Patterns" },
       {
         name: "description",
-        content: "Build guidance the orchestrator follows, and the reference knowledge built agents read.",
+        content: "Build guidance the orchestrator follows when it designs agents and workflows.",
       },
     ],
   }),
@@ -29,7 +29,6 @@ export const Route = createFileRoute("/knowledge")({
 const TABS = [
   { value: "guidance", label: "Guidance", icon: Lightbulb },
   { value: "sources", label: "Sources", icon: FileStack },
-  { value: "reference", label: "Reference", icon: BookOpen },
   { value: "try", label: "Try retrieval", icon: Search },
   { value: "feedback", label: "Feedback", icon: LineChart },
 ] as const;
@@ -51,13 +50,21 @@ function KnowledgePage() {
       <p className="mt-1.5 max-w-3xl text-sm text-muted-foreground">
         <FeatureDescription route="/knowledge">
           Guidance is how to build: best practices the orchestrator follows when it designs agents and workflows and
-          chooses each agent&apos;s type. Reference is what a domain involves: facts built agents read at run time.
-          Add any document as a source; its items wait for review before builds use them.
+          chooses each agent&apos;s type. Add any document as a source; its items wait for review before builds use
+          them.
         </FeatureDescription>
       </p>
       <p className="mt-2 text-xs text-muted-foreground">
         {guidance.active ?? 0} active guidance · {guidance.proposed ?? 0} waiting for review ·{" "}
         {guidance.conflicting ?? 0} conflicting · {counts.data?.sources ?? 0} source(s)
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        <Building2 className="mr-1 inline size-3.5 align-[-2px]" />
+        What an industry involves — its regulations, standards, rules and metrics — is on{" "}
+        <Link to="/industry-knowledge" className="text-primary hover:underline">
+          Industry knowledge
+        </Link>
+        , filed by industry, domain and subdomain.
       </p>
 
       <Tabs value={current} onValueChange={(v) => void navigate({ search: { tab: v }, replace: true })} className="mt-5">
@@ -70,7 +77,6 @@ function KnowledgePage() {
         </TabsList>
         <TabsContent value="guidance" className="pt-4"><GuidancePanel /></TabsContent>
         <TabsContent value="sources" className="pt-4"><SourcesPanel /></TabsContent>
-        <TabsContent value="reference" className="pt-4"><KnowledgeTab /></TabsContent>
         <TabsContent value="try" className="pt-4"><TryRetrievalPanel /></TabsContent>
         <TabsContent value="feedback" className="pt-4"><FeedbackPanel /></TabsContent>
       </Tabs>

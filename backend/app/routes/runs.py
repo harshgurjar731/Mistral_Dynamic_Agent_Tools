@@ -37,11 +37,18 @@ class GuidanceRequest(BaseModel):
     item_ids: list[int] = Field(default_factory=list)
 
 
+class IndustryRequest(BaseModel):
+    """Industry knowledge for the run: auto (Settings decide) or off. Omitted: Settings decide."""
+    mode: Literal["auto", "off"] = "auto"
+
+
 class ProcessKnowledgeRequest(BaseModel):
-    """The orchestration page's knowledge controls: process documents and build guidance."""
+    """The orchestration page's knowledge controls: process documents, build guidance and
+    industry knowledge."""
     enabled: bool = False
     document_ids: list[int] = Field(default_factory=list)
     guidance: Optional[GuidanceRequest] = None
+    industry: Optional[IndustryRequest] = None
 
 
 class WorkflowPlanRun(BaseModel):

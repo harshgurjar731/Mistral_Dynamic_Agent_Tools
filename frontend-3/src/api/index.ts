@@ -14,7 +14,6 @@ import type {
   GraphStatus,
   HealthResponse,
   InputDocumentUpload,
-  KnowledgeEntry,
   Library,
   LibraryCard,
   LibraryDocument,
@@ -58,6 +57,8 @@ export { observabilityApi } from "./observability";
 export { settingsApi } from "./settings";
 export { processesApi } from "./processes";
 export { knowledgeApi, recommendationsApi, reviewsApi } from "./knowledge";
+export { industryApi } from "./industry";
+export type * from "./industry";
 export type * from "./knowledge";
 export { safetyApi } from "./safety";
 export { vaultApi, vaultToken } from "./vault";
@@ -375,42 +376,8 @@ export const ontologyApi = {
       written?: boolean;
       detail?: string;
     }>("/api/ontology/classify", body),
-  knowledge: (params: Record<string, unknown>) =>
-    get<{ entries: KnowledgeEntry[]; count: number; kinds: string[] }>("/api/ontology/knowledge", {
-      limit: 500,
-      ...params,
-    }),
-  knowledgeSearch: (params: Record<string, unknown>) =>
-    get<{
-      query: string;
-      domains: string[];
-      results: KnowledgeEntry[];
-      count: number;
-      rendered: string;
-    }>("/api/ontology/knowledge/search", { limit: 5, ...params }),
-  createKnowledge: (body: {
-    concept_id: string;
-    title: string;
-    body: string;
-    kind?: string;
-    tags?: string[];
-    as_of?: string | null;
-  }) => post<unknown>("/api/ontology/knowledge", body),
-  deleteKnowledge: (id: number) => del<unknown>(`/api/ontology/knowledge/${id}`),
-  agentKnowledge: (agentId: string, query?: string) =>
-    get<{ agent_id: string; domains: string[]; scoped: boolean; results: KnowledgeEntry[] }>(
-      `/api/ontology/knowledge/agent/${agentId}`,
-      query ? { query } : {},
-    ),
-  /** Moves agents still carrying the two retired retrieval tools onto the current one. */
-  attachKnowledgeTool: () =>
-    post<{
-      checked: number;
-      attached: number;
-      detached: number;
-      unchanged: number;
-      failed: number;
-    }>("/api/rag/agents/sync"),
+  // Industry knowledge has its own page and client — see `industryApi`. It is
+  // used while planning, not searched by agents at run time.
   // Governance rules moved out of the ontology — see `rulesApi`.
 };
 

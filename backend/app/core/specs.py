@@ -522,6 +522,10 @@ class CodeNeed:
     draft: dict = field(default_factory=dict)
     #: A complete stored requirement (runtime recovery) — skips authoring.
     requirement: Optional[dict] = None
+    #: Industry knowledge the code must follow — rules, thresholds, formulas,
+    #: standards — from the run's industry pack, ranked for this need
+    #: (``app.knowledge.industry.code_items``). Empty: none in scope.
+    industry_knowledge: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -551,6 +555,12 @@ class CodeRequirement:
     checks: list[dict] = field(default_factory=list)
     #: Inputs earlier versions failed on; every new version must pass them.
     regression_inputs: list[dict] = field(default_factory=list)
+    #: The industry knowledge the code was specified against, sent to the tool
+    #: service so the generator and its reference implementation follow it, and
+    #: kept with the requirement so every rebuild follows it too.
+    industry_knowledge: list[dict] = field(default_factory=list)
+    #: The ``industry:N`` refs the specification author said it applied. Not sent.
+    industry_refs: list[str] = field(default_factory=list)
 
     def as_request(self) -> dict:
         request = {
@@ -567,6 +577,8 @@ class CodeRequirement:
             request["checks"] = self.checks
         if self.regression_inputs:
             request["regression_inputs"] = self.regression_inputs
+        if self.industry_knowledge:
+            request["industry_knowledge"] = self.industry_knowledge
         return request
 
     @classmethod

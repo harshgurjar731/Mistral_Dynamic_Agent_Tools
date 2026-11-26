@@ -186,6 +186,9 @@ def spec_block(spec: SynthesisSpec) -> str:
                      "An example may list only some fields of `data`; every field it lists "
                      "must match exactly, and the rest must still follow the output schema.\n\n"
                      + "\n\n".join(rendered))
+    industry = industry_block(spec)
+    if industry:
+        parts.append(industry)
     parts.append(f"## Data source\n{spec.api_details}")
     if spec.http_fixtures:
         sample = {k: v for k, v in spec.http_fixtures[0].items() if k != "for_input"}
@@ -199,6 +202,32 @@ def spec_block(spec: SynthesisSpec) -> str:
     if spec.feedback:
         parts.append(feedback_block(spec.feedback))
     return "\n\n".join(parts)
+
+
+def industry_lines(spec: SynthesisSpec) -> list[str]:
+    """One line per industry item: force, category, jurisdiction, date — title: body."""
+    lines = []
+    for item in spec.industry_knowledge or []:
+        jurisdiction = item.get("jurisdiction")
+        meta = [m for m in (item.get("force"), item.get("category"),
+                            jurisdiction if jurisdiction not in (None, "", "global") else "",
+                            f"as of {item['as_of']}" if item.get("as_of") else "") if m]
+        ref = f"[{item['ref']}] " if item.get("ref") else ""
+        lines.append(f"- {ref}{' · '.join(meta)} — {item.get('title')}: {item.get('body')}")
+    return lines
+
+
+def industry_block(spec: SynthesisSpec) -> str:
+    """The industry's rules, formulas and standards, for the generator. "" without any."""
+    lines = industry_lines(spec)
+    if not lines:
+        return ""
+    return ("## Industry knowledge the code must follow\n"
+            "Reviewed facts about this industry. Compute values with these formulas and "
+            "definitions; enforce MANDATORY rules and thresholds as explicit checks that report "
+            "a clear error or flag (never a silent pass); never do what a PROHIBITED item rules "
+            "out; use the standards for field formats and codes. Where the input schema or the "
+            "worked examples are more specific, they win.\n" + "\n".join(lines))
 
 
 def feedback_block(feedback: dict) -> str:

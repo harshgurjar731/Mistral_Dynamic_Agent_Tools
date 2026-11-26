@@ -431,7 +431,7 @@ class ExecutionLayer(Layer):
     # ── JSON mode ───────────────────────────────────────────────────────
 
     async def _handle_json(self, ctx: PipelineContext, client, agent_id: str | None) -> None:
-        # Scope any industry-knowledge lookup to this agent's own domain.
+        # Scope the document-graph tool to this agent's own libraries.
         from app.services import tool_registry
         tool_registry.CURRENT_AGENT.set(agent_id or ctx.agent_id)
 

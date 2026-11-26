@@ -69,7 +69,9 @@ def test_legacy_industry_knowledge_is_copied_once(db):
     assert len(items) == 2
     ref = next(i for i in items if i["title"] == "Three-way match")
     bp = next(i for i in items if i["title"] == "Separate maker and checker")
-    assert (ref["kind"], ref["audience"], ref["origin"]) == ("reference", "runtime", "seed")
+    # Industry knowledge is read while planning now, never at run time.
+    assert (ref["kind"], ref["audience"], ref["origin"]) == ("reference", "builder", "seed")
+    assert ref["jurisdiction"] == "global"
     assert (bp["kind"], bp["category"], bp["audience"], bp["strength"]) == ("guidance", "best_practice", "both", "should")
 
 
@@ -82,9 +84,8 @@ def test_reference_api_keeps_its_shape(db):
     assert entry["kind"] == "regulation"
     again = reference.upsert_entry("domain.procurement", "Three-way match", "Updated.", kind="regulation")
     assert again["id"] == entry["id"] and reference.counts() == {"entries": 1, "concepts": 1}
-    found = reference.search("match invoice", domains=["domain.procurement"])
-    assert found and found[0]["title"] == "Three-way match"
-    _guidance()  # builder-only guidance is not runtime reference knowledge
+    assert not hasattr(reference, "search")  # industry knowledge is no longer searched at run time
+    _guidance()  # guidance is not industry knowledge
     assert reference.counts()["entries"] == 1
 
 

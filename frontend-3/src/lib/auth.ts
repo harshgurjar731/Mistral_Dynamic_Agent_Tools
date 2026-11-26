@@ -72,6 +72,7 @@ const PAGE_PERMISSIONS: [prefix: string, perms: string[]][] = [
   ["/ontology", ["catalog.view"]],
   ["/processes", ["catalog.view"]],
   ["/knowledge", ["knowledge.view"]],
+  ["/industry-knowledge", ["knowledge.view"]],
   ["/libraries", ["knowledge.view"]],
   ["/remote-servers", ["remote_servers.view"]],
   ["/settings", ["settings.view"]],

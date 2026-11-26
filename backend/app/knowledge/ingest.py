@@ -94,6 +94,13 @@ async def distill_source(client: Any, source_id: int, *, auto_approve: Optional[
         store.delete_item(old["id"])
 
     items, notes = await distill.distill(client, source["text"], title=source["title"])
+    # Industry facts are filed on an industry node, through the Industry
+    # knowledge page; a guidance source keeps only its guidance.
+    facts = [i for i in items if i["kind"] != "guidance"]
+    if facts:
+        items = [i for i in items if i["kind"] == "guidance"]
+        notes.append(f"{len(facts)} industry fact(s) were left out: add this document on the "
+                     "Industry knowledge page, filed under its industry, to keep them.")
     existing_hashes = {store.content_hash(i["title"], i["body"]) for i in store.list_items()}
     created: list[int] = []
     skipped = 0

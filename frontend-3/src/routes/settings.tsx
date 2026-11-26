@@ -7,6 +7,7 @@ import {
   Activity,
   AlertTriangle,
   Box,
+  Building2,
   Cpu,
   Database,
   Gauge,
@@ -132,6 +133,7 @@ type CategoryId =
   | "tool_service"
   | "platform"
   | "process"
+  | "industry"
   | "safety"
   | "vault"
   | "frontend"
@@ -170,6 +172,13 @@ const CATEGORIES: { id: CategoryId; title: string; blurb: string; icon: LucideIc
     blurb:
       "The template process documents must follow, how documents are matched to a request, and how build guidance is picked and ranked with them.",
     icon: Workflow,
+  },
+  {
+    id: "industry",
+    title: "Industry knowledge",
+    blurb:
+      "Whether plans and generated code use the reviewed facts about their industry, how many, from which jurisdictions, and how uploaded industry documents are read.",
+    icon: Building2,
   },
   {
     id: "safety",

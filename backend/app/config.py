@@ -180,6 +180,32 @@ class Settings(BaseSettings):
     KNOWLEDGE_DISTILL_MODEL: str = "mistral-large-latest"
     KNOWLEDGE_SOURCE_MAX_MB: int = 25
 
+    # Industry knowledge (Industry knowledge page): facts filed on the domain
+    # tree, read while planning and generating tool/activity code.
+    #: auto — every plan in a matched industry uses it; off — only when a request asks.
+    INDUSTRY_KNOWLEDGE_MODE: str = "auto"
+    #: Best-ranked items one build takes into account.
+    INDUSTRY_PACK_SIZE: int = 20
+    #: Most items one planning decision is shown.
+    INDUSTRY_VIEW_SIZE: int = 6
+    #: Longest item text shown to a decision or the code author (characters).
+    INDUSTRY_BODY_CHARS: int = 700
+    #: Also use items filed below the matched node, when they match the request.
+    INDUSTRY_INCLUDE_NARROWER: bool = True
+    #: Comma-separated jurisdictions planning may use (global always counts). Empty: all.
+    INDUSTRY_JURISDICTIONS: str = ""
+    #: Give tool and activity code generation the industry rules, metrics and standards.
+    INDUSTRY_IN_CODEGEN: bool = True
+    #: Most items one tool or activity specification is given.
+    INDUSTRY_CODE_ITEMS: int = 6
+    #: Distilled items wait for review unless this is on (then high-confidence ones go live).
+    INDUSTRY_AUTO_APPROVE: bool = False
+    INDUSTRY_SOURCE_MAX_MB: int = 25
+    #: Excerpts of one document that are read (about 12,000 characters each).
+    INDUSTRY_MAX_EXCERPTS: int = 40
+    #: Model that extracts industry facts from documents. Empty: the distillation model.
+    INDUSTRY_DISTILL_MODEL: str = "mistral-large-latest"
+
     # Governance runtime: human review steps and reflective agents.
     HUMAN_REVIEW_TIMEOUT_SECONDS: int = 86400
     REFLECTION_MODEL: str = "mistral-medium-latest"

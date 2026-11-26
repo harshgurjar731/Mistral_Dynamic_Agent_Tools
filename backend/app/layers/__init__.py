@@ -44,6 +44,7 @@ from app.layers.workflow.verify_layers import ScenarioDesignLayer, WorkflowDryRu
 from app.layers.agent.verification_layers import AgentEvaluationLayer, FacetConsistencyLayer
 from app.layers.agent.archetype_layer import AgentArchetypeLayer
 from app.layers.knowledge_context_layer import KnowledgeContextLayer
+from app.layers.industry_knowledge_layer import IndustryKnowledgeLayer
 from app.layers.workflow.oversight_layer import OversightPlacementLayer
 from app.layers.workflow.pattern_expansion_layer import PatternExpansionLayer
 from app.layers.execution_layer import ExecutionLayer
@@ -117,12 +118,15 @@ chat_pipeline.add(Stage("equip", "Build missing tools",
     CapabilityGapLayer(),
 ]))
 chat_pipeline.add(Stage("ground", "Gather what it can use",
-                        "The tools, connectors and libraries available, the process knowledge and "
-                        "guidance in scope, and the kind of agent this is.", [
+                        "The tools, connectors and libraries available, the process knowledge, "
+                        "industry knowledge and guidance in scope, and the kind of agent this is.", [
     AgentInventoryLayer(),
     # After inventory (it resolves the scope this reads), before the facets so
     # every branch shares one process context and one guidance pack.
     KnowledgeContextLayer("agent"),
+    # After process knowledge (its document's domain widens the scope), before
+    # the archetype and facets so every decision reads one industry pack.
+    IndustryKnowledgeLayer("agent"),
     # After knowledge (it reads the process facts and guidance), before the
     # facets so model, tools and instructions are chosen for the agent type.
     AgentArchetypeLayer("agent"),
@@ -175,9 +179,13 @@ chat_pipeline.add(Stage("answer", "Answer", "The agent answers your request.", [
 
 workflow_pipeline = Pipeline("workflow_design")
 workflow_pipeline.add(Stage("understand", "Understand the goal",
-                            "What exists, what the business knows, the work to do and how each part runs.", [
+                            "What exists, what the business and its industry know, the work to do and how "
+                            "each part runs.", [
     ResourceInventoryLayer(),
     KnowledgeContextLayer("workflow"),
+    # Next to process knowledge, before decomposition: every planning decision
+    # and every activity's code reads the same industry pack.
+    IndustryKnowledgeLayer("workflow"),
     GoalDecompositionLayer(),
     ExecutionModeLayer(),
 ]))

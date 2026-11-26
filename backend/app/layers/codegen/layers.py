@@ -379,7 +379,20 @@ def requirement_from_answer(data: dict, need: CodeNeed, normalised: dict) -> Cod
         http_fixtures=[f for f in (data.get("http_fixtures") or []) if isinstance(f, dict)],
         origin=need.origin,
         checks=clean_checks(data.get("checks")),
+        industry_knowledge=[dict(i) for i in need.industry_knowledge or []],
+        industry_refs=_industry_refs(data, need),
     )
+
+
+def _industry_refs(data: dict, need: CodeNeed) -> list[str]:
+    """The ``industry:N`` refs the author applied — only ones it was given."""
+    given = {str(i.get("ref")) for i in need.industry_knowledge or [] if i.get("ref")}
+    out: list[str] = []
+    for r in data.get("industry_refs") or [] if isinstance(data.get("industry_refs"), list) else []:
+        ref = str(r.get("ref") if isinstance(r, dict) else r or "").strip().strip("[]")
+        if ref in given and ref not in out:
+            out.append(ref)
+    return out
 
 
 def clean_checks(raw) -> list[dict]:

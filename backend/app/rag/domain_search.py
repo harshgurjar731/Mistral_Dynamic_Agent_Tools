@@ -1,41 +1,33 @@
 """
-One tool for everything an agent knows that is not the document text itself.
+One tool for what an agent knows that is not the document text itself.
 
 Before this, an agent could carry three retrieval tools — ``document_library``,
 ``query_industry_knowledge`` and ``query_knowledge_graph`` — and had to choose
 between them on every question. That is a tool-selection problem the model
-solves badly and pays for either way: three descriptions competing for
-attention, three attribution contracts, and a wrong choice returning nothing
-useful while looking like an answer.
+solves badly and pays for either way.
 
 Two tools, split on a line a model can actually apply:
 
 * ``document_library`` — **what a passage says**. Verbatim wording, quotations,
   the text of a specific clause.
-* ``search_domain_knowledge`` — **what we know**. This one. Entities and how
-  they connect, from the graph built out of those same documents, plus the
-  curated industry knowledge for the agent's domain.
+* ``search_domain_knowledge`` — **how things connect**. This one. Entities and
+  their relations, from the graph built out of those same documents, scoped by
+  the agent's libraries.
 
-Both sources are searched together and scoped the same way, so an answer built
-from them is about one subject rather than two. The graph narrows by the
-agent's libraries; the corpus narrows by the agent's domain annotations; and
-after Stage 2 those are the same subject, because a library is annotated to the
-domain its agent serves.
-
-They are rendered as separate sections under **one** attribution contract.
-Merging their scores into a single ranking was the alternative and it is false
-precision: a Lucene score over entity names and a token overlap over
-hand-written prose are not comparable numbers, and pretending they are would
-bury a directly relevant triple under a vaguely matching paragraph.
+Curated industry knowledge is no longer searched here. It is read while the
+agent or workflow is planned — by the industry-knowledge layer, next to process
+knowledge — and by tool and activity code generation, so its regulations,
+rules and metrics are built into the design instead of looked up on every
+turn (``app.knowledge.industry``). The tool keeps its name, so agents created
+with it keep working; the ``domains`` argument is accepted and ignored.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Iterable, Optional
 
-from app.rag import retrieval, timeline
+from app.rag import retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -45,69 +37,44 @@ async def search(
     query: str,
     *,
     library_ids: Optional[Iterable[str]] = None,
-    domains: Optional[Iterable[str]] = None,
+    domains: Optional[Iterable[str]] = None,  # noqa: ARG001 — kept for callers; unused
     hops: int = 2,
     limit: int = 12,
     optimize: bool = True,
 ) -> dict:
-    """Search the document graph and the industry corpus together.
+    """Search the document graph of these libraries.
 
-    Both run concurrently: they share nothing, one is a Bolt round trip and the
-    other a SQLite scan, and running them in series would add the slower one's
-    latency to every RAG turn for no reason.
-
-    Neither failing takes the other down. A graph outage still yields industry
-    knowledge; an empty corpus still yields the graph.
+    ``knowledge`` stays in the result, always empty, so callers that read it
+    keep working; industry knowledge is used in planning, not here.
     """
     libraries = [lid for lid in (library_ids or []) if lid]
-    domain_ids = [d for d in (domains or []) if d]
 
-    async def _graph() -> dict:
-        if not libraries:
-            return {"available": False, "reason": "this agent has no document library"}
+    if not libraries:
+        graph_result = {"available": False, "reason": "this agent has no document library"}
+    else:
         try:
-            return await retrieval.retrieve(
+            graph_result = await retrieval.retrieve(
                 client, query, library_ids=libraries,
                 hops=hops, limit=limit, optimize=optimize,
             )
         except Exception as e:
             logger.warning("Graph retrieval failed: %s", e)
-            return {"available": False, "reason": str(e)[:200]}
-
-    async def _corpus() -> dict:
-        from app.knowledge import reference as knowledge
-
-        try:
-            with timeline.stage(
-                "industry_knowledge", meta={"domains": domain_ids or "all"}
-            ) as st:
-                entries = await asyncio.to_thread(
-                    knowledge.search, query, domain_ids or None, None, max(3, limit // 2)
-                )
-                st.set(entries=len(entries))
-            return {"available": True, "entries": entries}
-        except Exception as e:
-            logger.warning("Industry knowledge lookup failed: %s", e)
-            return {"available": False, "entries": [], "reason": str(e)[:200]}
-
-    graph_result, corpus_result = await asyncio.gather(_graph(), _corpus())
+            graph_result = {"available": False, "reason": str(e)[:200]}
 
     return {
         "query": query,
         "graph": graph_result,
-        "knowledge": corpus_result,
+        "knowledge": {"available": False, "entries": [],
+                      "reason": "Industry knowledge is used while planning, not at run time."},
         "libraries": libraries,
-        "domains": domain_ids,
-        "found": bool(
-            (graph_result.get("entities") or graph_result.get("relations"))
-            or corpus_result.get("entries")
-        ),
+        "domains": [],
+        "found": bool(graph_result.get("entities") or graph_result.get("relations")),
     }
 
 
 # ── Rendering ──────────────────────────────────────────────────────────────
 
-#: One contract for both sources.
+#: The contract the graph's results are read under.
 #:
 #: Terse for the reason the two it replaces were terse: a tool result reads as
 #: *data*, and anything long competes with the content it wraps. The specific
@@ -120,15 +87,13 @@ _CONTRACT = """\
 RULES FOR THIS ANSWER — follow exactly:
 1. Everything below is SOURCED. Prefer it over your own knowledge.
 2. Ground your answer in the evidence quotes, and name the source — the
-   document filename, or the domain the industry note belongs to.
+   document filename.
 3. Anything you state that is NOT below — a figure, rate, threshold, date or
    named regulation — is UNSOURCED. Write "(unverified)" immediately after it,
    every time. This is not optional.
 4. A relation is a summary, not a quotation. Do not elaborate one beyond what
    its evidence sentence supports.
-5. Where an industry note carries an "As of" date, cite that date whenever you
-   use its figures. Never present dated material as current.
-6. If the material does not answer the question, say so and say what it does
+5. If the material does not answer the question, say so and say what it does
    cover. Do not fill the gap.
 
 ──────────────────────────── SOURCED MATERIAL ────────────────────────────
@@ -136,9 +101,8 @@ RULES FOR THIS ANSWER — follow exactly:
 
 
 def render(result: dict, *, scope_note: str = "") -> str:
-    """Format both sources for a model to read back, under one contract."""
+    """Format the graph's results for a model to read back, under one contract."""
     graph = result.get("graph") or {}
-    corpus = result.get("knowledge") or {}
     blocks: list[str] = []
 
     # ── The document graph ──────────────────────────────────────────────
@@ -178,26 +142,9 @@ def render(result: dict, *, scope_note: str = "") -> str:
             "Try the document library tool for the wording of a passage."
         )
 
-    # ── The industry corpus ─────────────────────────────────────────────
-    entries = corpus.get("entries") or []
-    if entries:
-        from app.catalog import store as ontology_store
-
-        lines = ["### Industry knowledge"]
-        for entry in entries:
-            concept = ontology_store.get_concept(entry["concept_id"])
-            label = concept["label"] if concept else entry["concept_id"]
-            dated = f" · As of {entry['as_of']}" if entry.get("as_of") else ""
-            lines.append(
-                f"\n**{entry['title']}** — {label} ({entry['kind']}){dated}\n"
-                f"{entry['body']}"
-            )
-        blocks.append("\n".join(lines))
-
     if not blocks:
         return (
-            "Nothing matched that query in this agent's documents or in the "
-            "industry knowledge for its domain.\n\n"
+            "Nothing matched that query in this agent's documents.\n\n"
             "Say plainly that no sourced material was found, then try the "
             "document library tool for the document text. Mark every specific "
             'figure, date or name you give from your own knowledge with '
@@ -212,22 +159,12 @@ def render(result: dict, *, scope_note: str = "") -> str:
     return header + _CONTRACT + "\n" + "\n\n".join(blocks)
 
 
-def has_coverage(library_ids: Iterable[str], domains: Iterable[str]) -> bool:
-    """Whether this tool would return anything for an agent.
-
-    A union, unlike the two tools it replaces: one source having material is
-    enough to make the tool worth carrying, and an agent with documents but no
-    industry knowledge is the common case.
-    """
-    from app.knowledge import reference as knowledge
+def has_coverage(library_ids: Iterable[str], domains: Iterable[str] = ()) -> bool:  # noqa: ARG001
+    """Whether this tool would return anything for an agent: a graphed library."""
     from app.rag import graph_store
 
     libraries = [lid for lid in (library_ids or []) if lid]
-    domain_ids = [d for d in (domains or []) if d]
-
-    if libraries and graph_store.has_coverage(libraries):
-        return True
     try:
-        return bool(domain_ids) and knowledge.has_coverage(domain_ids)
+        return bool(libraries) and graph_store.has_coverage(libraries)
     except Exception:
         return False

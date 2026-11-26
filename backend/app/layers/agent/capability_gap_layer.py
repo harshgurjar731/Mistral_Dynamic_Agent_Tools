@@ -80,6 +80,13 @@ class CapabilityGapLayer(Layer):
             tool_name = data.get("tool_name", "") or ""
             ctx.emit("status", f"Building capability: {tool_name or 'new tool'}…")
 
+            # This runs before planning has resolved the industry pack, so
+            # resolve it now (IndustryKnowledgeLayer re-ranks it later with
+            # the process document). The tool's code follows the industry's
+            # rules, formulas and standards.
+            industry_items = await self._industry_items(
+                ctx, f"{tool_name} {data.get('tool_description') or ctx.query}")
+
             need = CodeNeed(
                 purpose="tool",
                 origin="chat",
@@ -93,6 +100,7 @@ class CapabilityGapLayer(Layer):
                     "required": data.get("required", []),
                 },
                 guidance=prerequisites.code_guidance(ctx),
+                industry_knowledge=industry_items,
             )
 
             def relay(event: dict) -> None:
@@ -112,6 +120,12 @@ class CapabilityGapLayer(Layer):
                 ctx.emit("status", f"Could not build '{resolution.name or tool_name}' — the agent "
                                    f"is created without it. {resolution.message[:240]}")
             ctx.synthesis_result = resolution.usable
+            req = resolution.requirement
+            if resolution.status in ("built", "pending_approval") and req is not None and req.industry_refs:
+                from app.knowledge import industry_pipeline
+
+                industry_pipeline.record_items(ctx, self.name, req.industry_refs,
+                                               how=f"applied in the code of {resolution.name}")
             if resolution.status == "built":
                 ctx.emit("tool_new", {"tool_name": resolution.name, "status": "approved",
                                       "version": resolution.version})
@@ -121,3 +135,23 @@ class CapabilityGapLayer(Layer):
             ctx.synthesis_result = False
 
         return await next(ctx)
+
+    async def _industry_items(self, ctx: PipelineContext, purpose: str) -> list[dict]:
+        """The industry items the tool's code should follow; [] when none are in scope."""
+        from app.knowledge import industry, industry_pipeline
+
+        if not bool(industry.setting("INDUSTRY_IN_CODEGEN", True)):
+            return []
+        try:
+            from app.catalog import match
+
+            goal = ctx.query
+            if ctx.requirements and ctx.requirements.domain not in ("", "general"):
+                goal = f"{ctx.requirements.domain} {ctx.requirements.intent}"
+            scope = match.scope_for_goal(goal)
+            await industry_pipeline.ensure(ctx, goal=" ".join(filter(None, [ctx.query, goal])),
+                                           concept_ids=scope.get("domains") or [])
+            return industry_pipeline.code_items(ctx, purpose)
+        except Exception as e:
+            logger.debug("Industry knowledge for the capability gap skipped: %s", e)
+            return []

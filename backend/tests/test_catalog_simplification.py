@@ -79,13 +79,13 @@ def test_stopword_sets_match_the_ones_each_matcher_had():
 
 def test_each_matcher_tokenizes_as_before():
     from app.catalog import match
-    from app.knowledge import reference
     from app.process import resolver
 
+    # (The industry-knowledge run-time search and its tokenizer were removed:
+    # industry knowledge is ranked while planning, by app.knowledge.industry.)
     text = "Please process the invoice data: what do we need to approve a purchase requisition?"
     assert match._tokens(text) == {"please", "invoice", "what", "need", "approve", "purchase", "requisition"}
     assert resolver._tokens(text) == {"invoice", "what", "approve", "purchase", "requisition"}
-    assert reference._tokens(text) == {"process", "invoice", "data", "need", "approve", "purchase", "requisition"}
 
 
 def test_tag_dispatches_fast_and_falls_back_from_accurate(monkeypatch):

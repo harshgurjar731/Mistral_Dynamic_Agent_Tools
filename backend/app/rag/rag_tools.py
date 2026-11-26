@@ -136,19 +136,15 @@ def library_ids_of(tools: Iterable[Any]) -> list[str]:
     return library_ids_from_tools(tools)
 
 
-def agent_has_coverage(tools: Iterable[Any], agent_id: str = "") -> bool:
-    """Whether the tool would return anything for this agent.
+def agent_has_coverage(tools: Iterable[Any], agent_id: str = "") -> bool:  # noqa: ARG001
+    """Whether the tool would return anything for this agent: a graphed library.
 
-    A union across both sources it searches: a graphed library, or a domain with
-    industry knowledge behind it. Either is enough — an agent with documents but
-    no curated knowledge for its domain is the common case, and so is the
-    reverse.
+    Industry knowledge no longer counts — it is used while planning, not by
+    the tool. ``agent_id`` is kept for callers.
     """
-    from app.knowledge import reference as knowledge
     from app.rag import domain_search
 
-    domains = knowledge.domains_for_agent(agent_id) if agent_id else []
-    return domain_search.has_coverage(library_ids_of(tools), domains)
+    return domain_search.has_coverage(library_ids_of(tools))
 
 
 async def attach_to_agent(client, agent_id: str, existing_tools: list) -> bool:

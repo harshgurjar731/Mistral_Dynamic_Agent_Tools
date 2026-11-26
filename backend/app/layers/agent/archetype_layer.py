@@ -112,8 +112,11 @@ class AgentArchetypeLayer(Layer):
         if undecided:
             process_block = process_knowledge.block(ctx, "agent_archetype")
             guidance_block = guidance.block(ctx, "agent_archetype")
+            from app.knowledge import industry_pipeline
+
+            industry_block = industry_pipeline.block(ctx, "agent_archetype")
             user = ("WORK TO CLASSIFY:\n" + "\n".join(_work_line(w) for w in undecided)
-                    + process_block + guidance_block)
+                    + process_block + guidance_block + industry_block)
             try:
                 from app.config import settings
 
@@ -133,6 +136,8 @@ class AgentArchetypeLayer(Layer):
                     process_knowledge.record_refs(ctx, self.name, data)
                 if guidance_block:
                     guidance.record_refs(ctx, self.name, data)
+                if industry_block:
+                    industry_pipeline.record_refs(ctx, self.name, data)
                 llm_summary = str(data.get("reasoning") or "")
             except Exception as e:
                 logger.warning("Archetype decision failed — defaults kept: %s", e)

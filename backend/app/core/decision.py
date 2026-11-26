@@ -417,6 +417,11 @@ class DecisionLayer(Layer):
     #: ``process_view``. With no guidance in scope the block is empty.
     guidance_view: Optional[str] = None
 
+    #: Which view of the run's industry knowledge this decision reads (see
+    #: ``app.knowledge.industry.CATEGORY_VIEWS``). None: the same as
+    #: ``process_view``. With no industry knowledge in scope the block is empty.
+    industry_view: Optional[str] = None
+
     #: Whether this decision is told the build prerequisites settled with the
     #: user (``app.build_prereqs.guidance``). Empty when there are none.
     uses_prerequisites: bool = False
@@ -467,6 +472,15 @@ class DecisionLayer(Layer):
 
         return guidance.block(ctx, view)
 
+    def industry_block(self, ctx: PipelineContext) -> str:
+        """Industry knowledge appended to the user prompt; "" when there is none."""
+        view = self.industry_view or self.process_view
+        if not view:
+            return ""
+        from app.knowledge import industry_pipeline
+
+        return industry_pipeline.block(ctx, view)
+
     def apply(self, ctx: PipelineContext, data: dict) -> None:
         """Write the parsed decision onto the context."""
         raise NotImplementedError
@@ -489,6 +503,9 @@ class DecisionLayer(Layer):
             guidance_block = self.guidance_block(ctx)
             if guidance_block:
                 user = user + guidance_block
+            industry_block = self.industry_block(ctx)
+            if industry_block:
+                user = user + industry_block
             if self.uses_prerequisites:
                 from app.build_prereqs import guidance as prerequisites
 
@@ -568,6 +585,10 @@ class DecisionLayer(Layer):
                 from app.knowledge import pipeline as guidance
 
                 guidance.record_refs(ctx, self.name, data)
+            if industry_block:
+                from app.knowledge import industry_pipeline
+
+                industry_pipeline.record_refs(ctx, self.name, data)
             # Shown under this layer's row in the timeline. Every decision
             # prompt is required to justify itself, and this is where that
             # justification surfaces to the user.

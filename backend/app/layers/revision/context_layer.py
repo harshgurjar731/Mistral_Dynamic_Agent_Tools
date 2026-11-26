@@ -115,6 +115,24 @@ async def _load_process_knowledge(ctx: PipelineContext, workflow_name: str) -> N
         facts=facts_from(content, derived_requirements(content)),
         subject="workflow", process=ctx.metadata.get(pk.CONTEXT_KEY))
 
+    # Industry knowledge for the industry the workflow was filed under (its
+    # domain annotations) and its process document's domain. None in scope:
+    # nothing set, and the revision prompt is unchanged.
+    from app.knowledge import industry, industry_pipeline
+
+    concepts = [d.get("concept_id") for d in docs or [] if d.get("concept_id")]
+    try:
+        from app.catalog import store as catalog_store
+        from app.catalog.vocab import Predicate
+
+        concepts += catalog_store.annotations_for("workflow", workflow_name).get(
+            Predicate.SERVES_DOMAIN.value, []) or []
+    except Exception as e:
+        logger.debug("No domain annotations for revision of %s: %s", workflow_name, e)
+    industry_pipeline.attach(ctx, await industry.resolve(
+        ctx.client, goal=goal, concept_ids=concepts, process=ctx.metadata.get(pk.CONTEXT_KEY),
+        mode=industry_pipeline.industry_request(ctx).get("mode")))
+
 
 async def _catalog(ctx: PipelineContext) -> dict:
     """Agents, activities and connectors a step may bind to. Never raises."""

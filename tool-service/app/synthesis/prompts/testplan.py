@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from app.synthesis.prompts import common
 from app.synthesis.spec import SynthesisSpec
 
 SYSTEM = """\
@@ -37,4 +38,9 @@ def user(spec: SynthesisSpec) -> str:
         f"Data source: {spec.api_details}\n"
         f"Input schema:\n{json.dumps(spec.input_schema, indent=2)}\n"
         + (f"Output schema:\n{json.dumps(spec.output_schema, indent=2)}\n" if spec.output_schema else "")
+        # Realistic inputs for this industry: values near its thresholds and
+        # in its formats, so the rules the code enforces are exercised.
+        + (("Industry rules, thresholds and formats the function follows (make case 3 sit near "
+            "one of these thresholds):\n" + "\n".join(common.industry_lines(spec)) + "\n")
+           if spec.industry_knowledge else "")
     )

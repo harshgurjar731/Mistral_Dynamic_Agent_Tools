@@ -171,9 +171,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ Workflow annotation backfill skipped: %s", e)
 
-    # Classify any agent still without a domain. Without one the knowledge tool
-    # cannot scope itself and falls back to searching every industry, which is
-    # the difference between "mortgage knowledge" and "some knowledge".
+    # Classify any agent still without a domain. The domain is what the
+    # planner narrows reusable agents by, and what a revision's industry
+    # knowledge is scoped to.
     #
     # Scheduled in the background: this is an LLM call per agent, and holding up
     # boot for it would be the wrong trade for an enhancement that lands
@@ -536,6 +536,9 @@ app.include_router(processes_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import knowledge as knowledge_routes  # noqa: E402
 app.include_router(knowledge_routes.router, prefix=settings.API_PREFIX)
+
+from app.routes import industry_knowledge as industry_knowledge_routes  # noqa: E402
+app.include_router(industry_knowledge_routes.router, prefix=settings.API_PREFIX)
 
 from app.routes import reviews as reviews_routes  # noqa: E402
 app.include_router(reviews_routes.router, prefix=settings.API_PREFIX)

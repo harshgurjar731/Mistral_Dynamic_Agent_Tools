@@ -135,6 +135,12 @@ class SynthesisSpec:
     #: each of them without error and with output matching the output schema —
     #: so a fix, once made, stays made through later rebuilds.
     regression_inputs: list[dict] = field(default_factory=list)
+    #: Reviewed facts about the industry the code must follow — rules and
+    #: thresholds to enforce, formulas to compute with, standards for formats:
+    #: ``[{"ref", "title", "category", "force", "body", "jurisdiction", "as_of"}]``.
+    #: Shown to the generator and to the reference implementation, so both
+    #: compute the same thing the industry's way.
+    industry_knowledge: list[dict] = field(default_factory=list)
 
     # ── Construction ────────────────────────────────────────────────────
 
@@ -174,6 +180,7 @@ class SynthesisSpec:
             origin=str(kw.get("origin") or "explicit"),
             feedback=_feedback(kw.get("feedback")),
             regression_inputs=_regressions(kw.get("regression_inputs")),
+            industry_knowledge=_industry(kw.get("industry_knowledge")),
         )
 
     @classmethod
@@ -211,6 +218,7 @@ class SynthesisSpec:
                 # Only when present, so every spec without it keeps its identity.
                 **({"feedback": self.feedback} if self.feedback else {}),
                 **({"regression_inputs": self.regression_inputs} if self.regression_inputs else {}),
+                **({"industry_knowledge": self.industry_knowledge} if self.industry_knowledge else {}),
             },
             sort_keys=True,
             default=str,
@@ -355,6 +363,22 @@ def _regressions(raw) -> list[dict]:
         if isinstance(item, dict) and item and item not in out:
             out.append(item)
     return out[-20:]
+
+
+_INDUSTRY_KEYS = {"ref": 40, "title": 200, "category": 40, "force": 20, "body": 1200,
+                  "jurisdiction": 24, "as_of": 20, "path": 200}
+
+
+def _industry(raw) -> list[dict]:
+    """Industry items with only the known keys and bounded lengths; at most 12."""
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        clean = {k: str(item.get(k) or "").strip()[:n] for k, n in _INDUSTRY_KEYS.items() if item.get(k)}
+        if clean.get("title") and clean.get("body"):
+            out.append(clean)
+    return out[:12]
 
 
 def _feedback(raw) -> dict:

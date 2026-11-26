@@ -78,9 +78,6 @@ export const QK = {
   ontologyUsage: (id: string) => ["ontology", "concepts", id, "usage"] as const,
   annotationsList: (params: Record<string, unknown>) =>
     ["ontology", "annotations", "list", params] as const,
-  knowledge: (params: Record<string, unknown>) => ["ontology", "knowledge", params] as const,
-  knowledgeSearch: (params: Record<string, unknown>) =>
-    ["ontology", "knowledge", "search", params] as const,
   scope: (goal: string) => ["ontology", "scope", goal] as const,
   scopeGraph: (goal: string) => ["ontology", "scope", "graph", goal] as const,
   ragOverview: () => ["rag", "overview"] as const,
@@ -114,6 +111,13 @@ export const QK = {
   knowledgeVocabulary: () => ["knowledge", "vocabulary"] as const,
   knowledgeSources: () => ["knowledge", "sources"] as const,
   knowledgeFeedback: () => ["knowledge", "feedback"] as const,
+  // Industry knowledge: the tree, its items, documents and the planning preview.
+  industry: () => ["industry"] as const,
+  industryConfig: () => ["industry", "config"] as const,
+  industryTree: () => ["industry", "tree"] as const,
+  industryItems: (params: Record<string, unknown>) => ["industry", "items", params] as const,
+  industrySources: () => ["industry", "sources"] as const,
+  industryUsage: (id: number) => ["industry", "usage", id] as const,
   reviews: (status: string | null = "pending") => ["reviews", status] as const,
   executionReviews: (executionId: string) => ["reviews", "execution", executionId] as const,
   review: (id: number) => ["reviews", "one", id] as const,

@@ -92,6 +92,8 @@ class ActivityGapLayer(WorkflowStepLayer):
         ctx.emit("status", f"Resolving {len(activity_caps)} activity(ies)…")
         by_id = {c.id: c for c in spec.capabilities}
 
+        from app.knowledge import industry_pipeline
+
         needs = []
         for cap in activity_caps:
             upstream = [
@@ -120,6 +122,8 @@ class ActivityGapLayer(WorkflowStepLayer):
                 # What was settled with the user before building: the vault names
                 # to read, the services to do without, the facts to rely on.
                 guidance=prerequisites.code_guidance(ctx, cap.id),
+                # The industry's rules, formulas and standards for this step.
+                industry_knowledge=industry_pipeline.code_items(ctx, f"{cap.name} {cap.purpose}"),
             ))
 
         from app.core.stages import emit_sublayer
@@ -262,6 +266,9 @@ class ActivityGapLayer(WorkflowStepLayer):
                     reused.append(row)
                 else:
                     req = resolution.requirement
+                    if req is not None and req.industry_refs:
+                        industry_pipeline.record_items(ctx, self.name, req.industry_refs, target=cap.id,
+                                                       how=f"applied in the code of {resolution.name}")
                     built.append({
                         **row,
                         "status": resolution.status,

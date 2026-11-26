@@ -329,8 +329,10 @@ setting "is_reused": false on any agent.
    platform attaches document_library for you — do not list it in "tools".
 4. Set "knowledge_graph": true ONLY when the agent must reason over how things
    CONNECT — who supplies whom, what governs what, which system depends on
-   which — or needs the domain's regulations, metrics and definitions. That
-   attaches search_domain_knowledge.
+   which. That attaches search_domain_knowledge (the graph of the agent's own
+   documents). The industry's regulations, rules and metrics are not looked up
+   at run time: write the ones the INDUSTRY KNOWLEDGE block gives you into the
+   instructions.
    Set it false when the agent only needs the WORDING of a passage: quoting a
    clause, checking a figure, summarising a section. document_library alone
    does that better, and a second retrieval tool competing for every turn makes
@@ -590,8 +592,9 @@ supplied library inventory rather than inventing a tool to read files.
 
 The platform attaches document_library to any agent that has a library — do NOT
 list it in "tools". Set "knowledge_graph": true on a step that must reason over
-how entities connect, or needs the domain's regulations and metrics; that adds
-search_domain_knowledge. Leave it false for a step that only needs the wording
+how entities connect in its documents; that adds search_domain_knowledge. The
+industry's regulations, rules and metrics go into the step's instructions (from
+the INDUSTRY KNOWLEDGE block when there is one), never into a tool lookup. Leave it false for a step that only needs the wording
 of a passage. Do NOT propose a new tool whose job is "search the documents";
 one already exists.
 

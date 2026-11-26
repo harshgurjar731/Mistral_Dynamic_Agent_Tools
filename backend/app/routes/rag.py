@@ -295,8 +295,7 @@ async def get_library_domains(library_id: str):
     """Which domains this library serves, and the vocabulary to choose from.
 
     The annotation is what lets a planner pick this library for a goal, and what
-    lets industry knowledge, document search and the graph all narrow to the
-    same subject.
+    lets document search and the graph narrow to the same subject.
     """
     from app.catalog import store as ontology_store
     from app.catalog.vocab import Scheme
@@ -613,10 +612,10 @@ class SearchRequest(BaseModel):
 async def search(request: SearchRequest, client=Depends(get_mistral_client)):
     """Run the agent's own retrieval and return every stage of it.
 
-    Both sources, exactly as ``search_domain_knowledge`` runs them: what the
-    optimiser did to the query, which entities matched, what the traversal
-    found, which industry notes came back, and the prompt block the model would
-    actually receive.
+    Exactly as ``search_domain_knowledge`` runs it: what the optimiser did to
+    the query, which entities matched, what the traversal found, and the prompt
+    block the model would actually receive. (Industry knowledge is no longer
+    searched here; it is used while planning.)
     """
     from app.rag import domain_search
 

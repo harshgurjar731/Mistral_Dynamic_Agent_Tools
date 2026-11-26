@@ -32,6 +32,15 @@ class SynthesizeRequest(BaseModel):
     side_effects: str = "none"                  # none | read-only | write | delete
     http_fixtures: list[dict] = Field(default_factory=list)
     origin: str = "explicit"                    # chat | workflow | explicit | runtime | import
+    # Declared so they reach SynthesisSpec: an undeclared field is dropped by
+    # model_dump(), which silently lost a rebuild's failure and comment.
+    # A rebuild after a run-time failure: previous_code, runtime_error, comment, …
+    feedback: dict = Field(default_factory=dict)
+    # Inputs earlier versions failed on; every new version must pass them.
+    regression_inputs: list[dict] = Field(default_factory=list)
+    # Industry rules, formulas and standards the code must follow:
+    # [{"ref", "title", "category", "force", "body", "jurisdiction", "as_of"}]
+    industry_knowledge: list[dict] = Field(default_factory=list)
 
 
 class SynthesizeResponse(BaseModel):

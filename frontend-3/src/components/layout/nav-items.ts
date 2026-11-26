@@ -1,6 +1,7 @@
 import {
   Activity,
   BotMessageSquare,
+  Building2,
   Cpu,
   GitBranch,
   HardDrive,
@@ -187,7 +188,7 @@ const ITEMS: NavItem[] = [
     page: {
       title: "Knowledge",
       description:
-        "Build guidance the orchestrator follows when it designs agents and workflows, and the reference knowledge built agents read at run time.",
+        "Build guidance the orchestrator follows when it designs agents and workflows, and chooses each agent's type.",
       tab: "Knowledge",
     },
   },
@@ -237,6 +238,18 @@ const ITEMS: NavItem[] = [
       description:
         "The business processes each industry runs, filed by domain and subdomain like the ontology, with a process and subprocess level below. A process document attached here grounds agent and workflow design when Process knowledge is turned on.",
       tab: "Processes",
+    },
+  },
+  {
+    label: "Industry knowledge",
+    to: "/industry-knowledge",
+    group: "knowledge",
+    icon: Building2,
+    page: {
+      title: "Industry knowledge",
+      description:
+        "The reviewed facts about each industry, domain and subdomain — regulations, standards, business rules, metrics, risks and definitions. Plans in that industry follow them, and the tools and activities built for those plans are generated against them.",
+      tab: "Industry knowledge",
     },
   },
   {

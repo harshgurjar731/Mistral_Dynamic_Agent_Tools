@@ -58,6 +58,10 @@ class RequirementProfile:
             parts.append("## Draft from the caller (refine it; do not trust it blindly)\n"
                          + json.dumps(need.draft, indent=2, default=str))
         parts.extend(self.context_blocks(need))
+        if getattr(need, "industry_knowledge", None):
+            from app.knowledge.industry import render_for_code
+
+            parts.append(render_for_code(need.industry_knowledge))
         if issues and previous is not None:
             parts.append("## Your previous specification was rejected\n"
                          + json.dumps(previous.as_request(), indent=2, default=str)

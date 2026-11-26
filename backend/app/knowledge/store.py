@@ -19,8 +19,15 @@ from app.knowledge.models import KnowledgeItem, KnowledgeSource
 logger = logging.getLogger(__name__)
 
 KINDS = ("reference", "guidance")
-REFERENCE_CATEGORIES = ("definition", "regulation", "process", "metric", "risk",
-                        "best_practice", "glossary")
+#: Industry knowledge (kind ``reference``) — what sort of claim an item makes.
+#: Planning shows each category to the decisions it can change, and code
+#: generation reads the ones code can follow (rules, metrics, standards).
+INDUSTRY_CATEGORIES = ("regulation", "standard", "business_rule", "metric", "risk",
+                       "process", "definition")
+#: Older reference categories, mapped onto the current ones on write and by
+#: the boot migration.
+LEGACY_REFERENCE_CATEGORIES = {"glossary": "definition", "best_practice": "business_rule"}
+REFERENCE_CATEGORIES = INDUSTRY_CATEGORIES
 GUIDANCE_CATEGORIES = ("archetype", "agent_design", "instruction_style", "workflow_pattern",
                        "tool_connector", "governance", "model_choice", "naming", "data_handling",
                        "anti_pattern", "best_practice")
@@ -90,6 +97,7 @@ def to_dict(item: KnowledgeItem, *, embedding: bool = False) -> dict:
         "source_id": item.source_id,
         "source_ref": _loads(item.source_ref, {}),
         "as_of": item.as_of,
+        "jurisdiction": item.jurisdiction or ("global" if item.kind == "reference" else None),
         "stats": {"used": item.used or 0, "accepted_builds": item.accepted_builds or 0,
                   "rolled_back_builds": item.rolled_back_builds or 0},
         "has_embedding": bool(item.embedding),
@@ -108,6 +116,8 @@ def normalise(data: dict) -> dict:
     if kind not in KINDS:
         raise KnowledgeError(f"kind must be one of {', '.join(KINDS)}.")
     category = str(data.get("category") or ("definition" if kind == "reference" else "best_practice")).strip().lower()
+    if kind == "reference":
+        category = LEGACY_REFERENCE_CATEGORIES.get(category, category)
     allowed = REFERENCE_CATEGORIES if kind == "reference" else GUIDANCE_CATEGORIES
     if category not in allowed:
         raise KnowledgeError(f"category '{category}' is not valid for {kind}; use one of {', '.join(allowed)}.")
@@ -115,7 +125,9 @@ def normalise(data: dict) -> dict:
     body = str(data.get("body") or "").strip()
     if not title or not body:
         raise KnowledgeError("title and body are both required.")
-    audience = str(data.get("audience") or ("runtime" if kind == "reference" else "builder")).strip().lower()
+    # Industry knowledge is read while planning and generating code, never by
+    # a built agent at run time, so its audience is always the builder.
+    audience = "builder" if kind == "reference" else str(data.get("audience") or "builder").strip().lower()
     if audience not in AUDIENCES:
         raise KnowledgeError(f"audience must be one of {', '.join(AUDIENCES)}.")
     subject = str(data.get("subject") or "both").strip().lower()
@@ -162,8 +174,21 @@ def normalise(data: dict) -> dict:
         "rationale": str(data.get("rationale") or "").strip(), "status": status,
         "confidence": data.get("confidence"), "origin": str(data.get("origin") or "user"),
         "source_id": data.get("source_id"), "source_ref": data.get("source_ref") or {},
-        "as_of": data.get("as_of"),
+        "as_of": (str(data.get("as_of")).strip()[:20] or None) if data.get("as_of") else None,
+        "jurisdiction": normalise_jurisdiction(data.get("jurisdiction")) if kind == "reference" else None,
     }
+
+
+#: Spellings of "applies everywhere".
+_GLOBAL = {"", "global", "all", "any", "worldwide", "international", "none"}
+
+
+def normalise_jurisdiction(value: Any) -> str:
+    """``global``, or a short upper-case region or country code (EU, UK, US-CA …)."""
+    text = " ".join(str(value or "").split())
+    if text.lower() in _GLOBAL:
+        return "global"
+    return text.upper()[:24]
 
 
 def _apply(item: KnowledgeItem, clean: dict) -> None:
@@ -186,6 +211,7 @@ def _apply(item: KnowledgeItem, clean: dict) -> None:
     item.source_id = clean["source_id"]
     item.source_ref = _dumps(clean["source_ref"])
     item.as_of = clean["as_of"]
+    item.jurisdiction = clean["jurisdiction"]
     item.content_hash = content_hash(clean["title"], clean["body"])
 
 
@@ -379,6 +405,29 @@ def has_active_guidance() -> bool:
             KnowledgeItem.audience.in_(["builder", "both"])).first() is not None
 
 
+def has_active_industry() -> bool:
+    """Whether any approved industry knowledge exists — the planner's cheap first check."""
+    with _session() as db:
+        if db is None:
+            return False
+        return db.query(KnowledgeItem.id).filter(
+            KnowledgeItem.kind == "reference", KnowledgeItem.status == "active").first() is not None
+
+
+def industry_counts_by_concept() -> dict[str, dict[str, int]]:
+    """``{concept_id: {status: n}}`` for industry knowledge — the tree's badges."""
+    with _session() as db:
+        if db is None:
+            return {}
+        out: dict[str, dict[str, int]] = {}
+        rows = db.query(KnowledgeItem.concept_id, KnowledgeItem.status).filter(
+            KnowledgeItem.kind == "reference").all()
+        for concept_id, status in rows:
+            bucket = out.setdefault(concept_id or "", {})
+            bucket[status] = bucket.get(status, 0) + 1
+        return out
+
+
 # ── Sources ────────────────────────────────────────────────────────────────
 
 
@@ -386,7 +435,8 @@ def _source_dict(row: KnowledgeSource, *, text: bool = False) -> dict:
     out = {
         "id": row.id, "title": row.title, "source_type": row.source_type, "filename": row.filename,
         "url": row.url, "library_id": row.library_id, "document_id": row.document_id,
-        "concept_id": row.concept_id, "status": row.status, "message": row.message or "",
+        "concept_id": row.concept_id, "purpose": row.purpose or "guidance",
+        "status": row.status, "message": row.message or "",
         "item_count": row.item_count or 0, "version": row.version or 1,
         "text_chars": len(row.text or ""),
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -430,11 +480,18 @@ def get_source(source_id: int, *, text: bool = False) -> Optional[dict]:
         return _source_dict(row, text=text) if row else None
 
 
-def list_sources() -> list[dict]:
+def list_sources(purpose: Optional[str] = None) -> list[dict]:
+    """Sources, newest first; ``purpose`` (guidance | industry) narrows to one page's."""
     with _session() as db:
         if db is None:
             return []
-        return [_source_dict(r) for r in db.query(KnowledgeSource).order_by(KnowledgeSource.id.desc()).all()]
+        q = db.query(KnowledgeSource)
+        if purpose == "guidance":
+            # Rows from before the column existed are guidance sources.
+            q = q.filter((KnowledgeSource.purpose == "guidance") | KnowledgeSource.purpose.is_(None))
+        elif purpose:
+            q = q.filter(KnowledgeSource.purpose == purpose)
+        return [_source_dict(r) for r in q.order_by(KnowledgeSource.id.desc()).all()]
 
 
 def delete_source(source_id: int, *, items: bool = True) -> dict:
@@ -492,6 +549,8 @@ def ensure_schema() -> None:
             db.commit()
             logger.info("process_usage: added source_type column")
 
+        _industry_migration(db, text)
+
         legacy_cols = {row[1] for row in db.execute(text("PRAGMA table_info(industry_knowledge)"))}
         item_cols = {row[1] for row in db.execute(text("PRAGMA table_info(knowledge_items)"))}
         if not legacy_cols or not item_cols:
@@ -506,11 +565,15 @@ def ensure_schema() -> None:
             if rid in done or not title or not body:
                 continue
             guidance = (kind == "best_practice")
+            # best_practice rows become guidance (category best_practice); only
+            # reference rows take the industry categories.
+            category = kind if guidance else LEGACY_REFERENCE_CATEGORIES.get(kind, kind)
             item = KnowledgeItem(
                 kind="guidance" if guidance else "reference",
-                category=kind if kind in REFERENCE_CATEGORIES else "definition",
+                category=category if guidance or category in REFERENCE_CATEGORIES else "definition",
                 concept_id=concept_id, title=title, body=body, tags=tags,
-                audience="both" if guidance else "runtime",
+                audience="both" if guidance else "builder",
+                jurisdiction=None if guidance else "global",
                 strength="should" if guidance else None,
                 status="active", origin="seed" if source == "seed" else "migrated",
                 as_of=dated, legacy_id=rid, content_hash=content_hash(title, body),
@@ -524,3 +587,39 @@ def ensure_schema() -> None:
         logger.warning("Knowledge schema migration failed: %s", e)
     finally:
         db.close()
+
+
+def _industry_migration(db, text) -> None:
+    """Industry knowledge moved from run time to planning. Idempotent.
+
+    * ``knowledge_items.jurisdiction`` and ``knowledge_sources.purpose`` columns;
+    * every reference item's audience becomes ``builder`` (no agent reads it
+      at run time any more), with ``global`` jurisdiction when unset;
+    * the old ``glossary`` / ``best_practice`` reference categories map to
+      ``definition`` / ``business_rule``.
+    """
+    item_cols = {row[1] for row in db.execute(text("PRAGMA table_info(knowledge_items)"))}
+    if item_cols and "jurisdiction" not in item_cols:
+        db.execute(text("ALTER TABLE knowledge_items ADD COLUMN jurisdiction VARCHAR"))
+        db.commit()
+        logger.info("knowledge_items: added jurisdiction column")
+    source_cols = {row[1] for row in db.execute(text("PRAGMA table_info(knowledge_sources)"))}
+    if source_cols and "purpose" not in source_cols:
+        db.execute(text("ALTER TABLE knowledge_sources ADD COLUMN purpose VARCHAR NOT NULL DEFAULT 'guidance'"))
+        db.commit()
+        logger.info("knowledge_sources: added purpose column")
+    if not item_cols:
+        return
+    changed = db.execute(text(
+        "UPDATE knowledge_items SET audience = 'builder' "
+        "WHERE kind = 'reference' AND audience != 'builder'")).rowcount or 0
+    changed += db.execute(text(
+        "UPDATE knowledge_items SET jurisdiction = 'global' "
+        "WHERE kind = 'reference' AND (jurisdiction IS NULL OR jurisdiction = '')")).rowcount or 0
+    for old, new in LEGACY_REFERENCE_CATEGORIES.items():
+        changed += db.execute(text(
+            "UPDATE knowledge_items SET category = :new WHERE kind = 'reference' AND category = :old"),
+            {"new": new, "old": old}).rowcount or 0
+    if changed:
+        db.commit()
+        logger.info("knowledge_items: %d industry knowledge field(s) migrated for planning", changed)

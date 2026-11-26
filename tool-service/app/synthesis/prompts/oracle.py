@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 
 from app.synthesis import policy
+from app.synthesis.prompts import common
 from app.synthesis.spec import SynthesisSpec
 
 SYSTEM = """\
@@ -45,5 +46,7 @@ def user(spec: SynthesisSpec) -> str:
         f"Input schema:\n{json.dumps(spec.input_schema, indent=2)}\n"
         + (f"Output schema for data:\n{json.dumps(spec.output_schema, indent=2)}\n" if spec.output_schema else "")
         + (("Method notes from the specification author:\n- " + "\n- ".join(notes) + "\n") if notes else "")
+        + (("Industry rules and formulas the specification follows:\n"
+            + "\n".join(common.industry_lines(spec)) + "\n") if spec.industry_knowledge else "")
         + "\nAllowed imports: " + ", ".join(sorted(policy.ALLOWED_STDLIB)) + "\n"
     )

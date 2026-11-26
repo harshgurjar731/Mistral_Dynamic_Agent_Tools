@@ -1,5 +1,5 @@
 """
-Knowledge routes — the Knowledge page (guidance, reference, sources) and the
+Knowledge routes — the Knowledge page (guidance and its sources) and the
 recommendation import on the Processes page.
 
     GET    /knowledge/items                       list (?kind= &status= &category= &concept_id= &source_id=)
@@ -126,7 +126,7 @@ async def set_status(body: StatusBody):
 
 @router.get("/knowledge/counts")
 async def counts():
-    return {"counts": store.counts(), "sources": len(store.list_sources())}
+    return {"counts": store.counts(), "sources": len(store.list_sources("guidance"))}
 
 
 @router.get("/knowledge/vocabulary")
@@ -148,7 +148,7 @@ async def vocabulary():
 
 @router.get("/knowledge/sources")
 async def list_sources():
-    return {"sources": store.list_sources()}
+    return {"sources": store.list_sources("guidance")}
 
 
 @router.post("/knowledge/sources")

@@ -113,7 +113,11 @@ def test_add_source_extracts_distils_scopes_and_embeds(db, monkeypatch):
     out = asyncio.run(ingest.add_source(client, data=b"%PDF-1.4 fake", filename="guide.pdf",
                                         content_type="application/pdf"))
     assert client.ocr_calls == 1 and "<!-- page 2 -->" in calls[0]["user"]
-    assert out["result"]["created"] == 3 and out["source"]["status"] == "distilled"
+    # The industry fact (kind reference) is left out: industry knowledge is filed on an
+    # industry node through the Industry knowledge page, and the note says so.
+    assert out["result"]["created"] == 2 and out["source"]["status"] == "distilled"
+    assert any("Industry knowledge page" in n for n in out["result"]["notes"])
+    assert "Three-way match" not in {i["title"] for i in store.list_items()}
 
     items = {i["title"]: i for i in store.list_items()}
     task = items["Task agents for invoice extraction"]
@@ -134,7 +138,7 @@ def test_redistil_is_idempotent_and_keeps_reviewed_items(db, monkeypatch):
 
     again = asyncio.run(ingest.distill_source(FakeClient(), sid))
     assert again["skipped_duplicates"] == 1  # the approved one is not duplicated
-    assert len(store.list_items(source_id=sid)) == 3
+    assert len(store.list_items(source_id=sid)) == 2  # guidance only
 
 
 def test_contradicting_guidance_is_flagged(db, monkeypatch):

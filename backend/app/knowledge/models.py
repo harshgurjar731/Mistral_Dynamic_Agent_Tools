@@ -4,7 +4,9 @@ Knowledge tables.
 * ``knowledge_items`` — one short, self-contained item filed on a catalog node
   (or global when ``concept_id`` is null). ``kind`` separates the two uses:
 
-    reference   what a domain involves — read by built agents at run time
+    reference   industry knowledge: what an industry, domain or subdomain
+                involves (regulations, standards, rules, metrics, risks) —
+                read by planning and by tool and activity code generation
     guidance    how to build — read by the build pipelines
 
   Guidance may carry ``strength``, ``conditions`` and ``effect``, which is what
@@ -67,6 +69,9 @@ class KnowledgeItem(Base):
     #: JSON {page, quote, document_id, library_id} — the citation.
     source_ref = Column(Text, nullable=True)
     as_of = Column(String, nullable=True)
+    #: Industry knowledge only: where it holds — "global", or a region or
+    #: country code (EU, UK, US, IN …). Planning can be limited to some.
+    jurisdiction = Column(String, nullable=True)
     #: JSON array of floats (mistral-embed), set at ingestion. Optional.
     embedding = Column(Text, nullable=True)
     content_hash = Column(String, nullable=True, index=True)
@@ -95,8 +100,12 @@ class KnowledgeSource(Base):
     document_id = Column(String, nullable=True)
     #: Extracted markdown, with page markers.
     text = Column(Text, nullable=True)
-    #: Catalog node the whole source is about, when known.
+    #: Catalog node the whole source is about, when known. Required for an
+    #: industry source: the industry, domain or subdomain it was filed under.
     concept_id = Column(String, nullable=True)
+    #: guidance | industry — which distillation it went through, and which
+    #: page lists it.
+    purpose = Column(String, nullable=False, default="guidance")
     #: pending | extracted | distilled | failed
     status = Column(String, nullable=False, default="pending")
     message = Column(Text, nullable=True)

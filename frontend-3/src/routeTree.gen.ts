@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as IndustryKnowledgeRouteImport } from './routes/industry-knowledge'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as LibrariesRouteImport } from './routes/libraries'
 import { Route as LoginRouteImport } from './routes/login'
@@ -89,6 +90,11 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IndustryKnowledgeRoute = IndustryKnowledgeRouteImport.update({
+  id: '/industry-knowledge',
+  path: '/industry-knowledge',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KnowledgeRoute = KnowledgeRouteImport.update({
@@ -390,6 +396,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
+  '/industry-knowledge': typeof IndustryKnowledgeRoute
   '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
   '/login': typeof LoginRoute
@@ -453,6 +460,7 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
+  '/industry-knowledge': typeof IndustryKnowledgeRoute
   '/knowledge': typeof KnowledgeRoute
   '/login': typeof LoginRoute
   '/ontology': typeof OntologyRoute
@@ -516,6 +524,7 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/health': typeof HealthRoute
+  '/industry-knowledge': typeof IndustryKnowledgeRoute
   '/knowledge': typeof KnowledgeRoute
   '/libraries': typeof LibrariesRouteWithChildren
   '/login': typeof LoginRoute
@@ -581,6 +590,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/forgot-password'
     | '/health'
+    | '/industry-knowledge'
     | '/knowledge'
     | '/libraries'
     | '/login'
@@ -644,6 +654,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/forgot-password'
     | '/health'
+    | '/industry-knowledge'
     | '/knowledge'
     | '/login'
     | '/ontology'
@@ -706,6 +717,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/forgot-password'
     | '/health'
+    | '/industry-knowledge'
     | '/knowledge'
     | '/libraries'
     | '/login'
@@ -770,6 +782,7 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   HealthRoute: typeof HealthRoute
+  IndustryKnowledgeRoute: typeof IndustryKnowledgeRoute
   KnowledgeRoute: typeof KnowledgeRoute
   LibrariesRoute: typeof LibrariesRouteWithChildren
   LoginRoute: typeof LoginRoute
@@ -855,6 +868,13 @@ declare module '@tanstack/react-router' {
       path: '/health'
       fullPath: '/health'
       preLoaderRoute: typeof HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/industry-knowledge': {
+      id: '/industry-knowledge'
+      path: '/industry-knowledge'
+      fullPath: '/industry-knowledge'
+      preLoaderRoute: typeof IndustryKnowledgeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/knowledge': {
@@ -1278,6 +1298,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   HealthRoute: HealthRoute,
+  IndustryKnowledgeRoute: IndustryKnowledgeRoute,
   KnowledgeRoute: KnowledgeRoute,
   LibrariesRoute: LibrariesRouteWithChildren,
   LoginRoute: LoginRoute,

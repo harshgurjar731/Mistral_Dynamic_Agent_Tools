@@ -18,16 +18,16 @@ logger = logging.getLogger(__name__)
 
 #: Canonical name of the grounded-knowledge tool.
 #:
-#: One tool covering both non-verbatim sources: the knowledge graph built from
-#: an agent's documents, and the curated industry knowledge for its domain. It
-#: replaced two separate tools that competed for the same question — three
+#: The knowledge graph built from an agent's documents. It replaced two
+#: separate tools that competed for the same question — three
 #: retrieval tools on one agent is a tool-selection problem the model solves
 #: badly, and a wrong choice returns nothing useful while looking like an
 #: answer.
 #:
 #: Its partner is the built-in ``document_library``. The split a model can
-#: actually apply: ask the library what a passage *says*, ask this what we
-#: *know*.
+#: actually apply: ask the library what a passage *says*, ask this how things
+#: *connect*. Curated industry knowledge is not searched at run time: it is
+#: built into the agent while it is planned (``app.knowledge.industry``).
 #:
 #: Referenced from agent creation, the builder catalogue and the reconcile, so
 #: it is defined once — a typo in any of those would silently attach nothing.
@@ -77,29 +77,23 @@ FUNCTION_TOOLS = {
             "parameters": {"type": "object", "properties": {}},
         },
     },
-    # Both non-verbatim sources behind one name. Executed in this process:
-    # the graph is a local Bolt hop and the corpus is a SQLite scan, so a
-    # Docker round trip would be pure latency.
+    # The document graph. Executed in this process: the graph is a local Bolt
+    # hop, so a Docker round trip would be pure latency.
     DOMAIN_SEARCH_TOOL: {
         "type": "function",
         "function": {
             "name": DOMAIN_SEARCH_TOOL,
             "description": (
-                "Search everything this agent knows about its domain: the "
-                "knowledge graph built from its own uploaded documents, and the "
-                "curated industry knowledge for the business domain it serves. "
-                "Returns entities, how they connect, the sentences they were "
-                "extracted from, and any relevant industry regulation, metric, "
-                "process or risk. "
-                "Call this BEFORE answering anything that depends on the user's "
-                "documents or on domain expertise — questions about "
-                "relationships, dependencies, ownership, obligations, "
-                "who-connects-to-what, regulations, thresholds or definitions. "
+                "Search the knowledge graph built from this agent's own uploaded "
+                "documents. Returns entities, how they connect, and the "
+                "sentences they were extracted from. "
+                "Call this BEFORE answering anything that depends on how things "
+                "in the user's documents relate — relationships, dependencies, "
+                "ownership, obligations, who-connects-to-what. "
                 "Use document_library instead when you need the exact wording of "
                 "a specific passage; use both when you need the connection and "
                 "the quotation. "
-                "Results are scoped automatically to this agent's libraries and "
-                "domain. "
+                "Results are scoped automatically to this agent's libraries. "
                 "IMPORTANT: what this returns is your sourced material. Any "
                 "figure, rate, threshold, date or named regulation you state "
                 "that did not come from it must be marked '(unverified)'."
@@ -121,14 +115,6 @@ FUNCTION_TOOLS = {
                         "description": (
                             "Optional. Search one specific library instead of all "
                             "of this agent's libraries."
-                        ),
-                    },
-                    "domain": {
-                        "type": "string",
-                        "description": (
-                            "Optional concept id to search industry knowledge "
-                            "under, e.g. 'domain.lending.mortgage'. Leave empty "
-                            "to use the agent's own domain."
                         ),
                     },
                     "hops": {
@@ -226,23 +212,17 @@ def _execute_get_database_schema(arguments: dict) -> str:
 
 
 async def _execute_domain_search(arguments: dict) -> str:
-    """Search the agent's graph and its domain knowledge, as one result.
+    """Search the agent's document graph.
 
     Async, unlike the other native executors, because the path it drives is
-    genuinely asynchronous: the optimiser is a model call, the traversal is a
-    network hop, and the two sources run concurrently.
+    genuinely asynchronous: the optimiser is a model call and the traversal is
+    a network hop.
 
-    Scoping order matches what the two tools it replaced did, so an agent's
-    behaviour is unchanged apart from having one tool instead of two:
-      1. an explicit argument, when the model asks for one;
-      2. the agent's own libraries and domain annotations;
-      3. unscoped.
-
-    (2) is what makes this useful without prompt engineering — a mortgage agent
-    gets mortgage material because of what it *is*.
+    Scoped to an explicit ``library_id`` when the model asks for one, else to
+    the agent's own libraries. A ``domain`` argument from an agent created
+    before industry knowledge moved to planning is ignored.
     """
     from app.dependencies import get_mistral_client
-    from app.knowledge import reference as knowledge
     from app.rag import domain_search, scope, timeline
 
     query = str(arguments.get("query") or "").strip()
@@ -250,7 +230,6 @@ async def _execute_domain_search(arguments: dict) -> str:
         return "No query was supplied. Ask a question about this agent's domain."
 
     explicit_library = str(arguments.get("library_id") or "").strip()
-    explicit_domain = str(arguments.get("domain") or "").strip()
     try:
         hops = max(1, min(3, int(arguments.get("hops") or 2)))
     except (TypeError, ValueError):
@@ -264,52 +243,38 @@ async def _execute_domain_search(arguments: dict) -> str:
     client = get_mistral_client()
 
     libraries = [explicit_library] if explicit_library else scope.resolve(client, agent_id)
-    domains = (
-        [explicit_domain] if explicit_domain
-        else (knowledge.domains_for_agent(agent_id) if agent_id else [])
-    )
-
-    scope_parts = []
-    if libraries:
-        scope_parts.append(f"libraries {', '.join(libraries)}")
-    if domains:
-        scope_parts.append(f"domain {', '.join(domains)}")
-    scope_note = "; ".join(scope_parts) or "everything (this agent has no library or domain)"
+    scope_note = f"libraries {', '.join(libraries)}" if libraries else "this agent has no library"
 
     timeline.ensure("query", f"agent:{agent_id or 'unknown'}")
 
     try:
         with timeline.stage(
             "domain_search",
-            meta={"query": query[:200], "libraries": libraries or "all",
-                  "domains": domains or "all", "hops": hops},
+            meta={"query": query[:200], "libraries": libraries or "none", "hops": hops},
         ) as st:
             result = await domain_search.search(
-                client, query, library_ids=libraries, domains=domains,
-                hops=hops, limit=limit,
+                client, query, library_ids=libraries, hops=hops, limit=limit,
             )
             graph = result.get("graph") or {}
             st.set(
                 entities=len(graph.get("entities") or []),
                 relations=len(graph.get("relations") or []),
-                knowledge_entries=len((result.get("knowledge") or {}).get("entries") or []),
             )
             if not result.get("found"):
-                st.note("nothing matched in either source")
+                st.note("nothing matched in the graph")
     except Exception as e:
         logger.warning("Domain search failed: %s", e)
         return (
-            f"Domain knowledge is unavailable right now ({e}). Use the document "
+            f"The document graph is unavailable right now ({e}). Use the document "
             "library tool instead, and mark anything you state from your own "
             'knowledge with "(unverified)".'
         )
 
     logger.info(
-        "Domain search: query=%.60r scope=%s -> %d entities, %d relations, %d notes",
+        "Domain search: query=%.60r scope=%s -> %d entities, %d relations",
         query, scope_note,
         len((result.get("graph") or {}).get("entities") or []),
         len((result.get("graph") or {}).get("relations") or []),
-        len((result.get("knowledge") or {}).get("entries") or []),
     )
     return domain_search.render(result, scope_note=scope_note)
 
